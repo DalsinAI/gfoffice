@@ -14,11 +14,13 @@ set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 OWF="$HERE/libowf"
 LIB="$OWF/library"
+# the same order as sort gives, whatever the locale (comm needs it)
+export LC_ALL=C
 CC=${CC:-cc}
 NM=${NM:-nm}
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
-FLAGS="-O1 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables -DOWF_LIBRARY_BUILD -I$OWF/include -I$OWF/src -I$LIB"
+FLAGS="-std=c99 -O1 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables -DOWF_LIBRARY_BUILD -I$OWF/include -I$OWF/src -I$LIB"
 mkdir -p "$T/src" "$T/rt"
 for f in "$OWF"/src/*.c "$OWF"/calc/*.c; do
     case "$f" in
@@ -34,8 +36,8 @@ for f in "$LIB/owf_runtime.c" "$LIB/owf_runtime_math.c" "$LIB/owf_sys_dos.c"; do
 done | sort -u > "$T/given"
 # what the archive's objects define between them
 "$NM" -g --defined-only "$T"/src/*.o | awk 'NF >= 3 { print $3 }' | sort -u > "$T/defined"
-# (glibc's C99 scanf names its sscanf __isoc99_sscanf: the same call)
-"$NM" -u "$T"/src/*.o | awk '$1 == "U" { sub(/^__isoc99_/, "", $2); print $2 }' | sort -u > "$T/called"
+# (glibc names C99 scanf and C23 strtol __isoc99_sscanf and __isoc23_strtol: the same calls)
+"$NM" -u "$T"/src/*.o | awk '$1 == "U" { sub(/^__isoc(99|23)_/, "", $2); print $2 }' | sort -u > "$T/called"
 # names a host compiler makes on its own, not calls in libowf's sources; the 68k's are in libgcc
 cat > "$T/host" <<'EOT'
 _GLOBAL_OFFSET_TABLE_
@@ -48,7 +50,7 @@ if [ -s "$T/missing" ]; then
     echo "(add them to libowf/library/owf_runtime.c, or use one it has):"
     while read -r name; do
         printf '  %s:' "$name"
-        for o in "$T"/src/*.o; do "$NM" -u "$o" | awk '$1 == "U" { sub(/^__isoc99_/, "", $2); print $2 }' | grep -qx "$name" && printf ' %s' "$(basename "$o" .o)"; done
+        for o in "$T"/src/*.o; do "$NM" -u "$o" | awk '$1 == "U" { sub(/^__isoc(99|23)_/, "", $2); print $2 }' | grep -qx "$name" && printf ' %s' "$(basename "$o" .o)"; done
         echo
     done < "$T/missing"
     exit 1

@@ -109,7 +109,7 @@ enum {
     M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK, M_SUBTOTALS,
     M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_PIVOT_DETAILS, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER, M_SCENARIOS, M_CONSOLIDATE, M_CONSOLIDATE_REFRESH, M_NAME_MANAGE, M_ADV_FILTER,
     M_TEXT_COLUMNS, M_REMOVE_DUPS,
-    M_PROTECT_SHEET, M_UNPROTECT_SHEET, M_CELL_PROTECT, M_PROTECT_BOOK, M_UNPROTECT_BOOK
+    M_PROTECT_SHEET, M_UNPROTECT_SHEET, M_CELL_PROTECT, M_PROTECT_BOOK, M_UNPROTECT_BOOK, M_EDIT_LINKS
 };
 
 static struct NewMenu menus[] = {
@@ -258,6 +258,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Pivot Table...", NULL, 0, 0, (APTR)M_PIVOT_SUMMARY },
     { NM_ITEM, "Refresh Pivot Table", NULL, 0, 0, (APTR)M_PIVOT_REFRESH },
     { NM_ITEM, "Show Pivot Details", NULL, 0, 0, (APTR)M_PIVOT_DETAILS },
+    { NM_ITEM, "Edit Links...", NULL, 0, 0, (APTR)M_EDIT_LINKS },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Validity...", NULL, 0, 0, (APTR)M_VALIDITY },
     { NM_ITEM, "Clear Validity", NULL, 0, 0, (APTR)M_VALIDITY_CLEAR },
@@ -3249,6 +3250,7 @@ static void do_goal_seek(void)
 static const char *const sv_goal_labels[] = { "Maximum", "Minimum", "Value of", NULL };
 static const char *const sv_rel_labels[] = { "<=", "=", ">=", "Whole number", "Binary", NULL };
 static const char *const sv_rel_words[] = { "", "<=", "=", ">=", "INT", "BIN" };
+static const char *const sv_engine_labels[] = { "Simplex LP", "Nonlinear", NULL };
 
 typedef struct {
     struct Node node;
@@ -3299,7 +3301,7 @@ static void sv_get_string(struct Gadget *g, struct Window *w, char *out, size_t 
 static int solver_window(oc_solver_model *m)
 {
     struct Gadget *glist = NULL, *last, *gtarget, *ggoal, *gvalue, *gvars, *glist_v, *glhs, *grel, *grhs;
-    struct Gadget *gadd, *gchange, *gremove, *gneg, *gsolve, *gclose;
+    struct Gadget *gadd, *gchange, *gremove, *gneg, *gengine, *gsolve, *gclose;
     struct NewGadget ng;
     struct Window *rw = NULL;
     struct List lines;
@@ -3351,13 +3353,19 @@ static int solver_window(oc_solver_model *m)
     ng.ng_Flags = PLACETEXT_RIGHT; ng.ng_LeftEdge = 10; ng.ng_TopEdge += fh + 16; ng.ng_Width = 22; ng.ng_Height = fh + 4;
     ng.ng_GadgetText = (STRPTR)"Variables are not negative"; ng.ng_GadgetID = 12;
     last = gneg = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, m->nonnegative ? TRUE : FALSE, TAG_DONE);
+    /* its own row, so a wide font does not run the check box's words into it */
+    ng.ng_Flags = PLACETEXT_LEFT; ng.ng_TopEdge += fh + 12; ng.ng_LeftEdge = 90; ng.ng_Width = 140;
+    ng.ng_Height = fh + 6;
+    ng.ng_GadgetText = (STRPTR)"Method"; ng.ng_GadgetID = 15;
+    last = gengine = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)sv_engine_labels,
+                                  GTCY_Active, (ULONG)(m->engine == OC_SOLVER_NONLINEAR ? 1 : 0), TAG_DONE);
     ng.ng_Flags = 0; ng.ng_TopEdge += fh + 14; ng.ng_Width = 90; ng.ng_Height = fh + 8;
     ng.ng_LeftEdge = ww - 200; ng.ng_GadgetText = (STRPTR)"Solve"; ng.ng_GadgetID = 13;
     last = gsolve = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
     ng.ng_LeftEdge = ww - 100; ng.ng_GadgetText = (STRPTR)"Close"; ng.ng_GadgetID = 14;
     last = gclose = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
     if (!gtarget || !ggoal || !gvalue || !gvars || !glist_v || !glhs || !grel || !grhs || !gadd || !gchange ||
-        !gremove || !gneg || !gsolve || !gclose)
+        !gremove || !gneg || !gengine || !gsolve || !gclose)
         goto out;
     wh = ng.ng_TopEdge + ng.ng_Height + 10;
     rw = OpenWindowTags(NULL,
@@ -3422,7 +3430,7 @@ static int solver_window(oc_solver_model *m)
                 sel = -1;
                 relist = 1;
             } else if (id == 13) {
-                LONG goal = 0, neg = 0;
+                LONG goal = 0, neg = 0, engine = 0;
                 double v = 0.0;
                 sv_get_string(gtarget, rw, text, sizeof text);
                 sv_take(trim_text(text), m->target, sizeof m->target);
@@ -3430,6 +3438,8 @@ static int solver_window(oc_solver_model *m)
                 sv_take(trim_text(text), m->variables, sizeof m->variables);
                 GT_GetGadgetAttrs(ggoal, rw, NULL, GTCY_Active, (ULONG)&goal, TAG_DONE);
                 GT_GetGadgetAttrs(gneg, rw, NULL, GTCB_Checked, (ULONG)&neg, TAG_DONE);
+                GT_GetGadgetAttrs(gengine, rw, NULL, GTCY_Active, (ULONG)&engine, TAG_DONE);
+                m->engine = engine == 1 ? OC_SOLVER_NONLINEAR : OC_SOLVER_SIMPLEX;
                 m->goal = (int)goal + 1;
                 m->nonnegative = neg != 0;
                 sv_get_string(gvalue, rw, value, sizeof value);
@@ -3496,9 +3506,7 @@ static void do_solver(void)
         }
         solver_answer_text(&r, answer, sizeof answer);
         snprintf(message, sizeof message, "%s\n\nTarget and values: %s\n\nKeep these values?",
-                 r.status == OC_SOLVED ? "Solver found the best values for the model."
-                                       : "Solver stopped at its limit: these are the best values it found, "
-                                         "but there may be better ones.", answer);
+                 oc_solver_summary(&m, &r), answer);
         {
             int keep = ask_window("Solver", message, "Keep|Restore") == 1;
             /* the model is kept on the sheet either way */
@@ -4669,6 +4677,73 @@ static void do_unprotect_book(void)
     rc = oc_core_unprotect_book(core, password);
     if (rc == OC_WRONG_PASSWORD) set_status("That is not the workbook's password.");
     else result(rc, "The workbook's structure is no longer protected.");
+}
+
+/* ---- Links to other workbooks ---- */
+
+/* The folder the book's file is in ("Work:Books", "Work:"), or "" when it has none. */
+static void book_folder(char *out, size_t size)
+{
+    size_t n = strlen(current_path), cut = 0, i;
+    for (i = 0; i < n; i++)
+        if (current_path[i] == '/' || current_path[i] == ':')
+            cut = current_path[i] == ':' ? i + 1 : i;
+    if (cut >= size) cut = 0;
+    memcpy(out, current_path, cut);
+    out[cut] = 0;
+}
+
+/* A link (from 0) updated from its file: OWF_OK and how many sheets, or why not in why. */
+static int update_link(int index, int *sheets, char *why, size_t size)
+{
+    const char *name = NULL, *target = NULL;
+    char base[512], path[512], shown[300];
+    int rc;
+    *sheets = 0;
+    if (oc_core_link(core, index, &name, &target, NULL) != OWF_OK) { snprintf(why, size, "There is no link %d.", index + 1); return OWF_ERR_UNSUPPORTED; }
+    book_folder(base, sizeof base);
+    to_latin1(name, strlen(name), shown, sizeof shown);
+    if (!oc_link_path(target, base, path, sizeof path)) {
+        snprintf(why, size, "%s is not a file GFOpenCalc can read: it keeps its last values.", shown);
+        return OWF_ERR_UNSUPPORTED;
+    }
+    rc = oc_core_update_link(core, index, path, NULL, sheets);
+    if (rc == OWF_OK && !*sheets) snprintf(why, size, "%s: the file has none of its sheets now; the last values stay.", shown);
+    else if (rc == OWF_OK) snprintf(why, size, "%s updated (%d sheet%s).", shown, *sheets, *sheets == 1 ? "" : "s");
+    else snprintf(why, size, "%s could not be read (%s): it keeps its last values.", shown, owf_error_text(rc));
+    return rc;
+}
+
+/* Data > Edit Links...: the links, and Update All or Update One. */
+static void do_edit_links(void)
+{
+    char text[1600], line[400], why[400], number[16];
+    size_t at = 0;
+    int n = oc_core_link_count(core), i, pick, sheets, done = 0;
+    if (!n) { set_status("This workbook has no links to other workbooks."); return; }
+    at += (size_t)snprintf(text, sizeof text, "Formulas here use the values these workbooks last had:\n");
+    for (i = 0; i < n && at + 2 < sizeof text; i++) {
+        const char *name = NULL, *target = NULL;
+        char a[200], b[200];
+        int ks = 0;
+        oc_core_link(core, i, &name, &target, &ks);
+        to_latin1(name, strlen(name), a, sizeof a);
+        to_latin1(target, strlen(target), b, sizeof b);
+        snprintf(line, sizeof line, "%d. %.180s (%.180s, %d sheet%s)\n", i + 1, a, b, ks, ks == 1 ? "" : "s");
+        at += (size_t)snprintf(text + at, sizeof text - at, "%s", line);
+    }
+    pick = ask_window("Edit Links", text, "Update All|Update One...|Close");
+    if (pick == 1) {
+        for (i = 0; i < n; i++)
+            if (update_link(i, &sheets, why, sizeof why) == OWF_OK && sheets) done++;
+        if (n == 1) set_status(why);
+        else { snprintf(line, sizeof line, "%d of %d links updated.", done, n); set_status(line); }
+    } else if (pick == 2) {
+        if (!text_requester("Update Link", "Link number", "1", number, sizeof number)) return;
+        i = atoi(number) - 1;
+        update_link(i, &sheets, why, sizeof why);
+        set_status(why);
+    }
 }
 
 static void do_cell_protection(void)
@@ -6072,6 +6147,7 @@ static void menu_action(ULONG id)
     case M_REMOVE_DUPS: do_remove_duplicates(); break;
     case M_PROTECT_SHEET: do_protect_sheet(); break;
     case M_PROTECT_BOOK: do_protect_book(); break;
+    case M_EDIT_LINKS: do_edit_links(); break;
     case M_UNPROTECT_BOOK: do_unprotect_book(); break;
     case M_UNPROTECT_SHEET: do_unprotect_sheet(); break;
     case M_CELL_PROTECT: do_cell_protection(); break;
@@ -6353,7 +6429,8 @@ static int rexx_pivot(const char *arg, char *out, size_t size)
 }
 
 /* SOLVE [MAX|MIN cell | VALUE cell n] [BY cells] [lhs<=rhs lhs=rhs lhs>=rhs ...] [INT cells] [BIN cells] [ANY]
- * [KEEP]: Data > Solver. With no model words, the sheet's own model. The answer is "target cell=value ...";
+ * [SIMPLEX|NONLINEAR] [KEEP]: Data > Solver. With no model words, the sheet's own model (SIMPLEX or NONLINEAR
+ * alone picks its engine; a new model is Simplex LP unless NONLINEAR is given). The answer is "target cell=value ...";
  * KEEP puts it in the cells (and keeps the model on the sheet). 1 solved; *now set when the model has no answer. */
 /* A cell or range word into a model's field: 0 when it is too long for it. */
 static int solve_ref(char *dst, size_t size, const char *word)
@@ -6371,11 +6448,13 @@ static int rexx_solve(const char *arg, char *out, size_t size, int *now)
     static oc_solver_result r;
     char word[2 * OC_SOLVER_REF], bad[64];
     const char *p = arg;
-    int keep = 0, any_model = 0, rc;
+    int keep = 0, any_model = 0, engine = -1, rc;
     oc_core_solver_model(core, &m);
     for (p = rexx_word(p, word, sizeof word); word[0]; p = rexx_word(p, word, sizeof word)) {
         char *op;
         if (!strcasecmp(word, "KEEP")) { keep = 1; continue; }
+        if (!strcasecmp(word, "SIMPLEX")) { engine = OC_SOLVER_SIMPLEX; continue; }
+        if (!strcasecmp(word, "NONLINEAR")) { engine = OC_SOLVER_NONLINEAR; continue; }
         if (!any_model) {                   /* the first model word starts a model afresh */
             any_model = 1;
             oc_solver_model_init(&m);
@@ -6423,6 +6502,8 @@ static int rexx_solve(const char *arg, char *out, size_t size, int *now)
         return 0;
     }
     if (!m.target[0]) { snprintf(out, size, "SOLVE: no model on this sheet: give MAX, MIN or VALUE and BY"); return 0; }
+    if (engine >= 0)
+        m.engine = engine;
     rc = oc_core_solve(core, &m, &r);
     if (rc == OWF_OK && r.status != OC_SOLVED && r.status != OC_SOLVED_LIMIT) {
         *now = 1;
@@ -6713,7 +6794,7 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
                  "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK CHARTSELECT CHARTMOVE "
-                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO PIVOTDETAILS PIVOTSET SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER MULTIOP TEXTTOCOLUMNS REMOVEDUPS CONDFMT PROTECT UNPROTECT CELLPROTECT ISPROTECTED PROTECTBOOK UNPROTECTBOOK ISBOOKPROTECTED QUIT");
+                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO PIVOTDETAILS PIVOTSET SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER MULTIOP TEXTTOCOLUMNS REMOVEDUPS CONDFMT PROTECT UNPROTECT CELLPROTECT ISPROTECTED PROTECTBOOK UNPROTECTBOOK ISBOOKPROTECTED LINKS UPDATELINK QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {   /* a DOS error code's text, as every Open app's port */
         if (!*arg) { ok = 0; snprintf(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -6856,6 +6937,35 @@ static int rexx_do_command(const char *command, char **result_out)
         snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc == OC_WRONG_PASSWORD ? "Wrong password"
                  : rc == OWF_ERR_UNSUPPORTED ? (on ? "The workbook is protected already" : "The workbook is not protected")
                  : owf_error_text(rc));
+    } else if (starts_word_ci(command, "LINKS", &arg)) {
+        /* LINKS: the links to other workbooks, "name=target" each, by commas */
+        size_t at = 0;
+        int i;
+        result_text[0] = 0;
+        for (i = 0; i < oc_core_link_count(core) && at + 2 < sizeof result_text; i++) {
+            const char *name = NULL, *target = NULL;
+            char t[400], u[400];
+            oc_core_link(core, i, &name, &target, NULL);
+            snprintf(t, sizeof t, "%.190s=%.190s", name, target);
+            to_latin1(t, strlen(t), u, sizeof u);
+            at += (size_t)snprintf(result_text + at, sizeof result_text - at, "%s%s", at ? "," : "", u);
+        }
+    } else if (starts_word_ci(command, "UPDATELINK", &arg)) {
+        /* UPDATELINK n | ALL: from each link's file; the result says how it went */
+        char which[16];
+        int sheets, rc = OWF_OK, i, n = oc_core_link_count(core);
+        rexx_word(arg, which, sizeof which);
+        if (!strcasecmp(which, "ALL")) {
+            int done = 0;
+            for (i = 0; i < n; i++)
+                if (update_link(i, &sheets, result_text, sizeof result_text) == OWF_OK && sheets) done++;
+            ok = done == n;
+            if (n != 1) snprintf(result_text, sizeof result_text, "%d of %d links updated", done, n);
+        } else {
+            rc = update_link(atoi(which) - 1, &sheets, result_text, sizeof result_text);
+            ok = rc == OWF_OK && sheets;
+            if (rc == OWF_ERR_UNSUPPORTED && (atoi(which) < 1 || atoi(which) > n)) rc_fail = RX_NOW;
+        }
     } else if (starts_word_ci(command, "ISBOOKPROTECTED", &arg)) {
         int has = 0, on = oc_core_book_protection(core, &has);
         snprintf(result_text, sizeof result_text, "%d %d", on, has);

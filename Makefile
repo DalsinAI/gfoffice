@@ -83,17 +83,17 @@ check: merge-table-check
 
 .PHONY: merge-table-test merge-table-check
 
-$(OUT)/test-spell: $(OWF_SRC) $(CORE_SRC) app/ow_spell.c tests/core/test_spell.c include/openwrite_core.h app/ow_spell.h
+$(OUT)/test-spell: $(OWF_SRC) $(CORE_SRC) app/ow_spell.c src/core/ow_spell_dict.c tests/core/test_spell.c include/openwrite_core.h app/ow_spell.h include/ow_spell_dict.h
 	mkdir -p $(OUT)
-	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Iapp -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) app/ow_spell.c tests/core/test_spell.c -lz -o $@
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Iapp -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) app/ow_spell.c src/core/ow_spell_dict.c tests/core/test_spell.c -lz -o $@
 
 spell-test: $(OUT)/test-spell
 	$(OUT)/test-spell
 
-$(OUT)/test-spell-asan: $(OWF_SRC) $(CORE_SRC) app/ow_spell.c tests/core/test_spell.c include/openwrite_core.h app/ow_spell.h
+$(OUT)/test-spell-asan: $(OWF_SRC) $(CORE_SRC) app/ow_spell.c src/core/ow_spell_dict.c tests/core/test_spell.c include/openwrite_core.h app/ow_spell.h include/ow_spell_dict.h
 	mkdir -p $(OUT)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-		-DOWF_HAVE_ZLIB -Iinclude -Iapp -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) app/ow_spell.c tests/core/test_spell.c -lz -o $@
+		-DOWF_HAVE_ZLIB -Iinclude -Iapp -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) app/ow_spell.c src/core/ow_spell_dict.c tests/core/test_spell.c -lz -o $@
 
 spell-check: $(OUT)/test-spell-asan
 	$(OUT)/test-spell-asan
@@ -396,7 +396,7 @@ check: calc-expect
 # the fixtures (odfpy and pypdf when installed, for the tests only). With
 # GFOpenLayout (OPENLAYOUT_SRC), OWConvert exports decks to PDF and the PDF
 # and layout tests run too; without it they are skipped, and say so.
-DECK_SRC = $(wildcard src/deck/*.c) src/core/ow_layout.c
+DECK_SRC = $(wildcard src/deck/*.c) src/core/ow_layout.c src/core/ow_spell_dict.c
 DECK_DEPS = $(OWF_SRC) libowf/include/owf.h libowf/include/owf_deck.h libowf/include/owf_pdf.h libowf/src/owf_internal.h \
 	libowf/src/owf_deck_int.h
 ifneq ($(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c),)
@@ -456,6 +456,28 @@ deck-edit-test: $(OUT)/test-opr-edit
 
 deck-edit-check: $(OUT)/test-opr-edit-asan
 	$(OUT)/test-opr-edit-asan tests/deck/fixtures/pptx-talk.pptx
+
+# Spelling through a deck (src/deck/opr_spell.c) with GFOpenWrite's dictionary.
+$(OUT)/test-opr-spell: $(DECK_DEPS) $(DECK_SRC) include/openpresentation_core.h include/ow_spell_dict.h tests/deck/test_opr_spell.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) \
+		tests/deck/test_opr_spell.c -lz -o $@
+
+$(OUT)/test-opr-spell-asan: $(DECK_DEPS) $(DECK_SRC) include/openpresentation_core.h include/ow_spell_dict.h tests/deck/test_opr_spell.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) tests/deck/test_opr_spell.c -lz -o $@
+
+deck-spell-test: $(OUT)/test-opr-spell
+	$(OUT)/test-opr-spell
+
+deck-spell-check: $(OUT)/test-opr-spell-asan
+	$(OUT)/test-opr-spell-asan
+
+test: deck-spell-test
+check: deck-spell-check
+
+.PHONY: deck-spell-test deck-spell-check
 
 $(OUT)/test-opr-show: $(DECK_DEPS) $(DECK_SRC) include/openpresentation_core.h tests/deck/test_opr_show.c
 	mkdir -p $(OUT)
@@ -542,6 +564,62 @@ test: publisher-merge-test
 check: publisher-merge-check
 
 .PHONY: publisher-merge-test publisher-merge-check
+
+# GFOpenPublisher's built-in publication templates (src/pub/opp_template.c)
+PUB_TEMPLATE_DEPS = $(OWF_SRC) src/pub/opp_template.c src/pub/opp_merge.c src/core/ow_merge.c \
+	tests/pub/test_pub_template.c include/openpublisher_template.h include/openpublisher_merge.h \
+	include/ow_merge.h libowf/include/owf_deck.h
+
+$(OUT)/test-publisher-template: $(PUB_TEMPLATE_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) src/pub/opp_template.c \
+		src/pub/opp_merge.c src/core/ow_merge.c tests/pub/test_pub_template.c -lz -o $@
+
+$(OUT)/test-publisher-template-asan: $(PUB_TEMPLATE_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) src/pub/opp_template.c \
+		src/pub/opp_merge.c src/core/ow_merge.c tests/pub/test_pub_template.c -lz -o $@
+
+publisher-template-test: $(OUT)/test-publisher-template
+	$(OUT)/test-publisher-template
+
+publisher-template-check: $(OUT)/test-publisher-template-asan
+	$(OUT)/test-publisher-template-asan
+
+test: publisher-template-test
+check: publisher-template-check
+
+.PHONY: publisher-template-test publisher-template-check
+
+ifneq ($(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c),)
+# merge fields shown by the page layout and kept by ODP and PPTX (tests/pub/test_pub_merge_show.c)
+PUB_MERGE_SHOW_DEPS = $(PUB_MERGE_DEPS) $(DECK_DEPS) $(DECK_SRC) tests/pub/test_pub_merge_show.c include/openpresentation_core.h
+
+$(OUT)/test-publisher-merge-show: $(PUB_MERGE_SHOW_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) src/pub/opp_merge.c \
+		src/core/ow_merge.c tests/pub/test_pub_merge_show.c -lz -o $@
+
+$(OUT)/test-publisher-merge-show-asan: $(PUB_MERGE_SHOW_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) src/pub/opp_merge.c src/core/ow_merge.c \
+		tests/pub/test_pub_merge_show.c -lz -o $@
+
+publisher-merge-show-test: $(OUT)/test-publisher-merge-show
+	$(OUT)/test-publisher-merge-show
+
+publisher-merge-show-check: $(OUT)/test-publisher-merge-show-asan
+	$(OUT)/test-publisher-merge-show-asan
+
+test: publisher-merge-show-test
+check: publisher-merge-show-check
+publisher-merge-test: publisher-merge-show-test
+publisher-merge-check: publisher-merge-show-check
+
+.PHONY: publisher-merge-show-test publisher-merge-show-check
+endif
 
 ifneq ($(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c),)
 PUB_CORE_SRC = src/pub/opp_import.c src/deck/opr_layout.c src/deck/opr_pdf.c src/core/ow_layout.c

@@ -33,7 +33,7 @@ extern "C" {
 
 typedef enum {
     OWF_OBJ_TEXT, OWF_OBJ_PICTURE, OWF_OBJ_SHAPE, OWF_OBJ_TABLE,
-    OWF_OBJ_CHART,               /* not read yet: charts are OWF_OBJ_OTHER for now */
+    OWF_OBJ_CHART,               /* a chart and its data (chart): PPTX's and ODP's */
     OWF_OBJ_GROUP,               /* its objects follow it, with parent set to it */
     OWF_OBJ_OTHER                /* kept for save (keep), drawn as its box */
 } owf_obj_kind;
@@ -121,7 +121,7 @@ typedef struct {
     int text_column_gap;         /* twips between text columns; 0: no gap */
     int image;                   /* OWF_OBJ_PICTURE: into res->images; -1: none */
     int crop[4];                 /* thousandths cut from left, top, right, bottom */
-    struct owf_chart *chart;     /* OWF_OBJ_CHART (Design-Suite-Shared.md, 4): NULL until charts come */
+    struct owf_chart *chart;     /* OWF_OBJ_CHART (Design-Suite-Shared.md, 4): its own, malloc'd; NULL: none */
     char *name, *alt;            /* UTF-8, may be NULL */
     char *flow_next;             /* ODF draw:chain-next-name; NULL when unlinked */
     int keep;                    /* into deck->kept; -1: none */

@@ -224,6 +224,16 @@ static long book_bytes(const owf_book *b)
         n += (long)strlen(b->names[i].formula) + 32;
     for (i = 0; i < b->nparts; i++)
         n += (long)b->parts[i].length + 64;
+    for (i = 0; i < b->nextbooks; i++) {                 /* other books' last values */
+        int k;
+        n += (long)sizeof *b->extbooks;
+        for (k = 0; k < b->extbooks[i].nsheets; k++) {
+            const owf_sheet *s = &b->extbooks[i].sheets[k];
+            n += (long)sizeof *s;
+            for (j = 0; j < s->ncells; j++)
+                n += cell_bytes(&s->cells[j]);
+        }
+    }
     return n;
 }
 

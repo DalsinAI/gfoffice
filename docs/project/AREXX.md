@@ -23,8 +23,11 @@ These follow the GFOffice conventions (docs/gfoffice/Design-Suite-Shared.md 6.3)
 
 The window (`app/openproject.c`, built by `build.d/project.sh`) answers `VERSION`, `ACTIVATE`,
 `DEACTIVATE` (5: it has no icon to go to), `FAULT CODE`, `PRINT` (every page of the Gantt view through
-printer.device), `VIEW` (`VIEW` gives `GANTT` or `USAGE`; `VIEW USAGE` shows the Resource Usage view
-and `VIEW GANTT` the Gantt chart; anything else is 10) and `QUIT` itself; `QUIT` gives 5 while the plan has unsaved changes and `QUIT FORCE`
+printer.device), `VIEW` (`VIEW` gives `GANTT`, `TRACKING`, `USAGE`, `TASKUSAGE`, `GRAPH` or `NETWORK`; `VIEW TRACKING`
+shows the Tracking Gantt, `VIEW USAGE` the
+Resource Usage view, `VIEW TASKUSAGE` the Task Usage view, `VIEW GRAPH` the Resource Graph (of the
+first resource), `VIEW NETWORK` the Network Diagram and
+`VIEW GANTT` the Gantt chart; anything else is 10) and `QUIT` itself; `QUIT` gives 5 while the plan has unsaved changes and `QUIT FORCE`
 drops them. A second copy's port is `GFOPENPROJECT.2`. `tests/arexx/project.rexx` runs the port on the
 Amiga (start GFOpenProject, then `rx project.rexx RAM:`).
 
@@ -58,6 +61,7 @@ Amiga (start GFOpenProject, then `rx project.rexx RAM:`).
 | USAGE | `RESOURCE/A,FROM/A,TO/A` | the resource's work between two dates, `12h` |
 | FINISH | | the plan's finish, `Fri 20/11/26 17:00` |
 | CRITICAL | | the critical rows (not summaries), `1 2 3` |
+| COLUMN | `COLUMN/A,SHOW/S,HIDE/S` | `1` when the window's table shows the column, after SHOW or HIDE; 5 when it would hide the last column shown, or there is no window; 10 for no such column. The column by its title (`"Resource Names"`) or a short name (`Resources`, `Percent`, `StartVariance`, `Constraint`) |
 
 Columns are named by their titles, with case, spaces and punctuation ignored. For example `Name`,
 `"Task Name"`, `Duration`, `Start`, `Finish`, `Predecessors`, `"% Complete"` or `percent`, `WBS`,

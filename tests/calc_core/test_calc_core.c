@@ -5934,6 +5934,103 @@ static void test_track_changes(void)
     }
 }
 
+/* Edit Links: the list, a target as a file, and an update from the file (an Undo step); a file not there
+ * leaves the last values. */
+static void test_edit_links(void)
+{
+    static const char *const src_path = "build/host/calc-core-link-src.xlsx";
+    oc_core *core = fresh();
+    owf_book *src = owf_book_new();
+    owf_extbook *eb;
+    owf_sheet *sh;
+    owf_cell *c;
+    const char *name = NULL, *target = NULL;
+    char path[256];
+    int sheets = -1;
+    if (!core || !src) {
+        oc_core_free(core);
+        owf_book_free(src);
+        return;
+    }
+    /* the source file: Q1!A1 5, Q1!A2 a formula whose value is 8 */
+    sh = owf_book_add_sheet(src, "Q1");
+    if (sh && (c = owf_sheet_cell(sh, 0, 0, 1)) != NULL)
+        owf_cell_set_number(c, 5);
+    if (sh && (c = owf_sheet_cell(sh, 1, 0, 1)) != NULL) {
+        owf_cell_set_formula(c, "A1+3");
+        owf_cell_set_number(c, 8);
+    }
+    CHECK(owf_export_book_file(src, src_path, "xlsx", NULL) == OWF_OK);
+    owf_book_free(src);
+    /* the paths a target names */
+    CHECK(oc_link_path("file:///C:/Books/My%20Rates.xlsx", "Work:x", path, sizeof path) && !strcmp(path, "C:/Books/My Rates.xlsx"));
+    CHECK(oc_link_path("file:///home/dale/R.ods", NULL, path, sizeof path) && !strcmp(path, "/home/dale/R.ods"));
+    CHECK(oc_link_path("file://localhost/home/R.ods", NULL, path, sizeof path) && !strcmp(path, "/home/R.ods"));
+    CHECK(oc_link_path("Rates.xlsx", "Work:Books", path, sizeof path) && !strcmp(path, "Work:Books/Rates.xlsx"));
+    CHECK(oc_link_path("Rates.xlsx", "Work:", path, sizeof path) && !strcmp(path, "Work:Rates.xlsx"));
+    CHECK(oc_link_path("sub/Rates.xlsx", "/home/dale/", path, sizeof path) && !strcmp(path, "/home/dale/sub/Rates.xlsx"));
+    CHECK(oc_link_path("Work:Books/Rates.xlsx", "RAM:", path, sizeof path) && !strcmp(path, "Work:Books/Rates.xlsx"));
+    CHECK(oc_link_path("Rates.xlsx", NULL, path, sizeof path) && !strcmp(path, "Rates.xlsx"));
+    CHECK(!oc_link_path("https://example.org/r.xlsx", "Work:", path, sizeof path));
+    CHECK(!oc_link_path("Rates.xlsx", "Work:Books", path, 8));
+    CHECK(!oc_link_path("", NULL, path, sizeof path));
+    CHECK(!oc_link_path("file://server/share/R.xlsx", NULL, path, sizeof path));   /* another computer's */
+    CHECK(!oc_link_path("R%00.xlsx", "Work:", path, sizeof path));
+    /* the book: its link with the last values (Q1!A1 2), a sheet the file does not have (Old!A1 1) */
+    CHECK(oc_core_link_count(core) == 0 && oc_core_link(core, 0, &name, &target, &sheets) == OWF_ERR_UNSUPPORTED);
+    eb = owf_book_add_extbook(oc_core_book(core), "calc-core-link-src.xlsx", NULL);
+    CHECK(eb != NULL);
+    if (!eb) {
+        oc_core_free(core);
+        return;
+    }
+    if ((sh = owf_extbook_sheet(eb, "Q1", 1)) != NULL && (c = owf_sheet_cell(sh, 0, 0, 1)) != NULL)
+        owf_cell_set_number(c, 2);
+    if ((sh = owf_extbook_sheet(eb, "Old", 1)) != NULL && (c = owf_sheet_cell(sh, 0, 0, 1)) != NULL)
+        owf_cell_set_number(c, 1);
+    CHECK(oc_core_link_count(core) == 1 && oc_core_link(core, 0, &name, &target, &sheets) == OWF_OK);
+    CHECK_STR(name, "calc-core-link-src.xlsx");
+    CHECK_STR(target, "calc-core-link-src.xlsx");          /* no target: its name */
+    CHECK(sheets == 2);
+    enter_at(core, "A1", "='[calc-core-link-src.xlsx]Q1'!A1*10");
+    enter_at(core, "A2", "=SUM('[calc-core-link-src.xlsx]Q1'!A:A)");
+    enter_at(core, "A3", "='[calc-core-link-src.xlsx]Old'!A1");
+    CHECK(num(core, "A1") == 20 && num(core, "A2") == 2 && num(core, "A3") == 1);
+    /* a file not there: its error, nothing changes, no Undo step */
+    oc_core_mark_saved(core);
+    CHECK(oc_core_update_link(core, 0, "build/host/no-such-link.xlsx", NULL, &sheets) != OWF_OK && sheets == 0);
+    CHECK(num(core, "A1") == 20 && !oc_core_is_dirty(core));
+    CHECK(oc_core_update_link(core, 1, src_path, NULL, &sheets) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_update_link(core, 0, NULL, NULL, &sheets) == OWF_ERR_UNSUPPORTED);
+    /* from the file: Q1 takes its values now (the formula's value too), Old keeps its last */
+    CHECK(oc_link_path(target, "build/host", path, sizeof path));
+    CHECK(oc_core_update_link(core, 0, path, NULL, &sheets) == OWF_OK && sheets == 1);
+    CHECK(num(core, "A1") == 50 && num(core, "A2") == 13 && num(core, "A3") == 1 && oc_core_is_dirty(core));
+    sh = &oc_core_book(core)->extbooks[0].sheets[0];
+    CHECK(sh->ncells == 2 && !sh->cells[1].formula && sh->cells[1].number == 8 && !sh->cells[0].style);
+    /* Undo: the last values back, and what the formulas made of them */
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(num(core, "A1") == 20 && num(core, "A2") == 2);
+    CHECK(oc_core_book(core)->extbooks[0].sheets[0].ncells == 1);
+    oc_core_free(core);
+    /* as the ARexx test does it: a formula on a book not kept is #REF!; saved, the file links that book (its
+       sheet, no values); opened again and updated, the formula has the file's value */
+    core = fresh();
+    if (core) {
+        enter_at(core, "A1", "='[calc-core-link-src.xlsx]Q1'!A2*2");
+        CHECK(at(core, "A1") && at(core, "A1")->type == OWF_VALUE_ERROR && oc_core_link_count(core) == 0);
+        CHECK(oc_core_save(core, "build/host/calc-core-link-main.xlsx", "xlsx", NULL) == OWF_OK);
+        CHECK(oc_core_open(core, "build/host/calc-core-link-main.xlsx", NULL, NULL, NULL) == OWF_OK);
+        CHECK(oc_core_link_count(core) == 1 && oc_core_link(core, 0, &name, &target, &sheets) == OWF_OK && sheets == 1);
+        CHECK(oc_link_path(target, "build/host", path, sizeof path) && !strcmp(path, "build/host/calc-core-link-src.xlsx"));
+        CHECK(oc_core_update_link(core, 0, path, NULL, &sheets) == OWF_OK && sheets == 1);
+        CHECK(num(core, "A1") == 16);
+        remove("build/host/calc-core-link-main.xlsx");
+        oc_core_free(core);
+    }
+    remove(src_path);
+}
+
 static void test_book_protection(void)
 {
     static const char *const paths[] = { "build/host/calc-core-bookprotect.xlsx", "build/host/calc-core-bookprotect.ods" };
@@ -7960,6 +8057,130 @@ static void test_solver(void)
     remove(ods);
 }
 
+/* The Nonlinear engine on known problems: a bowl, Rosenbrock's valley, constrained ones, a value goal, an
+ * infeasible model, and the model's engine kept in files. */
+static void test_solver_nonlinear(void)
+{
+    static const char *const xlsx = "build/host/calc-core-solver-nl.xlsx";
+    static const char *const ods = "build/host/calc-core-solver-nl.ods";
+    oc_core *core = fresh();
+    oc_solver_model m, back;
+    oc_solver_result r;
+    char bad[64];
+    if (!core)
+        return;
+    /* min (x - 3)^2 + (y + 1)^2 + 2: (3, -1), 2 */
+    enter_at(core, "B1", "0");
+    enter_at(core, "B2", "0");
+    enter_at(core, "B3", "=(B1-3)^2+(B2+1)^2+2");
+    oc_solver_model_init(&m);
+    snprintf(m.target, sizeof m.target, "B3");
+    snprintf(m.variables, sizeof m.variables, "B1:B2");
+    m.goal = OC_SOLVER_MIN;
+    m.nonnegative = 0;
+    /* the Simplex LP engine refuses it and points at the Nonlinear one */
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVER_NOT_LINEAR &&
+          strstr(r.why, "Nonlinear engine") != NULL);
+    m.engine = OC_SOLVER_NONLINEAR;
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED && r.nvariables == 2);
+    CHECK(fabs(r.value[0] - 3) < 1e-5 && fabs(r.value[1] + 1) < 1e-5 && fabs(r.objective - 2) < 1e-9);
+    CHECK(r.nodes > 0 && num(core, "B1") == 0);              /* the book is not changed */
+    /* kept >= 0: y stops at 0, so (3, 0) and 3 */
+    m.nonnegative = 1;
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED);
+    CHECK(fabs(r.value[0] - 3) < 1e-5 && r.value[1] == 0 && fabs(r.objective - 3) < 1e-9);
+    /* Rosenbrock from (-1.2, 1): 100(y - x^2)^2 + (1 - x)^2, least at (1, 1) */
+    m.nonnegative = 0;
+    enter_at(core, "B1", "-1.2");
+    enter_at(core, "B2", "1");
+    enter_at(core, "B3", "=100*(B2-B1^2)^2+(1-B1)^2");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED);
+    CHECK(fabs(r.value[0] - 1) < 1e-3 && fabs(r.value[1] - 1) < 1e-3 && r.objective < 1e-6);
+    /* min x^2 + y^2 with x + y >= 2: (1, 1), 2 */
+    enter_at(core, "B1", "0");
+    enter_at(core, "B2", "0");
+    enter_at(core, "B3", "=B1^2+B2^2");
+    enter_at(core, "B4", "=B1+B2");
+    solver_constraint(&m, "B4", OC_SOLVER_GE, "2");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED);
+    CHECK(fabs(r.value[0] - 1) < 1e-4 && fabs(r.value[1] - 1) < 1e-4 && fabs(r.objective - 2) < 1e-4);
+    /* max x * y with x + y <= 10, kept >= 0: (5, 5), 25 */
+    enter_at(core, "B1", "1");
+    enter_at(core, "B2", "1");
+    enter_at(core, "B3", "=B1*B2");
+    m.goal = OC_SOLVER_MAX;
+    m.nonnegative = 1;
+    m.constraints[0].rel = OC_SOLVER_LE;
+    snprintf(m.constraints[0].rhs, sizeof m.constraints[0].rhs, "10");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED);
+    CHECK(fabs(r.value[0] - 5) < 1e-3 && fabs(r.value[1] - 5) < 1e-3 && fabs(r.objective - 25) < 1e-4);
+    CHECK(r.value[0] + r.value[1] <= 10 + 1e-5);
+    /* the window's words for it, and for Simplex LP's answers */
+    CHECK(strstr(oc_solver_summary(&m, &r), "near the starting values") != NULL);
+    r.status = OC_SOLVED_LIMIT;
+    CHECK(strstr(oc_solver_summary(&m, &r), "limit of trials") != NULL);
+    m.engine = OC_SOLVER_SIMPLEX;
+    CHECK_STR(oc_solver_summary(&m, &r), "Solver stopped at its limit: these are the best values it found, "
+                                         "but there may be better ones.");
+    r.status = OC_SOLVED;
+    CHECK_STR(oc_solver_summary(&m, &r), "Solver found the best values for the model.");
+    r.status = OC_SOLVER_INFEASIBLE;
+    CHECK_STR(oc_solver_summary(&m, &r), "Solver could not solve this model.");
+    m.engine = OC_SOLVER_NONLINEAR;
+    /* the lab script's model: max x * y with 3x + 2y <= 18 from (1, 1) -> (3, 4.5), 13.5 */
+    enter_at(core, "B4", "=3*B1+2*B2");
+    snprintf(m.constraints[0].rhs, sizeof m.constraints[0].rhs, "18");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED);
+    CHECK(fabs(r.value[0] - 3) < 1e-3 && fabs(r.value[1] - 4.5) < 1e-3 && fabs(r.objective - 13.5) < 1e-4);
+    /* a value goal: x^3 = 27 from 1 */
+    enter_at(core, "C1", "1");
+    enter_at(core, "C2", "=C1^3");
+    oc_solver_model_init(&m);
+    m.engine = OC_SOLVER_NONLINEAR;
+    snprintf(m.target, sizeof m.target, "C2");
+    snprintf(m.variables, sizeof m.variables, "C1");
+    m.goal = OC_SOLVER_VALUE;
+    m.value = 27;
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED);
+    CHECK(fabs(r.value[0] - 3) < 1e-5 && fabs(r.objective - 27) < 1e-4);
+    /* infeasible: C1^2 <= -1 */
+    m.goal = OC_SOLVER_MIN;
+    solver_constraint(&m, "C2", OC_SOLVER_LE, "-1");
+    enter_at(core, "C2", "=C1^2");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVER_INFEASIBLE && r.why[0]);
+    /* a small limit: stopped before it is done */
+    m.nconstraints = 0;
+    m.max_trials = 5;
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && (r.status == OC_SOLVED_LIMIT || r.status == OC_SOLVER_NO_ANSWER) &&
+          r.nodes == 5);
+    m.max_trials = 0;
+    /* no whole or binary variables, and engines it does not know */
+    solver_constraint(&m, "C1", OC_SOLVER_INT, "");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_ERR_FORMAT && strstr(r.why, "Simplex LP") != NULL);
+    m.nconstraints = 0;
+    m.engine = 7;
+    CHECK(oc_core_solve(core, &m, &r) == OWF_ERR_FORMAT);
+    m.engine = OC_SOLVER_NONLINEAR;
+
+    /* the engine in the sheet's names and in files */
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED);
+    CHECK(oc_core_solver_apply(core, &m, &r, bad, sizeof bad) == OWF_OK);
+    CHECK(fabs(num(core, "C1")) < 1e-5);
+    CHECK(oc_core_solver_model(core, &back) && back.engine == OC_SOLVER_NONLINEAR);
+    CHECK(oc_core_save(core, xlsx, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_solver_model(core, &back) && back.engine == OC_SOLVER_NONLINEAR && back.goal == OC_SOLVER_MIN);
+    CHECK(oc_core_save(core, ods, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_solver_model(core, &back) && back.engine == OC_SOLVER_NONLINEAR);
+    back.engine = OC_SOLVER_SIMPLEX;
+    CHECK(oc_core_solver_apply(core, &back, NULL, bad, sizeof bad) == OWF_OK);
+    CHECK(oc_core_solver_model(core, &back) && back.engine == OC_SOLVER_SIMPLEX);
+    oc_core_free(core);
+    remove(xlsx);
+    remove(ods);
+}
+
 /* Consolidate's sources as defined names of ranges, and the names the window offers. */
 static void test_consolidate_names(void)
 {
@@ -8484,6 +8705,7 @@ int main(void)
     test_book_protection();
     test_external_books();
     test_track_changes();
+    test_edit_links();
     test_pivot_summary();
     test_pivot_layout();
     test_pivot_sort();
@@ -8500,6 +8722,7 @@ int main(void)
     test_pivot_definition_text();
     test_solver_lp();
     test_solver();
+    test_solver_nonlinear();
     test_scenarios();
     test_consolidate_refresh();
     test_scenario_frame();
