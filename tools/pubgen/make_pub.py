@@ -747,7 +747,11 @@ def columns():
     m = page_chunk(c, name='Master Page A')
     p1 = page_chunk(c, master=m)
     p2 = page_chunk(c, master=m)
-    t = Text(['Times New Roman', 'Franklin Gothic Book'], [DEFAULT_STYLE, (char_props(size=8.5, font=1), para_props())])
+    # the default style is dark blue (PL place 1), so WordArt's text, which takes it, has a colour too;
+    # the body style is dark green, so every run has its own colour
+    t = Text(['Times New Roman', 'Franklin Gothic Book'], [(TIMES + char_props(colour=1), para_props()),
+                                                           (char_props(size=8.5, font=1, colour=2), para_props())])
+    t.colours = [0x08000000, 0x00800000, 0x00008000]
     words = ' '.join('word%d' % i for i in range(40))
     t.story(1, [(para_props(style=1), [('Column story, part %s: %s' % (n, words), None)]) for n in ('one', 'two', 'three')])
     t.story(2, [(para_props(style=1), [('The second story runs on to page two. ' + words, None)])])

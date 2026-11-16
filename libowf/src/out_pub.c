@@ -7,8 +7,8 @@
  * boxes, shapes and tables, each frame's box and look, the text with its
  * paragraphs' alignment, character runs (bold, italic, underline, size,
  * typeface, colour), links and table cells, the colour scheme, and
- * pictures (PNG, GIF, JPEG, DIB, WMF, EMF: 8) and groups. WordArt and
- * the scratch area are not written yet: a report note says so.
+ * pictures (PNG, GIF, JPEG, DIB, WMF, EMF: 8), groups and WordArt's
+ * text. The scratch area is not written yet: a report note says so.
  *
  * What our reader reads back is checked (tests/pub/test_pub_save.py);
  * whether Publisher itself opens these files is not known yet.
@@ -146,7 +146,7 @@ typedef struct {
     int nout;
     unsigned long colours[256];          /* PL: the text's colours as 0x00BBGGRR */
     int ncolours;
-    int lost_pictures, lost_kinds, lost_wordart, lost_colours;
+    int lost_pictures, lost_kinds, lost_colours;
 } writer;
 
 static int npages_all(const owf_pub *pub)
@@ -231,11 +231,6 @@ static void write_pages(writer *w)
             long n;
             owf_buf *b;
             size_t at;
-            if (f->wordart) {
-                w->lost_wordart++;
-                w->frame_chunk[k][i] = -1;
-                continue;
-            }
             /* in a group: the group's chunk is its parent */
             n = new_chunk(w, f->kind == OWF_PUB_TABLE ? 0x10 : 0x01,
                           f->parent >= 0 && f->parent < i && w->frame_chunk[k][f->parent] >= 0 ?
@@ -532,12 +527,70 @@ static void write_blips(writer *w, owf_buf *store, owf_buf *delay)
     }
 }
 
+/* The first WordArt's size, typeface and colour (its story's first run), for the default style. */
+static int wordart_format(const owf_pub *pub, owf_charfmt *out)
+{
+    int k, i;
+    for (k = 0; k < npages_all(pub); k++) {
+        const owf_pub_page *pg = page_at(pub, k);
+        for (i = 0; i < pg->nframes; i++) {
+            const owf_pub_frame *f = &pg->frames[i];
+            if (f->wordart && f->story >= 0 && f->story < pub->nstories && pub->stories[f->story].nparas &&
+                pub->stories[f->story].paras[0].nruns) {
+                *out = pub->stories[f->story].paras[0].runs[0].fmt;
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+/* Whether every run written says its own colour: only then can the default
+ * style have one, which a run in the automatic colour would take instead. */
+static int all_runs_coloured(const writer *w)
+{
+    int i, j, k;
+    for (i = 0; i < w->pub->nstories; i++)
+        if (w->story_out[i] >= 0)
+            for (j = 0; j < w->pub->stories[i].nparas; j++)
+                for (k = 0; k < w->pub->stories[i].paras[j].nruns; k++)
+                    if (w->pub->stories[i].paras[j].runs[k].fmt.colour == OWF_COLOUR_AUTO)
+                        return 0;
+    return 1;
+}
+
+/* WordArt's text as 0xC0C0 holds it: UTF-16, its paragraphs apart by
+ * CR, and a NUL. */
+static void wordart_text(writer *w, const owf_story *st, owf_buf *out)
+{
+    int i, j;
+    for (i = 0; i < st->nparas; i++) {
+        if (i)
+            put16(out, 0x0D);
+        for (j = 0; j < st->paras[i].nruns; j++) {
+            const owf_run *r = &st->paras[i].runs[j];
+            if (r->kind == OWF_RUN_TEXT && r->text)
+                put_utf16(out, r->text, strlen(r->text));
+            else if (r->kind == OWF_RUN_TAB)
+                put16(out, 9);
+            else if (r->kind == OWF_RUN_LINEBREAK)
+                put16(out, 0x0B);
+        }
+    }
+    if (out->length)
+        put16(out, 0);
+    if (out->failed)
+        w->failed = 1;
+}
+
 static void write_shape(writer *w, owf_buf *b, const owf_pub_frame *f, long chunk, unsigned long spid, int in_group)
 {
     unsigned long pid[13], val[13];
     int n = 0, k, stype;
     size_t sp = open_rec(b, 0xF004, 0, 15), r, blk;
     long box[4];
+    owf_buf art;
+    owf_buf_init(&art);
     box[0] = f->left - w->pub->width_emu / 2;    /* EMU about the page's centre (PUB-FORMAT.md 7.2) */
     box[1] = f->top - w->pub->height_emu / 2;
     box[2] = f->right - w->pub->width_emu / 2;
@@ -597,14 +650,22 @@ static void write_shape(writer *w, owf_buf *b, const owf_pub_frame *f, long chun
         pid[n] = 0x1FF;
         val[n++] = f->lined ? 0x80008UL : 0x80000UL;
     }
+    if (f->wordart && f->story >= 0 && f->story < w->pub->nstories)
+        wordart_text(w, &w->pub->stories[f->story], &art);
+    if (art.length) {
+        pid[n] = 0xC0C0;                 /* WordArt's text: its data after the table (PUB-FORMAT.md 7.4) */
+        val[n++] = (unsigned long)art.length;
+    }
     if (n) {
         r = open_rec(b, 0xF00B, (unsigned)n, 3);
         for (k = 0; k < n; k++) {
             put16(b, (unsigned)pid[k]);
             put32(b, val[k]);
         }
+        owf_buf_put(b, art.data, art.length);
         close_rec(b, r);
     }
+    owf_buf_free(&art);
     if (in_group) {
         r = open_rec(b, 0xF00F, 0, 0);   /* the box in its group's rectangle: the same numbers */
         for (k = 0; k < 4; k++)
@@ -1097,22 +1158,55 @@ static void write_quill(writer *w, owf_buf *out)
             owf_buf_free(&names);
             owf_free(offs);
         }
-        /* STSH 0 and 1: one style, the default, with nothing of its own */
-        b = qadd(d, "STSH", 0);
-        put32(b, 0);
-        put32(b, 0);
-        b = qadd(d, "STSH", 1);
-        put32(b, 0x14 + 8 + 2 * 8);
-        put32(b, 2);
-        put32(b, 0);
-        put32(b, 0);
-        put32(b, 0);
-        put32(b, 8);
-        put32(b, 16);
-        for (i = 0; i < 2; i++) {
+        /* STSH 0 and 1: one style, the default. Every run says its own size and
+         * typeface, so the default's matter only to WordArt, whose text has no
+         * runs: it takes the first WordArt's size, typeface and colour, as read. */
+        {
+            owf_buf dc;
+            owf_charfmt def;
+            owf_buf_init(&dc);
+            if (wordart_format(w->pub, &def)) {
+                if (def.size > 0)
+                    f32(&dc, 0x20C, 0x20, (unsigned long)def.size * 635UL, 1);
+                if (def.font >= 0) {
+                    size_t a = open_field(&dc, 0x224, 0x88, 1), sl;
+                    for (i = 0; i < 2; i++) {
+                        sl = open_field(&dc, (unsigned)i, 0x88, 1);
+                        f16(&dc, 0x0B, 0x18, (unsigned)def.font, 1);
+                        close_block(&dc, sl);
+                    }
+                    close_block(&dc, a);
+                }
+                if (def.colour != OWF_COLOUR_AUTO && all_runs_coloured(w)) {
+                    int c = colour_place(w, def.colour);
+                    if (c > 0) {
+                        size_t a = open_field(&dc, 0x244, 0x88, 1);
+                        f32(&dc, 0x200, 0x20, (unsigned long)c, 1);
+                        close_block(&dc, a);
+                    }
+                }
+            }
+            b = qadd(d, "STSH", 0);
+            put32(b, 0);
+            put32(b, 0);
+            b = qadd(d, "STSH", 1);
+            put32(b, (unsigned long)(0x14 + 8 + 2 * 8 + dc.length));
+            put32(b, 2);
+            put32(b, 0);
+            put32(b, 0);
+            put32(b, 0);
+            put32(b, 8);
+            put32(b, (unsigned long)(16 + dc.length));
+            put16(b, 0);
+            put32(b, (unsigned long)(4 + dc.length));
+            owf_buf_put(b, dc.data, dc.length);
+            put16(b, 0);
             put16(b, 0);
             put32(b, 4);
             put16(b, 0);
+            if (dc.failed)
+                w->failed = 1;
+            owf_buf_free(&dc);
         }
         b = qadd(d, "FDPC", 0);
         fdp_pages(b, &cr);
@@ -1347,9 +1441,6 @@ int owf_pub_write(const owf_pub *pub, unsigned char **data, size_t *length, owf_
             owf_report_add(report, OWF_NOTE_LOST, "%d picture frame(s) with no picture saved as empty frames", w.lost_pictures);
         if (w.lost_kinds)
             owf_report_add(report, OWF_NOTE_LOST, "%d picture(s) of a kind .pub does not store saved as empty entries", w.lost_kinds);
-        if (w.lost_wordart)
-            owf_report_add(report, OWF_NOTE_LOST, "%d WordArt object(s) left out: WordArt is not written to .pub yet",
-                           w.lost_wordart);
         if (w.lost_colours)
             owf_report_add(report, OWF_NOTE_APPROX, "%d run(s) of text past the first 255 colours saved in the automatic colour",
                            w.lost_colours);
