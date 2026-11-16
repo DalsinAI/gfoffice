@@ -1908,16 +1908,73 @@ static void workbook_xml(xlsx_out *w, owf_buf *b)
     owf_buf_puts(b, "</workbook>\n");
 }
 
-static void external_xml(const owf_xl_link *l, owf_buf *b)
+static void sheet_name_xml(owf_buf *b, const char *name)
+{
+    owf_buf_puts(b, "<sheetName val=\"");
+    put_xml(b, name, X_ATTR);
+    owf_buf_puts(b, "\"/>");
+}
+
+/* A sheet's values as the book last saw them, sheetId its place in sheetNames. */
+static void external_data_xml(const owf_sheet *sh, int id, owf_buf *b)
 {
     int i;
+    long row = -1;
+    owf_buf_printf(b, "<sheetData sheetId=\"%d\">", id);
+    for (i = 0; i < sh->ncells; i++) {
+        const owf_cell *c = &sh->cells[i];
+        if (c->type == OWF_VALUE_EMPTY)
+            continue;
+        if ((long)c->row != row) {
+            if (row >= 0)
+                owf_buf_puts(b, "</row>");
+            row = (long)c->row;
+            owf_buf_printf(b, "<row r=\"%lu\">", (unsigned long)row + 1);
+        }
+        owf_buf_puts(b, "<cell r=\"");
+        put_ref(b, c->row, c->col);
+        switch (c->type) {
+        case OWF_VALUE_NUMBER:
+            owf_buf_puts(b, "\"><v>");
+            put_number(b, c->number);
+            break;
+        case OWF_VALUE_BOOL:
+            owf_buf_puts(b, c->number ? "\" t=\"b\"><v>1" : "\" t=\"b\"><v>0");
+            break;
+        case OWF_VALUE_ERROR:
+            owf_buf_printf(b, "\" t=\"e\"><v>%s", owf_xl_error_text(c->error));
+            break;
+        default: {
+            int cut;
+            owf_buf_puts(b, "\" t=\"str\"><v xml:space=\"preserve\">");
+            put_text(b, c->text, text_length(c->text, &cut), X_CELL);
+            break;
+        }
+        }
+        owf_buf_puts(b, "</v></cell>");
+    }
+    if (row >= 0)
+        owf_buf_puts(b, "</row>");
+    owf_buf_puts(b, "</sheetData>");
+}
+
+/* The book's sheets: those it had when last read (eb, which may be NULL),
+ * then the formulas' others; with eb, their values. */
+static void external_xml(const owf_extbook *eb, const owf_xl_link *l, owf_buf *b)
+{
+    int i, k, data = 0;
     owf_buf_puts(b, XML_HEAD "<externalLink xmlns=\"" NS_MAIN "\" xmlns:r=\"" NS_R "\"><externalBook r:id=\"rId1\">");
-    if (l->nsheets) {
+    if (l->nsheets || (eb && eb->nsheets)) {
         owf_buf_puts(b, "<sheetNames>");
+        for (i = 0; eb && i < eb->nsheets; i++) {
+            sheet_name_xml(b, eb->sheets[i].name);
+            data |= eb->sheets[i].ncells > 0;
+        }
         for (i = 0; i < l->nsheets; i++) {
-            owf_buf_puts(b, "<sheetName val=\"");
-            put_xml(b, l->sheets[i], X_ATTR);
-            owf_buf_puts(b, "\"/>");
+            for (k = 0; eb && k < eb->nsheets && !owf_same_word(eb->sheets[k].name, l->sheets[i]); k++)
+                ;
+            if (!eb || k == eb->nsheets)
+                sheet_name_xml(b, l->sheets[i]);
         }
         owf_buf_puts(b, "</sheetNames>");
     }
@@ -1929,6 +1986,13 @@ static void external_xml(const owf_xl_link *l, owf_buf *b)
             owf_buf_puts(b, "\"/>");
         }
         owf_buf_puts(b, "</definedNames>");
+    }
+    if (data) {
+        owf_buf_puts(b, "<sheetDataSet>");
+        for (i = 0; i < eb->nsheets; i++)
+            if (eb->sheets[i].ncells)
+                external_data_xml(&eb->sheets[i], i, b);
+        owf_buf_puts(b, "</sheetDataSet>");
     }
     owf_buf_puts(b, "</externalBook></externalLink>\n");
 }
@@ -2143,12 +2207,13 @@ int owf_export_xlsx(const owf_book *book, unsigned char **data, size_t *length, 
     result = add_part(zip, &part, "xl/sharedStrings.xml", result);
 
     for (i = 0; i < w.links.count && result == OWF_OK; i++) {
-        external_xml(&w.links.items[i], &part);
+        const owf_extbook *eb = owf_book_extbook(book, w.links.items[i].file);
+        external_xml(eb, &w.links.items[i], &part);
         snprintf(name, sizeof name, "xl/externalLinks/externalLink%d.xml", i + 1);
         result = add_part(zip, &part, name, result);
         owf_buf_puts(&part, XML_HEAD "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
                             "<Relationship Id=\"rId1\" Type=\"" REL "externalLinkPath\" Target=\"");
-        put_xml(&part, w.links.items[i].file, X_ATTR);
+        put_xml(&part, eb && eb->target ? eb->target : w.links.items[i].file, X_ATTR);
         owf_buf_puts(&part, "\" TargetMode=\"External\"/></Relationships>\n");
         snprintf(name, sizeof name, "xl/externalLinks/_rels/externalLink%d.xml.rels", i + 1);
         result = add_part(zip, &part, name, result);

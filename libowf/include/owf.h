@@ -717,6 +717,16 @@ typedef struct {
     size_t length;
 } owf_part;
 
+/* Another book the formulas refer to ("[Rates.xlsx]Sheet1!A1"), with the
+ * values its cells had when the file was last saved: Excel's externalLink
+ * parts. Its sheets hold cells only (values, no formulas or styles). */
+typedef struct {
+    char *name;                  /* as the formulas name it: "Rates.xlsx" */
+    char *target;                /* where it is, as the file wrote it: "Rates.xlsx", "file:///C:/Data/Rates.xlsx" */
+    int nsheets, capsheets;
+    owf_sheet *sheets;
+} owf_extbook;
+
 typedef struct owf_book {
     int nsheets, capsheets;
     owf_sheet *sheets;
@@ -739,6 +749,8 @@ typedef struct owf_book {
     char *protect_kept;          /* a hash libowf cannot check, as its file wrote it: "xlsx:" and the workbook*
                                     hash attributes, or "ods:" the digest algorithm's URI, a space and
                                     table:protection-key; or NULL */
+    int nextbooks, capextbooks;  /* the other books the formulas refer to, and their values last seen */
+    owf_extbook *extbooks;
 } owf_book;
 
 owf_book *owf_book_new(void);
@@ -779,6 +791,13 @@ void owf_condfmt_free(owf_condfmt *cf);
 int owf_book_keep_part(owf_book *book, const char *name, const char *type, const void *data, size_t length);
 const owf_part *owf_book_part(const owf_book *book, const char *name);
 int owf_book_copy_parts(owf_book *dst, const owf_book *src);
+/* Another book, found by its name (ignoring case; NULL: none), or found or
+ * added, its target set when one is given (NULL when memory runs out). Its
+ * sheet by name, found or (with create) added: NULL when there is none or
+ * memory ran out. */
+owf_extbook *owf_book_extbook(const owf_book *book, const char *name);
+owf_extbook *owf_book_add_extbook(owf_book *book, const char *name, const char *target);
+owf_sheet *owf_extbook_sheet(owf_extbook *eb, const char *name, int create);
 /* A new validation at the end of the sheet's, all zero (as
  * owf_sheet_add_condfmt), and one freed; the first whose ranges hold a
  * cell, or NULL. */

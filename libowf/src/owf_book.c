@@ -308,6 +308,20 @@ int owf_sheet_copy_extras(owf_sheet *dst, const owf_sheet *src)
     return 0;
 }
 
+static void free_extbooks(owf_book *book)
+{
+    int i, k;
+    for (i = 0; i < book->nextbooks; i++) {
+        owf_extbook *eb = &book->extbooks[i];
+        for (k = 0; k < eb->nsheets; k++)
+            free_sheet(&eb->sheets[k]);
+        free(eb->sheets);
+        free(eb->name);
+        free(eb->target);
+    }
+    free(book->extbooks);
+}
+
 void owf_book_free(owf_book *book)
 {
     int i;
@@ -336,6 +350,7 @@ void owf_book_free(owf_book *book)
     free(book->parts);
     free(book->protect_hash);
     free(book->protect_kept);
+    free_extbooks(book);
     free(book);
 }
 
@@ -379,6 +394,64 @@ int owf_book_copy_parts(owf_book *dst, const owf_book *src)
         if (owf_book_keep_part(dst, src->parts[i].name, src->parts[i].type, src->parts[i].data, src->parts[i].length) < 0)
             return -1;
     return 0;
+}
+
+/* ---- Other books the formulas refer to ---- */
+
+owf_extbook *owf_book_extbook(const owf_book *book, const char *name)
+{
+    int i;
+    for (i = 0; book && name && i < book->nextbooks; i++)
+        if (owf_same_word(book->extbooks[i].name, name))
+            return &book->extbooks[i];
+    return NULL;
+}
+
+owf_extbook *owf_book_add_extbook(owf_book *book, const char *name, const char *target)
+{
+    owf_extbook *eb = owf_book_extbook(book, name);
+    char *t = NULL;
+    if (!name || !*name)
+        return NULL;
+    if (target && !(t = copy_text(target, strlen(target))))
+        return NULL;
+    if (!eb) {
+        if (!grow((void **)&book->extbooks, book->nextbooks, &book->capextbooks, sizeof *eb, 4)) {
+            free(t);
+            return NULL;
+        }
+        eb = &book->extbooks[book->nextbooks];
+        memset(eb, 0, sizeof *eb);
+        if (!(eb->name = copy_text(name, strlen(name)))) {
+            free(t);
+            return NULL;
+        }
+        book->nextbooks++;
+    }
+    if (t) {
+        free(eb->target);
+        eb->target = t;
+    }
+    return eb;
+}
+
+owf_sheet *owf_extbook_sheet(owf_extbook *eb, const char *name, int create)
+{
+    owf_sheet *sheet;
+    int i;
+    if (!eb || !name)
+        return NULL;
+    for (i = 0; i < eb->nsheets; i++)
+        if (owf_same_word(eb->sheets[i].name, name))
+            return &eb->sheets[i];
+    if (!create || !grow((void **)&eb->sheets, eb->nsheets, &eb->capsheets, sizeof *sheet, 4))
+        return NULL;
+    sheet = &eb->sheets[eb->nsheets];
+    memset(sheet, 0, sizeof *sheet);
+    if (!(sheet->name = copy_text(name, strlen(name))))
+        return NULL;
+    eb->nsheets++;
+    return sheet;
 }
 
 owf_sheet *owf_book_add_sheet(owf_book *book, const char *name)
