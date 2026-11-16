@@ -262,6 +262,100 @@ int owf_pdf_path(owf_pdf *pdf, const int *xy, int n, int closed, unsigned long f
     return o->failed ? -1 : 0;
 }
 
+/* sin of whole degrees 0..90, * 16384 */
+static const unsigned short sin_degree[91] = {
+    0, 286, 572, 857, 1143, 1428, 1713, 1997, 2280, 2563, 2845, 3126, 3406, 3686, 3964, 4240, 4516, 4790, 5063,
+    5334, 5604, 5872, 6138, 6402, 6664, 6924, 7182, 7438, 7692, 7943, 8192, 8438, 8682, 8923, 9162, 9397, 9630,
+    9860, 10087, 10311, 10531, 10749, 10963, 11174, 11381, 11585, 11786, 11982, 12176, 12365, 12551, 12733, 12911,
+    13085, 13255, 13421, 13583, 13741, 13894, 14044, 14189, 14330, 14466, 14598, 14726, 14849, 14968, 15082, 15191,
+    15296, 15396, 15491, 15582, 15668, 15749, 15826, 15897, 15964, 16026, 16083, 16135, 16182, 16225, 16262, 16294,
+    16322, 16344, 16362, 16374, 16382, 16384
+};
+
+/* sin of tenths of a degree (to the nearest degree), * 16384 */
+static long sin16k(int tenths)
+{
+    int d = ((tenths % 3600 + 3600) % 3600 + 5) / 10 % 360;
+    return d <= 90 ? sin_degree[d] : d <= 180 ? sin_degree[180 - d] : d <= 270 ? -(long)sin_degree[d - 180]
+                                                                                : -(long)sin_degree[360 - d];
+}
+
+/* a colour part of the way (k of n) from one to the other */
+static unsigned long blend(unsigned long from, unsigned long to, long k, long n)
+{
+    unsigned long r = 0;
+    int shift;
+    for (shift = 16; shift >= 0; shift -= 8) {
+        long a = (long)((from >> shift) & 255), b = (long)((to >> shift) & 255);
+        r |= (unsigned long)(a + (b - a) * k / n) << shift;
+    }
+    return r;
+}
+
+#define GRADIENT_BANDS 48
+
+int owf_pdf_gradient(owf_pdf *pdf, const int *xy, int n, int x, int y, int w, int h, int kind, int angle,
+                     unsigned long from, unsigned long to)
+{
+    /* the box gives a radial gradient's centre and size; a linear one runs along the outline itself */
+    pdf_page *p = current(pdf);
+    owf_buf *o;
+    long cx = (long)x + w / 2, cy = (long)y + h / 2;
+    int i;
+    if (!p)
+        return -1;
+    if (!xy || n < 3 || w <= 0 || h <= 0)
+        return 0;
+    from = OWF_SHADE_RGB(from);
+    to = OWF_SHADE_RGB(to);
+    o = &p->content;
+    /* clipped to the shape's outline */
+    owf_buf_puts(o, "q\n");
+    for (i = 0; i < n; i++) {
+        put_xy(o, p, xy[i * 2], xy[i * 2 + 1]);
+        owf_buf_puts(o, i ? "l " : "m ");
+    }
+    owf_buf_puts(o, "h W n\n");
+    if (kind == OWF_PDF_GRADIENT_RADIAL) {
+        /* rings from the corners in to the centre, each over the last (each saves and restores its own
+         * colours, inside the clip): the box's ellipse through its corners, sqrt 2 as 181/128 */
+        long rx = (long)w * 181 / 256 + 1, ry = (long)h * 181 / 256 + 1;
+        for (i = 0; i < GRADIENT_BANDS; i++) {
+            long k = GRADIENT_BANDS - i, ex = rx * k / GRADIENT_BANDS, ey = ry * k / GRADIENT_BANDS;
+            if (owf_pdf_ellipse(pdf, (int)(cx - ex), (int)(cy - ey), (int)(ex * 2), (int)(ey * 2),
+                                OWF_SHADE(blend(from, to, k * 2 - 1, GRADIENT_BANDS * 2)), 0, 0) < 0)
+                return -1;
+        }
+    } else {
+        /* strips across the way the gradient runs, from fill to fill2 */
+        long ux = sin16k(angle + 900), uy = -sin16k(angle);          /* the way, y down, * 16384 */
+        long long lo = 0, hi = 0;
+        long len = 0, span;
+        /* from the outline's first point along the way to its last (any shape, turned or not) */
+        for (i = 0; i < n; i++) {
+            long long t = ((long long)(xy[i * 2] - cx) * ux + (long long)(xy[i * 2 + 1] - cy) * uy) / 16384;
+            long d = labs((long)(xy[i * 2] - cx)) + labs((long)(xy[i * 2 + 1] - cy));
+            if (!i || t < lo) lo = t;
+            if (!i || t > hi) hi = t;
+            if (d > len) len = d;                                      /* far enough each side */
+        }
+        len++;
+        span = (long)(hi - lo) + 1;
+        for (i = 0; i < GRADIENT_BANDS; i++) {
+            long t0 = (long)lo + span * i / GRADIENT_BANDS, t1 = (long)lo + span * (i + 1) / GRADIENT_BANDS + 2;
+            int q[8];
+            q[0] = (int)(cx + ux * t0 / 16384 - uy * len / 16384); q[1] = (int)(cy + uy * t0 / 16384 + ux * len / 16384);
+            q[2] = (int)(cx + ux * t1 / 16384 - uy * len / 16384); q[3] = (int)(cy + uy * t1 / 16384 + ux * len / 16384);
+            q[4] = (int)(cx + ux * t1 / 16384 + uy * len / 16384); q[5] = (int)(cy + uy * t1 / 16384 - ux * len / 16384);
+            q[6] = (int)(cx + ux * t0 / 16384 + uy * len / 16384); q[7] = (int)(cy + uy * t0 / 16384 - ux * len / 16384);
+            if (owf_pdf_path(pdf, q, 4, 1, OWF_SHADE(blend(from, to, i * 2 + 1, GRADIENT_BANDS * 2)), 0, 0) < 0)
+                return -1;
+        }
+    }
+    owf_buf_puts(o, "Q\n");
+    return o->failed ? -1 : 0;
+}
+
 /* ---- Text ---- */
 
 int owf_pdf_winansi(unsigned long c)

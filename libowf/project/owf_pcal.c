@@ -137,6 +137,14 @@ int owf_pcal_set_exception(owf_pcal *cal, long day, int nspans, const unsigned s
     return OWF_OK;
 }
 
+void owf_pcal_clear_exception(owf_pcal *cal, long day)
+{
+    int at;
+    if (!cal || (at = find_exception(cal, day)) < 0) return;
+    memmove(&cal->exceptions[at], &cal->exceptions[at + 1], (size_t)(cal->nexceptions - at - 1) * sizeof *cal->exceptions);
+    cal->nexceptions--;
+}
+
 void owf_pcal_free(owf_pcal *cal)
 {
     if (!cal) return;

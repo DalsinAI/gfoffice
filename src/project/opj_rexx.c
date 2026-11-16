@@ -25,7 +25,7 @@ enum {
     C_HELP, C_LASTERROR, C_ISDIRTY, C_GETFILE, C_NEW, C_OPEN, C_SAVE, C_SAVEAS, C_EXPORT, C_TASKS, C_ADDTASK,
     C_DELETETASK, C_GETCELL, C_SETCELL, C_INDENT, C_OUTDENT, C_LINK, C_UNLINK, C_UNDO, C_REDO, C_BASELINE,
     C_RESOURCES, C_ADDRESOURCE, C_DELETERESOURCE, C_GETRESOURCE, C_SETRESOURCE, C_ASSIGN, C_USAGE, C_FINISH,
-    C_CRITICAL, C_COLUMN, C_UPDATE, NCOMMANDS
+    C_CRITICAL, C_COLUMN, C_CALENDARS, C_ADDCALENDAR, C_WORKTIME, C_SETCALENDAR, C_UPDATE, NCOMMANDS
 };
 
 static const command commands[NCOMMANDS] = {
@@ -60,6 +60,10 @@ static const command commands[NCOMMANDS] = {
     { "FINISH", "" },
     { "CRITICAL", "" },
     { "COLUMN", "COLUMN/A,SHOW/S,HIDE/S" },
+    { "CALENDARS", "" },
+    { "ADDCALENDAR", "NAME/A,FROM/K" },
+    { "WORKTIME", "CALENDAR/A,DAY/A,TO/K,HOURS/F" },
+    { "SETCALENDAR", "CALENDAR/A,ROW/K/N" },
     { "UPDATE", "STATUS/A,WHOLE/S" },
 };
 
@@ -422,6 +426,69 @@ static void put(char *result, size_t size, const char *s)
     result[n] = 0;
 }
 
+/* ---- Calendars ---- */
+
+/* A weekday's name ("Mon", "monday") as 0 Sunday..6, or -1. */
+static int weekday_of(const char *s)
+{
+    static const char *const names[7] = { "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT" };
+    static const char *const tails[7] = { "DAY", "DAY", "SDAY", "NESDAY", "RSDAY", "DAY", "URDAY" };
+    int d, i;
+    for (d = 0; d < 7; d++) {
+        for (i = 0; i < 3 && upper((unsigned char)s[i]) == names[d][i]; i++) {}
+        if (i < 3) continue;
+        if (!s[3]) return d;
+        for (i = 0; tails[d][i] && upper((unsigned char)s[3 + i]) == tails[d][i]; i++) {}
+        if (!tails[d][i] && !s[3 + i]) return d;
+    }
+    return -1;
+}
+
+static int find_cal(opj_rexx *rx, const owf_project *p, const char *name, const char *what)
+{
+    int cal = opj_find_calendar(p, name);
+    if (cal < 0) snprintf(rx->lasterror, sizeof rx->lasterror, "%s: no calendar %.100s", what, name);
+    return cal;
+}
+
+/* WORKTIME: a weekday's hours or some days', set (HOURS: hours, OFF, or DEFAULT for a day to have the
+ * week's again) or, without HOURS, given back. */
+static int worktime(opj_rexx *rx, args *a, char *result, size_t size)
+{
+    opj_doc *doc = rx->doc;
+    const owf_project *p = doc->plan;
+    char text[96];
+    owf_ptime from, to;
+    int cal = find_cal(rx, p, a->value[0], "WORKTIME"), wd = weekday_of(a->value[1]), def;
+    if (cal < 0) return OPJ_RX_ERROR;
+    def = a->value[3] && (word_at(a->value[3], "DEFAULT", 7, 0) && !skip_space(a->value[3] + 7)[0]);
+    if (wd >= 0) {
+        if (a->value[2] || def) {
+            put(rx->lasterror, sizeof rx->lasterror, "WORKTIME: TO and DEFAULT are for dates, not weekdays");
+            return OPJ_RX_ERROR;
+        }
+        if (a->value[3]) return edit_rc(rx, opj_set_week_hours(doc, cal, wd, a->value[3]), "WORKTIME");
+        opj_hours_text(&p->calendars[cal].week[wd], text);
+        put(result, size, text);
+        return OPJ_RX_OK;
+    }
+    if (!opj_date_parse(a->value[1], 0, &from) || (a->value[2] && !opj_date_parse(a->value[2], 0, &to))) {
+        snprintf(rx->lasterror, sizeof rx->lasterror, "WORKTIME: %.100s is not a weekday or a date",
+                 a->value[2] && opj_date_parse(a->value[1], 0, &from) ? a->value[2] : a->value[1]);
+        return OPJ_RX_ERROR;
+    }
+    if (!a->value[2]) to = from;
+    if (a->value[3])
+        return edit_rc(rx, opj_set_day_hours(doc, cal, from / 1440, to / 1440, def ? NULL : a->value[3]), "WORKTIME");
+    if (a->value[2]) {
+        put(rx->lasterror, sizeof rx->lasterror, "WORKTIME: give HOURS with TO");
+        return OPJ_RX_ERROR;
+    }
+    opj_hours_text(owf_pcal_day(&p->calendars[cal], from / 1440), text);
+    put(result, size, text);
+    return OPJ_RX_OK;
+}
+
 static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
 {
     opj_doc *doc = rx->doc;
@@ -647,6 +714,27 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         }
         put(result, size, opj_view_column_shown(rx->view, col) ? "1" : "0");
         return OPJ_RX_OK;
+    case C_CALENDARS: snprintf(result, size, "%d", p->ncalendars); return OPJ_RX_OK;
+    case C_ADDCALENDAR: {
+        int from = -1;
+        if (a->value[1] && (from = find_cal(rx, p, a->value[1], "ADDCALENDAR")) < 0) return OPJ_RX_ERROR;
+        if ((rc = opj_add_calendar(doc, a->value[0], from, &r)) != OWF_OK) {
+            if (rc == OWF_ERR_FORMAT) {
+                snprintf(rx->lasterror, sizeof rx->lasterror, "ADDCALENDAR: %.100s is taken, empty or a number", a->value[0]);
+                return OPJ_RX_ERROR;
+            }
+            return edit_rc(rx, rc, "ADDCALENDAR");
+        }
+        snprintf(result, size, "%d", r + 1);
+        return OPJ_RX_OK;
+    }
+    case C_WORKTIME: return worktime(rx, a, result, size);
+    case C_SETCALENDAR: {
+        int none = !a->value[0][0] || !strcmp(a->value[0], "-"), cal = -1;
+        if (!(none && a->value[1]) && (cal = find_cal(rx, p, a->value[0], "SETCALENDAR")) < 0) return OPJ_RX_ERROR;
+        if (!a->value[1]) return edit_rc(rx, opj_set_plan_calendar(doc, cal), "SETCALENDAR");
+        return edit_rc(rx, opj_set_task_calendar(doc, (int)a->num[1] - 1, cal), "SETCALENDAR");
+    }
     case C_UPDATE: {
         owf_ptime status;
         if (!opj_date_parse(a->value[0], 17 * 60, &status)) {

@@ -1339,6 +1339,67 @@ static void resolve_flows(odp *o)
         }
 }
 
+/* ODF's draw:angle as tenths of a degree: plain tenths ("450"), or with a unit ("45deg", "45.5deg",
+ * "0.785rad", "50grad"); integer arithmetic */
+static int odf_angle(const char *v)
+{
+    long whole = 0, thousandths = 0, scale = 100, t;
+    int negative = 0;
+    const char *p;
+    if (!v) return 0;
+    while (*v == ' ') v++;
+    p = v;
+    if (*p == '-' || *p == '+') negative = *p++ == '-';
+    for (; *p >= '0' && *p <= '9'; p++)
+        if (whole < 100000) whole = whole * 10 + (*p - '0');
+    if (*p == '.')
+        for (p++; *p >= '0' && *p <= '9'; p++, scale /= 10) thousandths += (*p - '0') * scale;
+    if (!strncmp(p, "rad", 3))
+        return radians_tenths(v, &p);
+    if (!strncmp(p, "deg", 3)) t = whole * 10 + (thousandths + 50) / 100;
+    else if (!strncmp(p, "grad", 4)) t = whole * 9 + (thousandths * 9 + 500) / 1000;
+    else t = whole + (thousandths >= 500);
+    t %= 3600;
+    return (int)(negative ? -t : t);
+}
+
+/* The draw:gradient named name into look: linear and axial (drawn linear) run from start-color to
+ * end-color along draw:angle, ODF's 0 being top to bottom; radial, ellipsoid, square and
+ * rectangular have end-color at the centre and start-color at the edge. 0 when there is none. */
+static int read_gradient(odp *o, const char *name, owf_look *look)
+{
+    const owf_xml_node *c;
+    const char *style;
+    unsigned long from, to;
+    for (c = o->common ? o->common->first : NULL; c; c = c->next)
+        if (is(c, NS_DRAW, "gradient") && same(attr(c, NS_DRAW, "name"), name))
+            break;
+    if (!c) return 0;
+    from = shade(attr(c, NS_DRAW, "start-color"));
+    to = shade(attr(c, NS_DRAW, "end-color"));
+    if (!from) from = OWF_SHADE(0);
+    if (!to) to = OWF_SHADE(0xFFFFFF);
+    style = attr(c, NS_DRAW, "style");
+    if (style && (!strcmp(style, "radial") || !strcmp(style, "ellipsoid") || !strcmp(style, "square") ||
+                  !strcmp(style, "rectangular"))) {
+        look->gradient = OWF_GRADIENT_RADIAL;
+        look->fill = to;
+        look->fill2 = from;
+        look->gradient_angle = 0;
+        if (strcmp(style, "radial"))
+            owf_report_add(o->report, OWF_NOTE_APPROX, "Ellipsoid, square and rectangular gradients are drawn round");
+    } else {
+        int a = (2700 + odf_angle(attr(c, NS_DRAW, "angle"))) % 3600;
+        look->gradient = OWF_GRADIENT_LINEAR;
+        look->fill = from;
+        look->fill2 = to;
+        look->gradient_angle = a < 0 ? a + 3600 : a;
+        if (style && !strcmp(style, "axial"))
+            owf_report_add(o->report, OWF_NOTE_APPROX, "Axial gradients are drawn from one side to the other");
+    }
+    return 1;
+}
+
 /* Fill, line, insets, alignment and fitting from the object's style. */
 static void read_look(odp *o, owf_obj *obj, const gstyle *st, int is_shape)
 {
@@ -1350,9 +1411,12 @@ static void read_look(odp *o, owf_obj *obj, const gstyle *st, int is_shape)
 
     if (fill && !strcmp(fill, "solid"))
         obj->look.fill = shade(prop(o, st, "graphic-properties", NS_DRAW, "fill-color"));
+    else if (fill && !strcmp(fill, "gradient") &&
+             read_gradient(o, prop(o, st, "graphic-properties", NS_DRAW, "fill-gradient-name"), &obj->look))
+        ;
     else if (fill && (!strcmp(fill, "gradient") || !strcmp(fill, "hatch") || !strcmp(fill, "bitmap"))) {
         obj->look.fill = shade(prop(o, st, "graphic-properties", NS_DRAW, "fill-color"));
-        owf_report_add(o->report, OWF_NOTE_APPROX, "Gradient, hatched and picture fills are drawn in one colour");
+        owf_report_add(o->report, OWF_NOTE_APPROX, "Hatched and picture fills are drawn in one colour");
     } else if (!fill && is_shape) {
         obj->look.fill = shade(prop(o, st, "graphic-properties", NS_DRAW, "fill-color"));
     }

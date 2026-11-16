@@ -14,7 +14,7 @@
 extern "C" {
 #endif
 
-#define OPP_CORE_VERSION "0.2.0"
+#define OPP_CORE_VERSION "0.3.0"
 
 /* A deep conversion: pub remains owned by the caller and may be freed at
  * once.  The returned deck owns independent fonts, pictures and stories.
@@ -22,6 +22,16 @@ extern "C" {
  * text, tables' dimensions and pictures; formatting is a later reader step. */
 int opp_pub_to_deck(const owf_pub *pub, owf_deck **deck, owf_report *report);
 int opp_import_pub_file(const char *path, owf_deck **deck, owf_report *report, int *version);
+
+/* GFOpenPublisher save: a deck (as opp_pub_to_deck makes, or as edited)
+ * back into libowf's Publisher model, and through owf_pub_write a .pub.
+ * Frames sharing a flow_story share one story, its text the first frame's;
+ * boxes are kept in twips, looks, tables, groups and pictures as the deck
+ * has them. The pub and data are the caller's (owf_pub_free, owf_free).
+ * OWF_OK, OWF_ERR_FORMAT, OWF_ERR_MEMORY or OWF_ERR_IO. */
+int opp_deck_to_pub(const owf_deck *deck, owf_pub **pub, owf_report *report);
+int opp_export_pub(const owf_deck *deck, unsigned char **data, size_t *length, owf_report *report);
+int opp_export_pub_file(const owf_deck *deck, const char *path, owf_report *report);
 
 /* Count shared text flows in a publication deck. A flow is two or more
  * text objects with the same non-negative owf_obj.flow_story, in page/object

@@ -44,6 +44,15 @@ int owf_pdf_ellipse(owf_pdf *pdf, int x, int y, int w, int h, unsigned long fill
 /* npoints x, y pairs; closed joins the last to the first. */
 int owf_pdf_path(owf_pdf *pdf, const int *xy, int npoints, int closed, unsigned long fill,
                  unsigned long line, int line_width);
+
+/* A gradient fill inside the closed outline xy (npoints x, y pairs, twips), across the box x, y, w,
+ * h: OWF_PDF_GRADIENT_LINEAR runs from one colour to the other along angle (tenths of a degree
+ * anticlockwise, 0 left to right, 900 bottom to top); _RADIAL has from at the box's centre and to
+ * at its corners. Drawn as 48 bands of plain colour, clipped to the outline. 0, or -1. */
+#define OWF_PDF_GRADIENT_LINEAR 1
+#define OWF_PDF_GRADIENT_RADIAL 2
+int owf_pdf_gradient(owf_pdf *pdf, const int *xy, int npoints, int x, int y, int w, int h, int kind, int angle,
+                     unsigned long from, unsigned long to);
 /* Lines are dashed from now on (dash 1) or solid again (0). */
 void owf_pdf_dash(owf_pdf *pdf, int dash);
 /* A picture in the box x, y, w, h; with clip, only what is inside it shows
