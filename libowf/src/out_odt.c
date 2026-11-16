@@ -766,7 +766,13 @@ static void put_para_part(owf_buf *out, const owf_doc *doc, const owf_para *para
             continue;
         }
         t=char_style(s,&run->fmt);
-        kind = run->kind == OWF_RUN_FRAME ? 0 : change_kind(doc, run->revision);   /* 1.12: pictures too */
+        kind = change_kind(doc, run->revision);      /* 1.12: pictures too */
+        if (run->kind == OWF_RUN_FRAME && kind) {
+            /* 1.12: a frame's change is saved accepted (owf_export_file reports it): a deleted frame is left
+             * out, an inserted one is the document's */
+            if (kind == OWF_REV_DELETE) continue;
+            kind = 0;
+        }
         if (kind == OWF_REV_DELETE) {
             /* 1.5: deleted text: in the deletion's region (written accepted when there is none: left out) */
             if (tk) {
@@ -857,7 +863,9 @@ static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, 
             section_open=1;
         }
         if(p->table_id>=0){int id=p->table_id,row=-1;owf_buf_printf(out,"<table:table table:name=\"Table%d\">",id+1);
-            while(i<story->nparas&&story->paras[i].table_id==id){p=&story->paras[i];if(p->table_row!=row){if(row>=0)owf_buf_puts(out,"</table:table-row>");owf_buf_puts(out,"<table:table-row>");row=p->table_row;}if(OWF_SHADE_SET(p->cell_shading))owf_buf_printf(out,"<table:table-cell table:style-name=\"Cell%06lX\" office:value-type=\"string\">",OWF_SHADE_RGB(p->cell_shading));else owf_buf_puts(out,"<table:table-cell office:value-type=\"string\">");put_para_odt(out,doc,p,s);owf_buf_puts(out,"</table:table-cell>");++i;}
+            while(i<story->nparas&&story->paras[i].table_id==id){p=&story->paras[i];
+                if(change_kind(doc,p->row_revision)==OWF_REV_DELETE){++i;continue;}   /* 1.12: saved accepted */
+                if(p->table_row!=row){if(row>=0)owf_buf_puts(out,"</table:table-row>");owf_buf_puts(out,"<table:table-row>");row=p->table_row;}if(OWF_SHADE_SET(p->cell_shading))owf_buf_printf(out,"<table:table-cell table:style-name=\"Cell%06lX\" office:value-type=\"string\">",OWF_SHADE_RGB(p->cell_shading));else owf_buf_puts(out,"<table:table-cell office:value-type=\"string\">");put_para_odt(out,doc,p,s);owf_buf_puts(out,"</table:table-cell>");++i;}
             if(row>=0)owf_buf_puts(out,"</table:table-row>");
             owf_buf_puts(out,"</table:table>");
         }else{

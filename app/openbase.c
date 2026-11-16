@@ -54,7 +54,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenBase 0.12.0 (15.11.2026)"
+#define VERSION_TEXT "GFOpenBase 0.13.1 (16.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenBase, the database of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -64,7 +64,7 @@ enum {
     M_NEW = 1, M_OPEN, M_CLOSE, M_COPY, M_COMPACT, M_CHECK, M_ABOUT, M_QUIT,
     M_T_NEW, M_T_DESIGN, M_T_DELETE, M_T_RELATIONS, M_R_ADD, M_R_EDIT, M_R_DELETE, M_R_FIRST, M_R_LAST,
     M_T_VIEW, M_T_ALL, M_T_IMPORT, M_T_EXPORT, M_UNDO, M_T_FROMCSV,
-    M_Q_NEW, M_Q_OPEN, M_Q_DESIGN, M_Q_AGAIN, M_T_FORM, M_T_FROMDBF, M_T_IMPORTDBF, M_T_EXPORTDBF
+    M_Q_NEW, M_Q_OPEN, M_Q_DESIGN, M_Q_AGAIN, M_T_FORM, M_T_FROMDBF, M_T_IMPORTDBF, M_T_EXPORTDBF, M_Q_VIEW
 };
 
 /* 4.3: the Report window (app/ob_reportwin.c) */
@@ -107,6 +107,9 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Open Query...", "U", 0, 0, (APTR)M_Q_OPEN },
     { NM_ITEM, "Design Query...", NULL, 0, 0, (APTR)M_Q_DESIGN },
     { NM_ITEM, "Run Again", NULL, 0, 0, (APTR)M_Q_AGAIN },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Export Results as CSV...", NULL, 0, 0, (APTR)M_T_EXPORT },
+    { NM_ITEM, "Save as View...", NULL, 0, 0, (APTR)M_Q_VIEW },
     { NM_TITLE, "Row", NULL, 0, 0, NULL },
     { NM_ITEM, "Add Row...", "A", 0, 0, (APTR)M_R_ADD },
     { NM_ITEM, "Edit Row...", "E", 0, 0, (APTR)M_R_EDIT },
@@ -1162,8 +1165,11 @@ static void edit_indexes(struct Window *parent)
 
 /* ---- The relationships view ----
  * Each table a box (its name, then its fields, the key's in bold), each
- * relationship a line from the Lookup field to the table it looks up. The
- * relationships are made and changed in the table designer (Looks up). */
+ * relationship a line from the Lookup field to the table it looks up.
+ * Drawn here too (core 0.11.0): drag a table's key onto another table's
+ * field to make that field look it up, or onto the table's name to add a
+ * field that does; click a line to change what deleting does, or to
+ * remove it. The table designer's Looks up does the same. */
 
 #define RV_FIELDS 10        /* fields shown in a box */
 
@@ -1186,69 +1192,95 @@ struct rv_box {
     int x, y, w, h, shown;
     int nfields;
     char fields[RV_FIELDS][OB_NAME_MAX];
+    unsigned char keyed[RV_FIELDS];     /* in the key (drawn bold) */
+    unsigned char counter[RV_FIELDS];   /* the Counter: what a Lookup holds */
 };
 
-static void show_relationships(void)
+/* A relationship's line as drawn: four points, three straight parts */
+struct rv_line { int rel; WORD x[4], y[4]; };
+
+struct rv_view {
+    struct Window *w;
+    struct rv_box *box;
+    ob_relation *rel;
+    struct rv_line *line;
+    int nt, nr, nl, hidden, row_h, gap;
+};
+
+static void rv_free(struct rv_view *v)
 {
-    struct Window *rw;
-    struct RastPort *rp;
-    struct rv_box *box = NULL;
-    ob_relation *rel = NULL;
-    int nt, nr, i, j, done = 0, row_h = fh + 2, bw = fw * 18, gap, cols, x, y, rowmax, w, h, hidden = 0;
-    char line[160];
-    if (!proj) { tell("Open or make a project first."); return; }
-    nt = ob_table_count(proj);
-    nr = ob_relations(proj, NULL, 0);
-    if (nr < 0) { tell(ob_error(proj)); return; }
-    box = calloc((size_t)(nt ? nt : 1), sizeof *box);
-    rel = calloc((size_t)(nr ? nr : 1), sizeof *rel);
-    if (!box || !rel) { tell("Not enough memory."); goto out; }
-    ob_relations(proj, rel, nr);
-    w = scr->Width * 4 / 5;
-    h = scr->Height * 3 / 4;
-    rw = OpenWindowTags(NULL,
-        WA_Title, (ULONG)"Relationships",
-        WA_PubScreen, (ULONG)scr,
-        WA_Left, (scr->Width - w) / 2, WA_Top, (scr->Height - h) / 2,
-        WA_Width, w, WA_Height, h,
-        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE,
-        WA_SmartRefresh, TRUE, WA_AutoAdjust, TRUE,
-        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY,
-        TAG_DONE);
-    if (!rw) { tell("The window could not be opened."); goto out; }
-    rp = rw->RPort;
+    free(v->box);
+    free(v->rel);
+    free(v->line);
+    v->box = NULL;
+    v->rel = NULL;
+    v->line = NULL;
+    v->nt = v->nr = v->nl = 0;
+}
+
+/* The tables and relationships read again, and laid out in rows with room
+ * between the columns for the lines; 0 with the reason told. */
+static int rv_load(struct rv_view *v)
+{
+    struct Window *rw = v->w;
+    int i, j, bw = fw * 18, cols, x, y, rowmax;
+    rv_free(v);
+    v->nt = ob_table_count(proj);
+    v->nr = ob_relations(proj, NULL, 0);
+    if (v->nr < 0) { v->nr = 0; tell(ob_error(proj)); return 0; }
+    v->box = calloc((size_t)(v->nt ? v->nt : 1), sizeof *v->box);
+    v->rel = calloc((size_t)(v->nr ? v->nr : 1), sizeof *v->rel);
+    v->line = calloc((size_t)(v->nr ? v->nr : 1), sizeof *v->line);
+    if (!v->box || !v->rel || !v->line) { rv_free(v); tell("Not enough memory."); return 0; }
+    ob_relations(proj, v->rel, v->nr);
+    v->gap = fw * 12;
+    cols = (rw->Width - rw->BorderLeft - rw->BorderRight - v->gap) / (bw + v->gap);
+    if (cols < 1) cols = 1;
+    x = rw->BorderLeft + v->gap;
+    y = rw->BorderTop + 10;
+    rowmax = 0;
+    v->hidden = 0;
+    for (i = 0; i < v->nt; i++) {
+        struct rv_box *b = &v->box[i];
+        put_text(b->name, sizeof b->name, ob_table_name(proj, i));
+        if (ob_table_get(proj, b->name, &rv_t)) {
+            for (j = 0; j < rv_t.nfields && b->nfields < RV_FIELDS; j++) {
+                put_text(b->fields[b->nfields], OB_NAME_MAX, rv_t.fields[j].name);
+                b->keyed[b->nfields] = rv_t.fields[j].type == OB_COUNTER || rv_t.fields[j].key;
+                b->counter[b->nfields] = rv_t.fields[j].type == OB_COUNTER;
+                b->nfields++;
+            }
+            if (rv_t.nfields > RV_FIELDS) {
+                put_text(b->fields[RV_FIELDS - 1], OB_NAME_MAX, "...");
+                b->keyed[RV_FIELDS - 1] = b->counter[RV_FIELDS - 1] = 0;
+            }
+        }
+        b->w = bw;
+        b->h = v->row_h * (b->nfields + 1) + 6;
+        if (i && i % cols == 0) { x = rw->BorderLeft + v->gap; y += rowmax + v->row_h * 2; rowmax = 0; }
+        b->x = x;
+        b->y = y;
+        b->shown = y + b->h < rw->Height - rw->BorderBottom - v->row_h - 8;
+        if (!b->shown) v->hidden++;
+        if (b->h > rowmax) rowmax = b->h;
+        x += bw + v->gap;
+    }
+    return 1;
+}
+
+static void rv_paint(struct rv_view *v)
+{
+    struct Window *rw = v->w;
+    struct RastPort *rp = rw->RPort;
+    int i, j, row_h = v->row_h, gap = v->gap;
+    char line[200];
     SetFont(rp, font);
     SetDrMd(rp, JAM1);
     SetAPen(rp, pen(BACKGROUNDPEN));
     RectFill(rp, rw->BorderLeft, rw->BorderTop, rw->Width - rw->BorderRight - 1, rw->Height - rw->BorderBottom - 1);
-    /* lay the boxes out in rows, leaving room between columns for the lines */
-    gap = fw * 12;
-    cols = (rw->Width - rw->BorderLeft - rw->BorderRight - gap) / (bw + gap);
-    if (cols < 1) cols = 1;
-    x = rw->BorderLeft + gap;
-    y = rw->BorderTop + 10;
-    rowmax = 0;
-    for (i = 0; i < nt; i++) {
-        struct rv_box *b = &box[i];
-        put_text(b->name, sizeof b->name, ob_table_name(proj, i));
-        if (ob_table_get(proj, b->name, &rv_t)) {
-            for (j = 0; j < rv_t.nfields && b->nfields < RV_FIELDS; j++)
-                put_text(b->fields[b->nfields++], OB_NAME_MAX, rv_t.fields[j].name);
-            if (rv_t.nfields > RV_FIELDS) put_text(b->fields[RV_FIELDS - 1], OB_NAME_MAX, "...");
-        }
-        b->w = bw;
-        b->h = row_h * (b->nfields + 1) + 6;
-        if (i && i % cols == 0) { x = rw->BorderLeft + gap; y += rowmax + row_h * 2; rowmax = 0; }
-        b->x = x;
-        b->y = y;
-        b->shown = y + b->h < rw->Height - rw->BorderBottom - row_h - 8;
-        if (!b->shown) hidden++;
-        if (b->h > rowmax) rowmax = b->h;
-        x += bw + gap;
-    }
     /* the boxes first */
-    for (i = 0; i < nt; i++) {
-        struct rv_box *b = &box[i];
+    for (i = 0; i < v->nt; i++) {
+        struct rv_box *b = &v->box[i];
         if (!b->shown) continue;
         SetAPen(rp, pen(BACKGROUNDPEN));
         RectFill(rp, b->x, b->y, b->x + b->w - 1, b->y + b->h - 1);
@@ -1264,92 +1296,256 @@ static void show_relationships(void)
                                                  b->w - 8, row_h + 2));
         SetSoftStyle(rp, 0, FSF_BOLD);
         SetAPen(rp, pen(TEXTPEN));
-        ob_table_get(proj, b->name, &rv_t);
         for (j = 0; j < b->nfields; j++) {
-            int k = ob_table_find_field(&rv_t, b->fields[j]);
-            int keyed = k >= 0 && (rv_t.fields[k].type == OB_COUNTER || rv_t.fields[k].key);
-            if (keyed) SetSoftStyle(rp, FSF_BOLD, FSF_BOLD);
+            if (b->keyed[j]) SetSoftStyle(rp, FSF_BOLD, FSF_BOLD);
             Move(rp, b->x + 6, b->y + 3 + row_h * (j + 1) + rp->TxBaseline);
             Text(rp, (STRPTR)b->fields[j], (ULONG)TextFit(rp, (STRPTR)b->fields[j], strlen(b->fields[j]), &rv_te, NULL, 1,
                                                           b->w - 10, row_h));
-            if (keyed) SetSoftStyle(rp, 0, FSF_BOLD);
+            if (b->keyed[j]) SetSoftStyle(rp, 0, FSF_BOLD);
         }
     }
     /* then the lines, from box edge to box edge, each with its rule in the gap */
-    for (i = 0; i < nr; i++) {
+    v->nl = 0;
+    for (i = 0; i < v->nr; i++) {
         struct rv_box *from = NULL, *to = NULL;
+        struct rv_line *ln = &v->line[v->nl];
         int fy, tx, fx, ty, lx, ly, f = 0;
-        for (j = 0; j < nt; j++) {
-            if (same_name(box[j].name, rel[i].table)) from = &box[j];
-            if (same_name(box[j].name, rel[i].lookup)) to = &box[j];
+        for (j = 0; j < v->nt; j++) {
+            if (same_name(v->box[j].name, v->rel[i].table)) from = &v->box[j];
+            if (same_name(v->box[j].name, v->rel[i].lookup)) to = &v->box[j];
         }
         if (!from || !to || !from->shown || !to->shown) continue;
-        for (j = 0; j < from->nfields; j++) if (same_name(from->fields[j], rel[i].field)) f = j + 1;
+        for (j = 0; j < from->nfields; j++) if (same_name(from->fields[j], v->rel[i].field)) f = j + 1;
         fy = f ? from->y + 3 + row_h * f + row_h / 2 : from->y + from->h / 2;
         ty = to->y + row_h / 2 + 1;
+        ln->rel = i;
         if (from == to) {
             /* a table that looks itself up: a loop on its right */
             fx = from->x + from->w;
-            SetAPen(rp, pen(FILLPEN));
-            Move(rp, fx, fy); Draw(rp, fx + gap / 2, fy); Draw(rp, fx + gap / 2, ty); Draw(rp, fx, ty);
-            continue;
-        }
-        if (to->x >= from->x + from->w) { fx = from->x + from->w; tx = to->x; }
-        else if (to->x + to->w <= from->x) { fx = from->x; tx = to->x + to->w; }
-        else { fx = from->x + from->w; tx = to->x + to->w; }
-        SetAPen(rp, pen(FILLPEN));
-        Move(rp, fx, fy);
-        if (fx == tx || (fx == from->x + from->w && tx == to->x + to->w)) {
-            /* one above the other: out to the side and back */
-            int side = (fx > tx ? fx : tx) + gap / 2;
-            Draw(rp, side, fy); Draw(rp, side, ty); Draw(rp, tx, ty);
-            lx = side + 3;
+            ln->x[0] = (WORD)fx; ln->y[0] = (WORD)fy;
+            ln->x[1] = (WORD)(fx + gap / 2); ln->y[1] = (WORD)fy;
+            ln->x[2] = (WORD)(fx + gap / 2); ln->y[2] = (WORD)ty;
+            ln->x[3] = (WORD)fx; ln->y[3] = (WORD)ty;
+            lx = fx + gap / 2 + 3;
             ly = (fy + ty) / 2 + rp->TxBaseline / 2;
         } else {
-            int mid = (fx + tx) / 2;
-            Draw(rp, mid, fy); Draw(rp, mid, ty); Draw(rp, tx, ty);
-            lx = -1;
-            ly = ty - 3;
+            if (to->x >= from->x + from->w) { fx = from->x + from->w; tx = to->x; }
+            else if (to->x + to->w <= from->x) { fx = from->x; tx = to->x + to->w; }
+            else { fx = from->x + from->w; tx = to->x + to->w; }
+            ln->x[0] = (WORD)fx; ln->y[0] = (WORD)fy;
+            ln->x[3] = (WORD)tx; ln->y[3] = (WORD)ty;
+            if (fx == tx || (fx == from->x + from->w && tx == to->x + to->w)) {
+                /* one above the other: out to the side and back */
+                int side = (fx > tx ? fx : tx) + gap / 2;
+                ln->x[1] = (WORD)side; ln->y[1] = (WORD)fy;
+                ln->x[2] = (WORD)side; ln->y[2] = (WORD)ty;
+                lx = side + 3;
+                ly = (fy + ty) / 2 + rp->TxBaseline / 2;
+            } else {
+                int mid = (fx + tx) / 2;
+                ln->x[1] = (WORD)mid; ln->y[1] = (WORD)fy;
+                ln->x[2] = (WORD)mid; ln->y[2] = (WORD)ty;
+                lx = -1;
+                ly = ty - 3;
+            }
         }
+        SetAPen(rp, pen(FILLPEN));
+        Move(rp, ln->x[0], ln->y[0]);
+        for (j = 1; j < 4; j++) Draw(rp, ln->x[j], ln->y[j]);
+        v->nl++;
         /* the rule, in the gap, just above the line at the looked-up table */
         SetAPen(rp, pen(TEXTPEN));
         {
-            const char *rule = rel[i].on_delete == OB_DELETE_CASCADE ? "cascade"
-                             : rel[i].on_delete == OB_DELETE_CLEAR ? "clear" : "refuse";
+            const char *rule = v->rel[i].on_delete == OB_DELETE_CASCADE ? "cascade"
+                             : v->rel[i].on_delete == OB_DELETE_CLEAR ? "clear" : "refuse";
             int tw = TextLength(rp, (STRPTR)rule, strlen(rule));
-            Move(rp, lx >= 0 ? lx : (fx + tx) / 2 - tw / 2, ly);
+            Move(rp, lx >= 0 ? lx : (ln->x[0] + ln->x[3]) / 2 - tw / 2, ly);
             Text(rp, (STRPTR)rule, strlen(rule));
         }
     }
-    if (!nt) snprintf(line, sizeof line, "No tables yet: Table > New Table...");
-    else if (!nr) snprintf(line, sizeof line, "No relationships yet: give a field the type Lookup in the table designer");
-    else snprintf(line, sizeof line, "%d table%s, %d relationship%s. Key fields are in bold. Made in the table designer (Looks up).",
-                  nt, nt == 1 ? "" : "s", nr, nr == 1 ? "" : "s");
-    if (hidden) {
+    if (!v->nt) snprintf(line, sizeof line, "No tables yet: Table > New Table...");
+    else if (!v->nr) snprintf(line, sizeof line, "No relationships yet: drag a table's key (bold) onto a field of another table, or onto its name");
+    else snprintf(line, sizeof line, "%d table%s, %d relationship%s. Drag a key (bold) onto a field to relate them; click a line to change it.",
+                  v->nt, v->nt == 1 ? "" : "s", v->nr, v->nr == 1 ? "" : "s");
+    if (v->hidden) {
         size_t n = strlen(line);
-        snprintf(line + n, sizeof line - n, " %d don't fit.", hidden);
+        snprintf(line + n, sizeof line - n, " %d don't fit.", v->hidden);
     }
     SetAPen(rp, pen(TEXTPEN));
     Move(rp, rw->BorderLeft + 8, rw->Height - rw->BorderBottom - 6 - fh + rp->TxBaseline);
     Text(rp, (STRPTR)line, (ULONG)TextFit(rp, (STRPTR)line, strlen(line), &rv_te, NULL, 1,
                                           rw->Width - rw->BorderLeft - rw->BorderRight - 16, fh + 2));
+}
+
+/* What is at x, y: a box's field (*field from 0), its name (*field -1), or
+ * nothing (-1 returned). "..." (fields not shown) is nothing. */
+static int rv_box_at(const struct rv_view *v, int x, int y, int *field)
+{
+    int i;
+    for (i = 0; i < v->nt; i++) {
+        const struct rv_box *b = &v->box[i];
+        int row;
+        if (!b->shown || x < b->x || x >= b->x + b->w || y < b->y || y >= b->y + b->h) continue;
+        row = y < b->y + v->row_h + 2 ? -1 : (y - b->y - 3) / v->row_h - 1;
+        if (row >= b->nfields) row = b->nfields - 1;
+        if (row >= 0 && !strcmp(b->fields[row], "...")) return -1;
+        *field = row;
+        return i;
+    }
+    return -1;
+}
+
+/* The relationship whose line passes within 3 pixels of x, y; -1 none */
+static int rv_line_at(const struct rv_view *v, int x, int y)
+{
+    int i, j;
+    for (i = 0; i < v->nl; i++)
+        for (j = 0; j < 3; j++) {
+            int x0 = v->line[i].x[j], y0 = v->line[i].y[j], x1 = v->line[i].x[j + 1], y1 = v->line[i].y[j + 1];
+            int lo, hi;
+            if (y0 == y1) {
+                lo = x0 < x1 ? x0 : x1; hi = x0 < x1 ? x1 : x0;
+                if (x >= lo - 3 && x <= hi + 3 && y >= y0 - 3 && y <= y0 + 3) return v->line[i].rel;
+            } else {
+                lo = y0 < y1 ? y0 : y1; hi = y0 < y1 ? y1 : y0;
+                if (y >= lo - 3 && y <= hi + 3 && x >= x0 - 3 && x <= x0 + 3) return v->line[i].rel;
+            }
+        }
+    return -1;
+}
+
+static void rv_rubber(struct Window *rw, int x0, int y0, int x1, int y1)
+{
+    struct RastPort *rp = rw->RPort;
+    SetDrMd(rp, COMPLEMENT);
+    Move(rp, x0, y0);
+    Draw(rp, x1, y1);
+    SetDrMd(rp, JAM1);
+}
+
+/* A key dropped: which field looks up which table, the rule asked, made. 1 when it changed. */
+static int rv_drop(struct rv_view *v, int fb, int ff, int tb, int tf)
+{
+    const struct rv_box *key, *holder;
+    const char *field;
+    char q[400], made[OB_NAME_MAX];
+    int r;
+    if (tb < 0) return 0;
+    if (ff >= 0 && v->box[fb].counter[ff] && !(tb == fb && tf == ff)) {
+        key = &v->box[fb]; holder = &v->box[tb]; field = tf >= 0 ? holder->fields[tf] : NULL;
+    } else if (tf >= 0 && v->box[tb].counter[tf] && ff >= 0) {
+        key = &v->box[tb]; holder = &v->box[fb]; field = holder->fields[ff];
+    } else {
+        tell("Drag a table's key (in bold) onto the field that will hold it, or onto a table's name to add one.");
+        return 0;
+    }
+    if (field) snprintf(q, sizeof q, "%.60s.%.60s will hold a row of %.60s.\n\nWhen a row of %.60s is deleted, its rows in %.60s are:",
+                        holder->name, field, key->name, key->name, holder->name);
+    else snprintf(q, sizeof q, "%.60s gets a field that holds a row of %.60s.\n\nWhen a row of %.60s is deleted, its rows in %.60s are:",
+                  holder->name, key->name, key->name, holder->name);
+    r = ask(q, "Refused|Deleted Too|Cleared|Cancel");
+    if (!r) return 0;
+    if (!ob_relation_add(proj, holder->name, field, key->name,
+                         r == 2 ? OB_DELETE_CASCADE : r == 3 ? OB_DELETE_CLEAR : OB_DELETE_REFUSE, made, sizeof made)) {
+        tell(ob_error(proj));
+        return 0;
+    }
+    return 1;
+}
+
+/* A line clicked: its rule changed, or the relationship removed. 1 when it changed. */
+static int rv_edit(struct rv_view *v, int i)
+{
+    const ob_relation *r = &v->rel[i];
+    char q[400], table[OB_NAME_MAX], field[OB_NAME_MAX];
+    int a, good;
+    snprintf(q, sizeof q, "%.60s.%.60s holds a row of %.60s. When that row is deleted, its rows are %s.\n\nChange that to:",
+             r->table, r->field, r->lookup,
+             r->on_delete == OB_DELETE_CASCADE ? "deleted too" : r->on_delete == OB_DELETE_CLEAR ? "cleared" : "refused");
+    a = ask(q, "Refused|Deleted Too|Cleared|Remove It|Cancel");
+    if (!a) return 0;
+    put_text(table, sizeof table, r->table);
+    put_text(field, sizeof field, r->field);
+    if (a == 4) {
+        snprintf(q, sizeof q, "%.60s.%.60s will hold %.60s's keys as plain numbers, looking nothing up.", table, field, r->lookup);
+        if (ask(q, "Remove|Cancel") != 1) return 0;
+        good = ob_relation_remove(proj, table, field);
+    } else
+        good = ob_relation_set_rule(proj, table, field, a == 2 ? OB_DELETE_CASCADE : a == 3 ? OB_DELETE_CLEAR : OB_DELETE_REFUSE);
+    if (!good) { tell(ob_error(proj)); return 0; }
+    return 1;
+}
+
+static void show_relationships(void)
+{
+    struct rv_view v;
+    struct Window *rw;
+    int done = 0, w, h, changed = 0, dragging = 0, fb = -1, ff = -1, sx = 0, sy = 0, lx = 0, ly = 0;
+    if (!proj) { tell("Open or make a project first."); return; }
+    memset(&v, 0, sizeof v);
+    v.row_h = fh + 2;
+    w = scr->Width * 4 / 5;
+    h = scr->Height * 3 / 4;
+    rw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)"Relationships",
+        WA_PubScreen, (ULONG)scr,
+        WA_Left, (scr->Width - w) / 2, WA_Top, (scr->Height - h) / 2,
+        WA_Width, w, WA_Height, h,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE,
+        WA_SmartRefresh, TRUE, WA_AutoAdjust, TRUE, WA_ReportMouse, TRUE, WA_RMBTrap, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | IDCMP_MOUSEBUTTONS | IDCMP_MOUSEMOVE,
+        TAG_DONE);
+    if (!rw) { tell("The window could not be opened."); return; }
+    v.w = rw;
+    if (rv_load(&v)) rv_paint(&v);
     while (!done) {
         struct IntuiMessage *m;
         WaitPort(rw->UserPort);
         while ((m = GT_GetIMsg(rw->UserPort)) != NULL) {
             ULONG class = m->Class;
             UWORD code = m->Code;
+            int mx = m->MouseX, my = m->MouseY, again = 0;
             GT_ReplyIMsg(m);
             if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && (code == 27 || code == 13))) done = 1;
-            if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); }
+            else if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); }
+            else if (class == IDCMP_MOUSEBUTTONS && code == SELECTDOWN) {
+                int bi = rv_box_at(&v, mx, my, &ff), li;
+                if (bi >= 0 && ff >= 0) {           /* a field: drag it */
+                    dragging = 1;
+                    fb = bi;
+                    sx = lx = mx;
+                    sy = ly = my;
+                    rv_rubber(rw, sx, sy, lx, ly);
+                } else if (bi < 0 && (li = rv_line_at(&v, mx, my)) >= 0)
+                    again = rv_edit(&v, li);
+            } else if (class == IDCMP_MOUSEMOVE && dragging) {
+                rv_rubber(rw, sx, sy, lx, ly);
+                lx = mx;
+                ly = my;
+                rv_rubber(rw, sx, sy, lx, ly);
+            } else if (class == IDCMP_MOUSEBUTTONS && code == SELECTUP && dragging) {
+                int tf = -1, tb;
+                rv_rubber(rw, sx, sy, lx, ly);
+                dragging = 0;
+                tb = rv_box_at(&v, mx, my, &tf);
+                if (tb >= 0 && !(tb == fb && tf == ff)) again = rv_drop(&v, fb, ff, tb, tf);
+            }
+            if (again) {
+                changed = 1;
+                if (rv_load(&v)) rv_paint(&v);
+            }
         }
     }
     CloseWindow(rw);
+    rv_free(&v);
+    if (changed) {         /* the table shown may have a Lookup now, or none */
+        load_tables(NULL);
+        load_page();
+        refresh();
+    }
     if (win) ActivateWindow(win);     /* keys go to the main window again */
-out:
-    free(box);
-    free(rel);
 }
+
 
 static void design_table(int creating)
 {
@@ -1880,9 +2076,9 @@ static void export_csv(void)
     char path[512], msg[160];
     ob_int n;
     BPTR l;
-    if (q_on) { set_status("A query's rows are read only: choose a table to change its rows"); return; }
-    if (!proj || !have_cur) return;
-    snprintf(msg, sizeof msg, "Export %.60s as CSV", cur.name);
+    if (!proj || (!q_on && !have_cur)) return;
+    if (q_on) snprintf(msg, sizeof msg, "Export %.60s's results as CSV", qy.name[0] ? qy.name : "the query");
+    else snprintf(msg, sizeof msg, "Export %.60s as CSV", cur.name);
     if (!ask_file(msg, TRUE, "#?.csv", path, sizeof path)) return;
     if ((l = Lock((STRPTR)path, ACCESS_READ)) != 0) {
         UnLock(l);
@@ -1897,11 +2093,13 @@ static void export_csv(void)
         csv_o.charset = c == 2 ? OB_CHARSET_UTF8 : OB_CHARSET_LATIN1;
     }
     SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
-    n = ob_csv_export_with(proj, cur.name, &view, path, &csv_o);
+    /* a query's rows with the answers it was run with */
+    if (q_on) n = ob_query_csv_export(proj, &qy, q_pv, path, &csv_o);
+    else n = ob_csv_export_with(proj, cur.name, &view, path, &csv_o);
     SetWindowPointer(win, TAG_DONE);
     if (n < 0) { tell(ob_error(proj)); return; }
     snprintf(msg, sizeof msg, "Wrote %lld rows to %.60s%s", n, leaf(path),
-             ob_view_filtered(&view) ? " (the filtered rows)" : "");
+             !q_on && ob_view_filtered(&view) ? " (the filtered rows)" : "");
     set_status(msg);
 }
 
@@ -3892,6 +4090,30 @@ static void undo_last(void)
     set_status(msg);
 }
 
+/* ---- Query > Save as View... ---- */
+
+static void save_view(void)
+{
+    char name[OB_NAME_MAX], msg[OB_NAME_MAX + 80];
+    int i, n;
+    if (!proj) return;
+    if (!qy.ntables && !qy.sql_only) { set_status("No query yet: Query > New Query..."); return; }
+    snprintf(name, sizeof name, "%s", qy.name[0] ? qy.name : "");
+    if (!ask_text("Save as View", "View name (other SQLite programs can read it)", name, sizeof name)) return;
+    n = ob_sqlview_count(proj);
+    for (i = 0; i < n; i++) {
+        const char *v = ob_sqlview_name(proj, i);
+        if (v && same_name(v, name)) {
+            snprintf(msg, sizeof msg, "There is a view named %.40s.\nReplace it?", v);
+            if (!ask(msg, "Replace|Cancel")) return;
+            break;
+        }
+    }
+    if (!ob_query_save_view(proj, &qy, name)) { tell(ob_error(proj)); return; }
+    snprintf(msg, sizeof msg, "Saved the view %.40s", name);
+    set_status(msg);
+}
+
 /* The Report window over this one, its new report from the table or query shown. */
 static void report_window(void)
 {
@@ -3967,6 +4189,7 @@ static void menu_action(ULONG id)
     case M_Q_NEW: design_query(1); break;
     case M_Q_OPEN: open_query(); break;
     case M_Q_DESIGN: design_query(!qy.ntables && !qy.sql_only); break;
+    case M_Q_VIEW: save_view(); break;
     case M_Q_AGAIN:
         if (qy.ntables || qy.sql_only) run_query(1);
         else set_status("No query yet: Query > New Query...");

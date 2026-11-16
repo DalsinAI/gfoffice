@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.12.3"
+#define OWF_VERSION "1.12.5"
 
 /* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
@@ -99,8 +99,8 @@ typedef struct {
     int image;               /* index into doc->images for OWF_RUN_IMAGE, doc->frames for OWF_RUN_FRAME */
     int revision;            /* 1.5: a tracked change: 1 + its index in doc->revisions (OWF_REV_INSERT: this
                                 run was inserted, OWF_REV_DELETE: deleted but kept, shown struck through);
-                                0: none. 1.12: a picture in the line (OWF_RUN_IMAGE) may be one; a frame's run
-                                never is */
+                                0: none. 1.12: a picture in the line (OWF_RUN_IMAGE) or a frame's run (its
+                                frame put in or deleted; DOCX keeps it, ODT saves it accepted) may be one */
     int comment;             /* 1.6: a comment's place (OWF_RUN_TEXT runs with no text, kept apart from the text
                                 round them): 1 + its index in doc->comments where it is anchored (shown, and where
                                 a range ends); -(1 + its index) where its range starts. 0: none */
@@ -190,6 +190,10 @@ typedef struct {
      * in doc->revisions. Inserted: Return was typed there. Deleted: accepting the deletion joins the next
      * paragraph to this one. 0: none. */
     int mark_revision;
+    /* 1.12: a table cell's row is a tracked change (DOCX w:trPr/w:ins, w:del): 1 + its index in doc->revisions,
+     * the same on every cell of the row. Inserted: the row was put in; deleted: accepting it takes the row
+     * away. 0: none. */
+    int row_revision;
 } owf_para;
 
 typedef enum {

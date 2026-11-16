@@ -1365,6 +1365,96 @@ static void test_undo(void)
     ob_close(p);
 }
 
+/* Relationships drawn in the view: made, changed, removed (ob_relation_*) */
+static int rel_rule(ob_project *p, const char *table, const char *field, ob_on_delete *rule, char *lookup)
+{
+    ob_relation r[16];
+    int n = ob_relations(p, r, 16), i;
+    for (i = 0; i < n && i < 16; i++)
+        if (!strcmp(r[i].table, table) && !strcmp(r[i].field, field)) {
+            if (rule) *rule = r[i].on_delete;
+            if (lookup) strcpy(lookup, r[i].lookup);
+            return 1;
+        }
+    return 0;
+}
+
+static void test_relation_draw(void)
+{
+    ob_project *p = fresh("reldraw.oadb");
+    static ob_table t, o;
+    ob_field *f;
+    ob_on_delete rule;
+    char made[OB_NAME_MAX], lk[OB_NAME_MAX];
+    const char *cf[] = { "Name" }, *cv[] = { "Ann" }, *of[] = { "Cust", "Total" }, *ov[] = { "1", "5.00" }, *ov2[] = { "9", "1.00" };
+    ob_int key;
+    if (!p) return;
+    customers(&t);
+    CHECK(ob_table_create(p, &t), "Customers: %s", ob_error(p));
+    ob_table_init(&o, "Orders");
+    ob_table_add_field(&o, "Cust", OB_INTEGER);
+    f = ob_table_add_field(&o, "Total", OB_CURRENCY);
+    ob_table_add_field(&o, "Note", OB_TEXT);
+    (void)f;
+    CHECK(ob_table_create(p, &o), "Orders: %s", ob_error(p));
+    CHECK(ob_row_add(p, "Customers", 1, cf, cv, &key) && key == 1, "Ann is 1");
+    CHECK(ob_row_add(p, "Orders", 2, of, ov, NULL), "an order for 1: %s", ob_error(p));
+    CHECK(ob_relations(p, NULL, 0) == 0, "no relationships yet");
+
+    /* the key dragged onto Orders.Cust */
+    CHECK(ob_relation_add(p, "Orders", "cust", "customers", OB_DELETE_CASCADE, made, sizeof made) && !strcmp(made, "Cust"),
+          "Cust looks up Customers: %s", ob_error(p));
+    CHECK(rel_rule(p, "Orders", "Cust", &rule, lk) && rule == OB_DELETE_CASCADE && !strcmp(lk, "Customers"), "listed, cascade");
+    CHECK(ob_table_get(p, "Orders", &o) && o.fields[1].type == OB_LOOKUP && !strcmp(o.fields[1].lookup, "Customers"), "a Lookup now");
+    CHECK(ob_row_total(p, "Orders") == 1, "the order kept");
+    CHECK(!ob_row_add(p, "Orders", 2, of, ov2, NULL), "an order for 9 is refused now");
+
+    /* its rule changed, then cleared */
+    CHECK(ob_relation_set_rule(p, "Orders", "Cust", OB_DELETE_CLEAR) && rel_rule(p, "Orders", "Cust", &rule, NULL)
+          && rule == OB_DELETE_CLEAR, "clear: %s", ob_error(p));
+    CHECK(ob_row_delete(p, "Customers", 1) && ob_row_total(p, "Orders") == 1, "Ann deleted, her order kept, cleared: %s", ob_error(p));
+    CHECK(ob_row_add(p, "Customers", 1, cf, cv, &key), "Ann again: %lld", (long long)key);
+    CHECK(ob_relation_set_rule(p, "Orders", "Cust", OB_DELETE_REFUSE) && rel_rule(p, "Orders", "Cust", &rule, NULL)
+          && rule == OB_DELETE_REFUSE, "refuse");
+    CHECK(!ob_relation_set_rule(p, "Orders", "Cust", (ob_on_delete)7), "no such rule");
+    CHECK(!ob_relation_set_rule(p, "Orders", "Note", OB_DELETE_CASCADE) && strstr(ob_error(p), "doesn't look anything up"), "Note isn't one");
+
+    /* onto the table: a new Lookup field */
+    CHECK(ob_relation_add(p, "Orders", NULL, "Customers", OB_DELETE_REFUSE, made, sizeof made) && !strcmp(made, "Customers"),
+          "a new field Customers: %s", ob_error(p));
+    CHECK(ob_relation_add(p, "Orders", "", "Customers", OB_DELETE_REFUSE, made, sizeof made) && !strcmp(made, "Customers 2"),
+          "and Customers 2: %s %s", made, ob_error(p));
+    CHECK(ob_relations(p, NULL, 0) == 3, "three now");
+    CHECK(ob_row_total(p, "Orders") == 1, "the order kept again");
+
+    /* refused, nothing changed */
+    CHECK(!ob_relation_add(p, "Orders", "Note", "Customers", OB_DELETE_REFUSE, NULL, 0) && strstr(ob_error(p), "only an Integer"),
+          "Text can't: %s", ob_error(p));
+    CHECK(!ob_relation_add(p, "Orders", "id", "Customers", OB_DELETE_REFUSE, NULL, 0) && strstr(ob_error(p), "key"), "the Counter can't: %s", ob_error(p));
+    CHECK(!ob_relation_add(p, "Orders", "Nosuch", "Customers", OB_DELETE_REFUSE, NULL, 0), "no such field");
+    CHECK(!ob_relation_add(p, "Orders", "Cust", "Nosuch", OB_DELETE_REFUSE, NULL, 0), "no such table");
+    CHECK(!ob_relation_add(p, "Nosuch", "Cust", "Customers", OB_DELETE_REFUSE, NULL, 0), "no such table to change");
+    {
+        /* a number that isn't a key: refused with the reason, the field still an Integer */
+        static ob_table x;
+        const char *xf[] = { "Who" }, *xv[] = { "42" };
+        ob_table_init(&x, "Visits");
+        ob_table_add_field(&x, "Who", OB_INTEGER);
+        CHECK(ob_table_create(p, &x) && ob_row_add(p, "Visits", 1, xf, xv, NULL), "Visits: %s", ob_error(p));
+        CHECK(!ob_relation_add(p, "Visits", "Who", "Customers", OB_DELETE_REFUSE, NULL, 0) && strstr(ob_error(p), "aren't there"),
+              "42 isn't a customer: %s", ob_error(p));
+        CHECK(ob_table_get(p, "Visits", &x) && x.fields[1].type == OB_INTEGER && ob_row_total(p, "Visits") == 1, "unchanged");
+    }
+
+    /* removed: an Integer again, the keys kept */
+    CHECK(ob_relation_remove(p, "Orders", "Cust") && !rel_rule(p, "Orders", "Cust", NULL, NULL), "removed: %s", ob_error(p));
+    CHECK(ob_table_get(p, "Orders", &o) && o.fields[1].type == OB_INTEGER && !o.fields[1].lookup[0], "an Integer");
+    CHECK(ob_row_add(p, "Orders", 2, of, ov2, NULL), "an order for 9 goes in now: %s", ob_error(p));
+    CHECK(!ob_relation_remove(p, "Orders", "Cust") && strstr(ob_error(p), "doesn't look"), "not twice");
+    CHECK(ob_relations(p, NULL, 0) == 2, "two left");
+    ob_close(p);
+}
+
 /* A file's bytes (made up here, or written by the core); its length in *n. */
 static unsigned char *bytes_of(const char *file, long *n)
 {
@@ -2429,6 +2519,233 @@ static void test_queries(void)
     ob_close(p);
 }
 
+/* A query's rows as CSV, a query as a view, saved queries following a
+ * table's rename (core 0.13.1) */
+static void test_query_out(void)
+{
+    ob_project *p = fresh("qout.oadb");
+    static ob_query q, typed, spend, back;
+    static ob_table t;
+    ob_qcolumn *c;
+    ob_csv_opts o;
+    char err[OB_ERR_MAX];
+    const char *york[] = { "York" };
+    FILE *f;
+    if (!p) return;
+    five_customers(p);
+    shop_orders(p);
+
+    /* rows as CSV: headings, quoting, the sort and criteria */
+    ob_query_init(&q, "Town people");
+    ob_query_add_table(&q, "Customers");
+    c = ob_query_add_column(&q, "Customers", "Name");
+    c->sort = OB_SORT_UP;
+    c = ob_query_add_column(&q, "Customers", "Town");
+    strcpy(c->criteria[0], "Leeds");
+    c = ob_query_add_column(&q, NULL, "'a, \"b\"'");
+    strcpy(c->heading, "Note");
+    CHECK(ob_query_csv_export(p, &q, NULL, path("leeds.csv"), NULL) == 2, "export: %s", ob_error(p));
+    CHECK(!strcmp(slurp("leeds.csv"), "Name,Town,Note\r\nAnn,Leeds,\"a, \"\"b\"\"\"\r\nEve,Leeds,\"a, \"\"b\"\"\"\r\n"),
+          "query CSV: %s", slurp("leeds.csv"));
+    ob_csv_opts_init(&o);
+    o.sep = ';';
+    o.charset = OB_CHARSET_UTF8;
+    strcpy(q.columns[2].expr, "'caf\xE9'");
+    CHECK(ob_query_csv_export(p, &q, NULL, path("leeds.csv"), &o) == 2, "export UTF-8: %s", ob_error(p));
+    CHECK(!strcmp(slurp("leeds.csv"), "\xEF\xBB\xBFName;Town;Note\r\nAnn;Leeds;caf\xC3\xA9\r\nEve;Leeds;caf\xC3\xA9\r\n"),
+          "semicolons, UTF-8: %s", slurp("leeds.csv"));
+    o.sep = '|';
+    CHECK(ob_query_csv_export(p, &q, NULL, path("leeds.csv"), &o) < 0, "a bad separator");
+    CHECK_ERR(p, "separated by a comma");
+
+    /* a question: answered, or the file isn't made */
+    strcpy(q.columns[1].criteria[0], "[Which town?]");
+    CHECK(ob_query_csv_export(p, &q, york, path("york.csv"), NULL) == 2, "export with an answer: %s", ob_error(p));
+    CHECK(!strcmp(slurp("york.csv"), "Name,Town,Note\r\nbob,York,caf\xE9\r\ndan,York,caf\xE9\r\n"), "York: %s", slurp("york.csv"));
+    {
+        const char *bad[] = { "Paris" };
+        zap("paris.csv");
+        CHECK(ob_query_csv_export(p, &q, bad, path("paris.csv"), NULL) < 0, "a bad answer");
+        CHECK_ERR(p, "Town must be one of");
+        f = fopen(path("paris.csv"), "rb");
+        CHECK(!f, "no file made for a bad answer");
+        if (f) fclose(f);
+    }
+
+    /* typed SQL: values as SQLite gives them */
+    ob_query_init(&typed, "Typed");
+    typed.sql_only = 1;
+    strcpy(typed.sql, "SELECT Name, Total FROM Customers JOIN Orders ON Orders.Customer = Customers.id"
+                      " ORDER BY Total DESC LIMIT 2");
+    CHECK(ob_query_csv_export(p, &typed, NULL, path("typed.csv"), NULL) == 2, "typed SQL export: %s", ob_error(p));
+    CHECK(!strcmp(slurp("typed.csv"), "Name,Total\r\nAnn,10000\r\ndan,1000\r\n"), "typed SQL CSV: %s", slurp("typed.csv"));
+
+    /* a view: other SQL reads it */
+    CHECK(!ob_query_save_view(p, &q, "York people"), "a view can't ask questions");
+    CHECK_ERR(p, "A view can't ask questions");
+    strcpy(q.columns[1].criteria[0], "York");
+    CHECK(ob_query_save_view(p, &q, "York people"), "save a view: %s", ob_error(p));
+    CHECK(ob_sqlview_count(p) == 1 && !strcmp(ob_sqlview_name(p, 0), "York people") && ob_sqlview_name(p, 1) == NULL,
+          "the view is listed");
+    CHECK(ob_table_count(p) == 2 && ob_query_count(p) == 0, "a view is not a table or a saved query");
+    ob_query_init(&back, "Reads the view");
+    back.sql_only = 1;
+    strcpy(back.sql, "SELECT Name FROM \"York people\"");
+    CHECK(!strcmp(qrows(p, &back, NULL, 0, -1), "bob;dan"), "the view's rows: %s", qrows(p, &back, NULL, 0, -1));
+    strcpy(q.columns[1].criteria[0], "Hull");
+    CHECK(ob_query_save_view(p, &q, "york PEOPLE") && ob_sqlview_count(p) == 1, "saving again replaces: %s", ob_error(p));
+    CHECK(!strcmp(qrows(p, &back, NULL, 0, -1), "Cy"), "the new rows: %s", qrows(p, &back, NULL, 0, -1));
+    strcpy(q.columns[1].criteria[0], "York");
+    CHECK(ob_query_save_view(p, &q, "York people"), "back to York: %s", ob_error(p));
+
+    /* names: a view, a table and a saved query each have their own */
+    CHECK(!ob_query_save_view(p, &q, "customers"), "a view named like a table");
+    CHECK_ERR(p, "There is a table named customers");
+    CHECK(!ob_query_save_view(p, &q, "oadb_v"), "a kept name");
+    CHECK_ERR(p, "kept for the project");
+    CHECK(ob_query_save(p, &q), "save the query: %s", ob_error(p));
+    CHECK(!ob_query_save_view(p, &q, "town PEOPLE"), "a view named like a query");
+    CHECK_ERR(p, "There is a query named town PEOPLE");
+    strcpy(typed.name, "York People");
+    CHECK(!ob_query_save(p, &typed), "a query named like a view");
+    CHECK_ERR(p, "There is a view named York People");
+    strcpy(typed.name, "Typed");
+    CHECK(ob_query_save(p, &typed), "save typed SQL: %s", ob_error(p));
+    ob_table_init(&t, "york people");
+    CHECK(!ob_table_create(p, &t), "a table named like a view");
+    CHECK_ERR(p, "There is a view named york people");
+    CHECK(!ob_table_rename(p, "Orders", "York people"), "a table renamed like a view");
+    CHECK_ERR(p, "There is a view named York people");
+
+    /* a table's rename: grid queries and views follow, typed SQL is kept */
+    ob_query_init(&spend, "Spend");
+    ob_query_add_table(&spend, "Customers");
+    ob_query_add_table(&spend, "Orders");
+    c = ob_query_add_column(&spend, "Customers", "Name");
+    c->total = OB_TOTAL_GROUP;
+    c = ob_query_add_column(&spend, "Orders", "Total");
+    c->total = OB_TOTAL_SUM;
+    c = ob_query_add_column(&spend, NULL, "\"Orders\".\"id\"");
+    c->total = OB_TOTAL_COUNT;
+    CHECK(ob_query_save(p, &spend), "save Spend: %s", ob_error(p));
+    CHECK(ob_table_rename(p, "customers", "Clients"), "rename: %s", ob_error(p));
+    CHECK(ob_query_get(p, "Town people", &back) && back.ntables == 1 && !strcmp(back.tables[0], "Clients")
+          && !strcmp(back.columns[0].table, "Clients") && !strcmp(back.columns[1].table, "Clients")
+          && !back.columns[2].table[0], "the grid query follows");
+    CHECK(!strcmp(qrows(p, &back, NULL, 0, -1), "bob|York|caf\xE9;dan|York|caf\xE9"), "and runs: %s", qrows(p, &back, NULL, 0, -1));
+    CHECK(ob_query_get(p, "Spend", &back) && !strcmp(back.tables[0], "Clients") && !strcmp(back.tables[1], "Orders")
+          && !strcmp(back.columns[0].table, "Clients") && !strcmp(back.columns[1].table, "Orders"), "two tables, one renamed");
+    CHECK(ob_query_total(p, &back, NULL) == 4, "Spend runs: %s", ob_error(p));
+    CHECK(ob_query_get(p, "Typed", &back) && back.sql_only && strstr(back.sql, "FROM Customers JOIN"), "typed SQL as typed");
+    ob_query_init(&back, "Reads the view");
+    back.sql_only = 1;
+    strcpy(back.sql, "SELECT Name FROM \"York people\"");
+    CHECK(!strcmp(qrows(p, &back, NULL, 0, -1), "bob;dan"), "the view follows: %s", qrows(p, &back, NULL, 0, -1));
+
+    /* a design change with a view on the table */
+    ob_query_init(&back, "Weights");
+    back.sql_only = 1;
+    strcpy(back.sql, "SELECT Weight FROM Orders WHERE Weight > 1");
+    CHECK(ob_query_save_view(p, &back, "Weights"), "a view of Orders: %s", ob_error(p));
+    CHECK(ob_table_get(p, "Orders", &t), "Orders' design");
+    CHECK(ob_table_change(p, "Orders", &t), "the same design, a view on it: %s", ob_error(p));
+    ob_query_init(&back, "Count");
+    back.sql_only = 1;
+    strcpy(back.sql, "SELECT count(*) FROM Weights");
+    CHECK(!strcmp(qrows(p, &back, NULL, 0, -1), "2"), "the view still reads: %s", qrows(p, &back, NULL, 0, -1));
+    {
+        int w = ob_table_find_field(&t, "Weight");
+        CHECK(w > 0, "Weight is there");
+        if (w > 0) ob_table_remove_field(&t, w);
+    }
+    CHECK(!ob_table_change(p, "Orders", &t), "a change that leaves a view unable to read");
+    CHECK_ERR(p, "The view Weights uses Orders");
+    CHECK(ob_table_get(p, "Orders", &t) && ob_table_find_field(&t, "Weight") > 0 && ob_row_total(p, "Orders") == 5,
+          "Orders as it was");
+    strcpy(t.name, "Sales");
+    CHECK(ob_table_change(p, "Orders", &t), "a rename in a design change, a view on it: %s", ob_error(p));
+    CHECK(ob_table_count(p) == 2 && !strcmp(ob_table_name(p, 1), "Sales") && ob_row_total(p, "Sales") == 5,
+          "renamed with its rows");
+    CHECK(!strcmp(qrows(p, &back, NULL, 0, -1), "2"), "the view follows the design change's rename: %s",
+          qrows(p, &back, NULL, 0, -1));
+    {
+        static ob_table o;
+        CHECK(ob_table_get(p, "Orders", &o) == 0 && ob_table_get(p, "Sales", &o)
+              && !strcmp(o.fields[ob_table_find_field(&o, "Customer")].lookup, "Clients"), "Sales' design");
+    }
+    CHECK(ob_sqlview_drop(p, "weights") && ob_sqlview_count(p) == 1, "drop the view: %s", ob_error(p));
+    CHECK(!ob_sqlview_drop(p, "Weights"), "drop it twice");
+    CHECK_ERR(p, "There is no view named Weights");
+    CHECK(ob_query_get(p, "Spend", &back) && !strcmp(back.tables[1], "Sales") && !strcmp(back.columns[1].table, "Sales"),
+          "the grid query follows a design change's rename");
+    CHECK(!strcmp(back.columns[2].expr, "\"Sales\".\"id\""), "and its expression: %s", back.columns[2].expr);
+    CHECK(ob_query_total(p, &back, NULL) == 4, "and runs: %s", ob_error(p));
+
+    /* a table a view uses can't be deleted */
+    ob_query_init(&back, "Totals");
+    back.sql_only = 1;
+    strcpy(back.sql, "SELECT Total FROM Sales");
+    CHECK(ob_query_save_view(p, &back, "Totals"), "a view of Sales: %s", ob_error(p));
+    CHECK(!ob_table_drop(p, "Sales"), "delete a table a view uses");
+    CHECK_ERR(p, "The view Totals uses Sales");
+    CHECK(ob_table_count(p) == 2 && ob_row_total(p, "Sales") == 5, "Sales is kept");
+    CHECK(ob_sqlview_drop(p, "Totals") && ob_table_drop(p, "Sales") && ob_table_count(p) == 1, "then it can: %s", ob_error(p));
+    ob_close(p);
+
+    /* the SQL kept beside the grid was made again; read only can't save a view */
+    {
+        sqlite3 *db;
+        sqlite3_stmt *st;
+        const char *sql = "";
+        CHECK(sqlite3_open(path("qout.oadb"), &db) == SQLITE_OK
+              && sqlite3_prepare_v2(db, "SELECT sql FROM oadb_queries WHERE name = 'Town people'", -1, &st, NULL) == SQLITE_OK,
+              "read oadb_queries");
+        if (sqlite3_step(st) == SQLITE_ROW) sql = (const char *)sqlite3_column_text(st, 0);
+        CHECK(strstr(sql, "FROM \"Clients\"") && !strstr(sql, "Customers"), "kept SQL follows: %s", sql);
+        sqlite3_finalize(st);
+        sqlite3_close(db);
+    }
+    p = ob_open(path("qout.oadb"), OB_OPEN_READONLY, err, sizeof err);
+    CHECK(p && ob_sqlview_count(p) == 1 && ob_query_get(p, "Town people", &q), "reopened: %s", p ? ob_error(p) : err);
+    CHECK(p && !ob_query_save_view(p, &q, "Another"), "no views read only");
+    ob_close(p);
+}
+
+/* A design change that renames a table another table looks up (no views) */
+static void test_change_rename_looked_up(void)
+{
+    ob_project *p = fresh("rename-lookup.oadb");
+    static ob_table t, o;
+    if (!p) return;
+    five_customers(p);
+    shop_orders(p);
+    CHECK(ob_table_get(p, "Customers", &t), "Customers' design");
+    strcpy(t.name, "Clients");
+    CHECK(ob_table_change(p, "Customers", &t), "rename a looked-up table in a design change: %s", ob_error(p));
+    CHECK(ob_table_count(p) == 2 && !strcmp(ob_table_name(p, 0), "Clients") && ob_row_total(p, "Clients") == 5
+          && ob_row_total(p, "Orders") == 5, "rows kept");
+    CHECK(ob_table_get(p, "Orders", &o) && !strcmp(o.fields[ob_table_find_field(&o, "Customer")].lookup, "Clients"),
+          "the Lookup follows");
+    {
+        ob_relation r[4];
+        int n = ob_relations(p, r, 4);
+        CHECK(n == 1 && !strcmp(r[0].table, "Orders") && !strcmp(r[0].lookup, "Clients"), "the foreign key follows: %d", n);
+    }
+    {
+        const char *f[] = { "Customer", "Total" }, *v[] = { "2", "3.00" }, *bad[] = { "99", "1.00" };
+        CHECK(ob_row_add(p, "Orders", 2, f, v, NULL), "an order for a client: %s", ob_error(p));
+        CHECK(!ob_row_add(p, "Orders", 2, f, bad, NULL), "an order for nobody is refused");
+    }
+    /* and back, in a change that also adds a field */
+    CHECK(ob_table_get(p, "Clients", &t), "Clients' design");
+    strcpy(t.name, "Customers");
+    ob_table_add_field(&t, "Phone", OB_TEXT);
+    CHECK(ob_table_change(p, "Clients", &t), "rename back with a new field: %s", ob_error(p));
+    CHECK(ob_table_get(p, "Orders", &o) && !strcmp(o.fields[ob_table_find_field(&o, "Customer")].lookup, "Customers")
+          && ob_row_total(p, "Customers") == 5, "back as it was");
+    ob_close(p);
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1) {
@@ -2463,9 +2780,12 @@ int main(int argc, char **argv)
     test_csv();
     test_undo();
     test_csv_options();
+    test_relation_draw();
     test_dbf();
     test_rexx_rows();
     test_queries();
+    test_query_out();
+    test_change_rename_looked_up();
     test_query_joins();
     test_forms();
     test_not_projects();
