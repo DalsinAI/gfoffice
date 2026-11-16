@@ -19,14 +19,15 @@ working. Phase 1's target is 74%.
 | 12 Nov 2026 | C9 Data bars and icon sets | 74% |
 | 12 Nov 2026 | C8 Sheet and cell protection | 75% |
 | 16 Nov 2026 | Re-score: pivot items sorted, hidden, grouped and shown as percentages (#221, #222, #226, #229, #289, #293, #299); Multiple Operations past 4096 results (#225); the shown scenario's frame (#302); Consolidate sources from named ranges (#303) | 76% |
+| 16 Nov 2026 | Second re-score: pivot subtotals (#294, #296), drill-down (#300) and per-field choices in the window and ARexx (#313, #327); Refresh Consolidation (#304); the scenario drop-down (#305); workbook structure protection (#315); links to other workbooks with Edit Links (#329, #331, #333, #338, #339); the Nonlinear Solver (#340, #345) | 80% |
 
 ## Phase 1 features
 
 | Feature | Status | Deliverable | Notes |
 | --- | --- | --- | --- |
-| Pivot tables | Done (most) | C1 | Row, column, data and page fields; several data fields; page-field filters; grand totals on/off; refresh; layout afresh; row and column items sorted ascending or descending (as Data > Sort orders cells); single items hidden, their rows out of the totals; items grouped by number range, year, quarter or month, or by hand into named groups; data shown as % of row, column or grand total, or as an index; ODS `table:data-pilot-table` and XLSX pivot cache/table both ways (sorts, hidden items and date/number groups as XLSX fieldGroup; groups made by hand are saved ungrouped, with a note); Undo. Sorts, hidden items, groups and "show data as" chosen in the layout window (per field) and with ARexx PIVOTSET (groups by hand too; lab owed). Not yet: several pivot tables on one sheet |
-| Solver (linear, integer, nonlinear) | Done | C2 | Max, min or value of a target; up to 200 variables and 32 constraints (<=, =, >=, whole, binary; limits as numbers, cells or ranges); variables kept >= 0 or not; own two-phase simplex and branch and bound; linearity checked; Nonlinear engine (Nelder-Mead with growing penalties, local answers, no whole variables) kept as solver_eng 1; model kept in Excel's solver_* names (XLSX and ODS); ARexx SOLVE; Undo. Method choice in the window and ARexx SOLVE SIMPLEX|NONLINEAR; Not yet: reports, keeping answers as scenarios |
-| Scenarios | Done | C3 | Add, show, update, delete; up to 32 a sheet, 32 ranges and 2048 cells each; a formula kept as its value, as Excel keeps it; ranges follow row and column edits; ODS `table:scenario` tables and XLSX `scenarios` both ways; ARexx SCENARIO; Undo; the shown scenario framed on the sheet with its name in a tab, whose drop-down shows another. Not yet: a summary report, protection |
+| Pivot tables | Done (most) | C1 | Row, column, data and page fields; several data fields; page-field filters; grand totals on/off; refresh; layout afresh; row and column items sorted ascending or descending (as Data > Sort orders cells); single items hidden, their rows out of the totals; items grouped by number range, year, quarter or month, or by hand into named groups; data shown as % of row, column or grand total, or as an index; subtotals under each row item and after each column item; Show Pivot Details (drill-down to the source rows of a cell); ODS `table:data-pilot-table` and XLSX pivot cache/table both ways (sorts, hidden items and date/number groups as XLSX fieldGroup; groups made by hand are saved ungrouped, with a note); Undo. Sorts, hidden items, groups and "show data as" chosen in the layout window (per field) and with ARexx PIVOTSET (groups by hand too; lab owed). Not yet: several pivot tables on one sheet, pivot charts |
+| Solver (linear, integer, nonlinear) | Done | C2 | Max, min or value of a target; up to 200 variables and 32 constraints (<=, =, >=, whole, binary; limits as numbers, cells or ranges); variables kept >= 0 or not; own two-phase simplex and branch and bound; linearity checked; Nonlinear engine (Nelder-Mead with growing penalties, local answers, no whole variables) kept as solver_eng 1; model kept in Excel's solver_* names (XLSX and ODS); Method (Simplex LP or Nonlinear) in the window and ARexx SOLVE SIMPLEX|NONLINEAR (lab owed); ARexx SOLVE; Undo. Not yet: answer and sensitivity reports, keeping answers as scenarios, an evolutionary engine |
+| Scenarios | Done | C3 | Add, show, update, delete; up to 32 a sheet, 32 ranges and 2048 cells each; a formula kept as its value, as Excel keeps it; ranges follow row and column edits; ODS `table:scenario` tables and XLSX `scenarios` both ways; ARexx SCENARIO; Undo; the shown scenario framed on the sheet with its name in a tab, whose drop-down shows another (lab owed). Not yet: a summary report, protection |
 | Consolidate | Done | C4 | Up to 16 sources on any sheets; the eleven functions; by position or by row labels, column labels or both (case aside, labels in first-seen order); linked (formulas over the sources) or values; settings kept on the sheet for the window; ARexx CONSOLIDATE; Undo; a source picked from the named ranges or typed as a name. Data > Refresh Consolidation (ARexx CONSOLIDATE REFRESH) runs it again over the sources as they are now: sources typed as ranges and the table follow rows and columns put in or taken out, so it grows and shrinks with them. |
 | Named-range and database-range manager, advanced filter | Done (most) | C5 | Manage Names: list, add, change (name, formula, scope in one step; uses follow a rename), delete; ARexx NAMES, NAMEDEFINE, NAMERENAME, NAMEDELETE. Advanced filter: criteria range (AND across, OR down; <, <=, >, >=, <>, =, begins-with, wildcards), in place or copied to any sheet, unique rows; ARexx ADVFILTER; Undo. Not yet: database ranges as their own objects (a named range serves), criteria formulas (=C2>AVERAGE(C:C)), a rename followed into charts, validation and conditional formats |
 | Automatic data-table (Multiple Operations) recalc | Done (most) | C6 | Every table worked out again after each change (edits, Undo, Redo, ARexx), no Undo step of its own; ARexx MULTIOP. Past 4096 results or 20,000 cells they are worked out a few at a time while the program is idle, each table of up to 1024 results (a bigger one: Refresh by hand). Not yet: tables as true formula arrays (MULTIPLE.OPERATIONS) in ODS |
@@ -39,7 +40,44 @@ working. Phase 1's target is 74%.
 | Colour scales, data bars, icon sets | Done | C9 | Colour scales (two or three colours) as before; data bars drawn in each cell from its lowest number to its highest (Excel's 10% to 90%, or the file's lengths), in any colour, the number shown or not; Excel's 17 icon sets drawn (arrows, grey arrows, traffic lights, signs, symbols and flags as lights, red to black, ratings as signal bars, quarters as greys), reversed or not, the number shown or not; added from Format > Conditional Format ("bar blue", "icons 3Arrows reverse only") and ARexx CONDFMT; kept in XLSX and ODS (show-value both ways, reverse in GFOffice's own attribute); Undo. Not yet: negative bars from an axis, gradient bars, the icons' own pictures (the shapes stand for them), Excel 2010's extensions (kept out) |
 | Sheet and cell protection | Done | C8 | Protect a sheet with or without a password (Excel's 16-bit hash) and Excel's options (format cells, columns, rows; insert and delete rows and columns; sort...); cells locked unless made unlocked, formulas hidden; typing, clearing, pasting, cutting, filling, formatting, merging, sorting and row and column changes refused where they would change locked cells or what the sheet does not allow; Sheet menu and ARexx PROTECT, UNPROTECT, CELLPROTECT, ISPROTECTED; XLSX sheetProtection and xf protection, ODS table:protected and style:cell-protect both ways; workbook structure protection (no sheet added, duplicated, deleted, renamed, moved, hidden or shown; optional password; XLSX workbookProtection and ODS table:structure-protected both ways). Sheet > Protect Workbook and ARexx PROTECTBOOK, UNPROTECTBOOK, ISBOOKPROTECTED (lab owed). Not yet: ranges with their own passwords, an ODS password from LibreOffice or an XLSX SHA-512 one checked (kept and written back, not checked) |
 
-## The 16 November re-score
+## Phase 3 features
+
+| Feature | Status | Deliverable | Notes |
+| --- | --- | --- | --- |
+| Links to other workbooks | Done (most) | Gap 2 | Formulas on other workbooks' cells read and kept in XLSX and ODS both ways with the values last seen; a missing file shows the last values, not an error; Data > Edit Links... and ARexx LINKS/UPDATELINK update them from their files, one Undo step (lab owed). Not yet: databases and web pages as sources, refresh on open |
+| Tracked changes in sheets | Gap | Gap 3 | Core in review (#335); the Track Changes menu, Manage Changes window and ARexx are ready to open after it; XLSX and ODS next. Not scored until merged |
+| Macro recorder | Gap | - | The ARexx port covers the menus; recording a session as a script does not exist yet |
+
+## The second 16 November re-score
+
+Scored against gfoffice main 9bbbf25 (Dale's 11:01 ask), the same way as
+the 9 November gap analysis. Only merged work counts.
+
+- Pivot tables: subtotals under row items and after column items, Show
+  Pivot Details, and the per-field sorts, hidden items, groups and "show
+  data as" chosen in the layout window and ARexx PIVOTSET (+1.2; the
+  window's choices are lab owed).
+- Links to other workbooks: kept in both formats with their last values,
+  used by formulas, and updated from Edit Links or ARexx (+1.2). Databases
+  and web sources are still missing.
+- The Nonlinear Solver: smooth models that are not linear, chosen in the
+  window or ARexx and kept as Excel's GRG Nonlinear (+0.8).
+- Refresh Consolidation with tables that grow with their sources (+0.3),
+  workbook structure protection (+0.3), the scenario tab's drop-down (+0.1).
+
+Waiting to merge, not scored: the tracked-changes core (#335) and its
+window and ARexx (branch team2/calc-track-window-20261116, opens after it).
+
+Top three gaps by workflow weight:
+
+1. Sharing and review: tracked changes in sheets: recording, the list to
+   accept or reject, and XLSX and ODS (core and window waiting to merge;
+   the files are next).
+2. External data: a database or a web page as a source, refreshed on open
+   (other workbooks are in).
+3. A macro recorder: a session's menu actions kept as an ARexx script.
+
+## The first 16 November re-score
 
 Scored against gfoffice main 72b77cb, the same way as the 9 November gap
 analysis: an ordinary user finishing OpenOffice Calc's documented
