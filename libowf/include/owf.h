@@ -231,7 +231,14 @@ typedef struct {
      * text:notes-configuration): an owf_note_format (OWF_NOTE_FORMAT_DEFAULT: the kind's own, footnotes 1, 2,
      * endnotes i, ii) and the first number (0 or 1: 1) */
     int note_format[2], note_start[2];
+    /* 1.12.3: where each kind's numbers start again (DOCX's w:numRestart, ODF's text:start-numbering-at): an
+     * owf_note_restart. Endnotes can't start again on each page (Word's rule): they run on. */
+    int note_restart[2];
 } owf_page;
+
+/* 1.12.3: where a kind of note's numbering starts again: never (through the document), at each section's start
+ * (owf_para.section_columns), on each page (footnotes only) */
+typedef enum { OWF_NOTE_RESTART_CONTINUOUS, OWF_NOTE_RESTART_SECTION, OWF_NOTE_RESTART_PAGE, OWF_NOTE_RESTART_COUNT } owf_note_restart;
 
 /* 1.12.1: a kind of note's numbers. Symbols are Word's Chicago style: *, dagger, double dagger, section, then
  * doubled (**), and so on. Letters run a to z, then aa to zz (as Word does). */
@@ -319,7 +326,8 @@ typedef struct owf_format_change {
  * (owf_run.comment); one with a range has a run where the range starts too. A changed comment (its text, done)
  * is a new one that its runs name instead. ODT's office:annotation and DOCX's comments come in and go out as
  * these; other formats leave them out, but for "pdf-comments" (1.10.1), the PDF with a raised mark where each is
- * and the comments listed after the text. Its size never changes (owf_struct_size doesn't list it). (owf_comment
+ * and the comments listed after the text, and "pdf-comments-margin" (1.12.1), the same marks with each comment
+ * in a note beside its line. Its size never changes (owf_struct_size doesn't list it). (owf_comment
  * is a spreadsheet cell's.) */
 typedef struct owf_annotation {
     char *author;            /* UTF-8; NULL: unknown */
@@ -721,6 +729,13 @@ typedef struct owf_book {
     int active;                  /* the sheet shown first */
     int nparts, capparts;        /* owf.library 2.1: parts kept as they were (a sheet's drawing...) */
     owf_part *parts;
+    /* owf.library 2.6: the workbook's structure protected (no sheet added, deleted, renamed, moved, hidden or
+       shown), as Excel's workbookProtection lockStructure and ODF's table:structure-protected */
+    int protect_structure;
+    char *protect_hash;          /* Excel's 16-bit password hash as 4 hex digits, or NULL: no password */
+    char *protect_kept;          /* a hash libowf cannot check, as its file wrote it: "xlsx:" and the workbook*
+                                    hash attributes, or "ods:" the digest algorithm's URI, a space and
+                                    table:protection-key; or NULL */
 } owf_book;
 
 owf_book *owf_book_new(void);

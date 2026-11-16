@@ -116,7 +116,8 @@ unsigned long oc_core_changes(const oc_core *core);
 int oc_core_sheet(const oc_core *core);             /* the sheet showing */
 int oc_core_set_sheet(oc_core *core, int sheet);    /* OWF_OK or OWF_ERR_UNSUPPORTED */
 /* Adds a sheet after the one showing and shows it; name NULL: "SheetN".
- * The new sheet's index, or -1 when memory runs out. Undoable. */
+ * The new sheet's index, or -1 when memory runs out or the workbook's
+ * structure is protected. Undoable. */
 int oc_core_add_sheet(oc_core *core, const char *name);
 /* Renames a sheet; formulas and names that refer to it follow. OWF_OK,
  * OWF_ERR_FORMAT (an empty name, one with []:*?/\ or one another sheet
@@ -343,6 +344,16 @@ int oc_core_unprotect_sheet(oc_core *core, const char *password);
 /* 1 when the active sheet is protected; what it allows and whether it has a password. */
 int oc_core_sheet_protection(const oc_core *core, unsigned *allow, int *has_password);
 int oc_core_set_cell_protection(oc_core *core, int locked, int formula_hidden);
+/* The workbook's structure: while it is protected no sheet is added,
+ * duplicated, deleted, renamed, moved, hidden or shown, nor a pivot table
+ * made on a new sheet (OC_PROTECTED, and -1 from oc_core_add_sheet). The password is kept and checked as a sheet's.
+ * Not an Undo step, and Undo leaves it as it is; protecting clears Undo
+ * and Redo, so none brings back what it keeps out. OWF_ERR_UNSUPPORTED:
+ * already protected (not protected). */
+int oc_core_protect_book(oc_core *core, const char *password);
+int oc_core_unprotect_book(oc_core *core, const char *password);
+/* 1 when the workbook's structure is protected; whether it has a password. */
+int oc_core_book_protection(const oc_core *core, int *has_password);
 /* Excel's 16-bit hash of a password (0 for none). */
 unsigned oc_password_hash(const char *password);
 

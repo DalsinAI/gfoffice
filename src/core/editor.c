@@ -3239,7 +3239,8 @@ static void editor_number_notes(const owf_doc *doc, char (*marks)[16])
     for (i = 0; i < doc->nnotes; ++i) marks[i][0] = 0;
     for (n = 0; n < 5 + doc->nframes; ++n) {
         const owf_story *st = n < 5 ? stories[n] : &doc->frames[n - 5].story;
-        for (i = 0; i < st->nparas; ++i)
+        for (i = 0; i < st->nparas; ++i) {
+            owf_note_section_restart_impl(doc, st, i, count);   /* libowf 1.12.3: again at each section */
             for (j = 0; j < st->paras[i].nruns; ++j) {
                 int m = st->paras[i].runs[j].note, number;
                 const owf_note *note;
@@ -3250,6 +3251,7 @@ static void editor_number_notes(const owf_doc *doc, char (*marks)[16])
                 owf_note_format_impl(owf_note_kind_format_impl(doc, note->endnote), note->endnote, number,
                                      marks[m - 1], sizeof marks[m - 1]);
             }
+        }
     }
 }
 
@@ -3275,6 +3277,26 @@ int ow_editor_set_note_numbering(ow_editor *editor, int endnote, int format, int
     if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
     pg->note_format[k] = format;
     pg->note_start[k] = start;
+    edit_done(editor);
+    return OWF_OK;
+}
+
+int ow_editor_note_restart(const ow_editor *editor, int endnote)
+{
+    if (!editor || !editor->doc) return OWF_NOTE_RESTART_CONTINUOUS;
+    return owf_note_kind_restart_impl(editor->doc, endnote);
+}
+
+int ow_editor_set_note_restart(ow_editor *editor, int endnote, int restart)
+{
+    int k = endnote ? 1 : 0;
+    if (!editor || !editor->doc || restart < OWF_NOTE_RESTART_CONTINUOUS || restart >= OWF_NOTE_RESTART_COUNT ||
+        (k && restart == OWF_NOTE_RESTART_PAGE))
+        return OWF_ERR_FORMAT;
+    if (owf_note_kind_restart_impl(editor->doc, k) == restart) return OWF_OK;
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+    editor->doc->page.note_restart[k] = restart;
     edit_done(editor);
     return OWF_OK;
 }

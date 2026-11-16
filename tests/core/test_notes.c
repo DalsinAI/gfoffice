@@ -810,6 +810,135 @@ static void test_formatted(void)
     owf_doc_free(doc);
 }
 
+/* libowf 1.12.3: numbered again on each page (footnotes) or at each section, through DOCX and ODT */
+static void test_restart(void)
+{
+    owf_doc *doc = doc_of(100), *back = NULL;
+    ow_editor *ed = doc ? ow_editor_new(doc) : NULL;
+    ow_layout *l;
+    ow_note_info info;
+    char mark[16];
+    int later = -1, j, k;
+    CHECK(ed != NULL, "editor");
+    if (!ed) { owf_doc_free(doc); return; }
+    caret_end(ed, 0);
+    ow_editor_insert_note(ed, 0, "The first footnote.");
+    caret_end(ed, 1);
+    ow_editor_insert_note(ed, 0, "The second footnote.");
+    caret_end(ed, 40);
+    ow_editor_insert_note(ed, 0, "A footnote further on.");
+    caret_end(ed, 99);
+    ow_editor_insert_note(ed, 1, "An endnote.");
+    CHECK(ow_editor_note_restart(ed, 0) == OWF_NOTE_RESTART_CONTINUOUS, "through at first");
+    CHECK(ow_editor_set_note_restart(ed, 1, OWF_NOTE_RESTART_PAGE) == OWF_ERR_FORMAT, "endnotes never on each page");
+    CHECK(ow_editor_set_note_restart(ed, 0, OWF_NOTE_RESTART_COUNT) == OWF_ERR_FORMAT, "no such restart");
+    /* through: the later page's footnote is 3 */
+    l = ow_layout_new(doc, measure, NULL);
+    for (j = 0; l && j < doc->body.paras[40].nruns; ++j)
+        if (doc->body.paras[40].runs[j].note) later = page_of_run(l, 40, j);
+    CHECK(later > 0, "the third on a later page");
+    {
+        ol_unit x, y;
+        ol_document *feet = l && later > 0 ? ow_layout_footnotes(l, later, &x, &y) : NULL;
+        CHECK(feet && op_with(feet, "3"), "numbered through: 3");
+        if (feet) ol_document_free(feet);
+    }
+    ow_layout_free(l);
+    /* on each page: 1, 2 on the first page, 1 again on the later one */
+    CHECK(ow_editor_set_note_restart(ed, 0, OWF_NOTE_RESTART_PAGE) == OWF_OK &&
+          ow_editor_note_restart(ed, 0) == OWF_NOTE_RESTART_PAGE, "footnotes again on each page");
+    l = ow_layout_new(doc, measure, NULL);
+    CHECK(l != NULL, "laid out");
+    if (l) {
+        ol_unit x, y;
+        ol_document *first = ow_layout_footnotes(l, 0, &x, &y), *feet = later > 0 ? ow_layout_footnotes(l, later, &x, &y) : NULL;
+        CHECK(first && op_with(first, "1") && op_with(first, "2"), "1 and 2 on the first page");
+        CHECK(feet && op_with(feet, "1") && !op_with(feet, "3"), "1 again on the later page");
+        if (first) ol_document_free(first);
+        if (feet) ol_document_free(feet);
+        ow_layout_free(l);
+    }
+    /* DOCX: w:numRestart, last in w:footnotePr; endnotes at each section */
+    CHECK(ow_editor_set_note_restart(ed, 1, OWF_NOTE_RESTART_SECTION) == OWF_OK, "endnotes again at each section");
+    {
+        const owf_format *docx = owf_format_named("docx");
+        unsigned char *data = NULL;
+        size_t length = 0;
+        CHECK(docx && docx->export(doc, &data, &length, NULL) == OWF_OK && data, "written");
+        if (data) {
+            CHECK(part_count(data, length, "word/document.xml",
+                             "<w:footnotePr><w:numRestart w:val=\"eachPage\"/></w:footnotePr>") == 1, "eachPage");
+            CHECK(part_count(data, length, "word/document.xml",
+                             "<w:endnotePr><w:numRestart w:val=\"eachSect\"/></w:endnotePr>") == 1, "eachSect");
+            CHECK(owf_import_memory(data, length, NULL, &back, NULL, NULL) == OWF_OK && back, "read back");
+            if (back) {
+                CHECK(back->page.note_restart[0] == OWF_NOTE_RESTART_PAGE &&
+                      back->page.note_restart[1] == OWF_NOTE_RESTART_SECTION, "DOCX: back the same");
+                owf_doc_free(back);
+                back = NULL;
+            }
+            free(data);
+        }
+    }
+    /* ODT: text:start-numbering-at="page"; ODF has no sections' restart: through, and the report says so */
+    {
+        const owf_format *odt = owf_format_named("odt");
+        unsigned char *data = NULL;
+        size_t length = 0;
+        owf_report *rp = owf_report_new();
+        CHECK(odt && odt->export(doc, &data, &length, rp) == OWF_OK && data, "ODT written");
+        if (data) {
+            CHECK(part_count(data, length, "styles.xml", "text:start-numbering-at=\"page\"") == 1, "page in ODT");
+            CHECK(owf_import_memory(data, length, NULL, &back, NULL, NULL) == OWF_OK && back, "ODT read back");
+            if (back) {
+                CHECK(back->page.note_restart[0] == OWF_NOTE_RESTART_PAGE &&
+                      back->page.note_restart[1] == OWF_NOTE_RESTART_CONTINUOUS, "ODT: page kept, section through");
+                owf_doc_free(back);
+                back = NULL;
+            }
+            free(data);
+        }
+        {
+            int n, found = 0, times;
+            owf_note_level lv;
+            const char *t;
+            for (n = 0; rp && (t = owf_report_note(rp, n, &lv, &times)) != NULL; ++n)
+                if (strstr(t, "each section")) found = 1;
+            CHECK(found, "ODT's report: sections");
+        }
+        owf_report_free(rp);
+    }
+    /* undone: through again */
+    ow_editor_undo(ed);
+    ow_editor_undo(ed);
+    CHECK(ow_editor_note_restart(ed, 0) == OWF_NOTE_RESTART_CONTINUOUS &&
+          ow_editor_note_restart(ed, 1) == OWF_NOTE_RESTART_CONTINUOUS, "undone");
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+
+    /* at each section: the second section's notes from 1 again, in the libowf, editor and layout marks */
+    doc = doc_of(4);
+    ed = doc ? ow_editor_new(doc) : NULL;
+    CHECK(ed != NULL, "editor");
+    if (!ed) { owf_doc_free(doc); return; }
+    for (k = 0; k < 4; ++k) {
+        caret_end(ed, k);
+        ow_editor_insert_note(ed, 0, "A note.");
+    }
+    doc->body.paras[2].section_columns = 1;          /* a section starts at the third paragraph */
+    CHECK(ow_editor_set_note_restart(ed, 0, OWF_NOTE_RESTART_SECTION) == OWF_OK, "again at each section");
+    for (k = 0; k < 4; ++k) {
+        int m = note_in(doc, k);
+        const char *want = k == 0 || k == 2 ? "1" : "2";
+        owf_note_mark_text(doc, m, mark, sizeof mark);
+        CHECK(!strcmp(mark, want), mark);
+        CHECK(ow_layout_note_mark(doc, m, mark, sizeof mark) && !strcmp(mark, want), mark);
+        CHECK(ow_editor_note_info(ed, k, &info) && !strcmp(info.mark, want), info.mark);
+    }
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+}
+
 int main(void)
 {
     static const char *const rtf[] = { "{\\footnote", "\\ftnalt", "See the manual.", "\\par Page 4.", "Ends & notes." };
@@ -830,6 +959,7 @@ int main(void)
     test_pages();
     test_numbering();
     test_formatted();
+    test_restart();
     printf("notes: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

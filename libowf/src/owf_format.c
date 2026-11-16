@@ -107,6 +107,7 @@ static const owf_format *const formats[] = {
     &owf_format_html,
     &owf_format_pdf,
     &owf_format_pdf_comments,                        /* 1.10.1: after pdf, so a .pdf name picks pdf */
+    &owf_format_pdf_comments_margin,                 /* 1.12.1 */
     &owf_format_ftxt,
     &owf_format_prowrite,
     &owf_format_wordworth,
@@ -242,7 +243,7 @@ int owf_export_file(const owf_doc *doc, const char *path, const char *format, ow
         return OWF_ERR_UNSUPPORTED;
     if (f == &owf_format_pdf && owf_doc_has_comments(doc))                 /* 1.10.1 */
         owf_report_add(report, OWF_NOTE_LOST, "Comments were left out: pdf-comments keeps them");
-    else if (f != &owf_format_odt && f != &owf_format_docx && f != &owf_format_pdf_comments &&
+    else if (f != &owf_format_odt && f != &owf_format_docx && f != &owf_format_pdf_comments && f != &owf_format_pdf_comments_margin &&
              owf_doc_has_comments(doc))
         owf_report_add(report, OWF_NOTE_LOST, "Comments were left out: %s has none", f->description);  /* 1.6 */
     if (f != &owf_format_odt && f != &owf_format_docx && owf_doc_has_changes(doc)) {
