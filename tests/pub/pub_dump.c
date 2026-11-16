@@ -69,6 +69,8 @@ static void put_story(const owf_doc *res, const owf_story *story, const char *in
             }
         }
         printf("\"\n");
+        if (p->table_id >= 0)
+            printf("%s  cell row %d column %d of %d\n", indent, p->table_row, p->table_col, p->table_cols);
         if (p->fmt.align != OWF_ALIGN_LEFT)
             printf("%s  align %s\n", indent, p->fmt.align == OWF_ALIGN_CENTRE ? "centre" :
                    p->fmt.align == OWF_ALIGN_RIGHT ? "right" : "justify");

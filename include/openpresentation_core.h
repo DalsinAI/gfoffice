@@ -195,6 +195,17 @@ typedef struct {
 } opr_spell_mark;
 int opr_spell_marks(const owf_deck *deck, struct ow_spell *spell, int slide, int obj, const opr_pos *caret,
                     opr_spell_mark *marks, int max_marks);
+/* ARexx SPELL, args being what follows the command word:
+ *   SPELL [COUNT]       how many misspelt words the deck has
+ *   SPELL LIST          one line each, "slide object word" counted from 1
+ *                       ("slide NOTES word" for the notes), as many as fit
+ *   SPELL CHECK word    1 when it is spelt right, else 0
+ *   SPELL SUGGEST word  the suggestions, a space between
+ *   SPELL ADD word      into the user's word list (saved)
+ *   SPELL IGNORE word   passed until the dictionary is closed
+ * The answer, or the reason, goes in out; the return is ARexx's code: 0,
+ * 5 with no dictionary, 10 for a bad command, 20 for no memory. */
+int opr_spell_rexx(const owf_deck *deck, struct ow_spell *spell, const char *args, char *out, size_t size);
 /* Delete exactly the selected characters and paragraph separators. Both ends
  * collapse to the start. The caller owns the Undo snapshot, as for typing. */
 int opr_text_delete_selection(owf_deck *deck, int slide, int obj,

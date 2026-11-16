@@ -103,6 +103,10 @@ void owf_obj_clear(owf_obj *obj)
     free(obj->alt);
     free(obj->flow_next);
     free(obj->xml_id);
+    if (obj->chart) {
+        owf_chart_clear(obj->chart);
+        free(obj->chart);
+    }
     memset(obj, 0, sizeof *obj);
     obj->parent = -1;
     obj->flow_story = -1;
@@ -281,8 +285,17 @@ int owf_obj_copy(owf_obj *to, const owf_obj *from)
     to->name = NULL;
     to->alt = NULL;
     to->flow_next = NULL;
+    to->chart = NULL;
     if (story_copy(&to->text, &from->text) < 0)
         goto fail;
+    if (from->chart) {
+        if (!(to->chart = malloc(sizeof *to->chart))) goto fail;
+        if (owf_chart_copy(to->chart, from->chart) != OWF_OK) {
+            free(to->chart);
+            to->chart = NULL;
+            goto fail;
+        }
+    }
     if (from->points && from->npoints > 0) {
         if ((size_t)from->npoints > (size_t)-1 / (2 * sizeof *from->points)) goto fail;
         n = (size_t)from->npoints * 2 * sizeof *from->points;

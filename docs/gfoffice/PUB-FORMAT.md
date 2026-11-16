@@ -398,6 +398,24 @@ and that many UTF-16 characters [V 7: all their addresses]. A place in the
 publication is one character (0x010A in Sample) [H: the page's chunk
 number]; the reader keeps those links' words as plain text for now.
 
+### 6.8 Table cells: `TCD ` [V 4: Sample, Sample98 and Sample2000's 3 x 2 table, govdocs1-923566's 4 x 2 contents table]
+
+`TCD ` n (a `PLC` chunk, its name ending in a space) says which of story n's
+paragraphs go in which cell of the table whose text it is:
+
+| Offset | What |
+|---|---|
+| 0x00 | u32 n: the cells less one |
+| 0x04, 0x08 | u32 0, u32 0xFF00 [unknown] |
+| 0x0C | n + 1 u32: each cell's last character in the story, its last paragraph's mark; the last cell's is the story's length |
+
+A paragraph is in the cell whose end is the first at or after its start.
+Cells go across a row, then down: Sample's six paragraphs are "Table on
+page 2" and "Top right", then "P2 table left" and "P2 table right", then
+"Bottom Left" and "Bottom Right", the 2 x 3 its thumbnail shows; the
+table's chunk (0x67, 5.3) gives the columns. The 98 and 2000 forms have the
+same chunk. Merged cells: not seen yet.
+
 ## 7. The drawing: `Escher/EscherStm`
 
 ### 7.1 Records [V 24]
@@ -546,8 +564,7 @@ path in section 5.1.
   and colour in `FDPC` (6.4).
 - A frame's own text columns (none of the samples has one: their columns
   are linked frames, 5.3), text wrap (5.3's 0x47 is a guess), layering beyond the back-to-front order, rotation and flips.
-- Tables' cell borders, merged cells, and which paragraph goes in which cell
-  (`TCD `).
+- Tables' cell borders and merged cells.
 - Master pages' own frames (the samples' masters are empty), headers and
   footers, page numbers.
 - Links to places in the publication (6.7), fields, catalog and mail-merge
