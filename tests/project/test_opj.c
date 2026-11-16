@@ -1148,6 +1148,142 @@ static void test_view_lines(void)
     opj_doc_free(doc);
 }
 
+/* Work, Actual Work, Remaining Work, Cost and Actual Cost: worked out, a summary's from its subtasks. */
+static void test_work_columns(void)
+{
+    opj_doc *doc = three();
+    long v;
+    int na;
+    CHECK_S(opj_column_title(OPJ_COL_WORK), "Work");
+    CHECK_S(opj_column_title(OPJ_COL_REMAINING_WORK), "Remaining Work");
+    CHECK_S(opj_column_title(OPJ_COL_ACTUAL_COST), "Actual Cost");
+    CHECK(!opj_column_typed(OPJ_COL_ACTUAL_WORK));
+    CHECK_N(opj_add_resource(doc, "Dale", NULL), OWF_OK);
+    CHECK_N(opj_set_resource_cell(doc, 0, OPJ_RCOL_RATE, "20"), OWF_OK);
+    CHECK_N(opj_set_assignment(doc, 0, 0, 100), OWF_OK);                   /* Dale on Plan, 2 days */
+    CHECK_S(cell_of(doc, 0, OPJ_COL_WORK), "16h");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_WORK), "0h");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_REMAINING_WORK), "16h");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_COST), "320.00");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_COST), "0.00");
+    CHECK_N(opj_set_percent(doc, 0, 50), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_WORK), "8h");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_REMAINING_WORK), "8h");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_COST), "160.00");
+    CHECK(opj_cell_value(doc, 0, OPJ_COL_ACTUAL_WORK, &v, &na) && v == 8 * 60 && !na);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_WORK), "0h");                          /* no one on Build */
+    /* a summary: its subtasks' added up */
+    CHECK_N(opj_insert_task(doc, 0, "Phase"), OWF_OK);
+    CHECK_N(opj_indent(doc, 1, 3, 1), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_WORK), "16h");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_WORK), "8h");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_REMAINING_WORK), "8h");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_COST), "160.00");
+    CHECK_N(opj_column_parse("Actual Work", 0), OPJ_COL_ACTUAL_WORK);
+    opj_doc_free(doc);
+}
+
+/* Update Tasks: % Complete, actual and remaining durations and actual dates, one edit. */
+static void test_update_task(void)
+{
+    opj_doc *doc = three();
+    unsigned long before;
+    /* Build, 3 days from Wed 18: a day done */
+    before = doc->changes;
+    CHECK_N(opj_update_task(doc, 1, NULL, "1d", NULL, NULL, NULL), OWF_OK);
+    CHECK_N(doc->changes, before + 1);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "33%");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_ACTUAL_START), "Wed 18/11/26");       /* started where it was */
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "3d");
+    /* both: 1 of 3 days */
+    CHECK_N(opj_update_task(doc, 1, NULL, "1d", "2d", NULL, NULL), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "3d");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "33%");
+    /* half done, then a day left: the duration becomes the actual (1.5 days) plus it */
+    CHECK_N(opj_update_task(doc, 1, "50", NULL, NULL, NULL, NULL), OWF_OK);
+    CHECK_N(opj_update_task(doc, 1, NULL, NULL, "1d", NULL, NULL), OWF_OK);
+    CHECK_N(doc->plan->tasks[1].duration, 20 * 60L);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "60%");
+    /* more done than planned: the task stretches to it, done, with an actual finish */
+    CHECK_N(opj_update_task(doc, 1, NULL, "4d", NULL, NULL, NULL), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "4d");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "100%");
+    CHECK(doc->plan->tasks[1].has_actual_finish);
+    /* nearly done never rounds to 100% */
+    CHECK_N(opj_update_task(doc, 1, NULL, "1000h", "1m", NULL, NULL), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "99%");
+    CHECK(!doc->plan->tasks[1].has_actual_finish);
+    /* an actual start, then % Complete, then an actual finish, in that order */
+    CHECK_N(opj_update_task(doc, 0, "0", NULL, NULL, NULL, NULL), OWF_OK);
+    CHECK_N(opj_update_task(doc, 0, "50", NULL, NULL, "Tue 17/11/26", NULL), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_START), "Tue 17/11/26");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_PERCENT), "50%");
+    CHECK_N(opj_update_task(doc, 0, "", "", "", "", "Thu 19/11/26"), OWF_OK);   /* "" leaves each alone */
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_FINISH), "Thu 19/11/26");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_PERCENT), "100%");
+    /* text a cell won't take: nothing changes, no edit */
+    before = doc->changes;
+    CHECK_N(opj_update_task(doc, 2, "50", "x", NULL, NULL, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_update_task(doc, 2, "150", NULL, NULL, NULL, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_update_task(doc, 2, NULL, NULL, NULL, "someday", NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_update_task(doc, 3, "50", NULL, NULL, NULL, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_update_task(NULL, 0, "50", NULL, NULL, NULL, NULL), OWF_ERR_FORMAT);
+    CHECK_N(doc->changes, before);
+    CHECK_S(cell_of(doc, 2, OPJ_COL_PERCENT), "0%");
+    /* Undo puts it back as one step */
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK(!doc->plan->tasks[0].has_actual_finish);
+    /* a summary takes only % Complete */
+    CHECK_N(opj_insert_task(doc, 0, "Phase"), OWF_OK);
+    CHECK_N(opj_indent(doc, 1, 3, 1), OWF_OK);
+    CHECK_N(opj_update_task(doc, 0, NULL, "1d", NULL, NULL, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_update_task(doc, 0, "40", NULL, NULL, NULL, NULL), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_PERCENT), "40%");
+    opj_doc_free(doc);
+}
+
+/* Progress lines at the status date: straight past a task done or not yet due, jagged to one under way. */
+static void test_progress_lines(void)
+{
+    opj_doc *doc = three();
+    opj_view v;
+    oldraw *d;
+    opj_bar b;
+    long sx, pt;
+    int changed;
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    v.progress_lines = 1;
+    CHECK(!opj_status_x(&v, doc, &sx));                                    /* no status date yet */
+    CHECK_N(opj_update_project(doc, AT(18, 12, 0), 0, &changed), OWF_OK);   /* Plan done, Build begun */
+    CHECK(opj_status_x(&v, doc, &sx));
+    CHECK_N(sx, opj_view_x(&v, AT(18, 12, 0)));
+    CHECK(!opj_progress_point(&v, doc, 0, &pt));                           /* Plan: done by then */
+    CHECK(opj_progress_point(&v, doc, 1, &pt));                            /* Build: as far as it has got */
+    CHECK(opj_bar_of(&v, doc, 1, &b));
+    CHECK_N(pt, b.bar.x + (long)b.bar.w * doc->plan->tasks[1].percent / 100);
+    CHECK(doc->plan->tasks[1].percent > 0 && pt > b.bar.x);
+    CHECK(!opj_progress_point(&v, doc, 2, &pt));                           /* Ship: not due yet */
+    CHECK(!opj_progress_point(&v, doc, 5, &pt));
+    CHECK_N(opj_set_percent(doc, 1, 0), OWF_OK);          /* started at 8:00 but 0% by 12:00: behind */
+    CHECK(opj_bar_of(&v, doc, 1, &b));
+    CHECK(opj_progress_point(&v, doc, 1, &pt) && pt == b.bar.x && pt < sx);
+    CHECK_N(opj_set_percent(doc, 1, 25), OWF_OK);
+    CHECK(opj_bar_of(&v, doc, 1, &b));
+    d = cur = oldraw_new(&ops, NULL, W, H, NULL);
+    CHECK(d != NULL);
+    memset(px, 0, sizeof px);
+    opj_draw(d, &v, doc, NULL);
+    CHECK_X(px[40][sx], 0xE02020);                                        /* straight down Plan's row */
+    CHECK_X(px[48 + 8][b.bar.x + b.bar.w / 4], 0xE02020);                 /* out to Build's point */
+    v.progress_lines = 0;
+    CHECK(!opj_status_x(&v, doc, &sx));
+    memset(px, 0, sizeof px);
+    opj_draw(d, &v, doc, NULL);
+    CHECK((px[40][opj_view_x(&v, AT(18, 12, 0))] & 0xFFFFFFUL) != 0xE02020UL);
+    oldraw_free(d);
+    opj_doc_free(doc);
+}
+
 /* Edit > Find and Replace on the task sheet, Find on the resource sheet. */
 static void test_find_replace(void)
 {
@@ -2311,6 +2447,9 @@ int main(void)
     test_find_replace();
     test_filter_group();
     test_view_lines();
+    test_work_columns();
+    test_update_task();
+    test_progress_lines();
     test_assign_dialog();
     test_print();
     test_pdf();

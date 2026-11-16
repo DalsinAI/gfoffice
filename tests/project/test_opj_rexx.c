@@ -616,6 +616,37 @@ static void test_filter_group(void)
     opj_lines_free(&lines);
 }
 
+/* UPDATETASK and PROGRESSLINES. */
+static void test_update_task(void)
+{
+    opj_view v;
+    opj_doc_free(rx.doc);
+    rx.doc = opj_doc_new(NULL, AT(16, 8, 0));
+    CHECK(rx.doc != NULL);
+    if (!rx.doc) return;
+    ok("ADDTASK Dig DURATION 4d");
+    ok("UPDATETASK 1 ACTUAL 1d");
+    CHECK_S(ok("GETCELL 1 Percent"), "25%");
+    ok("UPDATETASK 1 REMAINING 1d");
+    CHECK_S(ok("GETCELL 1 Duration"), "2d");
+    ok("UPDATETASK 1 PERCENT 100 FINISH 18/11/26");
+    CHECK_S(ok("GETCELL 1 ActualFinish"), "Wed 18/11/26");
+    ok("UNDO");
+    CHECK_S(ok("GETCELL 1 Percent"), "50%");
+    CHECK_N(rx_do("UPDATETASK 1 ACTUAL soon"), OPJ_RX_ERROR);
+    CHECK_N(rx_do("UPDATETASK 2 PERCENT 5"), OPJ_RX_ERROR);
+    CHECK_S(ok("GETCELL 1 Work"), "0h");
+    CHECK_N(rx_do("PROGRESSLINES ON"), OPJ_RX_NOW);                         /* no window */
+    opj_view_init(&v, rx.doc, 800, 200, 16, OPJ_ZOOM_DAYS);
+    rx.view = &v;
+    CHECK_S(ok("PROGRESSLINES"), "0");
+    CHECK_S(ok("PROGRESSLINES ON"), "1");
+    CHECK(v.progress_lines);
+    CHECK_S(ok("PROGRESSLINES OFF"), "0");
+    CHECK_N(rx_do("PROGRESSLINES ON OFF"), OPJ_RX_ERROR);
+    rx.view = NULL;
+}
+
 int main(void)
 {
     if (!own_folder()) {
@@ -638,6 +669,7 @@ int main(void)
     test_level();
     test_sort_find();
     test_filter_group();
+    test_update_task();
     if (!rx.doc) return 1;
     CHECK_N(opj_rexx_format("A.XML"), OWF_PFILE_MSPDI);
     CHECK_N(opj_rexx_format("plan.Csv"), OWF_PFILE_CSV);

@@ -25,7 +25,7 @@ enum {
     C_HELP, C_LASTERROR, C_ISDIRTY, C_GETFILE, C_NEW, C_OPEN, C_SAVE, C_SAVEAS, C_EXPORT, C_TASKS, C_ADDTASK,
     C_DELETETASK, C_GETCELL, C_SETCELL, C_INDENT, C_OUTDENT, C_LINK, C_UNLINK, C_UNDO, C_REDO, C_BASELINE,
     C_RESOURCES, C_ADDRESOURCE, C_DELETERESOURCE, C_GETRESOURCE, C_SETRESOURCE, C_ASSIGN, C_USAGE, C_FINISH,
-    C_CRITICAL, C_COLUMN, C_CALENDARS, C_ADDCALENDAR, C_WORKTIME, C_SETCALENDAR, C_UPDATE, C_BASELINES, C_REPLACE, C_LEVEL, C_CLEARLEVELING, C_SORT, C_FIND, C_REPLACETEXT, C_FILTER, C_GROUP, C_LINES, C_LINE, NCOMMANDS
+    C_CRITICAL, C_COLUMN, C_CALENDARS, C_ADDCALENDAR, C_WORKTIME, C_SETCALENDAR, C_UPDATE, C_BASELINES, C_REPLACE, C_LEVEL, C_CLEARLEVELING, C_SORT, C_FIND, C_REPLACETEXT, C_FILTER, C_GROUP, C_LINES, C_LINE, C_UPDATETASK, C_PROGRESSLINES, NCOMMANDS
 };
 
 static const command commands[NCOMMANDS] = {
@@ -76,6 +76,8 @@ static const command commands[NCOMMANDS] = {
     { "GROUP", "BY/K,DESC/S" },
     { "LINES", "" },
     { "LINE", "LINE/A/N" },
+    { "UPDATETASK", "ROW/A/N,PERCENT/K,ACTUAL/K,REMAINING/K,START/K,FINISH/K" },
+    { "PROGRESSLINES", "ON/S,OFF/S" },
 };
 
 /* ---- Words ---- */
@@ -754,6 +756,21 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         return OPJ_RX_OK;
     }
     case C_FILTER: case C_GROUP: case C_LINES: case C_LINE: return run_lines(rx, c, a, result, size);
+    case C_UPDATETASK:
+        return edit_rc(rx, opj_update_task(doc, (int)row, a->value[1], a->value[2], a->value[3], a->value[4], a->value[5]),
+                       "UPDATETASK");
+    case C_PROGRESSLINES:
+        if (!rx->view) {
+            put(rx->lasterror, sizeof rx->lasterror, "PROGRESSLINES: there is no window to draw them in");
+            return OPJ_RX_NOW;
+        }
+        if (a->value[0] && a->value[1]) {
+            put(rx->lasterror, sizeof rx->lasterror, "PROGRESSLINES: ON or OFF, not both");
+            return OPJ_RX_ERROR;
+        }
+        if (a->value[0] || a->value[1]) rx->view->progress_lines = a->value[0] != NULL;
+        put(result, size, rx->view->progress_lines ? "1" : "0");
+        return OPJ_RX_OK;
     case C_COLUMN:
         if ((col = find_column(a->value[0], 0)) < 0) {
             snprintf(rx->lasterror, sizeof rx->lasterror, "COLUMN: no column %s", a->value[0]);
