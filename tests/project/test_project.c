@@ -438,6 +438,96 @@ static void test_baseline(void)
     owf_project_free(p);
 }
 
+/* Tracking: actual dates pin a task where it really ran; Update Project brings work up to a status date.
+ * A 3-day task A (Mon 16 to Wed 18), B (2 days) after it, C (1 day) after B, and a summary over them. */
+static void test_actuals(void)
+{
+    owf_project *p = plan();
+    int ph = owf_project_add_task(p, "Phase", 0), a = owf_project_add_task(p, "A", 3 * D);
+    int b = owf_project_add_task(p, "B", 2 * D), c = owf_project_add_task(p, "C", D);
+    TASK(p, a)->level = TASK(p, b)->level = TASK(p, c)->level = 2;
+    owf_project_link(p, a, b, OWF_LINK_FS, 0, 0);
+    owf_project_link(p, b, c, OWF_LINK_FS, 0, 0);
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    CHECK_T(TASK(p, b)->early_start, AT(19, 8, 0));
+    /* Wrong ones are refused: a summary, out of range, a finish with no start or before the start. */
+    CHECK_N(owf_project_set_actual(p, ph, 1, AT(16, 8, 0), 0, 0), OWF_ERR_FORMAT);
+    CHECK_N(owf_project_set_actual(p, 9, 1, AT(16, 8, 0), 0, 0), OWF_ERR_FORMAT);
+    CHECK_N(owf_project_set_actual(p, a, 0, 0, 1, AT(17, 17, 0)), OWF_ERR_FORMAT);
+    CHECK_N(owf_project_set_actual(p, a, 1, AT(17, 8, 0), 1, AT(16, 17, 0)), OWF_ERR_FORMAT);
+    CHECK(!TASK(p, a)->has_actual_start && TASK(p, a)->percent == 0);
+    /* A really started a day late (Tue 08:00): it and everything after it move a day, whatever the links. */
+    CHECK_N(owf_project_set_actual(p, a, 1, AT(17, 8, 0), 0, 0), OWF_OK);
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    CHECK_T(TASK(p, a)->early_start, AT(17, 8, 0));
+    CHECK_T(TASK(p, a)->early_finish, AT(19, 17, 0));
+    CHECK_T(TASK(p, b)->early_start, AT(20, 8, 0));
+    CHECK_T(TASK(p, c)->early_start, AT(24, 8, 0));                  /* Fri, Mon, then Tue */
+    /* It finished early, Wed at noon: 100%, its duration the 1.5 days it took, B pulled back. */
+    CHECK_N(owf_project_set_actual(p, a, 1, AT(17, 8, 0), 1, AT(18, 12, 0)), OWF_OK);
+    CHECK_N(TASK(p, a)->percent, 100);
+    CHECK_N(TASK(p, a)->duration, 3 * D / 2);
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    CHECK_T(TASK(p, a)->early_finish, AT(18, 12, 0));
+    CHECK_T(TASK(p, b)->early_start, AT(18, 13, 0));
+    CHECK_N(owf_ptask_actual_duration(TASK(p, a)), 3 * D / 2);
+    CHECK_N(owf_ptask_remaining_duration(TASK(p, a)), 0);
+    /* Clearing them leaves the percent and the duration as they are, and the links rule again. */
+    CHECK_N(owf_project_set_actual(p, a, 0, 0, 0, 0), OWF_OK);
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    CHECK(!TASK(p, a)->has_actual_start && !TASK(p, a)->has_actual_finish);
+    CHECK_T(TASK(p, a)->early_start, AT(16, 8, 0));
+    owf_project_free(p);
+
+    /* Update Project through Thu 19 at 12:00, A 3 days from Mon, B 2 days from Thu, C from Mon 23. */
+    p = plan();
+    ph = owf_project_add_task(p, "Phase", 0);
+    a = owf_project_add_task(p, "A", 3 * D);
+    b = owf_project_add_task(p, "B", 2 * D);
+    c = owf_project_add_task(p, "C", D);
+    TASK(p, a)->level = TASK(p, b)->level = TASK(p, c)->level = 2;
+    owf_project_link(p, a, b, OWF_LINK_FS, 0, 0);
+    owf_project_link(p, b, c, OWF_LINK_FS, 0, 0);
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    CHECK_N(owf_project_update(p, AT(19, 12, 0), 0), 2);             /* A done, B a quarter done; C, Phase not */
+    CHECK(p->has_status_date && p->status_date == AT(19, 12, 0));
+    CHECK(TASK(p, a)->has_actual_start && TASK(p, a)->has_actual_finish && TASK(p, a)->percent == 100);
+    CHECK_T(TASK(p, a)->actual_start, AT(16, 8, 0));
+    CHECK_T(TASK(p, a)->actual_finish, AT(18, 17, 0));
+    CHECK(TASK(p, b)->has_actual_start && !TASK(p, b)->has_actual_finish);
+    CHECK_T(TASK(p, b)->actual_start, AT(19, 8, 0));
+    CHECK_N(TASK(p, b)->percent, 25);                                /* 4 hours of 16 */
+    CHECK_N(owf_ptask_actual_duration(TASK(p, b)), 4 * 60);
+    CHECK_N(owf_ptask_remaining_duration(TASK(p, b)), 12 * 60);
+    CHECK(!TASK(p, c)->has_actual_start && TASK(p, c)->percent == 0);
+    CHECK(!TASK(p, ph)->has_actual_start);
+    /* Again at the same date changes nothing; a percent typed higher is never lowered. */
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    CHECK_N(owf_project_update(p, AT(19, 12, 0), 0), 0);
+    TASK(p, b)->percent = 60;
+    CHECK_N(owf_project_update(p, AT(19, 17, 0), 0), 0);             /* 50% by then: stays 60 */
+    CHECK_N(TASK(p, b)->percent, 60);
+    /* "0% or 100% only": C, started by Mon 23 at noon, gets its actual start and no percent. */
+    TASK(p, b)->percent = 0;
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    CHECK_N(owf_project_update(p, AT(23, 12, 0), 1), 2);             /* B finished, C started */
+    CHECK(TASK(p, b)->percent == 100 && TASK(p, b)->has_actual_finish);
+    CHECK(TASK(p, c)->has_actual_start && TASK(p, c)->percent == 0);
+    owf_project_free(p);
+    /* A task starting exactly at the status date hasn't started yet; a milestone there has happened. */
+    p = plan();
+    a = owf_project_add_task(p, "A", D);
+    b = owf_project_add_task(p, "Go", 0);
+    TASK(p, b)->milestone = 1;
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    CHECK_N(owf_project_update(p, AT(16, 8, 0), 0), 1);
+    CHECK(!TASK(p, a)->has_actual_start);
+    CHECK(TASK(p, b)->has_actual_finish && TASK(p, b)->percent == 100 && TASK(p, b)->duration == 0);
+    owf_project_free(p);
+    CHECK_N(owf_project_update(NULL, AT(16, 8, 0), 0), 0);
+    CHECK_N(owf_ptask_actual_duration(NULL), 0);
+}
+
 /* A milestone that becomes a summary and then a task again keeps the span it had, as MS Project does,
  * and so is no longer a milestone. */
 /* Hundreds of 10,000,000-unit assignments at once go past a 32-bit long: the peak stops at 2,000,000,000
@@ -492,6 +582,7 @@ int main(void)
     test_loop_and_holiday();
     test_resources();
     test_baseline();
+    test_actuals();
     test_summary_back_to_task();
     test_peak_cap();
     if (fails) {

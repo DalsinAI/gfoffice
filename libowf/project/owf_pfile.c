@@ -633,6 +633,7 @@ static int read_xml(const char *text, size_t length, owf_project **out)
     }
     if ((n = owf_xml_child(root, r.ns, "Title")) != NULL || (n = owf_xml_child(root, r.ns, "Name")) != NULL)
         p->title = text_dup(n, &failed);
+    if (child_text(&r, root, "StatusDate") && parse_time(r.buf, &p->status_date)) p->has_status_date = 1;
     if (child_long(&r, root, "MinutesPerDay", &v) && v > 0 && v <= 1440) p->minutes_per_day = v;
     if (child_long(&r, root, "MinutesPerWeek", &v) && v > 0 && v <= 10080) p->minutes_per_week = v;
 
@@ -699,6 +700,10 @@ static int read_xml(const char *text, size_t length, owf_project **out)
         if (child_long(&r, t, "CalendarUID", &v)) k->calendar = find_uid(cals, ncals, v);
         if (child_text(&r, t, "Start")) parse_time(r.buf, &k->early_start);
         if (child_text(&r, t, "Finish")) parse_time(r.buf, &k->early_finish);
+        if (child_text(&r, t, "ActualStart") && parse_time(r.buf, &k->actual_start)) k->has_actual_start = 1;
+        if (k->has_actual_start && child_text(&r, t, "ActualFinish") && parse_time(r.buf, &k->actual_finish) &&
+            k->actual_finish >= k->actual_start)
+            k->has_actual_finish = 1;
         read_baseline(&r, t, k);
         tasks[ntasks].uid = k->uid;
         tasks[ntasks].index = at;
@@ -844,6 +849,7 @@ static void write_xml(const owf_project *p, owf_buf *b, const char *ns)
     put_long(b, "ScheduleFromStart", 1);
     put_date(b, "StartDate", p->start);
     put_date(b, "FinishDate", p->finish);
+    if (p->has_status_date) put_date(b, "StatusDate", p->status_date);
     put_long(b, "CalendarUID", p->calendar + 1);
     put_long(b, "MinutesPerDay", p->minutes_per_day);
     put_long(b, "MinutesPerWeek", p->minutes_per_week);
@@ -874,6 +880,16 @@ static void write_xml(const owf_project *p, owf_buf *b, const char *ns)
         put_long(b, "Critical", t->critical ? 1 : 0);
         put_long(b, "PercentComplete", t->percent);
         if (t->cost) put_long(b, "Cost", t->cost);                      /* in cents */
+        /* MSPDI's order: the actuals and the remaining duration after Cost */
+        if (t->has_actual_start) put_date(b, "ActualStart", t->actual_start);
+        if (t->has_actual_finish) put_date(b, "ActualFinish", t->actual_finish);
+        if (!t->summary) {
+            owf_buf_puts(b, "<ActualDuration>");
+            put_iso_duration(b, owf_ptask_actual_duration(t));
+            owf_buf_puts(b, "</ActualDuration><RemainingDuration>");
+            put_iso_duration(b, owf_ptask_remaining_duration(t));
+            owf_buf_puts(b, "</RemainingDuration>");
+        }
         put_date(b, "EarlyStart", t->early_start);
         put_date(b, "EarlyFinish", t->early_finish);
         put_date(b, "LateStart", t->late_start);
