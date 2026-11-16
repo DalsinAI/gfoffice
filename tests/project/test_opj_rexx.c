@@ -505,6 +505,31 @@ static void test_replace(void)
     CHECK_S(ok("GETCELL 1 Resources"), "Bob[50%]");
 }
 
+/* LEVEL and CLEARLEVELING. */
+static void test_level(void)
+{
+    opj_doc_free(rx.doc);
+    rx.doc = opj_doc_new(NULL, AT(16, 8, 0));
+    CHECK(rx.doc != NULL);
+    if (!rx.doc) return;
+    ok("ADDTASK Dig DURATION 2d");
+    ok("ADDTASK Fill DURATION 1d");
+    ok("ADDRESOURCE Dale");
+    ok("ASSIGN 1 Dale");
+    ok("ASSIGN 2 Dale");
+    CHECK_S(ok("LEVEL WITHINSLACK"), "0");                                 /* Fill's day of slack isn't two */
+    CHECK_S(ok("GETCELL 2 Delay"), "0d");
+    CHECK_S(ok("LEVEL"), "1");
+    CHECK_S(ok("GETCELL 2 \"Leveling Delay\""), "2d");
+    CHECK_S(ok("GETCELL 2 Start"), "Wed 18/11/26");
+    ok("CLEARLEVELING");
+    CHECK_S(ok("GETCELL 2 leveldelay"), "0d");
+    ok("SETCELL 2 Delay 1d");
+    CHECK_S(ok("GETCELL 2 Start"), "Tue 17/11/26");
+    ok("UNDO");
+    CHECK_S(ok("GETCELL 2 Start"), "Mon 16/11/26");
+}
+
 int main(void)
 {
     if (!own_folder()) {
@@ -524,6 +549,7 @@ int main(void)
     test_update();
     test_baselines();
     test_replace();
+    test_level();
     if (!rx.doc) return 1;
     CHECK_N(opj_rexx_format("A.XML"), OWF_PFILE_MSPDI);
     CHECK_N(opj_rexx_format("plan.Csv"), OWF_PFILE_CSV);
