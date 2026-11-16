@@ -10,7 +10,8 @@
  *     is no longer found; a line, a hidden box and a placeholder showing its
  *     prompt are not checked; a clean deck says so;
  *   - one object's marks for the wavy underline as you type, the word at
- *     the caret (still being typed) left out, the notes' too.
+ *     the caret (still being typed) left out, the notes' too;
+ *   - Ignore All: the word passes from then on and is not saved.
  *
  * Prints what fails; exit 1 when anything did.
  * MIT, Copyright (c) 2026 AmiCradle Team.
@@ -153,6 +154,25 @@ static void test_marks(ow_spell *sp)
     CHECK(opr_notes_set(NULL, d, 0, "speker notes") == 0, "notes");
     n = opr_spell_marks(d, sp, 0, OPR_NOTES, NULL, m, 4);
     CHECK(n == 1 && m[0].start == 0 && m[0].end == 6, "the notes' marks: %d", n);
+    CHECK(ow_spell_ignore(sp, "MROE") && opr_spell_marks(d, sp, 0, obj, NULL, m, 4) == 2, "ignored in any case");
+    {
+        FILE *u = fopen(user_path, "r");
+        char buf[256];
+        size_t got = u ? fread(buf, 1, sizeof buf - 1, u) : 0;
+        if (u) fclose(u);
+        buf[got] = 0;
+        CHECK(!strstr(buf, "mroe") && strstr(buf, "wrld"), "ignored words are not saved, added ones are: %s", buf);
+    }
+    CHECK(!ow_spell_ignore(sp, "") && !ow_spell_ignore(NULL, "x"), "nothing to ignore");
+    CHECK(ow_spell_add(sp, "mroe"), "an ignored word added");
+    {
+        FILE *u = fopen(user_path, "r");
+        char buf[256];
+        size_t got = u ? fread(buf, 1, sizeof buf - 1, u) : 0;
+        if (u) fclose(u);
+        buf[got] = 0;
+        CHECK(strstr(buf, "mroe\n") != NULL, "an ignored word, added, is saved: %s", buf);
+    }
     d->slides[0].objs[obj].flags |= OWF_OBJ_EMPTY;
     CHECK(opr_spell_marks(d, sp, 0, obj, NULL, m, 4) == 0, "a prompt has none");
     CHECK(opr_spell_marks(d, sp, 0, 9, NULL, m, 4) == -1 && opr_spell_marks(d, sp, 3, 0, NULL, m, 4) == -1
