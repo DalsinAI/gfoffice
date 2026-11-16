@@ -110,6 +110,28 @@ check: diagram-check
 
 .PHONY: diagram-test diagram-check
 
+# The shapes' outlines (libowf/diagram/owf_dshape.c), shared by the canvas and the writers.
+$(OUT)/test-dshape: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dshape.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		tests/diagram/test_dshape.c -lz -o $@
+
+$(OUT)/test-dshape-asan: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dshape.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) tests/diagram/test_dshape.c -lz -o $@
+
+diagram-shape-test: $(OUT)/test-dshape
+	$(OUT)/test-dshape
+
+diagram-shape-check: $(OUT)/test-dshape-asan
+	$(OUT)/test-dshape-asan
+
+test: diagram-shape-test
+check: diagram-shape-check
+
+.PHONY: diagram-shape-test diagram-shape-check
+
 # Step D3: the editing core (src/diag): operations with Undo, ports and glue, orthogonal routing, snap.
 ODG_SRC = src/diag/odg_core.c
 ODG_DEPS = $(DIAG_DEPS) $(ODG_SRC) include/opendiag_core.h tests/diag/test_odg.c

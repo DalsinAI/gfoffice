@@ -168,6 +168,39 @@ char *owf_dlabel_text(const char *value, int html, size_t *length);
 /* The box round everything drawn on a page; 0 when nothing is. */
 int owf_dpage_bounds(const owf_dpage *p, owf_dnum box[4]);
 
+/* ---- Shapes ----
+ * The outlines of the shapes beyond the first flowchart set (owf_dshape.c), for the canvas and every writer to draw
+ * the same way: cylinder, cloud, document and multi-document, actor, note, card, cube, step, trapezoid, tape,
+ * internal storage, callout, stored data, manual input, delay, display, off-page reference, cross, summing junction
+ * and or, loop limit, sort, collate, single and double arrows, and a triangle turned by direction or flipped. A
+ * shape is named in its style as draw.io names it ("shape=cylinder3;", "shape=mxgraph.flowchart.delay;"), and
+ * turned with direction=south, west or north and flipped with flipH=1 and flipV=1. */
+
+#define OWF_DSHAPE_POINTS 160
+#define OWF_DSHAPE_PARTS 8
+#define OWF_DSHAPE_CLOSED 0x01u          /* the part's last point joins its first */
+#define OWF_DSHAPE_FILL   0x02u          /* filled with the fill colour */
+#define OWF_DSHAPE_LINE   0x04u          /* drawn round with the line colour */
+
+typedef struct {
+    int first, n;                        /* its points: points[first .. first + n - 1] */
+    unsigned flags;                      /* OWF_DSHAPE_ */
+} owf_dshape_part;
+
+typedef struct {
+    owf_dpoint points[OWF_DSHAPE_POINTS];   /* on the page, in hundredths */
+    int npoints;
+    owf_dshape_part parts[OWF_DSHAPE_PARTS];   /* in drawing order */
+    int nparts;
+} owf_dshape;
+
+/* The outline of the shape a style names, in box (x, y, width, height), into s: 1 when it is one of these shapes,
+ * 0 when not (a rectangle, ellipse or another shape the drawing code has itself; s is then empty). */
+int owf_dshape_outline(const char *style, const owf_dnum box[4], owf_dshape *s);
+/* The word GFOpenDiag writes for the shape a style names ("cylinder3" for "shape=cylinder;" too), NULL when it is
+ * none of these. */
+const char *owf_dshape_name(const char *style);
+
 /* ---- SVG and PNG with the diagram inside ----
  * As diagrams.net exports them, so that a picture opens again as the diagram it came from: an SVG holds
  * the whole mxfile in its root's content attribute, a PNG in a tEXt chunk keyed "mxfile" (URI-encoded). */
