@@ -290,6 +290,14 @@ def main():
             problem("%s_lib.sfd's first %d calls are not %s_lib.sfd's (the shared ones, at the same offsets)"
                     % (stem, SHARED, FOUR[0]))
 
+    # OWConvert's deck PDF (src/deck/opr_pdf.c) is built against owfpresent.library on the Amiga, so every
+    # call owf_pdf.h declares has to be one of its calls, or OWConvert's m68k link fails (owf_pdf_gradient).
+    pdf_h = open(os.path.join(REPO, "libowf", "include", "owf_pdf.h"), encoding="utf-8").read()
+    present = set(c["name"] for c in four["owfpresent"])
+    for name in sorted(set(re.findall(r"\b(owf_pdf_\w+)\s*\(", strip_comments(pdf_h)))):
+        if name not in present:
+            problem("owf_pdf.h declares %s, but owfpresent_lib.sfd has no call for it" % name)
+
     if problems:
         for p in problems:
             print("check_sfd.py: " + p)

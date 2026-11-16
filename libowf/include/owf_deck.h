@@ -166,9 +166,10 @@ typedef struct {
        earlier field keeps its offset. */
     unsigned char wrap;
     int wrap_gap[4];
-    /* OWF_OBJ_TABLE (Presentation gap 3; libowf 1.15, appended so every earlier field keeps its offset): its
+    /* OWF_OBJ_TABLE (Presentation gap 3; libowf 1.17, appended so every earlier field keeps its offset): its
        rows' heights in twips, nrows of them (0: as tall as its text needs; NULL: every row so), its merged
-       cells, which parts of its design are on (OWF_TABLE_...) and the design's name as the file gives it
+       cells (each cell a merge covers still has its paragraph, empty when the file gives it no text, so
+       every row has ncols cells), which parts of its design are on (OWF_TABLE_...) and the design's name as the file gives it
        (PPTX a:tableStyleId, ODF table:template-name; NULL: none). */
     int nrows, *row_heights;
     int nmerges;

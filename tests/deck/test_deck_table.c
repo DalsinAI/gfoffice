@@ -178,6 +178,16 @@ static void check_table(const owf_obj *o, const char *what, int last_height)
     m = merge_at(o, 1, 0);
     CHECK(m && m->rows == 2 && m->cols == 1, "%s: North down two rows", what);
     CHECK(!merge_at(o, 0, 1) && !merge_at(o, 2, 0), "%s: no merge starts in a covered cell", what);
+    {   /* every cell has its paragraph, the covered ones too */
+        int r, c, i, found;
+        for (r = 0; r < 3; r++)
+            for (c = 0; c < 3; c++) {
+                for (found = 0, i = 0; i < o->text.nparas; i++)
+                    found |= o->text.paras[i].table_row == r && o->text.paras[i].table_col == c &&
+                             o->text.paras[i].table_cols == 3;
+                CHECK(found, "%s: cell (%d,%d) has a paragraph", what, r, c);
+            }
+    }
     CHECK(o->table_design & OWF_TABLE_FIRST_ROW, "%s: a header row", what);
     CHECK(o->table_design & OWF_TABLE_BANDED_ROWS, "%s: banded rows", what);
     CHECK(!(o->table_design & (OWF_TABLE_FIRST_COL | OWF_TABLE_LAST_ROW | OWF_TABLE_BANDED_COLS)),

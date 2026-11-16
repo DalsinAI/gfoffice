@@ -25,7 +25,7 @@ enum {
     C_HELP, C_LASTERROR, C_ISDIRTY, C_GETFILE, C_NEW, C_OPEN, C_SAVE, C_SAVEAS, C_EXPORT, C_TASKS, C_ADDTASK,
     C_DELETETASK, C_GETCELL, C_SETCELL, C_INDENT, C_OUTDENT, C_LINK, C_UNLINK, C_UNDO, C_REDO, C_BASELINE,
     C_RESOURCES, C_ADDRESOURCE, C_DELETERESOURCE, C_GETRESOURCE, C_SETRESOURCE, C_ASSIGN, C_USAGE, C_FINISH,
-    C_CRITICAL, C_COLUMN, C_CALENDARS, C_ADDCALENDAR, C_WORKTIME, C_SETCALENDAR, C_UPDATE, NCOMMANDS
+    C_CRITICAL, C_COLUMN, C_CALENDARS, C_ADDCALENDAR, C_WORKTIME, C_SETCALENDAR, C_UPDATE, C_BASELINES, C_REPLACE, NCOMMANDS
 };
 
 static const command commands[NCOMMANDS] = {
@@ -49,7 +49,7 @@ static const command commands[NCOMMANDS] = {
     { "UNLINK", "ROW/A/N,COUNT/N" },
     { "UNDO", "" },
     { "REDO", "" },
-    { "BASELINE", "ROW/N,COUNT/N,CLEAR/S" },
+    { "BASELINE", "ROW/N,COUNT/N,CLEAR/S,NUMBER/K/N" },
     { "RESOURCES", "" },
     { "ADDRESOURCE", "NAME/A" },
     { "DELETERESOURCE", "ROW/A/N,COUNT/N" },
@@ -65,6 +65,8 @@ static const command commands[NCOMMANDS] = {
     { "WORKTIME", "CALENDAR/A,DAY/A,TO/K,HOURS/F" },
     { "SETCALENDAR", "CALENDAR/A,ROW/K/N" },
     { "UPDATE", "STATUS/A,WHOLE/S" },
+    { "BASELINES", "" },
+    { "REPLACE", "ROW/A/N,FROM/A,TO/A,UNITS/K" },
 };
 
 /* ---- Words ---- */
@@ -270,7 +272,7 @@ static int find_column(const char *name, int resource_sheet)
         { "finishvariance", OPJ_COL_FINISH_VARIANCE },
         { "constraint", OPJ_COL_CONSTRAINT_TYPE }, { "actualstart", OPJ_COL_ACTUAL_START },
         { "actualfinish", OPJ_COL_ACTUAL_FINISH }, { "actualduration", OPJ_COL_ACTUAL_DURATION },
-        { "remaining", OPJ_COL_REMAINING_DURATION }, { "remainingduration", OPJ_COL_REMAINING_DURATION },
+        { "remaining", OPJ_COL_REMAINING_DURATION }, { "remainingduration", OPJ_COL_REMAINING_DURATION }, { "earned", OPJ_COL_BCWP }, { "planned", OPJ_COL_BCWS },
     }, res[] = {
         { "maxunits", OPJ_RCOL_MAX }, { "max", OPJ_RCOL_MAX }, { "rate", OPJ_RCOL_RATE },
         { "stdrate", OPJ_RCOL_RATE }, { "name", OPJ_RCOL_NAME },
@@ -658,7 +660,13 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         return OPJ_RX_OK;
     case C_BASELINE: {
         int first = a->value[0] ? (int)row : 0, n = a->value[0] ? (int)count : -1;
-        return edit_rc(rx, a->value[2] ? opj_clear_baseline(doc, first, n) : opj_set_baseline(doc, first, n), "BASELINE");
+        long which = a->value[3] ? a->num[3] : 0;
+        if (which < 0 || which >= OWF_NBASELINES) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "BASELINE: NUMBER is 0 to %d", OWF_NBASELINES - 1);
+            return OPJ_RX_ERROR;
+        }
+        return edit_rc(rx, a->value[2] ? opj_clear_baseline_n(doc, (int)which, first, n)
+                                       : opj_set_baseline_n(doc, (int)which, first, n), "BASELINE");
     }
     case C_RESOURCES: snprintf(result, size, "%d", p->nresources); return OPJ_RX_OK;
     case C_ADDRESOURCE:
@@ -672,6 +680,15 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
             return OPJ_RX_ERROR;
         }
         return edit_rc(rx, opj_set_assignment(doc, (int)row, r, a->value[2] ? a->num[2] : 100), "ASSIGN");
+    case C_REPLACE: {
+        int to;
+        if ((r = find_resource(p, a->value[1])) < 0 || (to = find_resource(p, a->value[2])) < 0) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "REPLACE: no resource %.100s",
+                     r < 0 ? a->value[1] : a->value[2]);
+            return OPJ_RX_ERROR;
+        }
+        return edit_rc(rx, opj_replace_resource(doc, (int)row, r, to, a->value[3]), "REPLACE");
+    }
     case C_USAGE: {
         owf_ptime from, to;
         if ((r = find_resource(p, a->value[0])) < 0) {
@@ -715,6 +732,7 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         put(result, size, opj_view_column_shown(rx->view, col) ? "1" : "0");
         return OPJ_RX_OK;
     case C_CALENDARS: snprintf(result, size, "%d", p->ncalendars); return OPJ_RX_OK;
+    case C_BASELINES: opj_baselines_text(doc, result, size); return OPJ_RX_OK;
     case C_ADDCALENDAR: {
         int from = -1;
         if (a->value[1] && (from = find_cal(rx, p, a->value[1], "ADDCALENDAR")) < 0) return OPJ_RX_ERROR;

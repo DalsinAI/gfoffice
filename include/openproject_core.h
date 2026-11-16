@@ -74,6 +74,16 @@ int opj_set_notes(opj_doc *doc, int row, const char *notes);
  * first..first+count-1, count -1: the whole plan. */
 int opj_set_baseline(opj_doc *doc, int first, int count);
 int opj_clear_baseline(opj_doc *doc, int first, int count);
+/* The same for Baseline n, 0..10 (0 is the one above, MS Project's Baseline; 1..10 Baseline 1 to 10);
+ * n out of range: OWF_ERR_FORMAT. */
+int opj_set_baseline_n(opj_doc *doc, int n, int first, int count);
+int opj_clear_baseline_n(opj_doc *doc, int n, int first, int count);
+/* Which baselines some task has saved: bit n for Baseline n. */
+unsigned opj_baselines_saved(const opj_doc *doc);
+/* "3", "Baseline 3", "baseline3", "Baseline" or "" (Baseline 0) to n, 0..10; -1 when it is none of these. */
+int opj_baseline_parse(const char *text);
+/* The saved ones as "0 3 10" ("none" with none) into out. */
+void opj_baselines_text(const opj_doc *doc, char *out, size_t size);
 /* Tools > Tracking > Update Project: work complete through status (owf_project_update; whole: 0% or 100%
  * only), as one edit; how many tasks changed in *changed (when not NULL). */
 int opj_update_project(opj_doc *doc, owf_ptime status, int whole, int *changed);
@@ -134,6 +144,11 @@ enum {
     OPJ_COL_ACTUAL_FINISH,
     OPJ_COL_ACTUAL_DURATION,             /* duration times % complete, worked out */
     OPJ_COL_REMAINING_DURATION,
+    OPJ_COL_BCWS,                        /* earned value at the status date (NA without one), money */
+    OPJ_COL_BCWP,
+    OPJ_COL_ACWP,
+    OPJ_COL_SV,                          /* NA without a status date */
+    OPJ_COL_CV,
     OPJ_NCOLS
 };
 
@@ -206,6 +221,33 @@ int opj_set_assignment(opj_doc *doc, int task, int resource, long units);
 void opj_work_text(long minutes, char *out);
 /* "1234.50": hundredths of money. out >= 16 bytes. */
 void opj_money_text(long hundredths, char *out);
+
+/* ---- Assign Resources (MS Project's dialog): every resource against one task ---- */
+typedef struct {
+    int assigned;                        /* 1 when the task has the resource */
+    long units;                          /* the assignment's units, as opj_set_assignment takes them; 0 when none */
+    long work, cost;                     /* its work (minutes) and cost (hundredths), as scheduled */
+} opj_assign_info;
+/* The resource against the task into *out; 0 (and *out zeroed) when either is out of range. */
+int opj_assign_get(const opj_doc *doc, int task, int resource, opj_assign_info *out);
+/* Units as the dialog types them for the resource: a work resource "50%" or "50" (whole percent, 1 to
+ * 100000), a material "2.5" (units, to two places), a cost "120.00" (a currency sign before it is fine).
+ * OWF_OK with *units as opj_set_assignment takes them; OWF_ERR_FORMAT for 0, nothing, or text it doesn't take. */
+int opj_units_parse(const opj_doc *doc, int resource, const char *text, long *units);
+/* The other way: "50%", "2.5", "120.00"; "" for a resource out of range. out holds at least 24 bytes. */
+void opj_units_text(const opj_doc *doc, int resource, long units, char *out, size_t size);
+/* The dialog's line for the resource: "*" when assigned (else " "), the name, then for an assignment its
+ * units and cost, in columns. */
+void opj_assign_line(const opj_doc *doc, int task, int resource, char *out, size_t size);
+/* Assign: the resource on the task at units (NULL or "": the assignment's own units, else 100%, or one
+ * unit of a material; a cost resource needs its amount), as one edit. */
+int opj_assign_resource(opj_doc *doc, int task, int resource, const char *units);
+/* Remove: the resource's assignment on the task, as one edit; OWF_ERR_FORMAT when there is none. */
+int opj_remove_resource(opj_doc *doc, int task, int resource);
+/* Replace: the task's assignment of from goes to to, keeping its place and, with units NULL or "", its
+ * units (one unit of to's kind when the two kinds differ), as one edit. OWF_ERR_FORMAT when from isn't
+ * assigned, to already is, or they are the same. */
+int opj_replace_resource(opj_doc *doc, int task, int from, int to, const char *units);
 
 /* ---- Resource usage: each resource's work in each period ---- */
 
