@@ -104,12 +104,13 @@ static uint32_t argb(unsigned long rgb)
 
 /* 2.1.0: a tracked change's text in its author's colour, an insertion underlined, a deletion struck through.
  * The colour is the author's place among the document's authors, from a short list that reads on white. */
-static void change_style(const owf_doc *doc, int number, ol_style *s)
+/* A change's colour: its author's (the first author blue, the next red, and so on round six) */
+static unsigned long change_colour(const owf_doc *doc, int number)
 {
     static const unsigned long colours[] = { 0x1F5FBF, 0xB0306A, 0x2E7D32, 0x8E44AD, 0xC0601A, 0x00838F };
     const owf_revision *r = OWF_DOC_REVISION(doc, number);
     int i, author = 0;
-    if (!r) return;
+    if (!r) return colours[0];
     for (i = 0; i < number - 1; ++i) {
         const char *a = doc->revisions[i].author, *b = r->author;
         int seen = 0, k;
@@ -120,17 +121,23 @@ static void change_style(const owf_doc *doc, int number, ol_style *s)
         }
         if (!seen) ++author;
     }
-    s->foreground = argb(colours[author % (int)(sizeof colours / sizeof colours[0])]);
+    return colours[author % (int)(sizeof colours / sizeof colours[0])];
+}
+
+static void change_style(const owf_doc *doc, int number, ol_style *s)
+{
+    const owf_revision *r = OWF_DOC_REVISION(doc, number);
+    if (!r) return;
+    s->foreground = argb(change_colour(doc, number));
     s->text_flags |= r->kind == OWF_REV_DELETE ? OL_TEXT_STRIKE : OL_TEXT_UNDERLINE;
 }
 
 /* 2.0.37: whether the view hides a run: a deletion's, in the final view (not a comment's place or a note's mark,
- * which are no text of the deletion's) */
+ * which are no text of the deletion's). 2.0.38: a deleted picture in the line too. */
 static int hidden_deletion(const ow_layout *l, const owf_doc *doc, const owf_run *r)
 {
     const owf_revision *rv;
-    if (!l || !(l->view & OW_LAYOUT_FINAL) || r->comment || r->note > 0 ||
-        r->kind == OWF_RUN_IMAGE || r->kind == OWF_RUN_FRAME)
+    if (!l || !(l->view & OW_LAYOUT_FINAL) || r->comment || r->note > 0 || r->kind == OWF_RUN_FRAME)
         return 0;
     rv = OWF_DOC_REVISION(doc, r->revision);
     return rv && rv->kind == OWF_REV_DELETE;
@@ -667,8 +674,8 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
         ol_node *n;
         ol_style rs;
         if (hidden_deletion(l, doc, r)) {
-            /* 2.0.37: the final view: a deletion's text, tab, break or field takes no room (its node stays, so
-             * run j is still node block + 1 + j); a picture or frame is never one (owf_track_switch) */
+            /* 2.0.37: the final view: a deletion's text, tab, break, field or (2.0.38) picture takes no room (its
+             * node stays, so run j is still node block + 1 + j); a frame is never one (owf_track_switch) */
             n = ol_node_append(od, block, OL_ROLE_TEXT, "");
             if (!n) return NULL;
             run_style(doc, &r->fmt, spacing, &rs);
@@ -1208,6 +1215,25 @@ static const owf_story *pos_story(const ow_layout *l, int box, const ol_id **blo
 ol_document *ow_layout_body(const ow_layout *l)
 {
     return l ? l->body : NULL;
+}
+
+int ow_layout_picture_change(const ow_layout *l, ol_id node, unsigned long *rgb)
+{
+    const owf_story *story;
+    const owf_run *r;
+    const owf_revision *rv;
+    const node_ref *ref;
+    if (!l || !l->doc || (l->view & OW_LAYOUT_FINAL) || node >= l->caprefs) return 0;
+    ref = &l->refs[node];
+    if (ref->paragraph < 0 || ref->run < 0) return 0;
+    if (!ref->box) story = &l->doc->body;
+    else if (ref->box <= l->doc->nframes) story = &l->doc->frames[ref->box - 1].story;
+    else return 0;
+    if (ref->paragraph >= story->nparas || ref->run >= story->paras[ref->paragraph].nruns) return 0;
+    r = &story->paras[ref->paragraph].runs[ref->run];
+    if (r->kind != OWF_RUN_IMAGE || !(rv = OWF_DOC_REVISION(l->doc, r->revision))) return 0;
+    if (rgb) *rgb = change_colour(l->doc, r->revision);
+    return rv->kind == OWF_REV_DELETE ? OW_PICTURE_DELETED : OW_PICTURE_INSERTED;
 }
 
 int ow_layout_page_count(const ow_layout *l)

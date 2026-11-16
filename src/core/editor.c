@@ -1987,7 +1987,8 @@ static int tracked_delete_range(ow_editor *editor, ow_position *start_io, ow_pos
                     p->runs[target].revision = del;
                 }
                 changed = 1;
-            } else if (j < lr && (r->kind == OWF_RUN_TAB || r->kind == OWF_RUN_LINEBREAK || r->kind == OWF_RUN_FIELD)) {
+            } else if (j < lr && (r->kind == OWF_RUN_TAB || r->kind == OWF_RUN_LINEBREAK || r->kind == OWF_RUN_FIELD ||
+                                  r->kind == OWF_RUN_IMAGE)) {   /* 2.0.38: a picture in the line too */
                 if (rev_kind(editor->doc, r->revision) == OWF_REV_DELETE) continue;
                 if (rev_mine(editor, r->revision)) remove_run(p, j);
                 else r->revision = del;
@@ -4998,9 +4999,13 @@ int ow_editor_insert_image(ow_editor *editor, int image_index)
     ow_position pos,after,caret;owf_story *story;owf_para *p;int rc,base;
     if(!editor||!editor->doc||image_index<0||image_index>=editor->doc->nimages)return OWF_ERR_FORMAT;
     editor->typing_group=0;if(!remember_before_edit(editor))return OWF_ERR_MEMORY;
-    if(!ow_editor_selection_empty(editor)&&delete_selection_internal(editor)<0){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+    if(!ow_editor_selection_empty(editor)&&(editor->track?tracked_delete_selection(editor):delete_selection_internal(editor))<0){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+    /* 2.0.38: recording, the picture and the two paragraph ends round it are an insertion */
+    editor->typing_rev=editor->track?editor_revision(editor,OWF_REV_INSERT):0;
+    if(editor->track&&!editor->typing_rev){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
     pos=editor->selection.focus;rc=split_paragraph(editor,pos,&after);if(rc<0){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
     story=ed_story(editor);base=after.paragraph;p=insert_paragraph(story,base,NULL);if(!p||owf_para_add_image(p,&editor->typing_fmt,image_index)!=OWF_OK){ow_editor_undo(editor);return OWF_ERR_MEMORY;}
+    if(editor->typing_rev){p->runs[p->nruns-1].revision=editor->typing_rev;p->mark_revision=editor->typing_rev;}
     caret=after;caret.paragraph=base+1;caret.run=0;caret.byte_offset=0;editor->selection.anchor=editor->selection.focus=caret;editor->dirty=1;++editor->changes;return ow_editor_layout(editor);
 }
 
