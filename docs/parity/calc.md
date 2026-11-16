@@ -66,8 +66,8 @@ Top three gaps by workflow weight:
    and "show data as" (in, lab owed: the layout window's per-field
    choices and ARexx PIVOTSET), then several pivot tables on one sheet.
 2. External data and links: other workbooks' cells, a database or a web
-   page as a source, refreshed on open. Started: XLSX keeps each other
-   book's full path and the values it last had, both ways.
+   page as a source, refreshed on open. Started: XLSX and ODS keep each
+   other book's full path and the values it last had, both ways.
 3. Sharing and review: tracked changes in sheets (Edit > Track Changes).
    Workbook structure protection is in, with its Sheet menu items and
    ARexx (lab owed).

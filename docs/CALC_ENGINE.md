@@ -415,7 +415,11 @@ has both (an older GFOpenCalc's names and a newer table) takes the table.
   it, its target as the file wrote it, its sheets and the values their
   cells last had): XLSX reads and writes them from an externalLink part's
   `sheetNames` and `sheetDataSet` and its full `Target` ("%20" and the
-  like decoded in the name only).
+  like decoded in the name only); ODS as LibreOffice does, a table of
+  each sheet's values named `'URL'#Sheet` holding a `table:table-source`
+  in mode `copy-results-only` (not a sheet of the book), and formulas that
+  name the book by its URL (`['file:///…/Rates.ods'#$Sheet1.A1]`). A
+  sheet linked with its formulas (`copy-all`) stays a sheet, noted.
 - Defined names, the book's and a sheet's own (`Sheet2!Total`).
 - Operators, tightest first: `:` (range), space (intersection), `,`
   (union, inside brackets), unary `-` and `+`, `%`, `^`, `*` `/`, `+` `-`,

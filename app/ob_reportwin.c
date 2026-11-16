@@ -2,10 +2,11 @@
  * GFOpenBase's Report window (app/ob_reportwin.h; Design-OpenBase.md section 7).
  *
  * One report at a time is edited in it: its name, title, source (a table or a saved query), the field it
- * groups by, and its columns with a total under each. Preview... shows its pages as the PDF gets them
- * (app/ob_previewwin.c). Keep puts it in the project (oadb_reports, through ob_report_store), the list at
- * the top opens a kept one, and Make Document... saves it through libowf as the requester's file name says
- * (.odt, .docx, .pdf, .txt; no extension: .odt).
+ * groups by (then up to two more levels), and its columns with a total under each. Bands... opens the
+ * report's bands: report and page headers and footers, and each group level's header, footer and totals.
+ * Preview... shows its pages as the PDF gets them (app/ob_previewwin.c). Keep puts it in the project
+ * (oadb_reports, through ob_report_store), the list at the top opens a kept one, and Make Document... saves
+ * it through libowf as the requester's file name says (.odt, .docx, .pdf, .txt; no extension: .odt).
  *
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
@@ -33,8 +34,8 @@
 #include "ob_previewwin.h"
 
 enum {
-    R_KEPT = 1, R_NAME, R_TITLE, R_KIND, R_SOURCE, R_GROUP, R_COLS, R_ADD, R_REMOVE, R_FIELD, R_TOTAL, R_HEAD,
-    R_PREVIEW, R_KEEP, R_DELETE, R_MAKE, R_CLOSE, R_COUNT
+    R_KEPT = 1, R_NAME, R_TITLE, R_KIND, R_SOURCE, R_GROUP, R_SUB1, R_SUB2, R_COLS, R_ADD, R_REMOVE, R_FIELD, R_TOTAL, R_HEAD,
+    R_PREVIEW, R_BANDS, R_KEEP, R_DELETE, R_MAKE, R_CLOSE, R_COUNT
 };
 
 /* The totals a column can have, in ob_total's order with OB_TOTAL_GROUP left out. */
@@ -166,6 +167,8 @@ static void read_strings(struct Gadget **gad)
     RSTR(R_TITLE, rr.title);
     RSTR(R_SOURCE, source);
     RSTR(R_GROUP, rr.group);
+    RSTR(R_SUB1, rr.subgroup[0]);
+    RSTR(R_SUB2, rr.subgroup[1]);
     if (csel >= 0 && csel < rr.ncolumns) {
         RSTR(R_FIELD, rr.columns[csel].field);
         RSTR(R_HEAD, rr.columns[csel].heading);
@@ -287,6 +290,184 @@ static void make_document(void)
     owf_report_free(notes);
 }
 
+/* ---- The Bands window: the report's bands (ob_report_band) and, for a group level, its header, footer
+ * and totals. It edits a copy; OK puts the copy back into the report. ---- */
+
+enum { BW_HEAD = 1, BW_FOOT, BW_PHEAD, BW_PFOOT, BW_LEVEL, BW_TOTALS, BW_NEWPAGE, BW_GHEAD, BW_GFOOT, BW_HELP1,
+       BW_HELP2, BW_OK, BW_CANCEL, BW_COUNT };
+
+static STRPTR bw_level_labels[] = { (STRPTR)"Group 1", (STRPTR)"Group 2", (STRPTR)"Group 3", NULL };
+
+/* The strings into d: the four report and page bands, and level L's group bands. */
+static void bw_read(struct Window *bw, struct Gadget **gad, ob_report *d, int L)
+{
+    static const struct { int id; ob_band b; int group; } map[] = {
+        { BW_HEAD, OB_BAND_HEAD, 0 }, { BW_FOOT, OB_BAND_FOOT, 0 }, { BW_PHEAD, OB_BAND_PAGE_HEAD, 0 },
+        { BW_PFOOT, OB_BAND_PAGE_FOOT, 0 }, { BW_GHEAD, OB_BAND_GROUP_HEAD, 1 }, { BW_GFOOT, OB_BAND_GROUP_FOOT, 1 }
+    };
+    size_t size;
+    unsigned i;
+    for (i = 0; i < sizeof map / sizeof map[0]; i++) {
+        STRPTR str = NULL;
+        char *t = ob_report_band(d, map[i].b, map[i].group ? L : 0, &size);
+        if (!t || !gad[map[i].id]) continue;
+        GT_GetGadgetAttrs(gad[map[i].id], bw, NULL, GTST_String, (ULONG)&str, TAG_DONE);
+        if (str) put_text(t, size, (const char *)str);
+    }
+}
+
+/* 1 when the report's bands changed. */
+static int bands_window(void)
+{
+    static ob_report d;                 /* the copy (4.5 KB: off the stack) */
+    static char help1[100], help2[100];
+    struct Window *bw;
+    struct Gadget *eg = NULL, *g, *gad[BW_COUNT];
+    struct NewGadget ng;
+    struct DrawInfo *dri;
+    int done = 0, ok = 0, rebuild = 1, L = 0, fh = env->fh, fw = env->fw, rowh = fh + 8, lw = fw * 14, l, t, w, h;
+    d = rr;
+    snprintf(help1, sizeof help1, "[Title] [Date] anywhere; [Page] [Pages] on a page; [Count] in a footer");
+    snprintf(help2, sizeof help2, "[Group] [Value] and any field in a group's bands; [[ for a [");
+    w = fw * 72;
+    h = rowh * 11 + 16;
+    if (w > env->scr->Width - 20) w = env->scr->Width - 20;
+    if (h > env->scr->Height - 40) h = env->scr->Height - 40;
+    bw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)"Report Bands",
+        WA_PubScreen, (ULONG)env->scr,
+        WA_Left, rw->LeftEdge + 16, WA_Top, rw->TopEdge + 16,
+        WA_InnerWidth, w, WA_InnerHeight, h,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE,
+        WA_SmartRefresh, TRUE, WA_AutoAdjust, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | CYCLEIDCMP |
+                  STRINGIDCMP | BUTTONIDCMP | CHECKBOXIDCMP | TEXTIDCMP,
+        TAG_DONE);
+    if (!bw) { say("Not enough memory for the Bands window"); return 0; }
+    SetFont(bw->RPort, env->font);
+    dri = GetScreenDrawInfo(env->scr);
+    l = bw->BorderLeft + 8;
+    t = bw->BorderTop + 6;
+    while (!done) {
+        if (rebuild) {
+            int iw = bw->Width - bw->BorderLeft - bw->BorderRight - 16, y = t, cw = fw * 10 + 24;
+            if (eg) { RemoveGList(bw, eg, -1); FreeGadgets(eg); eg = NULL; }
+            memset(gad, 0, sizeof gad);
+            if (!(g = CreateContext(&eg))) break;
+            memset(&ng, 0, sizeof ng);
+            ng.ng_VisualInfo = env->vi;
+            ng.ng_TextAttr = env->ta;
+            ng.ng_Flags = PLACETEXT_LEFT;
+            ng.ng_LeftEdge = l + lw;
+            ng.ng_Width = iw - lw;
+            ng.ng_Height = fh + 6;
+#define BW_STRING(id, label, text) do { ng.ng_TopEdge = y; ng.ng_GadgetText = (UBYTE *)(label); ng.ng_GadgetID = (id); \
+    g = gad[id] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)(text), GTST_MaxChars, OB_BAND_MAX - 1, \
+                               TAG_DONE); y += rowh; } while (0)
+            BW_STRING(BW_HEAD, "Report header", d.head);
+            BW_STRING(BW_FOOT, "Report footer", d.foot);
+            BW_STRING(BW_PHEAD, "Page header", d.page_head);
+            BW_STRING(BW_PFOOT, "Page footer", d.page_foot);
+            y += 4;
+            ng.ng_TopEdge = y;
+            ng.ng_Width = cw;
+            ng.ng_GadgetText = (UBYTE *)"Bands of";
+            ng.ng_GadgetID = BW_LEVEL;
+            g = gad[BW_LEVEL] = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)bw_level_labels,
+                                             GTCY_Active, (ULONG)L, TAG_DONE);
+            ng.ng_LeftEdge = l + lw + cw + 8;
+            ng.ng_Flags = PLACETEXT_RIGHT;
+            ng.ng_Width = fh + 10;
+            ng.ng_GadgetText = (UBYTE *)"Totals";
+            ng.ng_GadgetID = BW_TOTALS;
+            g = gad[BW_TOTALS] = CreateGadget(CHECKBOX_KIND, g, &ng, GTCB_Checked, (ULONG)!(d.no_totals & (1 << L)),
+                                              GTCB_Scaled, TRUE, TAG_DONE);
+            ng.ng_LeftEdge = l + lw + cw + 8 + fh + 10 + fw * 8;
+            ng.ng_GadgetText = (UBYTE *)"New page for each group 1";
+            ng.ng_GadgetID = BW_NEWPAGE;
+            g = gad[BW_NEWPAGE] = CreateGadget(CHECKBOX_KIND, g, &ng, GTCB_Checked, (ULONG)(d.new_page != 0),
+                                               GTCB_Scaled, TRUE, TAG_DONE);
+            ng.ng_Flags = PLACETEXT_LEFT;
+            ng.ng_LeftEdge = l + lw;
+            ng.ng_Width = iw - lw;
+            y += rowh;
+            BW_STRING(BW_GHEAD, "Group header", d.group_head[L]);
+            BW_STRING(BW_GFOOT, "Group footer", d.group_foot[L]);
+#undef BW_STRING
+            /* what the bands may name */
+            ng.ng_LeftEdge = l;
+            ng.ng_Width = iw;
+            ng.ng_TopEdge = y + 4;
+            ng.ng_GadgetText = NULL;
+            ng.ng_GadgetID = BW_HELP1;
+            g = gad[BW_HELP1] = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text, (ULONG)help1, TAG_DONE);
+            ng.ng_TopEdge = y + 4 + rowh - 4;
+            ng.ng_GadgetID = BW_HELP2;
+            g = gad[BW_HELP2] = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text, (ULONG)help2, TAG_DONE);
+            /* OK and Cancel */
+            ng.ng_Flags = PLACETEXT_IN;
+            ng.ng_TopEdge = bw->Height - bw->BorderBottom - 6 - (fh + 6);
+            ng.ng_Width = fw * 10 + 16;
+            ng.ng_LeftEdge = l;
+            ng.ng_GadgetText = (UBYTE *)"OK";
+            ng.ng_GadgetID = BW_OK;
+            g = gad[BW_OK] = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            ng.ng_LeftEdge = l + iw - ng.ng_Width;
+            ng.ng_GadgetText = (UBYTE *)"Cancel";
+            ng.ng_GadgetID = BW_CANCEL;
+            g = gad[BW_CANCEL] = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            if (!g) break;
+            SetAPen(bw->RPort, dri ? dri->dri_Pens[BACKGROUNDPEN] : 0);
+            RectFill(bw->RPort, bw->BorderLeft, bw->BorderTop, bw->Width - bw->BorderRight - 1,
+                     bw->Height - bw->BorderBottom - 1);
+            AddGList(bw, eg, ~0, -1, NULL);
+            RefreshGList(eg, bw, NULL, -1);
+            GT_RefreshWindow(bw, NULL);
+            rebuild = 0;
+        }
+        {
+            struct IntuiMessage *m;
+            WaitPort(bw->UserPort);
+            while (!rebuild && !done && (m = GT_GetIMsg(bw->UserPort)) != NULL) {
+                ULONG class = m->Class;
+                UWORD code = m->Code;
+                struct Gadget *gg = (struct Gadget *)m->IAddress;
+                GT_ReplyIMsg(m);
+                if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) { done = 1; break; }
+                if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(bw); GT_EndRefresh(bw, TRUE); continue; }
+                if (class != IDCMP_GADGETUP) continue;
+                switch (gg->GadgetID) {
+                case BW_LEVEL:
+                    bw_read(bw, gad, &d, L);
+                    if (code < OB_REPORT_LEVELS) L = code;
+                    rebuild = 1;
+                    break;
+                case BW_TOTALS:
+                    if (gg->Flags & GFLG_SELECTED) d.no_totals &= ~(1 << L);
+                    else d.no_totals |= 1 << L;
+                    break;
+                case BW_NEWPAGE: d.new_page = (gg->Flags & GFLG_SELECTED) != 0; break;
+                case BW_OK:
+                    bw_read(bw, gad, &d, L);
+                    ok = 1;
+                    done = 1;
+                    break;
+                case BW_CANCEL: done = 1; break;
+                default: break;
+                }
+            }
+        }
+    }
+    if (eg) { RemoveGList(bw, eg, -1); FreeGadgets(eg); }
+    if (dri) FreeScreenDrawInfo(env->scr, dri);
+    CloseWindow(bw);
+    ActivateWindow(rw);
+    if (!ok || !memcmp(&d, &rr, sizeof rr)) return 0;
+    rr = d;
+    return 1;
+}
+
+
 void ob_report_window(const ob_rwin_env *e)
 {
     struct Gadget *eg = NULL, *g, *gad[R_COUNT];
@@ -368,10 +549,26 @@ void ob_report_window(const ob_rwin_env *e)
             ng.ng_LeftEdge = l + lw;
             ng.ng_Width = iw - lw;
             ng.ng_TopEdge = y += rowh;
-            ng.ng_GadgetText = (UBYTE *)"Group by";
-            ng.ng_GadgetID = R_GROUP;
-            g = gad[R_GROUP] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)rr.group,
-                                            GTST_MaxChars, OB_NAME_MAX - 1, TAG_DONE);
+            {
+                /* Group by [ ] then [ ] then [ ]: three levels */
+                int tw = fw * 5 + 8, third = (iw - lw - 2 * tw) / 3;
+                ng.ng_Width = third;
+                ng.ng_GadgetText = (UBYTE *)"Group by";
+                ng.ng_GadgetID = R_GROUP;
+                g = gad[R_GROUP] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)rr.group,
+                                                GTST_MaxChars, OB_NAME_MAX - 1, TAG_DONE);
+                ng.ng_LeftEdge = l + lw + third + tw;
+                ng.ng_GadgetText = (UBYTE *)"then";
+                ng.ng_GadgetID = R_SUB1;
+                g = gad[R_SUB1] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)rr.subgroup[0],
+                                               GTST_MaxChars, OB_NAME_MAX - 1, TAG_DONE);
+                ng.ng_LeftEdge = l + lw + 2 * (third + tw);
+                ng.ng_GadgetID = R_SUB2;
+                g = gad[R_SUB2] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)rr.subgroup[1],
+                                               GTST_MaxChars, OB_NAME_MAX - 1, TAG_DONE);
+                ng.ng_LeftEdge = l + lw;
+                ng.ng_Width = iw - lw;
+            }
             /* the columns, and adding or taking one out */
             ng.ng_TopEdge = y += rowh;
             ng.ng_Width = half;
@@ -394,6 +591,10 @@ void ob_report_window(const ob_rwin_env *e)
             ng.ng_GadgetText = (UBYTE *)"Preview...";
             ng.ng_GadgetID = R_PREVIEW;
             g = gad[R_PREVIEW] = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+            ng.ng_TopEdge = y + 3 * rowh;
+            ng.ng_GadgetText = (UBYTE *)"Bands...";
+            ng.ng_GadgetID = R_BANDS;
+            g = gad[R_BANDS] = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
             ng.ng_Flags = PLACETEXT_LEFT;
             ng.ng_LeftEdge = l + lw;
             /* the chosen column, or the one Add Column adds */
@@ -468,7 +669,8 @@ void ob_report_window(const ob_rwin_env *e)
                     if (memcmp(&before, &rr, sizeof rr)) dirty = 1;
                 }
                 switch (gg->GadgetID) {
-                case R_NAME: case R_TITLE: case R_SOURCE: case R_GROUP: break;
+                case R_NAME: case R_TITLE: case R_SOURCE: case R_GROUP: case R_SUB1: case R_SUB2: break;
+                case R_BANDS: if (bands_window()) dirty = 1; rebuild = 1; break;
                 case R_FIELD: case R_HEAD: if (csel >= 0) rebuild = 1; break;
                 case R_KEPT:
                     if (may_drop()) open_kept((int)code);
