@@ -594,9 +594,13 @@ its order, the picture itself in `Escher/EscherDelayStm` (PNG and GIF in
 0xF01E, JPEG 0xF01D, DIB 0xF01F, WMF 0xF01B and EMF 0xF01A with the 34-byte
 header and zlib data in stored blocks), and the frame's 0x4104 naming its
 entry; the 16-byte ids are written as zero (MD4 in [MS-ODRAW], not checked by
-our reader; whether Publisher checks them is not known). Not written yet,
-each named in the report: WordArt, groups' own records (their frames are kept, flat) and the scratch
-area. PL holds 255 text colours; runs past them keep the automatic colour,
+our reader; whether Publisher checks them is not known). Groups: an F003
+container whose first shape has F009 (the group's rectangle, set to its own
+box about the page centre, so its frames' F00F boxes are the same numbers)
+and flags 0x201; its frames follow with flag 0x2 and their Contents chunks
+have the group's chunk as parent. Shape numbers are the file's own for the
+2002-or-later forms (202 for text boxes). Not written yet, each named in the
+report: WordArt and the scratch area. PL holds 255 text colours; runs past them keep the automatic colour,
 with a note. tests/pub/test_pub_save.py reads every generated file back through
 our own reader; whether Publisher itself opens these files has not been
 checked yet.

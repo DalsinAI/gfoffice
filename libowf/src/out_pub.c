@@ -7,9 +7,8 @@
  * boxes, shapes and tables, each frame's box and look, the text with its
  * paragraphs' alignment, character runs (bold, italic, underline, size,
  * typeface, colour), links and table cells, the colour scheme, and
- * pictures (PNG, GIF, JPEG, DIB, WMF, EMF: 8). WordArt and groups' own
- * records are not written yet: a report note says so, and a group's
- * frames are kept on the page.
+ * pictures (PNG, GIF, JPEG, DIB, WMF, EMF: 8) and groups. WordArt and
+ * the scratch area are not written yet: a report note says so.
  *
  * What our reader reads back is checked (tests/pub/test_pub_save.py);
  * whether Publisher itself opens these files is not known yet.
@@ -147,7 +146,7 @@ typedef struct {
     int nout;
     unsigned long colours[256];          /* PL: the text's colours as 0x00BBGGRR */
     int ncolours;
-    int lost_pictures, lost_kinds, lost_wordart, lost_groups, lost_colours;
+    int lost_pictures, lost_kinds, lost_wordart, lost_colours;
 } writer;
 
 static int npages_all(const owf_pub *pub)
@@ -232,17 +231,15 @@ static void write_pages(writer *w)
             long n;
             owf_buf *b;
             size_t at;
-            if (f->kind == OWF_PUB_GROUP) {
-                w->lost_groups++;
-                w->frame_chunk[k][i] = -1;
-                continue;
-            }
             if (f->wordart) {
                 w->lost_wordart++;
                 w->frame_chunk[k][i] = -1;
                 continue;
             }
-            n = new_chunk(w, f->kind == OWF_PUB_TABLE ? 0x10 : 0x01, w->page_chunk[k]);
+            /* in a group: the group's chunk is its parent */
+            n = new_chunk(w, f->kind == OWF_PUB_TABLE ? 0x10 : 0x01,
+                          f->parent >= 0 && f->parent < i && w->frame_chunk[k][f->parent] >= 0 ?
+                          w->frame_chunk[k][f->parent] : w->page_chunk[k]);
             if (n < 0)
                 return;
             w->frame_chunk[k][i] = n;
@@ -535,22 +532,38 @@ static void write_blips(writer *w, owf_buf *store, owf_buf *delay)
     }
 }
 
-static void write_shape(writer *w, owf_buf *b, const owf_pub_frame *f, long chunk, unsigned long spid)
+static void write_shape(writer *w, owf_buf *b, const owf_pub_frame *f, long chunk, unsigned long spid, int in_group)
 {
     unsigned long pid[13], val[13];
     int n = 0, k, stype;
     size_t sp = open_rec(b, 0xF004, 0, 15), r, blk;
+    long box[4];
+    box[0] = f->left - w->pub->width_emu / 2;    /* EMU about the page's centre (PUB-FORMAT.md 7.2) */
+    box[1] = f->top - w->pub->height_emu / 2;
+    box[2] = f->right - w->pub->width_emu / 2;
+    box[3] = f->bottom - w->pub->height_emu / 2;
+    if (f->kind == OWF_PUB_GROUP) {
+        /* a group: its own rectangle is its box, so its frames' boxes need no scaling */
+        r = open_rec(b, 0xF009, 0, 1);
+        for (k = 0; k < 4; k++)
+            put32(b, (unsigned long)box[k]);
+        close_rec(b, r);
+    }
     if (f->kind == OWF_PUB_TEXT)
         stype = 202;
+    else if (f->shape_type >= 0 && w->pub->version >= OWF_PUB_2003)
+        stype = f->shape_type;           /* the file's own number (the 98/2000 forms number theirs apart: 9) */
     else if (f->kind == OWF_PUB_PICTURE)
         stype = 75;
     else if (f->kind == OWF_PUB_TABLE)
         stype = 1;
     else
         stype = f->shape_type >= 0 ? f->shape_type : 1;
+    if (f->kind == OWF_PUB_GROUP)
+        stype = 0;
     r = open_rec(b, 0xF00A, (unsigned)stype, 2);
     put32(b, spid);
-    put32(b, 0xA00);
+    put32(b, (f->kind == OWF_PUB_GROUP ? 0x201UL : 0xA00UL) | (in_group ? 0x2UL : 0));   /* group / child */
     close_rec(b, r);
     for (k = 0; k < 4; k++)
         if (f->inset[k] >= 0) {
@@ -592,14 +605,19 @@ static void write_shape(writer *w, owf_buf *b, const owf_pub_frame *f, long chun
         }
         close_rec(b, r);
     }
-    r = open_rec(b, 0xF010, 0, 0);       /* the box, EMU about the page's centre (PUB-FORMAT.md 7.2) */
-    blk = open_block(b);
-    f32(b, 0x01, 0x20, (unsigned long)(f->left - w->pub->width_emu / 2), 0);
-    f32(b, 0x02, 0x20, (unsigned long)(f->top - w->pub->height_emu / 2), 0);
-    f32(b, 0x03, 0x20, (unsigned long)(f->right - w->pub->width_emu / 2), 0);
-    f32(b, 0x04, 0x20, (unsigned long)(f->bottom - w->pub->height_emu / 2), 0);
-    close_block(b, blk);
-    close_rec(b, r);
+    if (in_group) {
+        r = open_rec(b, 0xF00F, 0, 0);   /* the box in its group's rectangle: the same numbers */
+        for (k = 0; k < 4; k++)
+            put32(b, (unsigned long)box[k]);
+        close_rec(b, r);
+    } else {
+        r = open_rec(b, 0xF010, 0, 0);   /* the box */
+        blk = open_block(b);
+        for (k = 0; k < 4; k++)
+            f32(b, (unsigned)k + 1, 0x20, (unsigned long)box[k], 0);
+        close_block(b, blk);
+        close_rec(b, r);
+    }
     r = open_rec(b, 0xF011, 0, 0);       /* its Contents chunk */
     blk = open_block(b);
     f32(b, 0x01, 0x68, (unsigned long)chunk, 0);
@@ -614,6 +632,36 @@ static void write_shape(writer *w, owf_buf *b, const owf_pub_frame *f, long chun
         close_rec(b, r);
     }
     close_rec(b, sp);
+}
+
+/* A frame whose group is written goes in that group's container, not on the page. */
+static int in_written_group(const writer *w, int k, int i)
+{
+    int p = page_at(w->pub, k)->frames[i].parent;
+    return p >= 0 && p < i && w->frame_chunk[k][p] >= 0;
+}
+
+/* A frame, and when it is a group, its container: the group's own shape,
+ * then its frames (MS-ODRAW 2.2.16), as deep as the reader reads. */
+static void write_tree(writer *w, owf_buf *b, int k, int i, unsigned long base, int *shapes, int depth)
+{
+    const owf_pub_page *pg = page_at(w->pub, k);
+    const owf_pub_frame *f = &pg->frames[i];
+    int j;
+    size_t c = 0;
+    if (f->kind == OWF_PUB_PICTURE && (f->image < 0 || !w->pub->res || f->image >= w->pub->res->nimages))
+        w->lost_pictures++;              /* a picture frame the reader found no picture for */
+    if (f->kind == OWF_PUB_GROUP)
+        c = open_rec(b, 0xF003, 0, 15);
+    write_shape(w, b, f, w->frame_chunk[k][i], base + (unsigned long)++*shapes, depth > 0);
+    if (f->kind == OWF_PUB_GROUP) {
+        for (j = i + 1; j < pg->nframes; j++)
+            if (pg->frames[j].parent == i && w->frame_chunk[k][j] >= 0) {
+                if (depth + 1 < 16)
+                    write_tree(w, b, k, j, base, shapes, depth + 1);
+            }
+        close_rec(b, c);
+    }
 }
 
 static void write_escher(writer *w, owf_buf *b, owf_buf *delay)
@@ -663,13 +711,10 @@ static void write_escher(writer *w, owf_buf *b, owf_buf *delay)
         put32(b, 5);
         close_rec(b, r2);
         close_rec(b, sp);
-        for (i = 0, shapes = 0; i < pg->nframes; i++)
-            if (w->frame_chunk[k][i] >= 0) {
-                if (pg->frames[i].kind == OWF_PUB_PICTURE &&
-                    (pg->frames[i].image < 0 || !w->pub->res || pg->frames[i].image >= w->pub->res->nimages))
-                    w->lost_pictures++;      /* a picture frame the reader found no picture for */
-                write_shape(w, b, &pg->frames[i], w->frame_chunk[k][i], base + (unsigned long)++shapes);
-            }
+        shapes = 0;
+        for (i = 0; i < pg->nframes; i++)
+            if (w->frame_chunk[k][i] >= 0 && !in_written_group(w, k, i))
+                write_tree(w, b, k, i, base, &shapes, 0);
         close_rec(b, r);
         close_rec(b, dg);
     }
@@ -1305,8 +1350,6 @@ int owf_pub_write(const owf_pub *pub, unsigned char **data, size_t *length, owf_
         if (w.lost_wordart)
             owf_report_add(report, OWF_NOTE_LOST, "%d WordArt object(s) left out: WordArt is not written to .pub yet",
                            w.lost_wordart);
-        if (w.lost_groups)
-            owf_report_add(report, OWF_NOTE_APPROX, "%d group(s) saved as their separate objects", w.lost_groups);
         if (w.lost_colours)
             owf_report_add(report, OWF_NOTE_APPROX, "%d run(s) of text past the first 255 colours saved in the automatic colour",
                            w.lost_colours);
