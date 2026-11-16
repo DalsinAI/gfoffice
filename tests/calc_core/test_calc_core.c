@@ -5689,6 +5689,70 @@ static void test_protection(void)
     oc_core_free(core);
 }
 
+/* Workbook structure protection: no sheet added, duplicated, deleted, renamed, moved, hidden or shown; cells
+   still change; kept in XLSX and ODS; Undo leaves it as it is. */
+static void test_book_protection(void)
+{
+    static const char *const paths[] = { "build/host/calc-core-bookprotect.xlsx", "build/host/calc-core-bookprotect.ods" };
+    oc_core *core = fresh();
+    int has = 1, k;
+    if (!core) return;
+    CHECK(oc_core_book_protection(core, &has) == 0 && !has);
+    CHECK(oc_core_unprotect_book(core, NULL) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_add_sheet(core, "Two") == 1 && oc_core_add_sheet(core, "Three") == 2);
+    CHECK(oc_core_protect_book(core, "test") == OWF_OK);
+    CHECK(oc_core_protect_book(core, NULL) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_book_protection(core, &has) == 1 && has);
+    for (k = 0; k < 3; k++) {
+        CHECK(oc_core_add_sheet(core, NULL) == -1 && oc_core_sheet_count(core) == 3);
+        CHECK(oc_core_duplicate_sheet(core, 0, "Copy") == OC_PROTECTED);
+        CHECK(oc_core_delete_sheet(core, 1) == OC_PROTECTED);
+        CHECK(oc_core_rename_sheet(core, 1, "Renamed") == OC_PROTECTED);
+        CHECK(oc_core_rename_sheet(core, 1, "Two") == OWF_OK);              /* its own name: nothing changes */
+        CHECK(oc_core_move_sheet(core, 0, 2) == OC_PROTECTED);
+        CHECK(oc_core_set_sheet_hidden(core, 2, 1) == OC_PROTECTED);
+        CHECK(oc_core_sheet_count(core) == 3 && !strcmp(oc_core_book(core)->sheets[1].name, "Two") &&
+              !oc_core_book(core)->sheets[2].hidden);
+        CHECK(oc_core_set_sheet(core, 0) == OWF_OK);                        /* sheets can still be shown */
+        {   /* nor a pivot table on a new sheet */
+            owf_range data;
+            enter_at(core, "A1", "Key");
+            enter_at(core, "B1", "Value");
+            enter_at(core, "A2", "x");
+            enter_at(core, "B2", "5");
+            CHECK(oc_parse_range("A1:B2", &data));
+            oc_core_select_range(core, &data);
+            CHECK(oc_core_pivot_summary(core, 0, OC_PIVOT_NO_COLUMN, 1, OC_SUBTOTAL_SUM) == OC_PROTECTED &&
+                  oc_core_sheet_count(core) == 3);
+            go(core, "A1");
+        }
+        CHECK(oc_core_set_input(core, 0, 0, 2, "5") == OWF_OK && fabs(num(core, "C1") - 5.0) < 1e-12);  /* cells change */
+        if (k < 2) {
+            CHECK(oc_core_save(core, paths[k], NULL, NULL) == OWF_OK);
+            CHECK(oc_core_open(core, paths[k], NULL, NULL, NULL) == OWF_OK);
+            CHECK(oc_core_book_protection(core, &has) == 1 && has && oc_core_sheet_count(core) == 3);
+        }
+    }
+    CHECK(oc_core_unprotect_book(core, "wrong") == OC_WRONG_PASSWORD);
+    CHECK(oc_core_unprotect_book(core, NULL) == OC_WRONG_PASSWORD);
+    CHECK(oc_core_unprotect_book(core, "test") == OWF_OK);
+    CHECK(oc_core_book_protection(core, &has) == 0 && !has);
+    CHECK(oc_core_add_sheet(core, "Four") == 1 && oc_core_sheet_count(core) == 4);
+    CHECK(oc_core_set_sheet_hidden(core, 1, 1) == OWF_OK);
+    /* protecting clears Undo, so the hidden sheet stays hidden; a later step's Undo leaves the protection */
+    CHECK(oc_core_protect_book(core, "") == OWF_OK);
+    CHECK(oc_core_book_protection(core, &has) == 1 && !has);
+    CHECK(oc_core_undo(core) == OWF_ERR_UNSUPPORTED && oc_core_book(core)->sheets[1].hidden);
+    go(core, "B2");
+    CHECK(oc_core_set_comment(core, "Me", "a note") == OWF_OK);
+    CHECK(oc_core_unprotect_book(core, NULL) == OWF_OK);
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_book_protection(core, NULL) == 0);
+    CHECK(oc_core_redo(core) == OWF_OK && oc_core_book_protection(core, NULL) == 0);
+    CHECK(oc_core_protect_book(core, NULL) == OWF_OK);
+    CHECK(oc_core_undo(core) == OWF_ERR_UNSUPPORTED && oc_core_book_protection(core, NULL) == 1);
+    oc_core_free(core);
+}
+
 static void test_pivot_summary(void)
 {
     static const char *const rows[][3] = {
@@ -7848,6 +7912,7 @@ int main(void)
     test_text_to_columns();
     test_remove_duplicates();
     test_protection();
+    test_book_protection();
     test_pivot_summary();
     test_pivot_layout();
     test_pivot_sort();

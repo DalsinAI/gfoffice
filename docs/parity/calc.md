@@ -37,7 +37,7 @@ working. Phase 1's target is 74%.
 | --- | --- | --- | --- |
 | Text to Columns, Remove Duplicates | Done | C7 | Text to Columns: tab, comma, semicolon, space and any other delimiter, runs of them as one, a text qualifier (a doubled one inside is one), fixed widths; each field General, Text or skipped; a number's shown value splits; ARexx TEXTTOCOLUMNS; Undo. Remove Duplicates: chosen columns or all, text compared without case, a heading row, only the range's cells move (rows kept close up, references follow them); ARexx REMOVEDUPS; Undo. Not yet: a preview of the split, a date order per column (the book's order is used) |
 | Colour scales, data bars, icon sets | Done | C9 | Colour scales (two or three colours) as before; data bars drawn in each cell from its lowest number to its highest (Excel's 10% to 90%, or the file's lengths), in any colour, the number shown or not; Excel's 17 icon sets drawn (arrows, grey arrows, traffic lights, signs, symbols and flags as lights, red to black, ratings as signal bars, quarters as greys), reversed or not, the number shown or not; added from Format > Conditional Format ("bar blue", "icons 3Arrows reverse only") and ARexx CONDFMT; kept in XLSX and ODS (show-value both ways, reverse in GFOffice's own attribute); Undo. Not yet: negative bars from an axis, gradient bars, the icons' own pictures (the shapes stand for them), Excel 2010's extensions (kept out) |
-| Sheet and cell protection | Done | C8 | Protect a sheet with or without a password (Excel's 16-bit hash) and Excel's options (format cells, columns, rows; insert and delete rows and columns; sort...); cells locked unless made unlocked, formulas hidden; typing, clearing, pasting, cutting, filling, formatting, merging, sorting and row and column changes refused where they would change locked cells or what the sheet does not allow; Sheet menu and ARexx PROTECT, UNPROTECT, CELLPROTECT, ISPROTECTED; XLSX sheetProtection and xf protection, ODS table:protected and style:cell-protect both ways. Not yet: workbook structure protection, ranges with their own passwords, an ODS password from LibreOffice or an XLSX SHA-512 one checked (kept and written back, not checked) |
+| Sheet and cell protection | Done | C8 | Protect a sheet with or without a password (Excel's 16-bit hash) and Excel's options (format cells, columns, rows; insert and delete rows and columns; sort...); cells locked unless made unlocked, formulas hidden; typing, clearing, pasting, cutting, filling, formatting, merging, sorting and row and column changes refused where they would change locked cells or what the sheet does not allow; Sheet menu and ARexx PROTECT, UNPROTECT, CELLPROTECT, ISPROTECTED; XLSX sheetProtection and xf protection, ODS table:protected and style:cell-protect both ways; workbook structure protection (no sheet added, duplicated, deleted, renamed, moved, hidden or shown; optional password; XLSX workbookProtection and ODS table:structure-protected both ways). Not yet: the workbook protection's menu item and ARexx, ranges with their own passwords, an ODS password from LibreOffice or an XLSX SHA-512 one checked (kept and written back, not checked) |
 
 ## The 16 November re-score
 
@@ -67,8 +67,9 @@ Top three gaps by workflow weight:
    #300 merge.
 2. External data and links: other workbooks' cells, a database or a web
    page as a source, refreshed on open.
-3. Sharing and review: tracked changes in sheets (Edit > Track Changes)
-   and workbook structure protection.
+3. Sharing and review: tracked changes in sheets (Edit > Track Changes),
+   and the menu item and ARexx for workbook structure protection (the
+   rule and its XLSX and ODS forms are in).
 
 ## How C1 was checked
 

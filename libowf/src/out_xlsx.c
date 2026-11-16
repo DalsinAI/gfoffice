@@ -1840,6 +1840,18 @@ static void workbook_xml(xlsx_out *w, owf_buf *b)
     int i, active = book->active >= 0 && book->active < book->nsheets ? book->active : 0;
     owf_buf_puts(b, XML_HEAD "<workbook xmlns=\"" NS_MAIN "\" xmlns:r=\"" NS_R "\">");
     owf_buf_puts(b, book->date1904 ? "<workbookPr date1904=\"1\"/>" : "<workbookPr/>");
+    if (book->protect_structure) {
+        owf_buf_puts(b, "<workbookProtection");
+        if (book->protect_hash && strlen(book->protect_hash) == 4)
+            owf_buf_printf(b, " workbookPassword=\"%s\"", book->protect_hash);
+        else if (book->protect_kept && !strncmp(book->protect_kept, "xlsx:", 5))
+            owf_buf_puts(b, book->protect_kept + 5);
+        else if (book->protect_kept)
+            owf_report_add(w->report, OWF_NOTE_APPROX,
+                           "The workbook's password from an ODS file is not kept in XLSX: its structure stays "
+                           "protected without one");
+        owf_buf_puts(b, " lockStructure=\"1\"/>");
+    }
     owf_buf_printf(b, "<bookViews><workbookView activeTab=\"%d\"/></bookViews><sheets>", active);
     for (i = 0; i < book->nsheets; i++) {
         owf_buf_puts(b, "<sheet name=\"");

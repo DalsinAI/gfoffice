@@ -3954,6 +3954,31 @@ static void body_end(ods *o, const owf_xml_event *e)
         cf_end(o, e);
 }
 
+/* office:spreadsheet's table:structure-protected: the workbook's sheets stay as they are. The password as
+   gfocalc's Excel hash, or ODF's digest (SHA-1 when it names none) kept as it was. */
+static void read_book_protection(ods *o, const owf_xml_event *e)
+{
+    const char *v = ev(e, NS_TABLE, "structure-protected");
+    const char *key = ev(e, NS_TABLE, "protection-key"), *alg = ev(e, NS_TABLE, "protection-key-digest-algorithm");
+    const char *xl = ev(e, NS_GFO, "protection-key-excel");
+    if (!v || strcmp(v, "true") || o->book->protect_structure)
+        return;
+    o->book->protect_structure = 1;
+    if (xl && strlen(xl) == 4)
+        o->book->protect_hash = copy(o, xl);
+    else if (key && *key) {
+        const char *a = alg && *alg ? alg : "http://www.w3.org/2000/09/xmldsig#sha1";
+        size_t size = strlen(a) + strlen(key) + 6;
+        char *k = malloc(size);
+        if (!k)
+            o->failed = 1;
+        else {
+            snprintf(k, size, "ods:%s %s", a, key);
+            o->book->protect_kept = k;
+        }
+    }
+}
+
 /* One part (content.xml, styles.xml, settings.xml) or the whole of a
  * flat file, as a stream. */
 static int read_part(ods *o, char *data, size_t length)
@@ -4029,6 +4054,8 @@ static int read_part(ods *o, char *data, size_t length)
             } else if (is(&e, NS_STYLE, "font-face")) {
                 read_face(o, &e);
             } else if (is(&e, NS_OFFICE, "body") || is(&e, NS_OFFICE, "spreadsheet")) {
+                if (e.name[0] == 's')
+                    read_book_protection(o, &e);
                 if (!o->in_body) {       /* cells with no style have the default's */
                     owf_cellstyle base;
                     base_style(o, &base);

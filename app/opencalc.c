@@ -976,6 +976,7 @@ static const char *leaf(const char *path)
 }
 
 static int result(int rc, const char *done);
+#define BOOK_LOCKED_TEXT "The workbook's structure is protected: its sheets stay as they are."
 static int ask_window(const char *title, const char *text, const char *buttons);
 
 /* A typed value its cell's rule refused: the rule's alert, as Excel shows it. Stop: Retry goes on typing,
@@ -1023,8 +1024,11 @@ static int result(int rc, const char *done)
     case OWF_ERR_MEMORY:
         tell("GFOpenCalc", "There is not enough memory to complete that.");
         break;
-    case OC_PROTECTED:
-        set_status("The cells are protected: Sheet > Unprotect Sheet first.");
+    case OC_PROTECTED:   /* a sheet change refused by the workbook's protection, or locked cells */
+        if (core && oc_core_book_protection(core, NULL) && !oc_core_sheet_protection(core, NULL, NULL))
+            set_status(BOOK_LOCKED_TEXT);
+        else
+            set_status("The cells are protected: Sheet > Unprotect Sheet first.");
         break;
     case OC_WRONG_PASSWORD:
         set_status("That is not the sheet's password.");
@@ -2470,18 +2474,31 @@ static void do_row_height(void)
     result(oc_core_set_row_height(core, pts ? (int)(pts * 20L / 100L) : 1), "Row height changed.");
 }
 
+/* Sheet > Insert Sheet and the "+" tab. */
+static void add_sheet_here(void)
+{
+    if (oc_core_add_sheet(core, NULL) >= 0)
+        set_status("Sheet added.");
+    else if (oc_core_book_protection(core, NULL))
+        set_status(BOOK_LOCKED_TEXT);
+    else
+        result(OWF_ERR_MEMORY, NULL);
+}
+
 static void do_rename_sheet(int sheet)
 {
     char name[96], latin[96];
     char *utf8;
+    int rc;
     if (sheet < 0 || sheet >= oc_core_sheet_count(core)) return;
     sheet_latin(sheet, latin, sizeof latin);
     if (!text_requester("Rename Sheet", "Name", latin, name, sizeof name)) return;
     if (!(utf8 = from_latin1(name))) { result(OWF_ERR_MEMORY, NULL); return; }
-    if (oc_core_rename_sheet(core, sheet, utf8) == OWF_ERR_FORMAT)
+    rc = oc_core_rename_sheet(core, sheet, utf8);
+    if (rc == OWF_ERR_FORMAT)
         tell("Rename Sheet", "A sheet's name is 1 to 31 characters, without [ ] : * ? / \\,\nand no other sheet may have it.");
     else
-        set_status("Sheet renamed.");
+        result(rc, "Sheet renamed.");
     owf_free(utf8);
 }
 
@@ -5867,7 +5884,7 @@ static void menu_action(ULONG id)
         if (oc_core_insert(core, 1) == OWF_ERR_FORMAT) set_status("Columns can't go in: cells would fall off the sheet.");
         else set_status("Columns inserted.");
         break;
-    case M_INS_SHEET: if (oc_core_add_sheet(core, NULL) < 0) result(OWF_ERR_MEMORY, NULL); else set_status("Sheet added."); break;
+    case M_INS_SHEET: add_sheet_here(); break;
     case M_COMMENT: do_comment(); break;
     case M_CHART: do_insert_chart(); break;
     case M_CHART_FORMAT: do_format_chart(); break;
@@ -5984,6 +6001,8 @@ static void menu_action(ULONG id)
     case M_SHEET_HIDE:
         if (oc_core_set_sheet_hidden(core, oc_core_sheet(core), 1) == OWF_ERR_UNSUPPORTED)
             set_status("A workbook keeps at least one visible sheet.");
+        else if (oc_core_book_protection(core, NULL) && !sheet_hidden(oc_core_sheet(core)))
+            set_status(BOOK_LOCKED_TEXT);
         else set_status("Sheet hidden.");
         break;
     case M_SHEET_SHOW: do_show_sheet(); break;
@@ -6773,13 +6792,14 @@ static int rexx_do_command(const char *command, char **result_out)
         char *utf8 = *arg ? from_latin1(arg) : NULL;
         ok = oc_core_add_sheet(core, utf8) >= 0;
         owf_free(utf8);
-        snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : "Failed");
+        snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : oc_core_book_protection(core, NULL) ? "Protected" : "Failed");
     } else if (starts_word_ci(command, "RENAMESHEET", &arg)) {   /* the sheet showing, as Rename... does */
         char *utf8 = *arg ? from_latin1(arg) : NULL;
         int rc = utf8 ? oc_core_rename_sheet(core, oc_core_sheet(core), utf8) : OWF_ERR_FORMAT;
         owf_free(utf8);
         ok = rc == OWF_OK;
-        snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc == OWF_ERR_FORMAT ? "Not a sheet name" : "Failed");
+        snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc == OWF_ERR_FORMAT ? "Not a sheet name"
+                                                         : rc == OC_PROTECTED ? "Protected" : "Failed");
     } else if (starts_word_ci(command, "RECALC", &arg)) {
         ok = owf_calc_recalc_all(oc_core_calc(core)) == OWF_OK;
         snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : "Out of memory");
@@ -7516,8 +7536,7 @@ static void tabs_press(int mx, int my, ULONG secs, ULONG micros)
         return;
     }
     if (tab_sheet[t] == TAB_PLUS) {
-        if (oc_core_add_sheet(core, NULL) < 0) result(OWF_ERR_MEMORY, NULL);
-        else set_status("Sheet added.");
+        add_sheet_here();
     } else {
         oc_core_set_sheet(core, tab_sheet[t]);
         if (t == last_tab && DoubleClick(last_secs, last_micros, secs, micros)) {
