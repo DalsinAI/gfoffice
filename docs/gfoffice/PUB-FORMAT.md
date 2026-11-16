@@ -1,6 +1,6 @@
 # Microsoft Publisher's .pub format: the clean-room notes
 
-GFOpenPublisher's record of what we know about .pub and where each fact came
+GFOpenPressmaster's record of what we know about .pub and where each fact came
 from. Microsoft never published a specification of .pub. Everything below
 was worked out from sample files only: their bytes, their structure, and
 what Publisher itself shows for them (the thumbnail Publisher saves in each
@@ -579,6 +579,40 @@ and what kind each shape is. `tools/publab/thumbdib.py` writes it as a PNG.
 The author's name is property 4 [V 26]: personal data, like the temporary
 path in section 5.1.
 
+## 11b. Writing (out_pub.c, step 3)
+
+`owf_pub_write` (libowf/src/out_pub.c, owfpub.library 3.3) writes only the
+2007 form that sections 4-7 describe, from an `owf_pub` the reader made:
+`Contents` (header, index, document, pages, masters, frames, tables, scheme),
+`Escher/EscherStm` (one F004 per frame: shape number, look, anchor in EMU
+about the page centre, F011 chunk, F00D text id), `Quill/QuillSub/CONTENTS`
+(TEXT, FDPC/FDPP pages, STRS, SYID, FONT, an empty STSH 0/1, TOKN, TCD, PL)
+and a DocumentSummaryInformation that says 12.0. The compound file is
+libowf/src/owf_cfbw.c (MS-CFB v3, 512-byte sectors, deterministic).
+Pictures (section 8): one F007 entry per picture the publication holds, in
+its order, the picture itself in `Escher/EscherDelayStm` (PNG and GIF in
+0xF01E, JPEG 0xF01D, DIB 0xF01F, WMF 0xF01B and EMF 0xF01A with the 34-byte
+header and zlib data in stored blocks), and the frame's 0x4104 naming its
+entry; the 16-byte ids are written as zero (MD4 in [MS-ODRAW], not checked by
+our reader; whether Publisher checks them is not known). Groups: an F003
+container whose first shape has F009 (the group's rectangle, set to its own
+box about the page centre, so its frames' F00F boxes are the same numbers)
+and flags 0x201; its frames follow with flag 0x2 and their Contents chunks
+have the group's chunk as parent. Groups nest 16 deep at most (the reader
+reads 24 containers); frames deeper are left out with a note. Shape numbers are the file's own for the
+2002-or-later forms (202 for text boxes). WordArt: its shape number, and its
+text in 0xC0C0 (UTF-16, paragraphs apart by CR, a NUL), not in Quill. The
+default style (STSH 1, style 0) gets the first WordArt's size, typeface and
+colour, each only when every run written has its own (runs from our reader
+always do; new text may not, and would take the default's instead).
+Not written yet, named in the report: the scratch area (the reader keeps only
+its count). GFOpenPressmaster's own pages reach the writer through
+`opp_deck_to_pub` (src/pub/opp_export.c), the inverse of `opp_pub_to_deck`:
+frames sharing a text flow share one story, boxes are kept in twips. PL holds 255 text colours; runs past them keep the automatic colour,
+with a note. tests/pub/test_pub_save.py reads every generated file back through
+our own reader; whether Publisher itself opens these files has not been
+checked yet.
+
 ## 12. Not known yet (phase 1's work)
 
 - Paragraph spacing, indents and the alignments other than left, right and
@@ -599,8 +633,8 @@ path in section 5.1.
 ## 13. PageStream
 
 PageStream (Soft-Logik, later Grasshopper) is the Amiga's desktop
-publisher: versions 1-2 (the `.pgs` era), 3, 4 and 5. GFOpenPublisher will
-import it (Design-OpenPublisher.md, section 9).
+publisher: versions 1-2 (the `.pgs` era), 3, 4 and 5. GFOpenPressmaster will
+import it (Design-OpenPressmaster.md, section 9).
 
 No PageStream document was found on GitHub, the only place this session's
 shell reaches (tests/pub/CORPUS.md). So nothing is known yet: no container,

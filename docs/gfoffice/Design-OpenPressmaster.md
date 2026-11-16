@@ -1,12 +1,14 @@
-# GFOpenPublisher: design
+# GFOpenPressmaster: design
+
+Renamed from GFOpenPublisher on 16 November 2026 (0.3.31). The ARexx port is GFOPENPRESSMASTER; the first copy running also answers to GFOPENPUBLISHER, so old scripts keep working.
 
 Version 0.1, draft for Dale's approval | 25 October 2026 | AmiCradle Team, MIT
 
-GFOpenPublisher is the GFOffice Suite's desktop-publishing program. Dale, 25
+GFOpenPressmaster is the GFOffice Suite's desktop-publishing program. Dale, 25
 October 2026, 01:36-01:40: it is "a microsoft publisher 100% compatible app".
 Its first phase must open every .pub version faithfully, view, print and
 export to PDF, then edit and save in our own format; saving .pub comes
-later. And at 01:38: "GFOpenPublisher should import PageStream files too."
+later. And at 01:38: "GFOpenPressmaster should import PageStream files too."
 
 Why now: Microsoft removed Publisher from Microsoft 365 on 1 October 2026 and
 ended the perpetual version's support on 13 October 2026, so people hold .pub
@@ -34,7 +36,7 @@ comfortable at 16-32 MB, as GFOpenWrite) that:
 - later, if Dale wants it, saves .pub.
 
 Apache OpenOffice, the suite's feature target, has no desktop-publishing
-program. So GFOpenPublisher's checklist is Publisher's own features (section
+program. So GFOpenPressmaster's checklist is Publisher's own features (section
 10). Where they overlap with drawing (shapes, layers, guides), AOO Draw's
 documented behaviour is the reference, as it will be for GFOpenDraw.
 
@@ -62,7 +64,7 @@ The same rules hold for PageStream.
 | Phase | What | Done when | Proof |
 | --- | --- | --- | --- |
 | **P0, the format lab and a reader** (this PR) | The corpus (`tests/pub/CORPUS.md`); PUB-FORMAT.md; `libowf/src/in_pub.c`: the version, page size, pages and masters, frames with boxes and kinds, text, tables', WordArt's, fonts, pictures; `pub-dump`; `make pub-test`, `make pub-check` | Every sample reads; dumps match what each file shows; cut and changed files fail safely under ASan and UBSan | Host tests. A stove build of OWConvert and GFOpenCalc, which now link `in_pub.c` |
-| **P1, faithful view, print and PDF** | Formatting (fonts, sizes, colours, alignment, spacing), styles and colour schemes; linked frames; columns; wrap; master pages' frames; tables' cells and borders; shapes and lines; pictures with crops; WordArt; layering. GFOpenPublisher's window to view pages; print and PDF export; OWConvert `.pub` to PDF | Each sample's page 1 matches its thumbnail; Dale's samples match his PDFs, page by page | Host: the model compared with expected dumps; PDFs rendered and compared with the thumbnails and Dale's PDFs. Lab: open, page through, print to a saved PDF |
+| **P1, faithful view, print and PDF** | Formatting (fonts, sizes, colours, alignment, spacing), styles and colour schemes; linked frames; columns; wrap; master pages' frames; tables' cells and borders; shapes and lines; pictures with crops; WordArt; layering. GFOpenPressmaster's window to view pages; print and PDF export; OWConvert `.pub` to PDF | Each sample's page 1 matches its thumbnail; Dale's samples match his PDFs, page by page | Host: the model compared with expected dumps; PDFs rendered and compared with the thumbnails and Dale's PDFs. Lab: open, page through, print to a saved PDF |
 | **P2, edit and our own format** | Editing (text, frames, pages, masters, pictures, shapes, tables, guides); save and open our own format; undo; PageStream import (when samples arrive) | Round trip: .pub, then our format, then reopened, gives the same model | Host round-trip tests. Lab: edit, save, reopen |
 | **P3, save .pub** (if Dale wants it) | Writing .pub for Publisher users | Publisher opens our files (needs a PC with Publisher) | Dale's PC |
 
@@ -195,7 +197,7 @@ GFOpenWrite does (`app/ow_print.c`). Publisher's print options come later
 PageStream (Soft-Logik, later Grasshopper) is the Amiga's own desktop
 publisher. Its versions: 1 and 2 (the `.pgs` era), 3, 4 and 5.
 
-- **Import only.** GFOpenPublisher opens PageStream documents into the same
+- **Import only.** GFOpenPressmaster opens PageStream documents into the same
   model and saves them in our own format. It never writes PageStream.
 - **What to import:** pages and their size, master pages, text frames and
   their linked chains, text with its formatting, pictures (placed IFF ILBM
@@ -258,34 +260,34 @@ publisher. Its versions: 1 and 2 (the `.pgs` era), 3, 4 and 5.
 | `tests/pub/` | Expected dumps, `pub_dump.c`, `test_pub.py`, `CORPUS.md`, `fetch_samples.sh` (outside samples, never committed) |
 | `tools/pubgen/` | `make_pub.py`: the .pub files the tests read, made from PUB-FORMAT's notes |
 | `tools/publab/` | The format lab's tools (PUB-FORMAT 1) |
-| `src/pub/` (P1) | GFOpenPublisher's portable core, host-tested, as `src/calc` |
-| `app/openpresent.c` with `OPENPUBLISHER` (P1a) | The Amiga page window, sharing Presentation's GFOpenLayout renderer rather than copying it |
+| `src/pub/` (P1) | GFOpenPressmaster's portable core, host-tested, as `src/calc` |
+| `app/openpresent.c` with `OPENPRESSMASTER` (P1a) | The Amiga page window, sharing Presentation's GFOpenLayout renderer rather than copying it |
 
 ### P1a delivered base (8 November 2026)
 
-`include/openpublisher_core.h` and `src/pub/opp_import.c` deep-convert P0's
+`include/openpressmaster_core.h` and `src/pub/opp_import.c` deep-convert P0's
 publication into the shared deck/page model: page size and order, master
 assignment and master frames, back-to-front frame order, groups, boxes, plain
 stories, table column counts, fonts and pictures. The source `owf_pub` remains
 independently owned. `app/openpresent.c` builds a separately branded
-GFOpenPublisher 0.1.0 with page menus; it opens `.pub` directly and inherits
+GFOpenPressmaster 0.1.0 with page menus; it opens `.pub` directly and inherits
 the shared screen renderer, page strip, PDF export, GFOpenPrint path and ODP
-save. `make publisher-core-test` and `publisher-core-check` verify conversion
+save. `make pressmaster-core-test` and `pressmaster-core-check` verify conversion
 and real PDF output on both text-only and picture-rich publications.
 
-GFOpenPublisher 0.1.2 inherits OpenLayout 0.14's shared shape display operations
+GFOpenPressmaster 0.1.2 inherits OpenLayout 0.14's shared shape display operations
 from Presentation. Imported Publisher rectangles and lines now travel through
 the same normalized geometry and screen/PDF renderers as ODP and PPTX shapes;
 the Publisher core test verifies that the adapter produces that display data.
 
-GFOpenPublisher 0.2.0 begins native publication authoring with Insert > Text
+GFOpenPressmaster 0.2.0 begins native publication authoring with Insert > Text
 Box. The shared Presentation/Publisher core creates the complete owned frame
 and story as one undoable operation, while the native Publisher window selects
 it and starts typing immediately. Movement, resize, exact geometry, appearance,
 arranging, alignment, duplication, deletion and ODP persistence then use the
 same reusable object lifecycle as imported publication frames.
 
-GFOpenPublisher 0.2.1 added Insert > Picture through that same core. The native
+GFOpenPressmaster 0.2.1 added Insert > Picture through that same core. The native
 file requester and Amiga datatypes discover the picture and its natural size;
 one transactional portable-core operation copies its compressed bytes,
 metadata, alt text and page geometry into the shared model, selects it and
@@ -293,21 +295,21 @@ records one undo step. Failed inserts leave neither a frame nor an orphaned
 resource. The existing OpenLayout screen/PDF path, movement, resize,
 duplication and ODP persistence then handle the authored picture.
 
-GFOpenPublisher 0.2.2 adds linked text flow without a private line breaker.
+GFOpenPressmaster 0.2.2 adds linked text flow without a private line breaker.
 The `.pub` reader's shared story number becomes `owf_obj.flow_story`; the
 portable Publisher core verifies chains, and the positioned-page adapter asks
 GFOpenLayout where page zero ended for each fixed frame. The suffix begins in
 the next frame, in page/object order, and every imported Publisher text frame
 clips at its box. `SampleNewsletter.pub` is the regression: 10 chains, 29
 frames, and the second frame no longer repeats the first frame's opening.
-GFOpenPublisher 0.2.3 preserves the links on save/reload. ODP export writes a
+GFOpenPressmaster 0.2.3 preserves the links on save/reload. ODP export writes a
 unique `draw:name` for every linked frame, `draw:chain-next-name` to its
 successor, and the story once in the chain head. ODP import resolves arbitrary
 named chains across pages (with bounded handling for damaged cycles) back into
 the shared flow identity. The real newsletter is exported, imported again and
 rechecked as 10 chains/29 frames with the same rendered continuation.
 
-GFOpenPublisher 0.2.4 adds the first authored rich-text controls without
+GFOpenPressmaster 0.2.4 adds the first authored rich-text controls without
 duplicating layout code. The shared Presentation/Publisher core 0.9.0 applies
 bold, italic, underline, explicit font size and paragraph alignment to an
 inclusive paragraph range, with the existing text snapshot Undo. The native
@@ -316,7 +318,7 @@ GFOpenLayout already consumes the resulting run and paragraph styles, and ODP
 save/reload preserves their effective appearance. Character-range selection,
 font/colour choosers and decoding the original PUB formatting records remain.
 
-GFOpenPublisher 0.2.5 and shared Presentation/Publisher core 0.10.0 add equal
+GFOpenPressmaster 0.2.5 and shared Presentation/Publisher core 0.10.0 add equal
 columns to bounded text frames through GFOpenLayout 0.15. Format > Text Columns
 offers one, two and three columns with one undoable model change; one column is
 stored canonically as no column split. GFOpenLayout owns the narrow-galley
@@ -328,7 +330,7 @@ surface, decoding column settings from original PUB records, and
 custom frame margins and column gaps. Rectangular wrap/exclusion around other
 page objects is delivered in 0.2.7; contour wrap remains.
 
-GFOpenPublisher 0.2.6 and shared core 0.11.0 add the first safe authoring
+GFOpenPressmaster 0.2.6 and shared core 0.11.0 add the first safe authoring
 surface for Publisher text flows. Object > Link to Next Empty Text Box appends
 the next later empty top-level frame to an unlinked frame or the current flow
 tail. Remove Tail from Text Flow reverses that operation without discarding
@@ -341,7 +343,7 @@ application never estimates a character count. Arbitrary middle-chain surgery
 remains deliberately refused until it can materialize every affected slice
 without losing visible text.
 
-GFOpenPublisher 0.2.7 and shared core 0.12.0 add object-driven text wrapping
+GFOpenPressmaster 0.2.7 and shared core 0.12.0 add object-driven text wrapping
 without a Publisher-only line fitter. Object > Text Wrapping makes a selected
 picture or non-line shape a square or top-and-bottom obstacle, with one
 undoable model change. The deck adapter translates the object's page geometry
@@ -351,14 +353,14 @@ single display object. Standard ODP `style:wrap` and per-side margins preserve
 the setting on save/reload. The native menu currently uses a sensible default
 distance; decoding original PUB wrap records remains.
 
-GFOpenPublisher 0.2.8 exposes the four persisted distances through Object >
+GFOpenPressmaster 0.2.8 exposes the four persisted distances through Object >
 Text Wrap Distance. Top, right, bottom and left are edited independently in
 twips and applied through the same `opr_obj_set_wrap` operation, so the change
 is one object-focused Undo/Redo step and needs no new layout API or model. The
 command requires Square or Top and Bottom wrapping first and rejects values
 outside 0 to 20000 twips.
 
-GFOpenPublisher 0.2.9 and GFOpenPresentation 0.6.5 add Format > Text Frame on
+GFOpenPressmaster 0.2.9 and GFOpenPresentation 0.6.5 add Format > Text Frame on
 shared core 0.13.0. One dialog edits one to sixteen columns, their exact gap,
 and the left, top, right and bottom internal margins. The portable operation
 validates that a positive text area remains and snapshots the complete setting
@@ -366,20 +368,20 @@ as one Undo/Redo step. Existing ODP padding and column-gap interchange and the
 GFOpenLayout bounded-frame path consume the result; the applications do not
 reimplement either persistence or layout.
 
-GFOpenPublisher 0.3.0 and GFOpenPresentation 0.6.6 add Text Colour through
+GFOpenPressmaster 0.3.0 and GFOpenPresentation 0.6.6 add Text Colour through
 shared core 0.14.0. An exact six-digit RGB value formats the current paragraph
 as one text-snapshot Undo/Redo step. The existing character-run renderer and
 ODP colour interchange carry it to screen, PDF and reload; the applications do
 not keep a separate colour overlay.
 
-GFOpenPublisher 0.3.1 and GFOpenPresentation 0.6.7 add Font Family through
+GFOpenPressmaster 0.3.1 and GFOpenPresentation 0.6.7 add Font Family through
 shared core 0.15.0. The name is interned once in the deck's existing font
 resources and assigned to the current paragraph's runs as one undoable text
 snapshot. Existing font resolution, screen/PDF rendering and ODP font-face
 interchange consume the same resource; Undo does not duplicate or discard
 shared font records.
 
-GFOpenPublisher 0.3.2 and GFOpenPresentation 0.6.8 add exact character-range
+GFOpenPressmaster 0.3.2 and GFOpenPresentation 0.6.8 add exact character-range
 selection through shared core 0.16.0. Mouse drag, Shift+Arrow and Edit > Select
 All Text maintain a fixed anchor and moving focus; typing, Backspace, Delete or
 Return replaces the range as one text-snapshot Undo step. Bold, italic,
@@ -388,7 +390,7 @@ including ranges across paragraphs, and ODP preserves those run boundaries.
 The native highlight is derived from the existing GFOpenLayout caret map, so
 this editing feature adds no second line or column geometry path.
 
-GFOpenPublisher 0.3.3 advances shared core to 0.17.0 and removes the tail-only
+GFOpenPressmaster 0.3.3 advances shared core to 0.17.0 and removes the tail-only
 restriction from linked-frame authoring. Any non-first frame can be detached;
 the frames before and after it remain in one ordered flow. An empty frame can
 then be inserted before the selected frame's current successor. Both changes
@@ -397,7 +399,7 @@ membership, so story bytes, ODP persistence and GFOpenLayout continuation stay
 on their established paths. The first frame remains protected because it owns
 the story.
 
-GFOpenPublisher 0.3.4 and shared core 0.18.0 add Object > Text Wrapping >
+GFOpenPressmaster 0.3.4 and shared core 0.18.0 add Object > Text Wrapping >
 Tight. The deck adapter asks GFOpenLayout 0.17 to flatten the selected closed
 shape's existing node-owned path into conservative horizontal exclusion bands;
 it does not reproduce ellipse, polygon or rotation geometry. Those bands use
@@ -406,7 +408,7 @@ bottom and left distances. Pictures, open lines and unavailable geometry fall
 back to Square. ODP writes and reads the standard `style:wrap-contour`
 attribute, and the existing object snapshot supplies Undo/Redo.
 
-GFOpenPublisher 0.3.5, GFOpenPresentation 0.6.11 and shared core 0.19.0 add
+GFOpenPressmaster 0.3.5, GFOpenPresentation 0.6.11 and shared core 0.19.0 add
 Object > Picture Crop. A selected top-level picture exposes left, top, right
 and bottom crop values in thousandths; validation prevents either opposing
 pair from removing the complete source area. The four edges change as one
@@ -415,7 +417,7 @@ existing shared crop fields and OpenLayout picture operation, so this adds no
 Publisher-only image geometry. Original PUB crop-record decoding, recolour
 and transparency remain separate import/rendering work.
 
-GFOpenPublisher 0.3.6 and GFOpenPresentation 0.6.12 carry shared core 0.20.0
+GFOpenPressmaster 0.3.6 and GFOpenPresentation 0.6.12 carry shared core 0.20.0
 and add Edit > Cut, Copy and Paste for exact text selections. The portable
 core extracts either selection direction across paragraph boundaries and the
 applications paste through the existing selection-replacement edit, so each
@@ -423,20 +425,20 @@ cut or paste is one Undo step. A shared Amiga adapter exchanges UTF-8 with
 clipboard.device's FTXT/CHRS Latin-1 form and replaces Writer's former private
 device implementation; clipboard transport is not an OpenLayout concern.
 
-GFOpenPublisher 0.3.7 and GFOpenPresentation 0.6.13 carry shared core 0.21.0
+GFOpenPressmaster 0.3.7 and GFOpenPresentation 0.6.13 carry shared core 0.21.0
 and add Find/Find Next. The portable command scans editable text in object and
 page order, folds ASCII case, wraps once and returns an exact `opr_selection`.
 The applications reveal that result with their existing OpenLayout caret and
 selection geometry; search does not add another text layout path.
 
-GFOpenPublisher 0.3.8 and GFOpenPresentation 0.6.14 carry shared core 0.22.0
+GFOpenPressmaster 0.3.8 and GFOpenPresentation 0.6.14 carry shared core 0.22.0
 and reuse OpenGadTools' horizontal ruler for paragraph indents. In text-editing
 mode the ruler covers the resolved frame's inner width; left, first-line or
 hanging, and right marker drags are validated, undoable and preserved by ODP.
 OpenLayout receives the resulting paragraph format during its normal reflow;
 the ruler itself remains shared UI chrome rather than layout-engine policy.
 
-GFOpenPublisher 0.3.9 and GFOpenPresentation 0.6.15 carry shared core 0.23.0
+GFOpenPressmaster 0.3.9 and GFOpenPresentation 0.6.15 carry shared core 0.23.0
 and add system clipboard Cut/Copy/Paste for supported top-level objects. A
 custom GFOffice IFF form carries ODP bytes and the source object index while
 ordinary text remains standard FTXT. Paste imports the payload, remaps fonts
@@ -444,7 +446,7 @@ and picture bytes into the destination deck and records one object-presence
 Undo step. Groups, charts and opaque kept-package objects are deliberately
 refused until their dependent resources have portable copy contracts.
 
-GFOpenPublisher 0.3.10 and GFOpenPresentation 0.6.16 carry shared core 0.24.0
+GFOpenPressmaster 0.3.10 and GFOpenPresentation 0.6.16 carry shared core 0.24.0
 and add Edit > Replace plus Replace All in Text Box. Replace uses the existing
 wrapped deck search and exact selection replacement. Replace All is a portable
 case-insensitive pass over one editable frame, skips replacement text when
@@ -454,7 +456,7 @@ formatted runs cannot leave the preceding run behind. Search and mutation use
 the deck story; OpenLayout remains responsible only for caret/selection
 geometry and reflow.
 
-GFOpenPublisher 0.3.11 and GFOpenPresentation 0.6.17 carry shared core 0.25.0
+GFOpenPressmaster 0.3.11 and GFOpenPresentation 0.6.17 carry shared core 0.25.0
 and add independent View toggles for a half-inch grid and magnetic grid
 snapping. Dragged objects snap their top-left position; every resize handle
 snaps only the edges it controls, using a six-screen-pixel threshold before
@@ -463,7 +465,7 @@ signed, thresholded coordinate arithmetic. The Amiga shell owns overlay dots
 and transient toggle state, so neither OpenLayout nor ODP/PDF contains editor
 grid policy. A completed drag still enters the existing one-step box Undo.
 
-GFOpenPublisher 0.3.12 and GFOpenPresentation 0.6.18 carry shared core 0.26.0
+GFOpenPressmaster 0.3.12 and GFOpenPresentation 0.6.18 carry shared core 0.26.0
 and add fixed page layout guides at both half-inch margins and the horizontal
 and vertical centres. Moves can align an object's start, centre or end to the
 nearest guide; resize handles align their active edge. Guide hits take
@@ -471,7 +473,7 @@ precedence when grid snapping is also on. The signed, thresholded box-anchor
 calculation is portable core code; guide drawing and toggle state remain
 shared editor chrome. Custom ruler guides and a baseline grid still remain.
 
-GFOpenPublisher 0.3.16 and GFOpenPresentation 0.6.22 carry shared core 0.30.0
+GFOpenPressmaster 0.3.16 and GFOpenPresentation 0.6.22 carry shared core 0.30.0
 and add Insert > Table for one to 32 rows and columns. Creation uses the same
 tagged cell paragraphs as imported ODP/PPTX tables and the same OpenLayout
 grid renderer. Each cell is editable through the existing rich-text engine;
@@ -506,7 +508,7 @@ leave out, so P0 leaves `in_pub.c` out of those two builds too
 
 ## 13. Questions for Dale
 
-1. **One model?** Should GFOpenPublisher's pages share GFOpenPresentation's deck
+1. **One model?** Should GFOpenPressmaster's pages share GFOpenPresentation's deck
    model, with a small extension for publishing (4.2), or keep a model of
    their own?
 2. **Our own format (P2).** Should we use OpenDocument Graphics (`.odg`,
@@ -525,7 +527,7 @@ leave out, so P0 leaves `in_pub.c` out of those two builds too
 6. **Mail and catalog merge.** Is merging data in scope, and from what: CSV
    files, GFOpenBase?
 7. **P3.** Do you want .pub saving at all, given Publisher is gone?
-8. **The scratch area.** Should GFOpenPublisher show the objects Publisher
+8. **The scratch area.** Should GFOpenPressmaster show the objects Publisher
    keeps beside the page?
 9. **OWConvert.** Should P1 add `.pub` to PDF and `.pub` to ODT (text) in
    OWConvert, for converting many files from the Shell?

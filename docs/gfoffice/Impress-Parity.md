@@ -131,7 +131,7 @@ Undo and ODP persistence.
 | Hyperlinks in text | P1 | Yes, and links in the PDF |
 | Fields: date, time, slide number, slide count, author, file name | P1 (date, number, count) | Date, number and count yes; others No |
 | Text animation (scrolling text), Fontwork | Later | No (Fontwork shapes are kept) |
-| Find and replace, spelling, autocorrect, thesaurus, hyphenation | P3, P4 (Shared E11) | Find/Find Next across the deck and Replace/Replace All in the active text box: Yes in 0.6.16; spelling, autocorrect, thesaurus and hyphenation: No |
+| Find and replace, spelling, autocorrect, thesaurus, hyphenation | P3, P4 (Shared E11) | Find/Find Next across the deck and Replace/Replace All in the active text box: Yes in 0.6.16; spelling: Yes (16 Nov, #337, #342, #344, #352): Tools > Spelling... through every slide and the notes, Spelling as You Type, ARexx SPELL; autocorrect, thesaurus and hyphenation: No |
 | Pictures inside text | Later | No (reported) |
 
 ## 5. Drawing objects
@@ -150,7 +150,7 @@ Undo and ODP persistence.
 | Connectors, glue points | Later | Kept |
 | 3-D objects, extrusion | Not planned | Kept |
 | Line: colour, width, solid or dashed; area: colour | P1 | Yes in the model and renderer; GFOpenPresentation 0.5.0 adds undoable UI editing of solid fill, line colour/width, solid/dashed/dotted/dash-dot style and start/end arrowheads for one top-level text box or shape |
-| Area: gradient, hatching, bitmap, transparency; shadow | Later | Approx.: one colour; transparency and shadow No |
+| Area: gradient, hatching, bitmap, transparency; shadow | Later | Gradient: linear and radial from ODP and PPTX (axial drawn linear; ellipsoid, square and rectangular drawn round), saved to both, drawn in the PDF and print as 48 bands and on screen as 16 (GFOpenPresentation 0.6.34). Hatching and bitmap: one colour; transparency and shadow No |
 | Position and size | P1 | Yes: GFOpenPresentation 0.3.4 added single-object drag move, eight resize handles, one/ten-pixel keyboard nudge and undo/redo; 0.3.9 added independent deep-copy duplication with a clamped offset; 0.5.1 adds exact numeric left, top, width and height; 0.6.17 adds an optional half-inch grid with move/resize snapping; 0.6.18 adds fixed margin/centre guides. 0.6.28 adds several objects picked (Shift+click, a drag round them) moved together by drag and arrow keys. Resizing several together, custom guides and aspect lock remain |
 | Rotation | P1 | Shape outlines are rotated through OpenLayout 0.14 and saved to ODP; GFOpenPresentation 0.3.7 adds undoable 15-degree left/right rotation for a selected shape. Shape text, pictures, groups, exact angle entry and rotation handles remain |
 | Flip, slant | P1 (flip of lines and arrows) | Lines and arrows yes; slant: Approx. (drawn in its box) |
@@ -189,7 +189,7 @@ Undo and ODP persistence.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
-| Charts (column, bar, line, area, pie, XY and others), their data | P2-P4 (Shared, section 4) | Kept, with their parts; drawn as their replacement picture, which since 16 Nov includes WMF and EMF ones; not edited |
+| Charts (column, bar, line, area, pie, XY and others), their data | P2-P4 (Shared, section 4) | Kept as charts with their data (type, series, titles, legend) from PPTX and ODP, saved back to both as charts (16 Nov, #348, #354, #358); editing core with Undo in (#355, #356), the editor window not yet; shown as their box or their replacement picture (WMF and EMF ones too), not drawn as charts |
 | Spreadsheet, formula, drawing objects (OLE) | Later | Kept, as charts are |
 | Sound and video | Later | Kept, shown as a box |
 | Floating frames, plug-ins, applets | Not planned | Kept |
@@ -209,7 +209,7 @@ Undo and ODP persistence.
 | Impress | Phase | P1 |
 | --- | --- | --- |
 | Start from the first slide, from the current | P2 | Yes: Show menu, F5 and Shift-F5 |
-| Next, previous, first, last, go to a slide by number, black and white screen, end | P2 | Yes in the borderless public-screen player; H explicitly visits the next hidden slide |
+| Next, previous, first, last, go to a slide by number, black and white screen, end | P2 | Yes in the borderless player, on the Workbench screen or (0.6.33, #281) a screen of its own in the slide's shape, chosen by Show > Show On; H explicitly visits the next hidden slide |
 | Advance on click, or automatically after a time | P2 | Yes, through the host-tested reusable `opr_show` state machine |
 | Rehearse timings | P4 | No |
 | Slide show settings: range, loop with a pause, pointer visible, pen, navigator, animations allowed, slides change on click, always on top | P2, P4 | Loop and first/current range: Yes; the rest kept or No |

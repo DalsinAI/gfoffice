@@ -1408,6 +1408,255 @@ static void test_network(void)
     opj_doc_free(doc);
 }
 
+/* Change Working Time: hours as text, base calendars, a weekday's hours, holidays and a task's own calendar,
+ * each one Undo step with the plan scheduled again. A 2-day task from Mon 16 Nov 2026 08:00. */
+static void test_worktime(void)
+{
+    opj_doc *doc = opj_doc_new(NULL, AT(16, 8, 0));
+    owf_pday h;
+    char text[80];
+    int cal = -9, night = -9;
+    long thu = owf_ptime_make(2026, 11, 19, 0, 0) / 1440;
+    CHECK(doc != NULL);
+    if (!doc) return;
+    /* Hours as typed and back. */
+    CHECK(opj_hours_parse("08:00-12:00, 13:00-17:00", &h) && h.nspans == 2 && h.from[1] == 780 && h.to[1] == 1020);
+    opj_hours_text(&h, text);
+    CHECK_S(text, "08:00-12:00, 13:00-17:00");
+    CHECK(opj_hours_parse("8-12 13:30-17", &h) && h.nspans == 2 && h.from[1] == 810);
+    CHECK(opj_hours_parse("22:00-24:00", &h) && h.nspans == 1 && h.to[0] == 1440);
+    CHECK(opj_hours_parse("OFF", &h) && h.nspans == 0);
+    CHECK(opj_hours_parse("", &h) && h.nspans == 0);
+    opj_hours_text(&h, text);
+    CHECK_S(text, "off");
+    CHECK(!opj_hours_parse("12-8", &h));                             /* backwards */
+    CHECK(!opj_hours_parse("8-12, 11-13", &h));                      /* overlapping */
+    CHECK(!opj_hours_parse("8-25", &h) && !opj_hours_parse("8:70-9", &h) && !opj_hours_parse("8", &h));
+    CHECK(!opj_hours_parse("1-2 3-4 5-6 7-8 9-10 11-12", &h));       /* six spans */
+    CHECK(!opj_hours_parse("8-12x", &h) && !opj_hours_parse(NULL, &h));
+
+    CHECK_N(opj_insert_task(doc, 0, "Lay"), OWF_OK);
+    CHECK_N(opj_set_duration(doc, 0, 2 * 480), OWF_OK);
+    CHECK_N(doc->plan->tasks[0].early_finish, AT(17, 17, 0));
+    /* Calendars by name (case ignored) or number. */
+    CHECK_N(opj_find_calendar(doc->plan, "standard"), 0);
+    CHECK_N(opj_find_calendar(doc->plan, "1"), 0);
+    CHECK_N(opj_find_calendar(doc->plan, "2"), -1);
+    CHECK_N(opj_find_calendar(doc->plan, "Night"), -1);
+    /* Standard's Monday made a half day: Lay runs on to Wed noon; Undo puts it back. */
+    CHECK_N(opj_set_week_hours(doc, 0, 1, "08:00-12:00"), OWF_OK);
+    CHECK_N(doc->plan->tasks[0].early_finish, AT(18, 12, 0));
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK_N(doc->plan->tasks[0].early_finish, AT(17, 17, 0));
+    CHECK_N(opj_set_week_hours(doc, 0, 7, "8-12"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_week_hours(doc, 3, 1, "8-12"), OWF_ERR_FORMAT);  /* no calendar 3 */
+    CHECK_N(opj_set_week_hours(doc, 0, 1, "nonsense"), OWF_ERR_FORMAT);
+    /* Holidays Mon 16 and Tue 17: Lay moves to Wed and Thu. */
+    CHECK_N(opj_set_day_hours(doc, 0, thu - 3, thu - 2, "off"), OWF_OK);
+    CHECK_N(doc->plan->tasks[0].early_start, AT(18, 8, 0));
+    CHECK_N(doc->plan->tasks[0].early_finish, AT(19, 17, 0));
+    CHECK_N(doc->plan->calendars[0].nexceptions, 2);
+    /* Tuesday back to the week's hours: Lay Tue and Wed. */
+    CHECK_N(opj_set_day_hours(doc, 0, thu - 2, thu - 2, NULL), OWF_OK);
+    CHECK_N(doc->plan->calendars[0].nexceptions, 1);
+    CHECK_N(doc->plan->tasks[0].early_start, AT(17, 8, 0));
+    CHECK_N(opj_set_day_hours(doc, 0, thu, thu - 1, "off"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_day_hours(doc, 0, thu, thu + 3660, "off"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_day_hours(doc, 0, thu, thu, "25-26"), OWF_ERR_FORMAT);
+    /* A new calendar, a copy of Standard with its holiday; names must be new and not a number. */
+    CHECK_N(opj_add_calendar(doc, "Night", 0, &night), OWF_OK);
+    CHECK_N(night, 1);
+    CHECK_N(doc->plan->calendars[night].nexceptions, 1);
+    CHECK_N(doc->plan->calendars[night].week[1].nspans, 2);
+    CHECK_N(opj_add_calendar(doc, "NIGHT", -1, &cal), OWF_ERR_FORMAT);
+    CHECK_N(opj_add_calendar(doc, "  ", -1, &cal), OWF_ERR_FORMAT);
+    CHECK_N(opj_add_calendar(doc, "24", -1, &cal), OWF_ERR_FORMAT);
+    CHECK_N(opj_add_calendar(doc, "Odd", 5, &cal), OWF_ERR_FORMAT);
+    CHECK_N(cal, -9);
+    CHECK_N(opj_add_calendar(doc, "Plain", -1, &cal), OWF_OK);        /* Standard's hours, no holidays */
+    CHECK_N(doc->plan->calendars[cal].nexceptions, 0);
+    CHECK_N(opj_find_calendar(doc->plan, "night"), night);
+    /* Night works 22:00-24:00 every day; Lay on its own Night calendar takes 4 days of 2 hours from Mon. */
+    {
+        int d;
+        for (d = 0; d < 7; d++) CHECK_N(opj_set_week_hours(doc, night, d, "22:00-24:00"), OWF_OK);
+    }
+    CHECK_N(opj_set_day_hours(doc, night, thu - 3, thu - 3, NULL), OWF_OK);   /* Mon not a holiday there */
+    CHECK_N(opj_set_task_calendar(doc, 0, night), OWF_OK);
+    CHECK_N(doc->plan->tasks[0].calendar, night);
+    CHECK_N(doc->plan->tasks[0].early_start, AT(16, 22, 0));
+    CHECK_N(doc->plan->tasks[0].early_finish, owf_ptime_make(2026, 11, 24, 0, 0));   /* 8 nights of 2 hours */
+    CHECK_N(opj_set_task_calendar(doc, 0, -1), OWF_OK);
+    CHECK_N(doc->plan->tasks[0].calendar, -1);
+    CHECK_N(opj_set_task_calendar(doc, 0, 9), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_task_calendar(doc, 4, 0), OWF_ERR_FORMAT);
+    /* The plan's calendar: Night for every task without its own. */
+    CHECK_N(opj_set_plan_calendar(doc, night), OWF_OK);
+    CHECK_N(doc->plan->calendar, night);
+    CHECK_N(doc->plan->tasks[0].early_start, AT(16, 22, 0));
+    CHECK_N(opj_set_plan_calendar(doc, -1), OWF_ERR_FORMAT);
+    {
+        unsigned long before = doc->changes;
+        CHECK_N(opj_set_plan_calendar(doc, 7), OWF_ERR_FORMAT);
+        CHECK_N(doc->changes, before);                                /* a refused edit is no step */
+    }
+    opj_doc_free(doc);
+    CHECK_N(opj_set_week_hours(NULL, 0, 1, "8-12"), OWF_ERR_FORMAT);
+    CHECK_N(opj_find_calendar(NULL, "Standard"), -1);
+}
+
+/* Tracking in the sheet: Actual Start, Actual Finish, Actual and Remaining Duration, % Complete moving the
+ * actual dates, and Update Project as one Undo step. Two 2-day tasks, A then B, from Mon 16 Nov 2026. */
+static void test_actual_cells(void)
+{
+    opj_doc *doc = opj_doc_new(NULL, AT(16, 8, 0));
+    int changed = -1;
+    unsigned long before;
+    CHECK(doc != NULL);
+    if (!doc) return;
+    CHECK_N(opj_insert_task(doc, 0, "A"), OWF_OK);
+    CHECK_N(opj_insert_task(doc, 1, "B"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_DURATION, "2d"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_DURATION, "2d"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_PREDECESSORS, "1"), OWF_OK);
+    CHECK_S(opj_column_title(OPJ_COL_ACTUAL_START), "Actual Start");
+    CHECK_S(opj_column_title(OPJ_COL_REMAINING_DURATION), "Remaining Dur.");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_START), "NA");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_FINISH), "NA");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_DURATION), "0d");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_REMAINING_DURATION), "2d");
+    /* Which columns are typed. */
+    CHECK(opj_column_typed(OPJ_COL_ACTUAL_START) && opj_column_typed(OPJ_COL_NOTES) && opj_column_typed(OPJ_COL_CONSTRAINT_TYPE));
+    CHECK(!opj_column_typed(OPJ_COL_ACTUAL_DURATION) && !opj_column_typed(OPJ_COL_ID) && !opj_column_typed(OPJ_COL_START_VARIANCE));
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_DURATION, "1d"), OWF_ERR_FORMAT);
+    /* 50% gives A its scheduled start as its actual start; a day done, a day to go. */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_PERCENT, "50"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_START), "Mon 16/11/26");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_FINISH), "NA");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_DURATION), "1d");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_REMAINING_DURATION), "1d");
+    /* 100% finishes it at its scheduled finish; 0% takes both away. */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_PERCENT, "100%"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_FINISH), "Tue 17/11/26");
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_PERCENT, "60"), OWF_OK);     /* not finished after all */
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_FINISH), "NA");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_START), "Mon 16/11/26");
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_PERCENT, "0"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_START), "NA");
+    /* A typed Actual Start a day late moves A and B; Actual Finish before it is refused. */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_START, "17/11/26"), OWF_OK);
+    CHECK_N(doc->plan->tasks[0].actual_start, AT(17, 8, 0));
+    CHECK_N(doc->plan->tasks[1].early_start, AT(19, 8, 0));
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_FINISH, "16/11/26"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_FINISH, "someday"), OWF_ERR_FORMAT);
+    /* Finished Wed at 17:00: 100%, 2 days, B from Thu. */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_FINISH, "18/11/26"), OWF_OK);
+    CHECK_N(doc->plan->tasks[0].actual_finish, AT(18, 17, 0));
+    CHECK_S(cell_of(doc, 0, OPJ_COL_PERCENT), "100%");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_REMAINING_DURATION), "0d");
+    /* An Actual Start later than the finish drops the finish. */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_START, "19/11/26"), OWF_OK);
+    CHECK(!doc->plan->tasks[0].has_actual_finish);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_PERCENT), "99%");                /* no longer finished */
+    /* NA on the finish leaves it started, below 100%; NA on the start clears both and the percent. */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_FINISH, "20/11/26"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_FINISH, "NA"), OWF_OK);
+    CHECK(doc->plan->tasks[0].has_actual_start && doc->plan->tasks[0].percent == 99);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_START, "na"), OWF_OK);
+    CHECK(!doc->plan->tasks[0].has_actual_start && doc->plan->tasks[0].percent == 0);
+    /* An Actual Finish with no start: the scheduled start is taken. */
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_ACTUAL_FINISH, "18/11/26"), OWF_OK);
+    CHECK_N(doc->plan->tasks[1].actual_start, AT(18, 8, 0));         /* B starts Wed, after A */
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK(!doc->plan->tasks[1].has_actual_start);
+    /* Update Project through Tue 17 17:00: A done, B not started; one Undo step. */
+    before = doc->changes;
+    CHECK_N(opj_update_project(doc, AT(17, 17, 0), 0, &changed), OWF_OK);
+    CHECK_N(changed, 1);
+    CHECK_N(doc->changes, before + 1);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_PERCENT), "100%");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_FINISH), "Tue 17/11/26");
+    CHECK(doc->plan->has_status_date && doc->plan->status_date == AT(17, 17, 0));
+    CHECK_N(opj_update_project(doc, AT(18, 12, 0), 0, &changed), OWF_OK);
+    CHECK_N(changed, 1);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "25%");
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "0%");
+    CHECK_N(opj_update_project(doc, AT(18, 12, 0), 1, NULL), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "0%");                 /* 0% or 100% only */
+    CHECK_S(cell_of(doc, 1, OPJ_COL_ACTUAL_START), "Wed 18/11/26");
+    CHECK_N(opj_update_project(NULL, AT(18, 12, 0), 0, &changed), OWF_ERR_FORMAT);
+    CHECK_N(changed, 0);
+    opj_doc_free(doc);
+}
+
+/* Change Working Time's days line: weekdays, a date, a range; the hours shown for it; setting them. */
+static void test_worktime_days(void)
+{
+    opj_doc *doc = opj_doc_new(NULL, AT(16, 8, 0));
+    int wd = -1;
+    long a = -1, b = -1, mon = AT(16, 0, 0) / 1440;
+    char text[80];
+    CHECK(doc != NULL);
+    if (!doc) return;
+    CHECK_N(opj_days_parse("Mon", &wd, &a, &b), 1);
+    CHECK_N(wd, 1);
+    CHECK_N(opj_days_parse(" saturday ", &wd, NULL, NULL), 1);
+    CHECK_N(wd, 6);
+    CHECK_N(opj_days_parse("WED", &wd, NULL, NULL), 1);
+    CHECK_N(wd, 3);
+    CHECK_N(opj_days_parse("Mo", &wd, NULL, NULL), 0);                /* too short */
+    CHECK_N(opj_days_parse("Mond", &wd, NULL, NULL), 0);              /* neither three letters nor the name */
+    CHECK_N(opj_days_parse("Fridays", &wd, NULL, NULL), 0);
+    CHECK_N(opj_days_parse("24/12/26", &wd, &a, &b), 2);
+    CHECK_N(a, mon + 38);
+    CHECK_N(b, a);
+    CHECK_N(opj_days_parse("24/12/26 - 1/1/27", NULL, &a, &b), 2);
+    CHECK_N(b - a, 8);
+    CHECK_N(opj_days_parse("16/11/26 to 18/11/26", NULL, &a, &b), 2);
+    CHECK_N(a, mon);
+    CHECK_N(b, mon + 2);
+    CHECK_N(opj_days_parse("2026-11-16 TO 2026-11-17", NULL, &a, &b), 2);   /* ISO dates keep their dashes */
+    CHECK_N(b, mon + 1);
+    CHECK_N(opj_days_parse("18/11/26 - 16/11/26", NULL, &a, &b), 0);  /* backwards */
+    CHECK_N(opj_days_parse("16/11/26 13:00", NULL, &a, &b), 0);       /* a time is not a day */
+    CHECK_N(opj_days_parse("1/1/26 - 1/1/40", NULL, &a, &b), 0);      /* over 3660 days */
+    CHECK_N(opj_days_parse("", NULL, NULL, NULL), 0);
+    CHECK_N(opj_days_parse(NULL, NULL, NULL, NULL), 0);
+    CHECK_N(opj_days_parse("someday", NULL, NULL, NULL), 0);
+    /* The hours they work now. */
+    opj_days_hours_text(doc->plan, 0, "Mon", text);
+    CHECK_S(text, "08:00-12:00, 13:00-17:00");
+    opj_days_hours_text(doc->plan, 0, "Sun", text);
+    CHECK_S(text, "off");
+    opj_days_hours_text(doc->plan, 0, "21/11/26", text);              /* a Saturday */
+    CHECK_S(text, "off");
+    opj_days_hours_text(doc->plan, 3, "Mon", text);
+    CHECK_S(text, "");
+    opj_days_hours_text(doc->plan, 0, "nonsense", text);
+    CHECK_S(text, "");
+    /* Setting them: a weekday, a range of holidays, back to default; default is for dates only. */
+    CHECK_N(opj_set_days_hours(doc, 0, "Fri", "08:00-12:00"), OWF_OK);
+    opj_days_hours_text(doc->plan, 0, "Friday", text);
+    CHECK_S(text, "08:00-12:00");
+    CHECK_N(opj_set_days_hours(doc, 0, "24/12/26 - 1/1/27", "off"), OWF_OK);
+    CHECK_N(doc->plan->calendars[0].nexceptions, 9);
+    opj_days_hours_text(doc->plan, 0, "28/12/26", text);
+    CHECK_S(text, "off");
+    CHECK_N(opj_set_days_hours(doc, 0, "28/12/26", " Default "), OWF_OK);
+    CHECK_N(doc->plan->calendars[0].nexceptions, 8);
+    opj_days_hours_text(doc->plan, 0, "28/12/26", text);
+    CHECK_S(text, "08:00-12:00, 13:00-17:00");
+    CHECK_N(opj_set_days_hours(doc, 0, "Mon", "default"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_days_hours(doc, 0, "someday", "off"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_days_hours(doc, 0, "Mon", "12-8"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_days_hours(doc, 0, "Mon", NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_days_hours(doc, 5, "Mon", "off"), OWF_ERR_FORMAT);
+    CHECK_N(opj_undo(doc), OWF_OK);                                   /* the default undone */
+    CHECK_N(doc->plan->calendars[0].nexceptions, 9);
+    opj_doc_free(doc);
+}
+
 int main(void)
 {
     test_dates();
@@ -1430,6 +1679,9 @@ int main(void)
     test_task_info();
     test_network();
     test_drag();
+    test_worktime();
+    test_actual_cells();
+    test_worktime_days();
     if (fails) {
         printf("project view tests: %d of %d checks failed\n", fails, checks);
         return 1;

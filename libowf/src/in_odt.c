@@ -136,6 +136,10 @@ static void read_text_props(odt *o, const owf_xml_node *n, owf_charprops *cp)
         cp->fmt.flags = strcmp(v, "none") ? cp->fmt.flags | OWF_STRIKE : cp->fmt.flags & ~OWF_STRIKE;
         cp->mask |= OWF_CP_STRIKE;
     }
+    if ((v = owf_xml_attr(n, NS_TEXT, "display"))) {   /* 1.14: hidden text */
+        cp->fmt.flags = !strcmp(v, "none") ? cp->fmt.flags | OWF_HIDDEN : cp->fmt.flags & ~OWF_HIDDEN;
+        cp->mask |= OWF_CP_HIDDEN;
+    }
     if ((v = owf_xml_attr(n, NS_STYLE, "text-position"))) {
         cp->fmt.flags &= ~(OWF_SUPER | OWF_SUB);
         if (!strncmp(v, "super", 5) || (v[0] != '-' && atoi(v) > 0))

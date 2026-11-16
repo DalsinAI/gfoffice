@@ -74,15 +74,32 @@ owf_font_kind opr_font_kind(const owf_deck *deck, int font);
 typedef enum {
     OPR_PDF_SLIDES,              /* a page a slide, at the slide's size */
     OPR_PDF_NOTES,               /* a notes page a slide: the slide above its notes */
-    OPR_PDF_HANDOUTS             /* handouts: handout_slides slides to a page */
+    OPR_PDF_HANDOUTS,            /* handouts: handout_slides slides to a page */
+    OPR_PDF_BOOKLET              /* a folded booklet: two pages side by side on each sheet side, in the order that
+                                    folds and staples in the middle (blank pages made up to a multiple of four) */
 } opr_pdf_pages;
+
+/* For a booklet of n pages: sheet side k's (0 the first sheet's front, 1 its back, ...) left and right page,
+   from 0, or -1 for a blank. The sides come to (n + 3) / 4 * 2. 0, or -1 when k is not a side. */
+int opr_booklet_side(int n, int k, int *left, int *right);
 
 typedef struct {
     int with_hidden;             /* hidden slides too */
     const char *today;           /* the date fields' text; NULL: today's */
     opr_pdf_pages pages;         /* 0: the slides */
     int handout_slides;          /* OPR_PDF_HANDOUTS: 1, 2, 3, 4, 6 or 9 (others: 6) */
+    /* For a printer, OPR_PDF_SLIDES only: bleed, twips each page prints past its trimmed edge (0 none, at
+       most OPR_PDF_MAX_BLEED), and crop marks at the trimmed corners, outside the bleed. Either makes each
+       PDF page larger than the slide by opr_pdf_margin's on every side, the slide in the middle. */
+    int bleed;
+    int crop_marks;
 } opr_pdf_options;
+
+#define OPR_PDF_MAX_BLEED 1440
+#define OPR_PDF_MARK_LENGTH 360  /* a crop mark, twips */
+#define OPR_PDF_MARK_GAP 120     /* the least room between a mark and the trimmed edge, twips */
+/* The room round each page for options' bleed and crop marks, twips (0: none). */
+int opr_pdf_margin(const opr_pdf_options *options);
 
 /* The deck as a PDF: by options->pages, one page a slide at the slide's
  * size, a notes page a slide, or handouts, both on the deck's notes page
@@ -90,6 +107,17 @@ typedef struct {
  * OWF_OK, or OWF_ERR_MEMORY. */
 int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigned char **data, size_t *length,
                    owf_report *report);
+
+/* A gradient fill as plain polygons, for a screen that fills polygons but can't clip (opr_gradient.c):
+ * band (0..bands-1) of the gradient inside the closed outline xy (n points, at most OL_MAX_SHAPE_POINTS)
+ * across the box x, y, w, h, into out (at most cap points) with its colour (0xRRGGBB). LINEAR runs from
+ * one colour to the other along angle (tenths anticlockwise, 0 left to right; each band overlaps the
+ * next by a unit); RADIAL's band 0 is the outermost ring, from at the centre, each band drawn over the
+ * one before. The point count (0: nothing to draw), or -1 when out is too small. */
+#define OPR_GRADIENT_LINEAR 1
+#define OPR_GRADIENT_RADIAL 2
+int opr_gradient_band(const int *xy, int n, int x, int y, int w, int h, int kind, int angle, unsigned long from,
+                      unsigned long to, int band, int bands, int *out, int cap, unsigned long *colour);
 
 /* The deck as PowerPoint (PPTX, opr_pptx.c): its slides with their objects
  * where they are drawn, text with its look and levels, pictures, shapes,

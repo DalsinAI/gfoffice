@@ -16,7 +16,7 @@ int owf_track_add(owf_doc *doc, int kind, const char *author, const char *date);
  * author and date may be NULL; before is the runs' format before the change. */
 int owf_track_format_add(owf_doc *doc, const char *author, const char *date, const owf_charfmt *before);
 
-/* 1.13: a paragraph format change for the document's list (owf_para.para_format_change's number), 0 when
+/* 1.15: a paragraph format change for the document's list (owf_para.para_format_change's number), 0 when
  * memory runs out. author, date and style may be NULL; before is the paragraph's format before the change. */
 int owf_track_para_format_add(owf_doc *doc, const char *author, const char *date, const char *style,
                               const owf_parafmt *before);

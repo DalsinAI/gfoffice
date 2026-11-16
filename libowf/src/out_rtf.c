@@ -102,6 +102,7 @@ static void put_charfmt(rtf_out *w, const owf_charfmt *f)
     if (f->flags & OWF_ITALIC) owf_buf_puts(&w->out, "\\i");
     if (f->flags & OWF_UNDERLINE) owf_buf_puts(&w->out, "\\ul");
     if (f->flags & OWF_STRIKE) owf_buf_puts(&w->out, "\\strike");
+    if (f->flags & OWF_HIDDEN) owf_buf_puts(&w->out, "\\v");          /* 1.14 */
     if (f->flags & OWF_SUPER) owf_buf_puts(&w->out, "\\super");
     else if (f->flags & OWF_SUB) owf_buf_puts(&w->out, "\\sub");
     if (f->colour != OWF_COLOUR_AUTO)

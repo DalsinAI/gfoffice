@@ -1,12 +1,12 @@
 /*
- * GFOpenPublisher's mail merge on the shared page model (src/pub/opp_merge.c).
+ * GFOpenPressmaster's mail merge on the shared page model (src/pub/opp_merge.c).
  * The data source is the suite's merge table (include/ow_merge.h), the same
  * one GFOpenWrite reads. A merge field is a field run (OWF_RUN_FIELD,
  * OWF_FIELD_MERGE) in a frame's text: its href is the column, its text the
  * value shown. MIT, Copyright (c) 2026 AmiCradle Team.
  */
-#ifndef OPENPUBLISHER_MERGE_H
-#define OPENPUBLISHER_MERGE_H
+#ifndef OPENPRESSMASTER_MERGE_H
+#define OPENPRESSMASTER_MERGE_H
 
 #include "owf_deck.h"
 #include "ow_merge.h"
@@ -73,7 +73,9 @@ typedef struct {
  * copy moves by whole boxes, and a page's last items may stay empty. The
  * page's other objects come on each page with the page's first record.
  * Merge fields become plain text, every frame of a text flow keeps to its
- * own copy, and the deck's other pages and masters are left as they are.
+ * own copy (a flow from a frame inside the item to one outside it is split
+ * there: the item's part flows in each item, the rest on each page), and
+ * the deck's other pages and masters are left as they are.
  * *made (when not NULL): the pages made. OWF_OK; OWF_ERR_UNSUPPORTED: no
  * table or records, no such page, an area or range that cannot be;
  * OWF_ERR_FORMAT: no object inside the area's first box; OWF_ERR_MEMORY:

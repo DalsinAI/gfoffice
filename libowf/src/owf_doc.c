@@ -148,7 +148,7 @@ void owf_doc_free(owf_doc *doc)
         free(doc->format_changes[i].date);
     }
     free(doc->format_changes);
-    for (i = 0; i < doc->npara_format_changes; ++i) {   /* 1.13 */
+    for (i = 0; i < doc->npara_format_changes; ++i) {   /* 1.15 */
         free(doc->para_format_changes[i].author);
         free(doc->para_format_changes[i].date);
         free(doc->para_format_changes[i].style);

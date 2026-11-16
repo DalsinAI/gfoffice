@@ -374,6 +374,85 @@ static void test_columns(void)
     rx.view = NULL;
 }
 
+/* Calendars by ARexx: CALENDARS, ADDCALENDAR, WORKTIME (a weekday or days, set or read) and SETCALENDAR,
+ * on a fresh plan from Mon 16 Nov 2026 with one 2-day task. */
+static void test_calendars(void)
+{
+    opj_doc_free(rx.doc);
+    rx.doc = opj_doc_new(NULL, AT(16, 8, 0));
+    CHECK(rx.doc != NULL);
+    if (!rx.doc) return;
+    ok("ADDTASK Lay DURATION 2d");
+    CHECK_S(ok("CALENDARS"), "1");
+    CHECK_S(ok("WORKTIME Standard Mon"), "08:00-12:00, 13:00-17:00");
+    CHECK_S(ok("WORKTIME 1 sunday"), "off");
+    CHECK_S(ok("WORKTIME Standard 18/11/26"), "08:00-12:00, 13:00-17:00");
+    ok("WORKTIME Standard Monday 08:00-12:00");
+    CHECK_S(ok("GETCELL 1 Finish"), "Wed 18/11/26");
+    CHECK_N(rx.doc->plan->tasks[0].early_finish, AT(18, 12, 0));
+    ok("UNDO");
+    ok("WORKTIME Standard 16/11/26 TO 17/11/26 off");                     /* two holidays */
+    CHECK_S(ok("GETCELL 1 Start"), "Wed 18/11/26");
+    CHECK_S(ok("WORKTIME Standard 17/11/26"), "off");
+    ok("WORKTIME Standard 17/11/26 DEFAULT");
+    CHECK_S(ok("WORKTIME Standard 17/11/26"), "08:00-12:00, 13:00-17:00");
+    CHECK_S(ok("GETCELL 1 Start"), "Tue 17/11/26");     /* Mon 16 still a holiday */
+    CHECK_N(rx_do("WORKTIME Standard Mon DEFAULT"), OPJ_RX_ERROR);
+    CHECK(strstr(rx.lasterror, "for dates") != NULL);
+    CHECK_N(rx_do("WORKTIME Standard 17/11/26 TO 18/11/26"), OPJ_RX_ERROR);
+    CHECK_N(rx_do("WORKTIME Standard Someday 8-12"), OPJ_RX_ERROR);
+    CHECK(strstr(rx.lasterror, "not a weekday or a date") != NULL);
+    CHECK_N(rx_do("WORKTIME Nowhere Mon"), OPJ_RX_ERROR);
+    CHECK_S(rx.lasterror, "WORKTIME: no calendar Nowhere");
+    CHECK_N(rx_do("WORKTIME Standard Mon 12-8"), OPJ_RX_ERROR);
+    /* A copy for nights; a name taken or a number is refused. */
+    CHECK_S(ok("ADDCALENDAR Night FROM Standard"), "2");
+    CHECK_N(rx_do("ADDCALENDAR night"), OPJ_RX_ERROR);
+    CHECK_N(rx_do("ADDCALENDAR 7"), OPJ_RX_ERROR);
+    CHECK_N(rx_do("ADDCALENDAR Odd FROM Nowhere"), OPJ_RX_ERROR);
+    CHECK_S(ok("CALENDARS"), "2");
+    ok("WORKTIME Night Mon 22:00-24:00");
+    ok("SETCALENDAR Night ROW 1");
+    CHECK_N(rx.doc->plan->tasks[0].early_start, AT(17, 8, 0));            /* the copy kept Mon 16 off */
+    ok("WORKTIME Night 16/11/26 DEFAULT");
+    CHECK_N(rx.doc->plan->tasks[0].early_start, AT(16, 22, 0));
+    ok("SETCALENDAR \"\" ROW 1");                                      /* the plan's again */
+    CHECK_N(rx.doc->plan->tasks[0].early_start, AT(17, 8, 0));
+    ok("SETCALENDAR Night");                                              /* the plan's calendar */
+    CHECK_N(rx.doc->plan->calendar, 1);
+    CHECK_N(rx_do("SETCALENDAR Night ROW 5"), OPJ_RX_ERROR);
+    CHECK_N(rx_do("SETCALENDAR -"), OPJ_RX_ERROR);                       /* the plan needs one */
+    CHECK(strstr(ok("HELP WORKTIME"), "CALENDAR/A,DAY/A,TO/K,HOURS/F") != NULL);
+}
+
+/* UPDATE: Update Project through a status date, the tasks changed; the tracking columns by short names. */
+static void test_update(void)
+{
+    opj_doc_free(rx.doc);
+    rx.doc = opj_doc_new(NULL, AT(16, 8, 0));
+    CHECK(rx.doc != NULL);
+    if (!rx.doc) return;
+    ok("ADDTASK Dig DURATION 2d");
+    ok("ADDTASK Fill DURATION 2d");
+    ok("LINK 1");
+    CHECK_S(ok("UPDATE 17/11/26"), "1");                                  /* 17:00 when no time is given */
+    CHECK_S(ok("GETCELL 1 ActualFinish"), "Tue 17/11/26");
+    CHECK_S(ok("GETCELL 1 Percent"), "100%");
+    CHECK_S(ok("UPDATE \"18/11/26 12:00\""), "1");
+    CHECK_S(ok("GETCELL 2 Percent"), "25%");
+    CHECK_S(ok("GETCELL 2 ActualDuration"), "4h");
+    CHECK_S(ok("GETCELL 2 Remaining"), "12h");
+    ok("UNDO");
+    CHECK_S(ok("UPDATE \"18/11/26 12:00\" WHOLE"), "1");
+    CHECK_S(ok("GETCELL 2 Percent"), "0%");
+    CHECK_S(ok("GETCELL 2 ActualStart"), "Wed 18/11/26");
+    ok("SETCELL 2 ActualStart NA");
+    CHECK_S(ok("GETCELL 2 \"Actual Start\""), "NA");
+    CHECK_N(rx_do("UPDATE soon"), OPJ_RX_ERROR);
+    CHECK_S(rx.lasterror, "UPDATE: soon is not a date");
+    CHECK_N(rx_do("SETCELL 2 ActualDuration 1d"), OPJ_RX_ERROR);
+}
+
 int main(void)
 {
     if (!own_folder()) {
@@ -389,6 +468,9 @@ int main(void)
     test_files();
     test_huge_numbers();
     test_columns();
+    test_calendars();
+    test_update();
+    if (!rx.doc) return 1;
     CHECK_N(opj_rexx_format("A.XML"), OWF_PFILE_MSPDI);
     CHECK_N(opj_rexx_format("plan.Csv"), OWF_PFILE_CSV);
     CHECK_N(opj_rexx_format("plan"), OWF_PFILE_GFPROJ);

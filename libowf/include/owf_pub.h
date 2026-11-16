@@ -1,7 +1,7 @@
 /*
- * libowf: Microsoft Publisher files (.pub), read for GFOpenPublisher.
+ * libowf: Microsoft Publisher files (.pub), read for GFOpenPressmaster.
  *
- * Phase 0's reader (docs/gfoffice/Design-OpenPublisher.md): it tells the
+ * Phase 0's reader (docs/gfoffice/Design-OpenPressmaster.md): it tells the
  * version, gives the page size, the pages and master pages, each page's
  * frames with their boxes and kinds, the text of text frames and tables as
  * paragraphs, the fonts the text names and the pictures. Phase 1 adds the
@@ -112,6 +112,13 @@ int owf_pub_detect(const unsigned char *data, size_t length);
 int owf_pub_read(const unsigned char *data, size_t length, owf_pub **pub, owf_report *report);
 int owf_pub_read_file(const char *path, owf_pub **pub, owf_report *report);
 void owf_pub_free(owf_pub *pub);
+/* owfpub.library 3.3: the publication as a .pub in the 2002-or-later form
+ * (Publisher 2007's), into memory from malloc: pages and master pages, text
+ * boxes, shapes and tables with their boxes and looks, the text with its
+ * runs, links and cells, the colour scheme, pictures, groups and WordArt.
+ * The scratch area is not written yet (a note in the report says so).
+ * OWF_OK, or OWF_ERR_MEMORY. */
+int owf_pub_write(const owf_pub *pub, unsigned char **data, size_t *length, owf_report *report);
 
 #ifdef __cplusplus
 }

@@ -56,6 +56,8 @@ static void put_rpr_props(owf_buf *out, const owf_doc *doc, const owf_charfmt *f
         owf_buf_puts(out, "<w:i/>");
     if (f->flags & OWF_STRIKE)
         owf_buf_puts(out, "<w:strike/>");
+    if (f->flags & OWF_HIDDEN)
+        owf_buf_puts(out, "<w:vanish/>");             /* 1.14 */
     if (f->colour != OWF_COLOUR_AUTO)
         owf_buf_printf(out, "<w:color w:val=\"%06lX\"/>", f->colour & 0xFFFFFFUL);
     if (f->size)
@@ -207,7 +209,7 @@ static void put_ppr_props(owf_buf *out, const owf_parafmt *f, const char *style)
         owf_buf_printf(out, "<w:jc w:val=\"%s\"/>", jc[f->align]);
 }
 
-/* 1.13: fc is the paragraph's tracked format change (w:pPrChange, last, the format before in its own w:pPr),
+/* 1.15: fc is the paragraph's tracked format change (w:pPrChange, last, the format before in its own w:pPr),
  * style_before the style it names there */
 static void put_ppr(owf_buf *out, const owf_doc *doc, const owf_parafmt *f, const char *style,
                     int section_end, const owf_para *section, int next_break,
@@ -738,7 +740,7 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
     char instr[160];
     char style[16], ostyle[16];
     const char *pstyle = NULL, *opstyle = NULL;
-    const owf_para_format_change *pfc = OWF_DOC_PARA_FORMAT_CHANGE(doc, para->para_format_change);   /* 1.13 */
+    const owf_para_format_change *pfc = OWF_DOC_PARA_FORMAT_CHANGE(doc, para->para_format_change);   /* 1.15 */
     docx_marks mk;
     size_t at = 0;
     int j;

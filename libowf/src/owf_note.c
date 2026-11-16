@@ -99,7 +99,7 @@ static void tidy_story(const owf_doc *doc, owf_story *s)
         p->table_row = p->table_col = p->table_cols = 0;
         p->section_columns = p->section_gap = 0;
         p->section_break = 0;
-        p->para_format_change = 0;                   /* 1.13 */
+        p->para_format_change = 0;                   /* 1.15 */
         for (j = 0; j < p->nruns;) {
             owf_run *r = &p->runs[j];
             const owf_revision *chg = OWF_DOC_REVISION(doc, r->revision);
@@ -156,7 +156,7 @@ int owf_note_story_formatted(const owf_story *story)
         for (j = 0; j < story->paras[i].nruns; ++j) {
             const owf_run *r = &story->paras[i].runs[j];
             if (r->kind == OWF_RUN_FIELD || r->href || (r->fmt.flags & (OWF_BOLD | OWF_ITALIC | OWF_UNDERLINE |
-                                                                        OWF_STRIKE | OWF_SUPER | OWF_SUB)))
+                                                                        OWF_STRIKE | OWF_SUPER | OWF_SUB | OWF_HIDDEN)))
                 return 1;
             if (r->kind != OWF_RUN_TEXT || !r->text || !*r->text)
                 continue;

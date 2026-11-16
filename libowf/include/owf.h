@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.13.0"
+#define OWF_VERSION "1.15.0"
 
 /* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
@@ -56,7 +56,11 @@ enum {
     OWF_UNDERLINE = 1 << 2,
     OWF_STRIKE = 1 << 3,
     OWF_SUPER = 1 << 4,
-    OWF_SUB = 1 << 5
+    OWF_SUB = 1 << 5,
+    /* 1.14: hidden text (DOCX w:vanish, ODF text:display="none", RTF \v): kept and saved; GFOpenWrite's
+     * layout leaves it out unless the view shows it (OW_LAYOUT_SHOW_HIDDEN); PDF and Markdown leave it out,
+     * HTML keeps it with display: none */
+    OWF_HIDDEN = 1 << 6
 };
 
 #define OWF_COLOUR_AUTO 0xFFFFFFFFUL
@@ -197,7 +201,7 @@ typedef struct {
      * the same on every cell of the row. Inserted: the row was put in; deleted: accepting it takes the row
      * away. 0: none. */
     int row_revision;
-    /* 1.13: the paragraph's format is a tracked change (DOCX w:pPrChange): fmt is its format now, and its format
+    /* 1.15: the paragraph's format is a tracked change (DOCX w:pPrChange): fmt is its format now, and its format
      * before is doc->para_format_changes' (1 + the index there). Apart from mark_revision. 0: none */
     int para_format_change;
 } owf_para;
@@ -327,7 +331,7 @@ typedef struct owf_format_change {
     owf_charfmt before;
 } owf_format_change;
 
-/* 1.13: a tracked paragraph format change (DOCX's w:pPrChange): who made it, when, and the paragraph's format
+/* 1.15: a tracked paragraph format change (DOCX's w:pPrChange): who made it, when, and the paragraph's format
  * and style before it. Accepting it keeps the paragraph's format; rejecting it gives the paragraph this one
  * back. Its size never changes (owf_struct_size doesn't list it). */
 typedef struct owf_para_format_change {
@@ -420,7 +424,7 @@ typedef struct owf_doc {
      * The list is as long as the last note with formats needs, never longer than nnotes. */
     int nnote_stories;
     owf_story *note_stories;
-    /* 1.13: tracked paragraph format changes (owf_para_format_change), named by their paragraphs
+    /* 1.15: tracked paragraph format changes (owf_para_format_change), named by their paragraphs
      * (owf_para.para_format_change); the list only grows, as the run format changes' does */
     int npara_format_changes, cappara_format_changes;
     struct owf_para_format_change *para_format_changes;
@@ -470,7 +474,7 @@ int owf_doc_set_title(owf_doc *doc, const char *utf8);
 #define OWF_DOC_FORMAT_CHANGE(doc, number)                                                                 \
     ((number) > 0 && (number) <= (doc)->nformat_changes ? &(doc)->format_changes[(number) - 1]             \
                                                          : (owf_format_change *)0)
-/* 1.13: the paragraph format change a paragraph names (owf_para.para_format_change), NULL for 0 or one the
+/* 1.15: the paragraph format change a paragraph names (owf_para.para_format_change), NULL for 0 or one the
  * document doesn't have */
 #define OWF_DOC_PARA_FORMAT_CHANGE(doc, number)                                                            \
     ((number) > 0 && (number) <= (doc)->npara_format_changes ? &(doc)->para_format_changes[(number) - 1]   \

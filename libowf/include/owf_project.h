@@ -47,6 +47,8 @@ void owf_pcal_standard(owf_pcal *cal);
 int owf_pcal_set_week(owf_pcal *cal, int weekday, int nspans, const unsigned short *pairs);
 /* A day off (nspans 0) or a day with its own hours; replaces an exception on that day. */
 int owf_pcal_set_exception(owf_pcal *cal, long day, int nspans, const unsigned short *pairs);
+/* Takes away day's exception, so it works the week's hours again; no exception there is no change. */
+void owf_pcal_clear_exception(owf_pcal *cal, long day);
 void owf_pcal_free(owf_pcal *cal);
 /* The working hours of the day holding t. */
 const owf_pday *owf_pcal_day(const owf_pcal *cal, long day);
@@ -76,6 +78,14 @@ typedef struct {
     int lag_percent;                     /* 1: lag is a percentage */
 } owf_plink;
 
+/* A saved baseline: Baseline 0 is kept in the task's own baseline_ fields, Baselines 1 to 10 here. */
+typedef struct {
+    owf_ptime start, finish;
+    long duration, work, cost;
+} owf_pbaseline;
+
+#define OWF_NBASELINES 11                /* Baseline 0 (MS Project's "Baseline") and Baselines 1 to 10 */
+
 typedef struct {
     char *name;
     char *notes;
@@ -102,6 +112,13 @@ typedef struct {
     int baselined;
     owf_ptime baseline_start, baseline_finish;
     long baseline_duration, baseline_work, baseline_cost;
+    unsigned short more_baselined;       /* bit n set: Baseline n (1..10) is saved in more_baselines[n - 1] */
+    owf_pbaseline more_baselines[OWF_NBASELINES - 1];
+    /* tracking: what really happened (owf_project_set_actual, owf_project_update); the scheduler starts a
+     * task with an actual start there, whatever its links and constraint, and ends one with an actual
+     * finish there */
+    int has_actual_start, has_actual_finish;
+    owf_ptime actual_start, actual_finish;
 } owf_ptask;
 
 /* ---- Resources and assignments (owf_presource.c) ---- */
@@ -150,6 +167,8 @@ typedef struct {
     owf_passign *assigns;
     int nassigns, capassigns;
     int next_resource_uid, next_assign_uid;
+    int has_status_date;                 /* the date Update Project last brought the plan up to */
+    owf_ptime status_date;
 } owf_project;
 
 /* A new project starting at start, with the Standard calendar as its calendar. NULL: memory. */
@@ -201,10 +220,32 @@ void owf_project_resources_update(owf_project *p);
  * as their baseline, MS Project's Set Baseline; schedule first. */
 void owf_project_set_baseline(owf_project *p, int first, int count);
 void owf_project_clear_baseline(owf_project *p, int first, int count);
+/* The same for Baseline n, 0..10 (0 is the one above); n out of range does nothing. */
+void owf_project_set_baseline_n(owf_project *p, int n, int first, int count);
+void owf_project_clear_baseline_n(owf_project *p, int n, int first, int count);
+/* Baseline n of a task into *out; 1 when it is saved, else 0 (and *out zeroed). */
+int owf_ptask_baseline(const owf_ptask *t, int n, owf_pbaseline *out);
 /* A task's variance from its baseline, now less then; 0 with no baseline. Start and finish in working
  * minutes on the task's calendar (later is above 0), duration and work in minutes, cost in hundredths. */
 enum { OWF_VAR_START, OWF_VAR_FINISH, OWF_VAR_DURATION, OWF_VAR_WORK, OWF_VAR_COST };
 long owf_ptask_variance(const owf_project *p, int task, int which);
+
+/* ---- Tracking (owf_project.c) ---- */
+
+/* Sets or clears (has_ 0) a task's actual start and finish. A finish makes the task 100% complete and,
+ * with a start, sets its duration to the working time between them (every minute for an elapsed task).
+ * OWF_OK; OWF_ERR_FORMAT for a summary, a task out of range, or a finish without a start or before it. */
+int owf_project_set_actual(owf_project *p, int task, int has_start, owf_ptime start, int has_finish, owf_ptime finish);
+/* MS Project's Update Project, "update work as complete through" status: every task (not summaries)
+ * scheduled to start before status gets its scheduled start as its actual start, and one scheduled to
+ * finish by then is 100% complete with its finish as actual finish. A task part way through gets the
+ * percent of its duration worked by status (whole set: left as it is, MS Project's "0% or 100% complete
+ * only"); a percent is never lowered. Records status as the status date. Schedule first and again after.
+ * The number of tasks changed. */
+int owf_project_update(owf_project *p, owf_ptime status, int whole);
+/* A task's actual and remaining duration in minutes: its duration times percent complete, and the rest. */
+long owf_ptask_actual_duration(const owf_ptask *t);
+long owf_ptask_remaining_duration(const owf_ptask *t);
 
 /* A deep copy (for Undo); NULL for memory. */
 owf_project *owf_project_copy(const owf_project *p);

@@ -6,7 +6,7 @@
 # deck-chart is libowf only (no GFOpenLayout). All run from make test and make check.
 # MIT, Copyright (c) 2026 AmiCradle Team.
 
-DECK_CHART_DEPS = $(OWF_SRC) libowf/include/owf.h libowf/include/owf_deck.h libowf/src/owf_internal.h \
+DECK_CHART_DEPS = $(OWF_SRC) libowf/include/owf.h libowf/include/owf_deck.h libowf/src/owf_internal.h libowf/src/owf_deck_int.h \
 	tests/deck/test_deck_chart.c tests/deck/chart_sales.h
 
 $(OUT)/test-deck-chart: $(DECK_CHART_DEPS)

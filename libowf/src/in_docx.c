@@ -308,6 +308,8 @@ static void read_rpr(docx *d, const owf_xml_node *rpr, owf_charprops *cp)
             set_flag(cp, OWF_CP_ITALIC, OWF_ITALIC, on_off(d, n));
         } else if (!strcmp(n->name, "strike") || !strcmp(n->name, "dstrike")) {
             set_flag(cp, OWF_CP_STRIKE, OWF_STRIKE, on_off(d, n));
+        } else if (!strcmp(n->name, "vanish")) {
+            set_flag(cp, OWF_CP_HIDDEN, OWF_HIDDEN, on_off(d, n));   /* 1.14: hidden text */
         } else if (!strcmp(n->name, "u")) {
             const char *v = wval(d, n);
             set_flag(cp, OWF_CP_UNDERLINE, OWF_UNDERLINE, !v || strcmp(v, "none") != 0);
@@ -1713,11 +1715,11 @@ static void paragraph(docx *d, const owf_xml_node *p)
             if (!rev) d->failed = 1;
             st->paras[st->nparas - 1].mark_revision = rev;
         }
-        if (wchild(d, mrpr, "rPrChange"))         /* 1.11: the runs' are kept; 1.13: the paragraphs' too */
+        if (wchild(d, mrpr, "rPrChange"))         /* 1.11: the runs' are kept; 1.15: the paragraphs' too */
             owf_report_add(d->report, OWF_NOTE_APPROX, "Tracked format changes of paragraph marks are kept as the format is now");
     }
     {
-        /* 1.13: a tracked paragraph format change (w:pPrChange): its w:pPr is the paragraph's whole format
+        /* 1.15: a tracked paragraph format change (w:pPrChange): its w:pPr is the paragraph's whole format
          * before it, from its style (the document's default when it names none) up, as the paragraph's own is */
         const owf_xml_node *chg = wchild(d, ppr, "pPrChange");
         owf_story *st = d->b->story;

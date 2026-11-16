@@ -76,6 +76,25 @@ static int draw_shape(owf_pdf *pdf, const ol_device_op *dop)
     fill = shade_of(s->fill_argb);
     line = shade_of(s->stroke_argb);
     owf_pdf_dash(pdf, dashed(s));
+    if (OWF_SHADE_SET(fill) && OL_SHAPE_STYLE_HAS_GRADIENT(s) && s->gradient != OL_GRADIENT_NONE &&
+        (s->fill2_argb >> 24)) {
+        /* a gradient inside the outline, then the outline alone; the gradient turns with the shape */
+        bounds.x = x;
+        bounds.y = y;
+        bounds.width = w;
+        bounds.height = h;
+        count = ol_shape_path(g, &bounds, path, OL_MAX_SHAPE_POINTS, &closed);
+        for (k = 0; k < count; k++) {
+            xy[k * 2] = path[k].x;
+            xy[k * 2 + 1] = path[k].y;
+        }
+        if (count >= 3 && closed &&
+            owf_pdf_gradient(pdf, xy, count, x, y, w, h,
+                             s->gradient == OL_GRADIENT_RADIAL ? OWF_PDF_GRADIENT_RADIAL : OWF_PDF_GRADIENT_LINEAR,
+                             s->gradient_angle_tenths + s->rotation_tenths, fill, shade_of(s->fill2_argb)) < 0)
+            return -1;
+        fill = 0;
+    }
     if (!s->rotation_tenths) {
         if (s->type == OL_SHAPE_RECT) {
             rc = owf_pdf_rect(pdf, x, y, w, h, fill, line, dop->thickness);
@@ -251,6 +270,77 @@ static int draw_slide_in(owf_pdf *pdf, const owf_deck *deck, int slide, const in
     return rc;
 }
 
+static int bleed_of(const opr_pdf_options *o)
+{
+    if (!o || o->pages != OPR_PDF_SLIDES || o->bleed <= 0) return 0;
+    return o->bleed > OPR_PDF_MAX_BLEED ? OPR_PDF_MAX_BLEED : o->bleed;
+}
+
+/* The gap between the trimmed edge and a crop mark: past the bleed */
+static int mark_gap(const opr_pdf_options *o)
+{
+    int b = bleed_of(o);
+    return b > OPR_PDF_MARK_GAP ? b : OPR_PDF_MARK_GAP;
+}
+
+/* A slide's background colour as opr_layout.c fills it (the slide's, else its master's), or 0 for white or
+ * none: the bleed is left white then */
+static unsigned long bleed_colour(const owf_deck *deck, int slide)
+{
+    const owf_master *m = owf_deck_slide_master(deck, slide);
+    unsigned long bg = deck->slides[slide].background;
+    if (!OWF_SHADE_SET(bg) && deck->slides[slide].background_image < 0 && m) bg = m->background;
+    if (!OWF_SHADE_SET(bg) || OWF_SHADE_RGB(bg) == 0xFFFFFFUL) return 0;
+    return bg;
+}
+
+int opr_pdf_margin(const opr_pdf_options *o)
+{
+    if (!o || o->pages != OPR_PDF_SLIDES) return 0;
+    if (o->crop_marks) return mark_gap(o) + OPR_PDF_MARK_LENGTH + 60;
+    return bleed_of(o);
+}
+
+/* Crop marks at the corners of the trimmed page (at m, m, w x h): two short hairlines at each, outside the bleed */
+static int crop_marks(owf_pdf *pdf, int m, int w, int h, int gap)
+{
+    int corner, xy[4];
+    for (corner = 0; corner < 4; corner++) {
+        int x = m + (corner & 1 ? w : 0), y = m + (corner & 2 ? h : 0);
+        int sx = corner & 1 ? 1 : -1, sy = corner & 2 ? 1 : -1;
+        xy[0] = x + sx * gap; xy[1] = y;                             /* across, level with the edge */
+        xy[2] = x + sx * (gap + OPR_PDF_MARK_LENGTH); xy[3] = y;
+        if (owf_pdf_path(pdf, xy, 2, 0, 0, OWF_SHADE(0x000000), 5) < 0) return -1;
+        xy[0] = x; xy[1] = y + sy * gap;                             /* down, in line with the edge */
+        xy[2] = x; xy[3] = y + sy * (gap + OPR_PDF_MARK_LENGTH);
+        if (owf_pdf_path(pdf, xy, 2, 0, 0, OWF_SHADE(0x000000), 5) < 0) return -1;
+    }
+    return 0;
+}
+
+int opr_booklet_side(int n, int k, int *left, int *right)
+{
+    int total = (n + 3) / 4 * 4, sheet = k / 2, l, r;
+    if (n <= 0 || k < 0 || k >= total / 2) return -1;
+    if (k % 2 == 0) { l = total - 1 - 2 * sheet; r = 2 * sheet; }          /* the front: the last page and the first */
+    else { l = 2 * sheet + 1; r = total - 2 - 2 * sheet; }                 /* the back: the second and the next to last */
+    *left = l < n ? l : -1;
+    *right = r < n ? r : -1;
+    return 0;
+}
+
+/* The pages a PDF shows: the slides but the hidden ones (unless with_hidden), into *out (malloc'd); how many,
+ * or -1 */
+static int shown_slides(const owf_deck *deck, const opr_pdf_options *options, int **out)
+{
+    int i, n = 0;
+    *out = (int *)malloc(sizeof **out * (size_t)(deck->nslides ? deck->nslides : 1));
+    if (!*out) return -1;
+    for (i = 0; i < deck->nslides; i++)
+        if (!deck->slides[i].hidden || (options && options->with_hidden)) (*out)[n++] = i;
+    return n;
+}
+
 int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigned char **data, size_t *length,
                    owf_report *report)
 {
@@ -268,7 +358,35 @@ int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigne
     /* the display list in twips: a unit is a quarter of one */
     memset(&scale, 0, sizeof scale);
     ol_scale_set(&scale, 1, OL_UNITS_PER_TWIP);
-    if (options && options->pages == OPR_PDF_HANDOUTS) {
+    if (options && options->pages == OPR_PDF_BOOKLET) {
+        int *order = NULL, n = shown_slides(deck, options, &order), k, sides;
+        if (n < 0)
+            goto memory;
+        sides = (n + 3) / 4 * 2;
+        for (k = 0; k < sides; k++) {
+            int lr[2], j;
+            opr_booklet_side(n, k, &lr[0], &lr[1]);
+            if (owf_pdf_page(pdf, deck->width * 2, deck->height) < 0) {
+                free(order);
+                goto memory;
+            }
+            for (j = 0; j < 2; j++) {
+                opr_slide *laid;
+                if (lr[j] < 0)
+                    continue;                        /* a blank page */
+                laid = opr_slide_layout(deck, order[lr[j]], NULL, NULL, options->today);
+                scale.origin_x = j ? deck->width : 0;
+                if (!laid || draw_laid(pdf, deck, laid, &scale, 0) < 0) {
+                    opr_slide_free(laid);
+                    free(order);
+                    goto memory;
+                }
+                overflow |= laid->overflow;
+                opr_slide_free(laid);
+            }
+        }
+        free(order);
+    } else if (options && options->pages == OPR_PDF_HANDOUTS) {
         int per = options->handout_slides, k = 0, w, h, box[4];
         if (per != 1 && per != 2 && per != 3 && per != 4 && per != 9)
             per = 6;
@@ -307,13 +425,21 @@ int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigne
                 goto memory;
         }
     } else {
+        int m = opr_pdf_margin(options);           /* room for the bleed and the crop marks */
+        scale.origin_x = scale.origin_y = m;
         for (i = 0; i < deck->nslides; i++) {
             const owf_slide *s = &deck->slides[i];
             opr_slide *laid;
             if (s->hidden && !(options && options->with_hidden))
                 continue;
             laid = opr_slide_layout(deck, i, NULL, NULL, options ? options->today : NULL);
-            if (!laid || owf_pdf_page(pdf, deck->width, deck->height) < 0) {
+            if (!laid || owf_pdf_page(pdf, deck->width + 2 * m, deck->height + 2 * m) < 0) {
+                opr_slide_free(laid);
+                goto memory;
+            }
+            if (bleed_of(options) && bleed_colour(deck, i) &&   /* a coloured background runs into the bleed */
+                owf_pdf_rect(pdf, m - bleed_of(options), m - bleed_of(options), deck->width + 2 * bleed_of(options),
+                             deck->height + 2 * bleed_of(options), bleed_colour(deck, i), 0, 0) < 0) {
                 opr_slide_free(laid);
                 goto memory;
             }
@@ -323,6 +449,8 @@ int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigne
             }
             overflow |= laid->overflow;
             opr_slide_free(laid);
+            if (options && options->crop_marks && crop_marks(pdf, m, deck->width, deck->height, mark_gap(options)) < 0)
+                goto memory;
         }
     }
     if (overflow)

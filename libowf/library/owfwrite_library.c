@@ -57,16 +57,20 @@
  * owf_para grew, so the three libraries go together again.
  * 3.17: libowf 1.12.6, 3.15's number ranges (OWF_FIELD_SEQ) on top of 3.16: #292 was numbered 3.15 before
  * #255's 3.16 merged first, so the library that knows SEQ is 3.17. No new calls and no structure grew.
- * 3.18: libowf 1.13, tracked paragraph format changes (owf_para.para_format_change, owf_doc.para_format_changes,
- * owf_para_format_change): DOCX w:pPrChange in and out; other formats the format as it is now (accepted). No
- * new calls; owf_para and owf_doc grew, so the three libraries go together again.
+ * 3.19: libowf 1.14 (3.18, libowf 1.13, is #368's), hidden text (OWF_HIDDEN): DOCX w:vanish, ODT
+ * text:display="none" and RTF \v in and out; PDF and Markdown leave it out. No new calls and no structure
+ * grew, so owfpub and owfpresent stay.
+ * 3.20: libowf 1.15 (numbered 3.18 and libowf 1.13 until 3.19 merged first), tracked paragraph format changes
+ * (owf_para.para_format_change, owf_doc.para_format_changes, owf_para_format_change): DOCX w:pPrChange in and
+ * out; other formats the format as it is now (accepted). No new calls; owf_para and owf_doc grew, so the three
+ * libraries go together again (owfpub.library 3.7, owfpresent.library 3.15).
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 18
-#define OWF_LIB_VERS "3.18"
+#define OWF_LIB_REVISION 20
+#define OWF_LIB_VERS "3.20"
 #define OWF_LIB_DATE "16.11.2026"
 #define OWF_LIB_CALLS_H "owfwrite_calls.h"
 #include "owf_libbase.h"

@@ -21,6 +21,7 @@ undoes; **Part** = some of it; **Gap** = missing.
 | 14 Nov 2026 | 2.0.36 | Print and export comments | 78% |
 | 15 Nov 2026 | 2.0.37 | Merge to the printer; own label sheets; envelopes with a return address and the printer's feed (gap 4.2) | 79% |
 | 16 Nov 2026 | 2.0.37 (main 72b77cb) | Re-score, merged work only: tracked format changes accepted, rejected and stepped to (#228 #231 #235), the final view (#243), tracked pictures (#244), comments by author and picked in the margin (#258 #261 #265), note numbering and formatted note text (#274 #285), RTF notes read (#218), Markdown in and out (#217) | 82% |
+| 16 Nov 2026 (second) | 2.0.37 (main 3569cf3) | Re-score, merged work only: tracked frames (#247) and table rows (#255 #259), comments printed in the margin (#269 #321), note numbering restarted per page or section (#288), number ranges (SEQ, #292) and references to figures and tables (#298) | 85% |
 
 The 16 November re-score counts only what is merged on main. Reviewing gets
 most of its three points: format changes now accept, reject and step like text
@@ -29,10 +30,18 @@ point); comments can be shown by author and picked in the margin (half a
 point). Notes get numbering settings, formatted text and RTF import (one
 point), and Markdown in and out adds half a point.
 
-Waiting to merge, not scored: #247 tracked frames, #255 and #259 tracked table
-rows, #269 comments printed in the margin, #288 note numbering restarted per
-page or section, #292 number ranges (SEQ), #298 references to figures and
-tables.
+The second 16 November re-score, on main 3569cf3, adds three points. Tracked
+frames and tracked table rows finish most of the tracked objects (one point);
+comments printed in the margin (half a point) and note numbering restarted per
+page or section (half a point) close two Part rows; SEQ number ranges and
+references to figures and tables give captions that number and cross-refer
+(one point). The about box still reads 2.0.37 because those PRs did not bump
+the version line; the feature rows below give the version each one shipped in.
+
+Waiting to merge, not scored: none open.
+
+Top gaps now: tracked paragraph formats and table columns (the last of
+reviewing), conditional, hidden and input fields, and document compare.
 
 Track changes was the largest single gap for reviewing documents, so it carries
 about a third of the nine points Phase 1 is meant to add to Writer (target 72%
@@ -55,7 +64,7 @@ completion adds one more.
 | Track changes: DOCX | Done | 2.0.27 | w:ins, w:del with w:delText, w:moveTo/w:moveFrom (read as insertion/deletion), inserted and deleted paragraph marks, w:trackRevisions. |
 | Track changes: other formats | Done | 2.0.27 | RTF, plain text, HTML and the Amiga formats are saved with every change accepted, and the save report says so. |
 | Tracked format changes of text (w:rPrChange) | Part | libowf 1.11 | DOCX keeps them in and out, with who, when and the format before; other formats save the format as it is now (the ODT save report says so). GFOpenWrite shows their text in the author's colour, and Accept and Reject (one at the caret, or all) keep the format or give the one before back; Next and Previous Change stop at them ("Format change by ..."). |
-| Tracked format changes of paragraphs (w:pPrChange) | Part | libowf 1.13 | DOCX keeps them in and out, with who, when and the paragraph's format and style before; other formats save the format as it is now (the ODT save report says so). GFOpenWrite does not show them, or accept and reject them one by one, yet. |
+| Tracked format changes of paragraphs (w:pPrChange) | Part | libowf 1.15 | DOCX keeps them in and out, with who, when and the paragraph's format and style before; other formats save the format as it is now (the ODT save report says so). GFOpenWrite does not show them, or accept and reject them one by one, yet. |
 | Tracked format changes in ODT (text:format-change) | Gap | | Read as the new format; saved accepted, and the save report says so. |
 | Tracked picture changes (in the line) | Done | 2.0.38, libowf 1.12 | A picture put in while recording is an insertion (with the paragraph ends round it), one deleted is marked deleted; Next/Previous, Accept and Reject take them like text. The pages frame a changed picture in its author's colour, crossed out when deleted; the final view leaves a deleted one out. DOCX (w:ins and w:del round w:drawing) and ODT keep them. |
 | Tracked frame changes (text boxes, placed pictures) | Done | 2.0.38, libowf 1.12 | A text box or placed picture put in while recording is an insertion; Delete Frame marks someone else's deleted (the author's own goes). Accept and Reject take the frame or keep it. The pages edge a changed frame in its author's colour; the final view leaves a deleted one out. DOCX keeps them; ODT saves them accepted and the save report says so. |
@@ -79,7 +88,8 @@ completion adds one more.
 | Fields: other formats | Done | 2.0.29 | RTF, plain text, HTML and PDF get the shown value. |
 | Fields: number ranges | Done | 2.0.43 | libowf 1.12.6 (OWF_FIELD_SEQ): Insert > Field > Number Range... places a numbered field of a name (Figure, Table, or any): each shows the count of its name's fields up to it, numbered again as text moves, on update and undo. DOCX SEQ fields (simple and complex; switches such as \s and \r are read past, and saved as \* ARABIC); ODT text:sequence with its text:sequence-decls. ARexx INSERTFIELD SEQ name. |
 | Fields: references to tables and figures | Done | 2.0.44 | libowf 1.12.6: Insert > Cross-reference... lists the captions (a paragraph with a number range) after the headings. A caption's reference shows its label and number ("Figure 2"), renumbered as figures come and go: a bookmark over "Figure " and the number (one already there, or a new _Ref), as Word's caption bookmarks are, and a REF field to it; or its page. A reference to any bookmark with a place shows that place, and bookmarks with a place are found by name (they were not). DOCX and ODT keep the bookmark's place. ARexx CROSSREF CAPTION n [PAGE]. |
-| Fields: conditional and hidden text, input fields | Gap | | |
+| Fields: hidden text | Done | 2.0.46 | libowf 1.14 (OWF_HIDDEN): Format > Hidden marks the selection hidden; View > Hidden Text shows it underlined, and otherwise it takes no room, the caret steps over it, Backspace and Delete pass it, and typing beside it isn't hidden. DOCX w:vanish, ODT text:display="none" and RTF \v in and out; HTML keeps it with display: none; PDF and Markdown leave it out. ARexx COMMAND HIDDEN, COMMAND SHOWHIDDEN. |
+| Fields: conditional text, input fields | Gap | | IF fields (DOCX IF, ODT text:conditional-text and text:hidden-text) and input fields (FILLIN, ASK; ODT text:text-input) are next. |
 | Footnotes and endnotes: insert, edit, delete | Done | 2.0.30 | Insert > Footnote... and Endnote... at the caret; Tools > Notes: Next/Previous Note, Edit Note..., Footnote <-> Endnote, Delete Note, all undoable. Typing at a mark goes after it. ARexx ADDFOOTNOTE, ADDENDNOTE, NOTES, NEXTNOTE, PREVNOTE, GETNOTE, EDITNOTE, CONVERTNOTE, DELETENOTE; GETTEXT shows the marks. |
 | Footnotes and endnotes: on the page | Done | 2.0.30 | Marks numbered as they come (footnotes 1, 2, 3; endnotes i, ii, iii) or with their own label. Footnotes at the foot of the page their mark is on, under a short rule, the page's text making room for them (GFOpenLayout's ol_layout_pages_notes); endnotes after the text. |
 | Footnotes and endnotes: DOCX and ODT | Done | 2.0.30 | DOCX footnotes.xml and endnotes.xml (with Word's separators), footnoteReference and endnoteReference. ODT text:note with note-class, note-citation (and its label) and note-body. |

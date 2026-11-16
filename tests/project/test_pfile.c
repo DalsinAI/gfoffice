@@ -666,7 +666,8 @@ static void test_baseline(void)
     CHECK_N(owf_project_schedule(p), OWF_OK);
     CHECK_N(owf_project_write(p, OWF_PFILE_MSPDI, &data, &length), OWF_OK);
     CHECK_HAS(data, "<DurationFormat>7</DurationFormat><Work>PT24H0M0S</Work><Estimated>");
-    CHECK_HAS(data, "<PercentComplete>0</PercentComplete><Cost>48000</Cost><EarlyStart>");
+    CHECK_HAS(data, "<PercentComplete>0</PercentComplete><Cost>48000</Cost><ActualDuration>PT0H0M0S</ActualDuration>"
+                    "<RemainingDuration>PT24H0M0S</RemainingDuration><EarlyStart>");
     CHECK_HAS(data, "<Baseline><Number>0</Number><Start>2026-11-16T08:00:00</Start><Finish>2026-11-17T17:00:00</Finish>"
                     "<Duration>PT16H0M0S</Duration><DurationFormat>7</DurationFormat><Work>PT16H0M0S</Work>"
                     "<Cost>32000</Cost></Baseline></Task>");
@@ -686,16 +687,55 @@ static void test_baseline(void)
     owf_project_free(q);
     q = NULL;
     owf_free(data);
-    /* By hand: a Baseline with no Number is Baseline 0; Baselines 1 to 10 are left out. */
+    /* By hand: a Baseline with no Number is Baseline 0; Baselines 1 to 10 are kept by number. */
     CHECK_N(owf_project_read((const unsigned char *)hand, sizeof hand - 1, &q), OWF_OK);
     if (q && q->ntasks == 2) {
         CHECK(q->tasks[0].baselined && q->tasks[0].baseline_start == AT(16, 8, 0));
         CHECK(q->tasks[0].baseline_finish == AT(16, 17, 0) && q->tasks[0].baseline_duration == D);
         CHECK(q->tasks[0].baseline_work == 240 && q->tasks[0].baseline_cost == 12345);
         CHECK(!q->tasks[1].baselined);
+        CHECK_N(q->tasks[0].more_baselined, 1 << 1);
+        CHECK_N(q->tasks[0].more_baselines[0].start, owf_ptime_make(2026, 11, 1, 8, 0));
+        CHECK_N(q->tasks[1].more_baselined, 1 << 2);
     } else
         CHECK(q && q->ntasks == 2);
     owf_project_free(q);
+    /* Baseline 3 out and back, after Baseline 0, in both formats; a Number past 10 is left out. */
+    owf_project_set_baseline_n(p, 3, 0, -1);
+    {
+        int f;
+        for (f = OWF_PFILE_GFPROJ; f <= OWF_PFILE_MSPDI; f++) {
+            q = NULL;
+            CHECK_N(owf_project_write(p, f, &data, &length), OWF_OK);
+            if (f == OWF_PFILE_MSPDI)
+                CHECK_HAS(data, "</Baseline><Baseline><Number>3</Number><Start>2026-11-16T08:00:00</Start>");
+            CHECK_N(owf_project_read(data, length, &q), OWF_OK);
+            if (q && q->ntasks == p->ntasks) {
+                for (i = 0; i < p->ntasks; i++) {
+                    owf_pbaseline x, y;
+                    CHECK(owf_ptask_baseline(&q->tasks[i], 3, &x) && owf_ptask_baseline(&p->tasks[i], 3, &y));
+                    CHECK(x.start == y.start && x.finish == y.finish && x.duration == y.duration);
+                    CHECK(x.work == y.work && x.cost == y.cost);
+                    CHECK(q->tasks[i].baselined && q->tasks[i].more_baselined == 1 << 3);
+                }
+            } else
+                CHECK(q && q->ntasks == p->ntasks);
+            owf_project_free(q);
+            owf_free(data);
+        }
+    }
+    {
+        static const char eleven[] =
+            "<?xml version=\"1.0\"?>\n<Project xmlns=\"http://schemas.microsoft.com/project\">"
+            "<StartDate>2026-11-16T08:00:00</StartDate><Tasks>"
+            "<Task><UID>1</UID><ID>1</ID><Name>Dig</Name><OutlineLevel>1</OutlineLevel><Duration>PT8H0M0S</Duration>"
+            "<Baseline><Number>11</Number><Start>2026-11-01T08:00:00</Start></Baseline>"
+            "<Baseline><Number>-1</Number><Start>2026-11-01T08:00:00</Start></Baseline></Task></Tasks></Project>\n";
+        q = NULL;
+        CHECK_N(owf_project_read((const unsigned char *)eleven, sizeof eleven - 1, &q), OWF_OK);
+        CHECK(q && q->ntasks == 1 && !q->tasks[0].baselined && q->tasks[0].more_baselined == 0);
+        owf_project_free(q);
+    }
     owf_project_free(p);
 }
 
@@ -734,6 +774,75 @@ static const char mpx_sample[] =
     "70,30,Sign off,0d,\"20,10SS+50%\",1,As Soon As Possible,,0,102\r\n"
     "70,40,Night shift,1d?,,1\r\n"
     "70,50,Odd links,1d,\"99,50,zz\",1\r\n";
+
+/* Actual start and finish and the status date go out in MSPDI (with the actual and remaining duration MS
+ * Project shows) and come back, in .gfproj too; a task with none writes none. By hand: an ActualFinish with
+ * no ActualStart, or before it, is left out. */
+static void test_actuals(void)
+{
+    static const char hand[] =
+        "<?xml version=\"1.0\"?>\n<Project xmlns=\"http://schemas.microsoft.com/project\">"
+        "<StartDate>2026-11-16T08:00:00</StartDate><StatusDate>2026-11-18T17:00:00</StatusDate><Tasks>"
+        "<Task><UID>1</UID><ID>1</ID><Name>A</Name><OutlineLevel>1</OutlineLevel><Duration>PT8H0M0S</Duration>"
+        "<ActualFinish>2026-11-16T17:00:00</ActualFinish></Task>"
+        "<Task><UID>2</UID><ID>2</ID><Name>B</Name><OutlineLevel>1</OutlineLevel><Duration>PT8H0M0S</Duration>"
+        "<ActualStart>2026-11-17T08:00:00</ActualStart><ActualFinish>2026-11-16T17:00:00</ActualFinish></Task>"
+        "</Tasks></Project>\n";
+    owf_project *p = sample(), *q = NULL;
+    unsigned char *data;
+    size_t length;
+    int f;
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_N(owf_project_set_actual(p, 0, 1, AT(16, 8, 0), 1, AT(17, 17, 0)), OWF_OK);
+    CHECK_N(owf_project_set_actual(p, 1, 1, AT(18, 13, 0), 0, 0), OWF_OK);
+    p->has_status_date = 1;
+    p->status_date = AT(18, 17, 0);
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    for (f = OWF_PFILE_GFPROJ; f <= OWF_PFILE_MSPDI; f++) {
+        CHECK_N(owf_project_write(p, f, &data, &length), OWF_OK);
+        if (f == OWF_PFILE_MSPDI) {
+            CHECK_HAS(data, "<FinishDate>");
+            CHECK_HAS(data, "<StatusDate>2026-11-18T17:00:00</StatusDate>");
+            CHECK_HAS(data, "<PercentComplete>100</PercentComplete><Cost>32000</Cost><ActualStart>2026-11-16T08:00:00</ActualStart>"
+                            "<ActualFinish>2026-11-17T17:00:00</ActualFinish><ActualDuration>PT16H0M0S</ActualDuration>"
+                            "<RemainingDuration>PT0H0M0S</RemainingDuration>");
+            CHECK_HAS(data, "<PercentComplete>25</PercentComplete><Cost>24000</Cost><ActualStart>2026-11-18T13:00:00</ActualStart>"
+                            "<ActualDuration>PT6H0M0S</ActualDuration><RemainingDuration>PT18H0M0S</RemainingDuration>");
+        }
+        q = NULL;
+        CHECK_N(owf_project_read(data, length, &q), OWF_OK);
+        if (q && q->ntasks == p->ntasks) {
+            CHECK(q->has_status_date && q->status_date == AT(18, 17, 0));
+            CHECK(q->tasks[0].has_actual_start && q->tasks[0].actual_start == AT(16, 8, 0));
+            CHECK(q->tasks[0].has_actual_finish && q->tasks[0].actual_finish == AT(17, 17, 0));
+            CHECK(q->tasks[1].has_actual_start && q->tasks[1].actual_start == AT(18, 13, 0));
+            CHECK(!q->tasks[1].has_actual_finish && !q->tasks[2].has_actual_start);
+            CHECK_N(owf_project_schedule(q), OWF_OK);
+            CHECK_N(q->tasks[1].early_start, AT(18, 13, 0));
+        } else
+            CHECK(q && q->ntasks == p->ntasks);
+        owf_project_free(q);
+        owf_free(data);
+    }
+    owf_project_free(p);
+    q = NULL;
+    CHECK_N(owf_project_read((const unsigned char *)hand, sizeof hand - 1, &q), OWF_OK);
+    if (q && q->ntasks == 2) {
+        CHECK(q->has_status_date && q->status_date == AT(18, 17, 0));
+        CHECK(!q->tasks[0].has_actual_start && !q->tasks[0].has_actual_finish);
+        CHECK(q->tasks[1].has_actual_start && !q->tasks[1].has_actual_finish);
+    } else
+        CHECK(q && q->ntasks == 2);
+    owf_project_free(q);
+    /* No status date, no actuals: none written. */
+    p = owf_project_new(AT(16, 8, 0));
+    owf_project_add_task(p, "A", D);
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_N(owf_project_write(p, OWF_PFILE_MSPDI, &data, &length), OWF_OK);
+    CHECK(!strstr((const char *)data, "StatusDate") && !strstr((const char *)data, "<ActualStart>"));
+    owf_free(data);
+    owf_project_free(p);
+}
 
 static void test_mpx(void)
 {
@@ -955,6 +1064,7 @@ int main(void)
     test_csv_read();
     test_cost_resource();
     test_baseline();
+    test_actuals();
     test_mpx();
     test_gan();
     test_damaged();

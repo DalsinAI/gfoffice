@@ -595,15 +595,27 @@ static void read_baseline(xr *r, const owf_xml_node *task, owf_ptask *k)
     for (bl = owf_xml_child(task, r->ns, "Baseline"); bl; bl = owf_xml_next(bl, r->ns, "Baseline")) {
         long number = 0, v;
         owf_ptime when;
+        owf_pbaseline b;
         child_long(r, bl, "Number", &number);
-        if (number != 0) continue;
-        k->baselined = 1;
-        if (child_text(r, bl, "Start") && parse_time(r->buf, &when)) k->baseline_start = when;
-        if (child_text(r, bl, "Finish") && parse_time(r->buf, &when)) k->baseline_finish = when;
-        if (child_text(r, bl, "Duration") && parse_iso_duration(r->buf, &v) && v >= 0) k->baseline_duration = v;
-        if (child_text(r, bl, "Work") && parse_iso_duration(r->buf, &v) && v >= 0) k->baseline_work = v;
-        if (child_long(r, bl, "Cost", &v)) k->baseline_cost = v < 0 ? 0 : v > 2000000000L ? 2000000000L : v;
-        return;
+        if (number < 0 || number >= OWF_NBASELINES) continue;
+        if (number == 0 ? k->baselined : (k->more_baselined & (1u << number)) != 0) continue;   /* the first wins */
+        memset(&b, 0, sizeof b);
+        if (child_text(r, bl, "Start") && parse_time(r->buf, &when)) b.start = when;
+        if (child_text(r, bl, "Finish") && parse_time(r->buf, &when)) b.finish = when;
+        if (child_text(r, bl, "Duration") && parse_iso_duration(r->buf, &v) && v >= 0) b.duration = v;
+        if (child_text(r, bl, "Work") && parse_iso_duration(r->buf, &v) && v >= 0) b.work = v;
+        if (child_long(r, bl, "Cost", &v)) b.cost = v < 0 ? 0 : v > 2000000000L ? 2000000000L : v;
+        if (number == 0) {
+            k->baselined = 1;
+            k->baseline_start = b.start;
+            k->baseline_finish = b.finish;
+            k->baseline_duration = b.duration;
+            k->baseline_work = b.work;
+            k->baseline_cost = b.cost;
+        } else {
+            k->more_baselined |= (unsigned short)(1u << number);
+            k->more_baselines[number - 1] = b;
+        }
     }
 }
 
@@ -633,6 +645,7 @@ static int read_xml(const char *text, size_t length, owf_project **out)
     }
     if ((n = owf_xml_child(root, r.ns, "Title")) != NULL || (n = owf_xml_child(root, r.ns, "Name")) != NULL)
         p->title = text_dup(n, &failed);
+    if (child_text(&r, root, "StatusDate") && parse_time(r.buf, &p->status_date)) p->has_status_date = 1;
     if (child_long(&r, root, "MinutesPerDay", &v) && v > 0 && v <= 1440) p->minutes_per_day = v;
     if (child_long(&r, root, "MinutesPerWeek", &v) && v > 0 && v <= 10080) p->minutes_per_week = v;
 
@@ -699,6 +712,10 @@ static int read_xml(const char *text, size_t length, owf_project **out)
         if (child_long(&r, t, "CalendarUID", &v)) k->calendar = find_uid(cals, ncals, v);
         if (child_text(&r, t, "Start")) parse_time(r.buf, &k->early_start);
         if (child_text(&r, t, "Finish")) parse_time(r.buf, &k->early_finish);
+        if (child_text(&r, t, "ActualStart") && parse_time(r.buf, &k->actual_start)) k->has_actual_start = 1;
+        if (k->has_actual_start && child_text(&r, t, "ActualFinish") && parse_time(r.buf, &k->actual_finish) &&
+            k->actual_finish >= k->actual_start)
+            k->has_actual_finish = 1;
         read_baseline(&r, t, k);
         tasks[ntasks].uid = k->uid;
         tasks[ntasks].index = at;
@@ -844,6 +861,7 @@ static void write_xml(const owf_project *p, owf_buf *b, const char *ns)
     put_long(b, "ScheduleFromStart", 1);
     put_date(b, "StartDate", p->start);
     put_date(b, "FinishDate", p->finish);
+    if (p->has_status_date) put_date(b, "StatusDate", p->status_date);
     put_long(b, "CalendarUID", p->calendar + 1);
     put_long(b, "MinutesPerDay", p->minutes_per_day);
     put_long(b, "MinutesPerWeek", p->minutes_per_week);
@@ -874,6 +892,16 @@ static void write_xml(const owf_project *p, owf_buf *b, const char *ns)
         put_long(b, "Critical", t->critical ? 1 : 0);
         put_long(b, "PercentComplete", t->percent);
         if (t->cost) put_long(b, "Cost", t->cost);                      /* in cents */
+        /* MSPDI's order: the actuals and the remaining duration after Cost */
+        if (t->has_actual_start) put_date(b, "ActualStart", t->actual_start);
+        if (t->has_actual_finish) put_date(b, "ActualFinish", t->actual_finish);
+        if (!t->summary) {
+            owf_buf_puts(b, "<ActualDuration>");
+            put_iso_duration(b, owf_ptask_actual_duration(t));
+            owf_buf_puts(b, "</ActualDuration><RemainingDuration>");
+            put_iso_duration(b, owf_ptask_remaining_duration(t));
+            owf_buf_puts(b, "</RemainingDuration>");
+        }
         put_date(b, "EarlyStart", t->early_start);
         put_date(b, "EarlyFinish", t->early_finish);
         put_date(b, "LateStart", t->late_start);
@@ -896,19 +924,21 @@ static void write_xml(const owf_project *p, owf_buf *b, const char *ns)
             put_long(b, "LagFormat", format);
             owf_buf_puts(b, "</PredecessorLink>");
         }
-        if (t->baselined) {                                              /* Baseline 0, MS Project's "Baseline" */
+        for (j = 0; j < OWF_NBASELINES; j++) {                           /* Baseline 0 is MS Project's "Baseline" */
+            owf_pbaseline bl;
+            if (!owf_ptask_baseline(t, j, &bl)) continue;
             owf_buf_puts(b, "<Baseline>");
-            put_long(b, "Number", 0);
-            put_date(b, "Start", t->baseline_start);
-            put_date(b, "Finish", t->baseline_finish);
+            put_long(b, "Number", j);
+            put_date(b, "Start", bl.start);
+            put_date(b, "Finish", bl.finish);
             owf_buf_puts(b, "<Duration>");
-            put_iso_duration(b, t->baseline_duration);
+            put_iso_duration(b, bl.duration);
             owf_buf_puts(b, "</Duration>");
-            put_long(b, "DurationFormat", duration_format(p, t->baseline_duration, t->elapsed));
+            put_long(b, "DurationFormat", duration_format(p, bl.duration, t->elapsed));
             owf_buf_puts(b, "<Work>");
-            put_iso_duration(b, t->baseline_work);
+            put_iso_duration(b, bl.work);
             owf_buf_puts(b, "</Work>");
-            put_long(b, "Cost", t->baseline_cost);
+            put_long(b, "Cost", bl.cost);
             owf_buf_puts(b, "</Baseline>");
         }
         owf_buf_puts(b, "</Task>\n");

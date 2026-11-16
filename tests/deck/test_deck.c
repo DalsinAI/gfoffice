@@ -624,6 +624,111 @@ static void test_layout(void)
 }
 #endif
 
+#ifdef OPR_WITH_LAYOUT
+static int count_of(const unsigned char *data, size_t n, const char *what)
+{
+    size_t k = strlen(what), i;
+    int c = 0;
+    for (i = 0; k && i + k <= n; i++)
+        if (!memcmp(data + i, what, k)) c++;
+    return c;
+}
+
+/* For a printer: bleed and crop marks make each page larger, the slide in the middle */
+static void test_print_marks(void)
+{
+    owf_deck *d = owf_deck_new(11906, 16838);
+    opr_pdf_options o;
+    unsigned char *plain = NULL, *marked = NULL, *bled = NULL;
+    size_t np = 0, nm = 0, nb = 0;
+    char box[64];
+    int m;
+    CHECK(d && owf_deck_add_slide(d, -1, -1), "a page");
+    if (!d || !d->nslides) { owf_deck_free(d); return; }
+    d->slides[0].background = OWF_SHADE(0x336699);
+    memset(&o, 0, sizeof o);
+    CHECK(opr_pdf_margin(&o) == 0 && opr_pdf_margin(NULL) == 0, "no room without marks or bleed");
+    CHECK(opr_export_pdf(d, &o, &plain, &np, NULL) == OWF_OK && xref_ok(plain, np), "the plain PDF");
+    o.crop_marks = 1;
+    m = opr_pdf_margin(&o);
+    CHECK(m == OPR_PDF_MARK_GAP + OPR_PDF_MARK_LENGTH + 60, "marks alone: %d", m);
+    CHECK(opr_export_pdf(d, &o, &marked, &nm, NULL) == OWF_OK && xref_ok(marked, nm), "the PDF with crop marks");
+    snprintf(box, sizeof box, "/MediaBox [0 0 %d.%02d %d.%02d]", (11906 + 2 * m) / 20, (11906 + 2 * m) % 20 * 5,
+             (16838 + 2 * m) / 20, (16838 + 2 * m) % 20 * 5);      /* points, as owf_pdf.c writes them */
+    CHECK(marked && find(marked, nm, box) != NULL, "the page larger by the marks' room: %s", box);
+    CHECK(marked && plain && count_of(marked, nm, " l ") == count_of(plain, np, " l ") + 8, "eight mark lines: %d %d",
+          marked ? count_of(marked, nm, " l ") : -1, plain ? count_of(plain, np, " l ") : -1);
+    o.crop_marks = 0;
+    o.bleed = 180;                                         /* about 3 mm */
+    CHECK(opr_pdf_margin(&o) == 180, "bleed alone: %d", opr_pdf_margin(&o));
+    CHECK(opr_export_pdf(d, &o, &bled, &nb, NULL) == OWF_OK && xref_ok(bled, nb), "the PDF with bleed");
+    CHECK(bled && find(bled, nb, "/MediaBox [0 0 613.30 859.90]") != NULL, "the page larger by the bleed");
+    CHECK(bled && plain && count_of(bled, nb, " re") == count_of(plain, np, " re") + 1, "the background into the bleed");
+    CHECK(bled && plain && count_of(bled, nb, " l ") == count_of(plain, np, " l "), "no marks");
+    o.crop_marks = 1;
+    CHECK(opr_pdf_margin(&o) == 180 + OPR_PDF_MARK_LENGTH + 60, "marks outside the bleed: %d", opr_pdf_margin(&o));
+    o.bleed = 99999;
+    CHECK(opr_pdf_margin(&o) == OPR_PDF_MAX_BLEED + OPR_PDF_MARK_LENGTH + 60, "the bleed at most an inch");
+    o.pages = OPR_PDF_NOTES;
+    CHECK(opr_pdf_margin(&o) == 0, "notes pages take no marks");
+    free(plain);
+    free(marked);
+    free(bled);
+    owf_deck_free(d);
+}
+/* A booklet: two pages a sheet side, in the order that folds in the middle */
+static void test_booklet(void)
+{
+    static const int eight[4][2] = { { 7, 0 }, { 1, 6 }, { 5, 2 }, { 3, 4 } };
+    owf_deck *d = owf_deck_new(5953, 8419);                /* A5 */
+    opr_pdf_options o;
+    unsigned char *pdf = NULL;
+    size_t n = 0;
+    int k, l, r, i;
+    char want[32];
+    for (k = 0; k < 4; k++)
+        CHECK(opr_booklet_side(8, k, &l, &r) == 0 && l == eight[k][0] && r == eight[k][1], "8 pages, side %d: %d %d", k, l, r);
+    CHECK(opr_booklet_side(8, 4, &l, &r) == -1 && opr_booklet_side(0, 0, &l, &r) == -1 && opr_booklet_side(8, -1, &l, &r) == -1,
+          "no such side");
+    CHECK(opr_booklet_side(5, 0, &l, &r) == 0 && l == -1 && r == 0, "5 pages: the last page blank: %d %d", l, r);
+    CHECK(opr_booklet_side(5, 1, &l, &r) == 0 && l == 1 && r == -1, "5 pages, side 1: %d %d", l, r);
+    CHECK(opr_booklet_side(1, 0, &l, &r) == 0 && l == -1 && r == 0 && opr_booklet_side(1, 1, &l, &r) == 0 && l == -1 && r == -1,
+          "one page: one sheet, the rest blank");
+    CHECK(d != NULL, "an A5 deck");
+    if (!d) return;
+    current = d;
+    for (i = 0; i < 6; i++) {                              /* P1 .. P6, the fourth hidden */
+        owf_slide *s = owf_deck_add_slide(d, -1, -1);
+        owf_obj *t = s ? owf_slide_add(s, OWF_OBJ_TEXT) : NULL;
+        if (!t) break;
+        t->x = 500; t->y = 500; t->width = 4000; t->height = 1000;
+        snprintf(want, sizeof want, "P%d", i + 1);
+        add_text(t, want, 0, 0);
+    }
+    d->slides[3].hidden = 1;
+    memset(&o, 0, sizeof o);
+    o.pages = OPR_PDF_BOOKLET;
+    CHECK(opr_export_pdf(d, &o, &pdf, &n, NULL) == OWF_OK && xref_ok(pdf, n), "the booklet PDF");
+    if (pdf) {
+        const char *at = (const char *)pdf;
+        /* five pages shown (P4 hidden) make eight: sides (8, 1) (2, 7) (6, 3) (4, 5), the 6th to 8th blank */
+        static const char *const order[5] = { "(P1) Tj", "(P2) Tj", "(P3) Tj", "(P5) Tj", "(P6) Tj" };
+        CHECK(find(pdf, n, "/Count 4 ") != NULL, "four sheet sides");
+        snprintf(want, sizeof want, "/MediaBox [0 0 %d.%02d ", 5953 * 2 / 20, 5953 * 2 % 20 * 5);
+        CHECK(find(pdf, n, want) != NULL, "a sheet side two pages wide: %s", want);
+        CHECK(find(pdf, n, "(P4) Tj") == NULL, "the hidden page left out");
+        for (i = 0; i < 5; i++) {
+            const char *p = find((const unsigned char *)at, n - (size_t)(at - (const char *)pdf), order[i]);
+            CHECK(p != NULL, "%s after the one before", order[i]);
+            if (p) at = p;
+        }
+    }
+    free(pdf);
+    current = NULL;
+    owf_deck_free(d);
+}
+#endif
+
 int main(void)
 {
     test_model();
@@ -633,6 +738,8 @@ int main(void)
 #ifdef OPR_WITH_LAYOUT
     test_shape_layout();
     test_layout();
+    test_print_marks();
+    test_booklet();
 #else
     printf("test_deck: built without OpenLayout: the layout and PDF tests were skipped\n");
 #endif
