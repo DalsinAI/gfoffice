@@ -1194,7 +1194,8 @@ int opj_update_task(opj_doc *doc, int row, const char *percent, const char *actu
         if (!given(actual)) {
             a = owf_ptask_actual_duration(t);                          /* the remaining changes the duration */
             if (er != t->elapsed && a > 0) return fail(work, OWF_ERR_FORMAT);  /* done in the other kind */
-        }
+        } else if (!given(remaining) && ea != t->elapsed && t->duration > 0)
+            return fail(work, OWF_ERR_FORMAT);   /* "1ed" done of a 3d (working) task: the other kind */
         if (given(remaining)) d = a + r;
         else d = a > t->duration ? a : t->duration;                     /* more done than planned: longer */
         t->duration = d;

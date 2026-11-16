@@ -1270,9 +1270,14 @@ static void test_update_task(void)
     before = doc->changes;                                     /* working and elapsed won't mix */
     CHECK_N(opj_update_task(doc, 2, NULL, "1d", "1ed", NULL, NULL), OWF_ERR_FORMAT);
     CHECK_N(opj_update_task(doc, 2, NULL, NULL, "1d", NULL, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_update_task(doc, 2, NULL, "1d", NULL, NULL, NULL), OWF_ERR_FORMAT);   /* actual alone, too */
+    CHECK_N(opj_update_task(doc, 0, NULL, "1ed", NULL, NULL, NULL), OWF_ERR_FORMAT);  /* 1ed of Plan's 2d */
+    CHECK_S(cell_of(doc, 0, OPJ_COL_DURATION), "2d");
     CHECK_N(doc->changes, before);
     CHECK_N(opj_update_task(doc, 2, NULL, NULL, "1ed", NULL, NULL), OWF_OK);   /* 2ed done, 1ed to go */
     CHECK_S(cell_of(doc, 2, OPJ_COL_DURATION), "3ed");
+    CHECK_N(opj_update_task(doc, 2, NULL, "3ed", NULL, NULL, NULL), OWF_OK);   /* the same kind: all done */
+    CHECK_S(cell_of(doc, 2, OPJ_COL_PERCENT), "100%");
     /* a summary takes only % Complete */
     CHECK_N(opj_insert_task(doc, 0, "Phase"), OWF_OK);
     CHECK_N(opj_indent(doc, 1, 3, 1), OWF_OK);
