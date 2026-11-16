@@ -415,6 +415,47 @@ int odg_group(odg_doc *doc, const char *const *ids, int n, char *group)
     return odg_end(doc, k);
 }
 
+/* Connectors joined to the group with this id (draw.io makes groups connectable="0", but a file may join one) keep
+ * that end loose where it is, so that removing the group doesn't take them with it. */
+static int loosen_joined(owf_dpage *p, const char *gid)
+{
+    int i, end;
+    for (i = 0; i < p->ncells; i++) {
+        owf_dcell *e = &p->cells[i];
+        owf_dpoint *path;
+        owf_dnum ox, oy;
+        int np = 0;
+        if (e->kind != OWF_DCELL_EDGE || !(same(e->source, gid) || same(e->target, gid)))
+            continue;
+        path = owf_dedge_path(p, e, &np);
+        if (!path || np < 2) {
+            owf_free(path);
+            continue;                    /* nowhere to leave it: it goes with the group */
+        }
+        origin_of(p, e->parent, &ox, &oy);
+        for (end = 0; end < 2; end++) {
+            owf_dpoint at = path[end ? np - 1 : 0];
+            if (!same(end ? e->target : e->source, gid))
+                continue;
+            at.x -= ox;
+            at.y -= oy;
+            e->geo.flags |= end ? OWF_DGEO_TARGET_POINT : OWF_DGEO_SOURCE_POINT;
+            if (end)
+                e->geo.target_point = at;
+            else
+                e->geo.source_point = at;
+            if (owf_dcell_set(end ? &e->target : &e->source, NULL) != OWF_OK ||
+                owf_dstyle_set(&e->style, end ? "entryX" : "exitX", NULL) != OWF_OK ||
+                owf_dstyle_set(&e->style, end ? "entryY" : "exitY", NULL) != OWF_OK) {
+                owf_free(path);
+                return OWF_ERR_MEMORY;
+            }
+        }
+        owf_free(path);
+    }
+    return OWF_OK;
+}
+
 /* The cells right inside the shape at index gi out to its parent, just over it in the drawing order; it goes
  * when it is a group. */
 static int take_apart(owf_dpage *p, int gi, char (*made)[ODG_ORDER_ID], int max, int *count)
@@ -460,6 +501,8 @@ static int take_apart(owf_dpage *p, int gi, char (*made)[ODG_ORDER_ID], int max,
         return r;
     gi = owf_dpage_index(p, self);
     put(p, &blk, gi + 1);
+    if (drop && (r = loosen_joined(p, self)) != OWF_OK)
+        return r;
     if (drop)
         owf_dpage_remove(p, self);
     return OWF_OK;

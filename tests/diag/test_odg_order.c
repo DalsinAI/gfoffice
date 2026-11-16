@@ -270,6 +270,35 @@ static void test_ungroup_container(void)
     done();
 }
 
+static void test_ungroup_joined(void)
+{
+    char g[ODG_ORDER_ID], made[4][ODG_ORDER_ID], e[24];
+    const char *ids[2];
+    owf_dcell *ec;
+    int n = 0;
+    fresh();
+    ids[0] = "B";
+    ids[1] = "C";
+    CHECK_N(odg_group(&doc, ids, 2, g), OWF_OK);
+    ec = owf_dpage_add(odg_page(&doc), "e", "1", OWF_DCELL_EDGE);   /* as a loaded file may have it */
+    ec->geo.flags = OWF_DGEO_HAS | OWF_DGEO_RELATIVE;
+    owf_dcell_set(&ec->source, "D");
+    owf_dcell_set(&ec->target, g);
+    snprintf(e, sizeof e, "e");
+    ids[0] = g;
+    CHECK_N(odg_ungroup(&doc, ids, 1, made, 4, &n), OWF_OK);
+    ec = cell(e);
+    CHECK(ec != NULL);                          /* not taken with the group */
+    if (ec) {
+        CHECK_S(ec->source, "D");
+        CHECK(ec->target == NULL);
+        CHECK(ec->geo.flags & OWF_DGEO_TARGET_POINT);
+        CHECK_N(ec->geo.target_point.x, PX(350));   /* the group's right side, facing D */
+        CHECK_N(ec->geo.target_point.y, PX(25));
+    }
+    done();
+}
+
 static void test_round_trip(void)
 {
     char g[ODG_ORDER_ID];
@@ -301,6 +330,7 @@ int main(void)
     test_group();
     test_group_in_group_and_connectors();
     test_ungroup_container();
+    test_ungroup_joined();
     test_round_trip();
     printf("diagram order and groups: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;

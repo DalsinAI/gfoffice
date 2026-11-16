@@ -34,7 +34,8 @@ int odg_reorder(odg_doc *doc, const char *const *ids, int n, odg_order how);
  * when that is not NULL. OWF_ERR_FORMAT when none can be grouped. */
 int odg_group(odg_doc *doc, const char *const *ids, int n, char *group);
 /* Each group named taken apart: what was inside it goes to the group's parent, where the group was in the drawing
- * order, and the group goes (a shape that holds others but isn't a group, a container, stays, emptied). The ids
+ * order, and the group goes (a shape that holds others but isn't a group, a container, stays, emptied). A
+ * connector joined to a group that goes keeps that end loose where it was. The ids
  * of the cells that came out go into made[0..max-1] when made is not NULL, how many there are into *nmade.
  * OWF_ERR_FORMAT when none of them holds anything. */
 int odg_ungroup(odg_doc *doc, const char *const *ids, int n, char (*made)[ODG_ORDER_ID], int max, int *nmade);
