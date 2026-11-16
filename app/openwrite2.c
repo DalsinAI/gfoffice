@@ -115,7 +115,7 @@ enum {
     M_COMMENT, M_COMMENT_NEXT, M_COMMENT_PREV, M_COMMENT_REPLY, M_COMMENT_EDIT, M_COMMENT_DONE, M_COMMENT_DELETE,
     M_COMMENT_FILTER,                                /* 2.0.39 */
     M_FIELD_TITLE, M_FIELD_AUTHOR, M_FIELD_SUBJECT, M_FIELD_FILENAME, M_FIELD_WORDS, M_FIELD_CHAPTER, M_FIELD_USER,
-    M_CROSS_REF, M_DOC_INFO, M_USER_FIELDS, M_UPDATE_FIELDS,
+    M_CROSS_REF, M_DOC_INFO, M_USER_FIELDS, M_UPDATE_FIELDS, M_FIELD_SEQ,
     M_FOOTNOTE, M_ENDNOTE, M_NOTE_NEXT, M_NOTE_PREV, M_NOTE_EDIT, M_NOTE_CONVERT, M_NOTE_DELETE, M_NOTE_NUMBERING,
     M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_DOC, M_MERGE_FILES,
     M_INDEX_ENTRY, M_INDEX,
@@ -208,6 +208,7 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Word Count", NULL, 0, 0, (APTR)M_FIELD_WORDS },
     { NM_SUB, "Chapter", NULL, 0, 0, (APTR)M_FIELD_CHAPTER },
     { NM_SUB, "User Field...", NULL, 0, 0, (APTR)M_FIELD_USER },
+    { NM_SUB, "Number Range...", NULL, 0, 0, (APTR)M_FIELD_SEQ },   /* 2.0.43: Figure 1, Table 2 */
     { NM_ITEM, "Cross-reference...", NULL, 0, 0, (APTR)M_CROSS_REF },
 
     { NM_TITLE, "Format", NULL, 0, 0, NULL },
@@ -4653,6 +4654,30 @@ static void do_index(int what)
     }
 }
 
+static char *comment_utf8(const char *latin1);
+
+/* 2.0.43 (libowf 1.12.6): Insert > Fields > Number Range...: a numbered field of a name (Figure, Table), its number
+ * the count of that name's fields up to it, renumbered as they move */
+static void do_number_range(void)
+{
+    static char last[48] = "Figure";
+    char typed[48], msg[96];
+    char *u;
+    int rc;
+    if (!editor) return;
+    if (!text_requester("Number Range", "Name (Figure, Table...):", last, typed, sizeof typed) || !typed[0]) return;
+    snprintf(last, sizeof last, "%s", typed);
+    if (!(u = comment_utf8(typed))) { DisplayBeep(scr); return; }
+    snprintf(msg, sizeof msg, "%s number inserted.", typed);
+    rc = ow_editor_insert_field_arg(editor, OWF_FIELD_SEQ, u);
+    free(u);
+    if (rc == OWF_ERR_FORMAT) {                      /* Word's rule for the name */
+        tell("Number Range", "A name is a letter, then letters, digits and _ (no spaces), 40 at most.");
+        return;
+    }
+    if (editor_result(rc, msg)) fields_update();
+}
+
 static void do_cross_reference(void)
 {
     static int page_form;
@@ -5464,6 +5489,7 @@ static void menu_action(ULONG id)
     case M_FIELD_USER: do_user_field(1); break;
     case M_USER_FIELDS: do_user_field(0); break;
     case M_CROSS_REF: do_cross_reference(); break;
+    case M_FIELD_SEQ: do_number_range(); break;
     case M_DOC_INFO: do_doc_info(); break;
     case M_UPDATE_FIELDS:
         if (editor) { fields_update(); set_status("Fields updated."); request_document_redraw(); }
@@ -5910,8 +5936,9 @@ static int rexx_do_command(const char *command, char **result_out)
     else if(starts_word_ci(command,"INSERTFIELD",&arg)){static const char *const kinds[]={"PAGE","PAGES","DATE","TIME","TITLE","AUTHOR","SUBJECT","FILENAME","WORDS","CHAPTER","USER","REF","REFPAGE"};char kind[16];const char *rest=arg;int k,n=0,rc;char *u=NULL;
         while(*rest&&*rest!=' '&&n<15){kind[n++]=(char)toupper((unsigned char)*rest++);}kind[n]=0;rest=skip_space(rest);
         for(k=0;k<13&&strcmp(kinds[k],kind);++k);
-        if(!editor||k==13){ok=0;snprintf(result,sizeof result,"INSERTFIELD takes PAGE PAGES DATE TIME TITLE AUTHOR SUBJECT FILENAME WORDS CHAPTER, or USER, REF or REFPAGE and a name");}
-        else{if(*rest)u=comment_utf8(rest);rc=ow_editor_insert_field_arg(editor,(owf_field)k,u&&*u?u:NULL);free(u);if(rc==OWF_ERR_FORMAT){ok=0;snprintf(result,sizeof result,"%s",k>=10?"That field needs a name":"That field takes no name");}else{ok=editor_result(rc,"Field inserted.");if(ok)fields_update();snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}}
+        if(k==13&&!strcmp(kind,"SEQ"))k=OWF_FIELD_SEQ;   /* 2.0.43: INSERTFIELD SEQ name, a number range */
+        if(!editor||k==13){ok=0;snprintf(result,sizeof result,"INSERTFIELD takes PAGE PAGES DATE TIME TITLE AUTHOR SUBJECT FILENAME WORDS CHAPTER, or USER, REF, REFPAGE or SEQ and a name");}
+        else{if(*rest)u=comment_utf8(rest);rc=ow_editor_insert_field_arg(editor,(owf_field)k,u&&*u?u:NULL);free(u);if(rc==OWF_ERR_FORMAT){ok=0;snprintf(result,sizeof result,"%s",k==OWF_FIELD_SEQ&&*rest?"A number range's name is a letter, then letters, digits and _, 40 at most":k>=10?"That field needs a name":"That field takes no name");}else{ok=editor_result(rc,"Field inserted.");if(ok)fields_update();snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}}
     else if(starts_word_ci(command,"DOCINFO",&arg)){char what[16];const char *rest=arg;int n=0,k;while(*rest&&*rest!=' '&&n<15){what[n++]=(char)toupper((unsigned char)*rest++);}what[n]=0;rest=skip_space(rest);
         k=!strcmp(what,"TITLE")?0:!strcmp(what,"AUTHOR")?1:!strcmp(what,"SUBJECT")?2:-1;
         if(!editor||k<0){ok=0;snprintf(result,sizeof result,"DOCINFO takes TITLE, AUTHOR or SUBJECT, and a value to set");}

@@ -691,6 +691,7 @@ static int special_field(const char *instr, owf_field *field, char *arg, size_t 
     else if (!strcmp(word, "PAGEREF") && *arg) *field = OWF_FIELD_REF_PAGE;
     else if (!strcmp(word, "MERGEFIELD") && *arg) *field = OWF_FIELD_MERGE;      /* 1.9 */
     else if (!strcmp(word, "XE") && *arg) *field = OWF_FIELD_INDEX;               /* 1.10 */
+    else if (!strcmp(word, "SEQ") && *arg) *field = OWF_FIELD_SEQ;                /* 1.12.6: its switches go */
     else return 0;
     if (*field <= OWF_FIELD_TIME || *field == OWF_FIELD_CHAPTER) arg[0] = 0;
     return 1;

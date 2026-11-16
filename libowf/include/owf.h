@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.12.5"
+#define OWF_VERSION "1.12.6"
 
 /* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
@@ -87,8 +87,11 @@ typedef enum { OWF_FIELD_PAGE, OWF_FIELD_PAGES, OWF_FIELD_DATE, OWF_FIELD_TIME,
                OWF_FIELD_MERGE,
                /* 1.10: an alphabetical index entry where it is (shows nothing): href is the entry, "Main:Sub" for
                 * a subentry (DOCX XE, ODF text:alphabetical-index-mark) */
-               OWF_FIELD_INDEX } owf_field;
-#define OWF_FIELD_LAST OWF_FIELD_INDEX
+               OWF_FIELD_INDEX,
+               /* 1.12.6: a number range: href is its name ("Figure", "Table"), text the number last shown, the
+                * count of its name's fields up to it (DOCX SEQ, ODF text:sequence) */
+               OWF_FIELD_SEQ } owf_field;
+#define OWF_FIELD_LAST OWF_FIELD_SEQ
 
 typedef struct {
     owf_run_kind kind;

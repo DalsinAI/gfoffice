@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <ctype.h>
 #include "openwrite_core.h"
 #include "owf_notenum_impl.h"
 #include "ow_merge.h"
@@ -5713,10 +5714,58 @@ int ow_editor_insert_link(ow_editor *editor, const char *text, const char *url)
 static int field_wants_arg(owf_field f)
 {
     return f == OWF_FIELD_USER || f == OWF_FIELD_REF || f == OWF_FIELD_REF_PAGE || f == OWF_FIELD_MERGE ||
-           f == OWF_FIELD_INDEX;
+           f == OWF_FIELD_INDEX || f == OWF_FIELD_SEQ;
 }
 
 static void merge_field_value(const ow_editor *editor, const char *column, char *out, size_t size);   /* 2.5.0 */
+
+/* libowf 1.12.6: a number range's name as Word takes it: a letter, then letters, digits and _, 40 at most */
+static int seq_name_ok(const char *name)
+{
+    size_t n;
+    if (!name || !isalpha((unsigned char)name[0])) return 0;
+    for (n = 0; name[n]; ++n)
+        if (n >= 40 || !(isalnum((unsigned char)name[n]) || name[n] == '_')) return 0;
+    return 1;
+}
+
+/* libowf 1.12.6: one of a name's number ranges seen (deleted ones are not); 1 when it is stop */
+static int seq_seen(const owf_doc *doc, const owf_run *q, const owf_run *stop, const char *name, int *k)
+{
+    if (q->kind == OWF_RUN_FIELD && q->field == OWF_FIELD_SEQ && q->href && !strcmp(q->href, name) &&
+        rev_kind(doc, q->revision) != OWF_REV_DELETE) ++*k;
+    return q == stop;
+}
+
+/* libowf 1.12.6: a name's number ranges up to stop (included), in the document's order: the body's (its
+ * tables' cells are body paragraphs) with each text box's where its frame is anchored. A header's or footer's
+ * count only their own. */
+static int seq_count(const owf_doc *doc, const owf_story *story, const owf_run *stop, const char *name)
+{
+    int i, j, f, g, k = 0;
+    if (story != &doc->body) {
+        for (f = 0; f < doc->nframes && story != &doc->frames[f].story; ++f)
+            ;
+        if (f == doc->nframes) {                     /* a header or footer */
+            for (i = 0; i < story->nparas; ++i)
+                for (j = 0; j < story->paras[i].nruns; ++j)
+                    if (seq_seen(doc, &story->paras[i].runs[j], stop, name, &k)) return k;
+            return k;
+        }
+    }
+    for (i = 0; i < doc->body.nparas; ++i)
+        for (j = 0; j < doc->body.paras[i].nruns; ++j) {
+            const owf_run *q = &doc->body.paras[i].runs[j];
+            if (seq_seen(doc, q, stop, name, &k)) return k;
+            if (q->kind == OWF_RUN_FRAME && q->image >= 0 && q->image < doc->nframes) {
+                const owf_story *fs = &doc->frames[q->image].story;
+                for (f = 0; f < fs->nparas; ++f)
+                    for (g = 0; g < fs->paras[f].nruns; ++g)
+                        if (seq_seen(doc, &fs->paras[f].runs[g], stop, name, &k)) return k;
+            }
+        }
+    return k;
+}
 
 /* A paragraph's text as one line (deleted text left out, tabs and breaks as spaces), cut to fit */
 static void para_line(const owf_doc *doc, const owf_para *p, char *out, size_t size)
@@ -5827,6 +5876,11 @@ static void field_value(ow_editor *editor, const owf_story *story, int para, con
         }
         break;
     case OWF_FIELD_MERGE: merge_field_value(editor, run->href, out, size); break;   /* 2.5.0 */
+    case OWF_FIELD_SEQ:                              /* libowf 1.12.6: in the document's order (seq_count) */
+        if (!run->href) break;
+        k = seq_count(doc, story, run, run->href);
+        snprintf(out, size, "%d", k);
+        break;
     default: break;
     }
 }
@@ -6032,6 +6086,7 @@ int ow_editor_insert_field_arg(ow_editor *editor, owf_field field, const char *a
     char *arg_copy = NULL;
     if (!editor || field < OWF_FIELD_PAGE || field > OWF_FIELD_LAST) return OWF_ERR_FORMAT;
     if (field_wants_arg(field) != (arg && *arg)) return OWF_ERR_FORMAT;   /* 2.3.0: a name, for those that take one */
+    if (field == OWF_FIELD_SEQ && !seq_name_ok(arg)) return OWF_ERR_FORMAT;   /* libowf 1.12.6: Word's rule */
     editor->typing_group = 0;
     if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
     if (!ow_editor_selection_empty(editor) && delete_selection_internal(editor) < 0) {
