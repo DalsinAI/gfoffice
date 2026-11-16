@@ -165,17 +165,34 @@ $(OUT)/test-odg-mind-asan: $(ODG_MIND_DEPS) $(OWF_SRC)
 		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_mind.c \
 		tests/diag/test_odg_mind.c -lz -o $@
 
-diagram-core-test: $(OUT)/test-odg $(OUT)/test-odg-rexx $(OUT)/test-odg-style $(OUT)/test-odg-mind
+# The clipboard: Copy, Cut, Paste and Duplicate (src/diag/odg_clip.c).
+ODG_CLIP_DEPS = $(ODG_DEPS) src/diag/odg_clip.c include/opendiag_clip.h tests/diag/test_odg_clip.c
+
+$(OUT)/test-odg-clip: $(ODG_CLIP_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		$(ODG_SRC) src/diag/odg_clip.c tests/diag/test_odg_clip.c -lz -o $@
+
+$(OUT)/test-odg-clip-asan: $(ODG_CLIP_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_clip.c \
+		tests/diag/test_odg_clip.c -lz -o $@
+
+diagram-core-test: $(OUT)/test-odg $(OUT)/test-odg-rexx $(OUT)/test-odg-style $(OUT)/test-odg-mind $(OUT)/test-odg-clip
 	$(OUT)/test-odg
 	$(OUT)/test-odg-rexx
 	$(OUT)/test-odg-style
 	$(OUT)/test-odg-mind
+	$(OUT)/test-odg-clip
 
-diagram-core-check: $(OUT)/test-odg-asan $(OUT)/test-odg-rexx-asan $(OUT)/test-odg-style-asan $(OUT)/test-odg-mind-asan
+diagram-core-check: $(OUT)/test-odg-asan $(OUT)/test-odg-rexx-asan $(OUT)/test-odg-style-asan $(OUT)/test-odg-mind-asan \
+	$(OUT)/test-odg-clip-asan
 	$(OUT)/test-odg-asan
 	$(OUT)/test-odg-rexx-asan
 	$(OUT)/test-odg-style-asan
 	$(OUT)/test-odg-mind-asan
+	$(OUT)/test-odg-clip-asan
 
 test: diagram-core-test
 check: diagram-core-check
