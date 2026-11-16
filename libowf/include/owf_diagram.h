@@ -111,6 +111,9 @@ owf_dcell *owf_dpage_find(const owf_dpage *p, const char *id);
 int owf_dpage_index(const owf_dpage *p, const char *id);
 /* A new cell at the end (on top); id NULL makes a new one. NULL when the id is taken or memory ran out. */
 owf_dcell *owf_dpage_add(owf_dpage *p, const char *id, const char *parent, int kind);
+/* A copy of src (every field and attribute) at the end, with id (NULL makes a new one) in place of src's. NULL
+ * when the id is taken or memory ran out. src must not be a cell of p: p's cells may move. */
+owf_dcell *owf_dpage_add_copy(owf_dpage *p, const owf_dcell *src, const char *id);
 /* Removes the cell, every cell inside it, and the edges joined to any of them; how many went. */
 int owf_dpage_remove(owf_dpage *p, const char *id);
 /* An id no cell has, into buf (at least 16 bytes). */
