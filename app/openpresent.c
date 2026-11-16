@@ -5420,8 +5420,11 @@ static void spell_dialog(void)
                 from = caret;
                 /* the start point moves with the text when it is after the change, in the same paragraph */
                 if (start_slide == found.slide && start_obj == found.obj && start.para == found.selection.anchor.para &&
-                    start.offset > found.selection.anchor.offset)
-                    start.offset = (size_t)((long)start.offset + grow);
+                    start.offset > found.selection.anchor.offset) {
+                    long moved = (long)start.offset + grow;
+                    start.offset = moved > (long)found.selection.anchor.offset ? (size_t)moved
+                                                                               : found.selection.anchor.offset;
+                }
             }
             break;
         }
