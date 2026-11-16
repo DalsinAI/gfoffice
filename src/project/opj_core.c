@@ -1185,16 +1185,22 @@ int opj_update_task(opj_doc *doc, int row, const char *percent, const char *actu
         return fail(work, rc);
     if (given(actual) || given(remaining)) {
         long a = 0, r = 0, d;
-        int el, es, pc;
+        int ea = -1, er = -1, es, pc;
         char pct[8];
-        if (given(actual) && (owf_pduration_parse(work, actual, &a, &el, &es) != OWF_OK || a < 0)) return fail(work, OWF_ERR_FORMAT);
-        if (given(remaining) && (owf_pduration_parse(work, remaining, &r, &el, &es) != OWF_OK || r < 0))
+        if (given(actual) && (owf_pduration_parse(work, actual, &a, &ea, &es) != OWF_OK || a < 0)) return fail(work, OWF_ERR_FORMAT);
+        if (given(remaining) && (owf_pduration_parse(work, remaining, &r, &er, &es) != OWF_OK || r < 0))
             return fail(work, OWF_ERR_FORMAT);
-        if (!given(actual)) a = owf_ptask_actual_duration(t);          /* the remaining changes the duration */
+        if (ea >= 0 && er >= 0 && ea != er) return fail(work, OWF_ERR_FORMAT);   /* "2d" done, "1ed" to go */
+        if (!given(actual)) {
+            a = owf_ptask_actual_duration(t);                          /* the remaining changes the duration */
+            if (er != t->elapsed && a > 0) return fail(work, OWF_ERR_FORMAT);  /* done in the other kind */
+        } else if (!given(remaining) && ea != t->elapsed && t->duration > 0)
+            return fail(work, OWF_ERR_FORMAT);   /* "1ed" done of a 3d (working) task: the other kind */
         if (given(remaining)) d = a + r;
         else d = a > t->duration ? a : t->duration;                     /* more done than planned: longer */
         t->duration = d;
-        t->milestone = d == 0;
+        t->elapsed = ea >= 0 ? ea : er;      /* "1ed" makes the duration elapsed, as the Duration cell does */
+        /* the Milestone flag stays as set (MS Project's), whatever the duration becomes */
         if (d == 0) pc = t->percent;                  /* a milestone: % Complete says whether it's done */
         else if (a >= d) pc = 100;
         else if ((pc = (int)((a * 100 + d / 2) / d)) > 99) pc = 99;      /* not all done: never 100% */

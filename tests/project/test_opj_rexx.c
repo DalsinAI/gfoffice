@@ -612,6 +612,20 @@ static void test_filter_group(void)
     CHECK_S(rx.lasterror, "LINE: no line 9");
     CHECK_S(ok("GROUP"), "0");
     CHECK_S(ok("LINES"), "4");
+    ok("FILTER Milestones SUMMARIES");                                     /* NEW starts on All Tasks, */
+    ok("GROUP BY Duration DESC");                                          /* ungrouped */
+    ok("SAVEAS build/host/rexx-lines.gfproj");
+    ok("NEW FORCE");
+    CHECK_N(lines.filter.kind, OPJ_FILTER_ALL);
+    CHECK_N(lines.filter.summaries, 0);
+    CHECK_N(lines.group, -1);
+    CHECK_N(lines.group_descending, 0);
+    CHECK_S(ok("LINES"), "0");
+    ok("FILTER Milestones");
+    ok("OPEN build/host/rexx-lines.gfproj FORCE");              /* and so does OPEN */
+    CHECK_N(lines.filter.kind, OPJ_FILTER_ALL);
+    CHECK_S(ok("LINES"), "4");
+    remove("build/host/rexx-lines.gfproj");
     rx.lines = NULL;
     opj_lines_free(&lines);
 }
