@@ -1876,35 +1876,94 @@ static void mark_named_masters(reader *r, span list, unsigned char *named)
     }
 }
 
-/* Whether page chunk pc is a master: field 0x10 is 3 (the first samples), or
-   another page names it in 0x0D (the masters whose 0x10 is 1 or 0,
-   PUB-FORMAT.md 5.4). */
 /* A two-page master's left and right pages: one of each with the same
- * name, each paired with the first free one (PUB-FORMAT.md 5.4). A half
- * left without its other page is a one-page master. */
+ * name (PUB-FORMAT.md 5.4). In the masters' order, the k-th left of a
+ * name pairs with the k-th right of it. A half left without its other page
+ * is a one-page master. One pass through a table of the names, so the
+ * reading stays linear however many masters a file has. */
+typedef struct {
+    const char *name;            /* NULL: the masters without a name */
+    int used;
+    int left, right;             /* the first unpaired half of each side; -1: none */
+    int left_last, right_last;
+} name_slot;
+
+static unsigned long name_hash(const char *s)
+{
+    unsigned long h = 2166136261UL;
+    if (!s)
+        return 0;
+    while (*s)
+        h = ((h ^ (unsigned char)*s++) * 16777619UL) & 0xFFFFFFFFUL;
+    return h;
+}
+
+static int same_name(const char *a, const char *b)
+{
+    return (!a && !b) || (a && b && !strcmp(a, b));
+}
+
 static void pair_masters(owf_pub *pub)
 {
-    int i, k;
-    for (i = 0; i < pub->nmasters; i++) {
-        owf_pub_page *a = &pub->masters[i];
-        if (a->side != OWF_PUB_LEFT || a->pair >= 0)
+    int i, nhalves = 0;
+    size_t size = 1, mask;
+    name_slot *slots = NULL;
+    int *next = NULL;
+    for (i = 0; i < pub->nmasters; i++)
+        if (pub->masters[i].side != OWF_PUB_ONE_PAGE)
+            nhalves++;
+    while (nhalves && size < 2 * (size_t)nhalves)
+        size <<= 1;
+    if (nhalves && (!(slots = owf_calloc(size, sizeof *slots)) ||
+                    !(next = owf_calloc((size_t)pub->nmasters, sizeof *next))))
+        nhalves = 0;                 /* no room: every master one page, as an unpaired half is */
+    mask = size - 1;
+    for (i = 0; nhalves && i < pub->nmasters; i++) {
+        owf_pub_page *m = &pub->masters[i];
+        name_slot *t;
+        size_t at;
+        int *mine_first, *mine_last, *other_first, *other_last;
+        if (m->side == OWF_PUB_ONE_PAGE)
             continue;
-        for (k = 0; k < pub->nmasters; k++) {
-            owf_pub_page *b = &pub->masters[k];
-            if (b->side == OWF_PUB_RIGHT && b->pair < 0 &&
-                ((!a->name && !b->name) || (a->name && b->name && !strcmp(a->name, b->name)))) {
-                a->pair = k;
-                b->pair = i;
-                pub->facing = 1;
-                break;
-            }
+        for (at = name_hash(m->name) & mask; slots[at].used && !same_name(slots[at].name, m->name); at = (at + 1) & mask)
+            ;
+        t = &slots[at];
+        if (!t->used) {
+            t->used = 1;
+            t->name = m->name;
+            t->left = t->right = t->left_last = t->right_last = -1;
+        }
+        mine_first = m->side == OWF_PUB_LEFT ? &t->left : &t->right;
+        mine_last = m->side == OWF_PUB_LEFT ? &t->left_last : &t->right_last;
+        other_first = m->side == OWF_PUB_LEFT ? &t->right : &t->left;
+        other_last = m->side == OWF_PUB_LEFT ? &t->right_last : &t->left_last;
+        if (*other_first >= 0) {     /* the oldest waiting half of the other side */
+            int k = *other_first;
+            *other_first = next[k];
+            if (*other_first < 0)
+                *other_last = -1;
+            m->pair = k;
+            pub->masters[k].pair = i;
+            pub->facing = 1;
+        } else {                     /* waits, after the others of its side */
+            next[i] = -1;
+            if (*mine_last >= 0)
+                next[*mine_last] = i;
+            else
+                *mine_first = i;
+            *mine_last = i;
         }
     }
+    owf_free(slots);
+    owf_free(next);
     for (i = 0; i < pub->nmasters; i++)
         if (pub->masters[i].pair < 0)
             pub->masters[i].side = OWF_PUB_ONE_PAGE;
 }
 
+/* Whether page chunk pc is a master: field 0x10 is 3 (the first samples), or
+   another page names it in 0x0D (the masters whose 0x10 is 1 or 0,
+   PUB-FORMAT.md 5.4). */
 static int is_master_page(reader *r, const unsigned char *named, long pc)
 {
     return named[pc] || field_value(chunk_body(r, pc), 0x10, 0) == 3;
