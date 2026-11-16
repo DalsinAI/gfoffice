@@ -53,7 +53,7 @@ void opj_view_init(opj_view *v, const opj_doc *doc, int width, int height, int r
 int opj_column_width(int column)
 {
     static const int widths[OPJ_NCOLS] = { 32, 180, 56, 96, 96, 84, 64, 48, 140, 96, 96, 72, 72, 140, 96, 160,
-                                                   96, 96, 96, 96 };
+                                                   96, 96, 96, 96, 80, 80, 80, 80, 80 };
     return column >= 0 && column < OPJ_NCOLS ? widths[column] : 0;
 }
 

@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.14.1"
+#define OWF_VERSION "1.16.1"
 
 /* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
@@ -94,8 +94,12 @@ typedef enum { OWF_FIELD_PAGE, OWF_FIELD_PAGES, OWF_FIELD_DATE, OWF_FIELD_TIME,
                OWF_FIELD_INDEX,
                /* 1.12.6: a number range: href is its name ("Figure", "Table"), text the number last shown, the
                 * count of its name's fields up to it (DOCX SEQ, ODF text:sequence) */
-               OWF_FIELD_SEQ } owf_field;
-#define OWF_FIELD_LAST OWF_FIELD_SEQ
+               OWF_FIELD_SEQ,
+               /* 1.16: conditional text: href is Word's form after IF, two operands, an operator and the two
+                * texts ({DOCVARIABLE Gender} = "F" "Ms" "Mr"; owf_ifform.h), text the one last shown (DOCX IF,
+                * ODF text:conditional-text) */
+               OWF_FIELD_IF } owf_field;
+#define OWF_FIELD_LAST OWF_FIELD_IF
 
 typedef struct {
     owf_run_kind kind;

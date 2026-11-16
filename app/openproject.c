@@ -48,7 +48,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenProject 0.1.13 (16.11.2026)"
+#define VERSION_TEXT "GFOpenProject 0.1.14 (16.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenProject, the project planner of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -133,6 +133,11 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Actual Finish", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_ACTUAL_FINISH) },
     { NM_SUB, "Actual Duration", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_ACTUAL_DURATION) },
     { NM_SUB, "Remaining Dur.", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_REMAINING_DURATION) },
+    { NM_SUB, "BCWS", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_BCWS) },
+    { NM_SUB, "BCWP", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_BCWP) },
+    { NM_SUB, "ACWP", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_ACWP) },
+    { NM_SUB, "SV", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_SV) },
+    { NM_SUB, "CV", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_CV) },
     { NM_TITLE, "Tools", NULL, 0, 0, NULL },
     { NM_ITEM, "Set Baseline", NULL, 0, 0, (APTR)M_SET_BASELINE },
     { NM_ITEM, "Clear Baseline", NULL, 0, 0, (APTR)M_CLEAR_BASELINE },
