@@ -78,9 +78,14 @@ as hidden names named as Excel names its Solver models (`solver_opt`,
 ODS keeps them as named expressions (ODF has no hidden names, which the save
 notes). Keeping the answer is one Undo step.
 
+The window's Method cycle picks Simplex LP or Nonlinear; a Nonlinear answer
+is offered as the best near the starting values.
+
 ARexx: `SOLVE [MAX|MIN cell | VALUE cell n] [BY cells] [lhs<=rhs ...]
-[INT cells] [BIN cells] [ANY] [KEEP]` gives "target cell=value ..."; with no
-model words it solves the sheet's own model. RC 5 when the model has no
+[INT cells] [BIN cells] [ANY] [SIMPLEX|NONLINEAR] [KEEP]` gives "target
+cell=value ..."; with no model words it solves the sheet's own model
+(SIMPLEX or NONLINEAR alone changes only its engine; a new model is Simplex
+LP unless NONLINEAR is given). RC 5 when the model has no
 answer (no values meet it, no limit, or not linear), 10 when it does not
 make sense; LASTERROR says why. Test script: tests/arexx/calc-solver.rexx.
 

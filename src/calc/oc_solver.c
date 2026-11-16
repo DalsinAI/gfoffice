@@ -824,6 +824,21 @@ static int name_number(const owf_book *book, int sheet, const char *name, double
     return n && n->formula && number_text(n->formula, v);
 }
 
+const char *oc_solver_summary(const oc_solver_model *model, const oc_solver_result *res)
+{
+    int nonlinear = model && model->engine == OC_SOLVER_NONLINEAR;
+    if (res && res->status == OC_SOLVED)
+        return nonlinear ? "Solver found the best values near the starting values (a local answer: "
+                           "other starting values may find a better one)."
+                         : "Solver found the best values for the model.";
+    if (res && res->status == OC_SOLVED_LIMIT)
+        return nonlinear ? "Solver stopped at its limit of trials: these are the best values it found, "
+                           "but there may be better ones."
+                         : "Solver stopped at its limit: these are the best values it found, "
+                           "but there may be better ones.";
+    return "Solver could not solve this model.";
+}
+
 void oc_solver_model_init(oc_solver_model *model)
 {
     memset(model, 0, sizeof *model);

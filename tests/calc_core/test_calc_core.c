@@ -7812,6 +7812,23 @@ static void test_solver_nonlinear(void)
     CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED);
     CHECK(fabs(r.value[0] - 5) < 1e-3 && fabs(r.value[1] - 5) < 1e-3 && fabs(r.objective - 25) < 1e-4);
     CHECK(r.value[0] + r.value[1] <= 10 + 1e-5);
+    /* the window's words for it, and for Simplex LP's answers */
+    CHECK(strstr(oc_solver_summary(&m, &r), "near the starting values") != NULL);
+    r.status = OC_SOLVED_LIMIT;
+    CHECK(strstr(oc_solver_summary(&m, &r), "limit of trials") != NULL);
+    m.engine = OC_SOLVER_SIMPLEX;
+    CHECK_STR(oc_solver_summary(&m, &r), "Solver stopped at its limit: these are the best values it found, "
+                                         "but there may be better ones.");
+    r.status = OC_SOLVED;
+    CHECK_STR(oc_solver_summary(&m, &r), "Solver found the best values for the model.");
+    r.status = OC_SOLVER_INFEASIBLE;
+    CHECK_STR(oc_solver_summary(&m, &r), "Solver could not solve this model.");
+    m.engine = OC_SOLVER_NONLINEAR;
+    /* the lab script's model: max x * y with 3x + 2y <= 18 from (1, 1) -> (3, 4.5), 13.5 */
+    enter_at(core, "B4", "=3*B1+2*B2");
+    snprintf(m.constraints[0].rhs, sizeof m.constraints[0].rhs, "18");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED);
+    CHECK(fabs(r.value[0] - 3) < 1e-3 && fabs(r.value[1] - 4.5) < 1e-3 && fabs(r.objective - 13.5) < 1e-4);
     /* a value goal: x^3 = 27 from 1 */
     enter_at(core, "C1", "1");
     enter_at(core, "C2", "=C1^3");

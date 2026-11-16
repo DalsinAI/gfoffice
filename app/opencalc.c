@@ -3249,6 +3249,7 @@ static void do_goal_seek(void)
 static const char *const sv_goal_labels[] = { "Maximum", "Minimum", "Value of", NULL };
 static const char *const sv_rel_labels[] = { "<=", "=", ">=", "Whole number", "Binary", NULL };
 static const char *const sv_rel_words[] = { "", "<=", "=", ">=", "INT", "BIN" };
+static const char *const sv_engine_labels[] = { "Simplex LP", "Nonlinear", NULL };
 
 typedef struct {
     struct Node node;
@@ -3299,7 +3300,7 @@ static void sv_get_string(struct Gadget *g, struct Window *w, char *out, size_t 
 static int solver_window(oc_solver_model *m)
 {
     struct Gadget *glist = NULL, *last, *gtarget, *ggoal, *gvalue, *gvars, *glist_v, *glhs, *grel, *grhs;
-    struct Gadget *gadd, *gchange, *gremove, *gneg, *gsolve, *gclose;
+    struct Gadget *gadd, *gchange, *gremove, *gneg, *gengine, *gsolve, *gclose;
     struct NewGadget ng;
     struct Window *rw = NULL;
     struct List lines;
@@ -3351,13 +3352,19 @@ static int solver_window(oc_solver_model *m)
     ng.ng_Flags = PLACETEXT_RIGHT; ng.ng_LeftEdge = 10; ng.ng_TopEdge += fh + 16; ng.ng_Width = 22; ng.ng_Height = fh + 4;
     ng.ng_GadgetText = (STRPTR)"Variables are not negative"; ng.ng_GadgetID = 12;
     last = gneg = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, m->nonnegative ? TRUE : FALSE, TAG_DONE);
+    /* its own row, so a wide font does not run the check box's words into it */
+    ng.ng_Flags = PLACETEXT_LEFT; ng.ng_TopEdge += fh + 12; ng.ng_LeftEdge = 90; ng.ng_Width = 140;
+    ng.ng_Height = fh + 6;
+    ng.ng_GadgetText = (STRPTR)"Method"; ng.ng_GadgetID = 15;
+    last = gengine = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)sv_engine_labels,
+                                  GTCY_Active, (ULONG)(m->engine == OC_SOLVER_NONLINEAR ? 1 : 0), TAG_DONE);
     ng.ng_Flags = 0; ng.ng_TopEdge += fh + 14; ng.ng_Width = 90; ng.ng_Height = fh + 8;
     ng.ng_LeftEdge = ww - 200; ng.ng_GadgetText = (STRPTR)"Solve"; ng.ng_GadgetID = 13;
     last = gsolve = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
     ng.ng_LeftEdge = ww - 100; ng.ng_GadgetText = (STRPTR)"Close"; ng.ng_GadgetID = 14;
     last = gclose = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
     if (!gtarget || !ggoal || !gvalue || !gvars || !glist_v || !glhs || !grel || !grhs || !gadd || !gchange ||
-        !gremove || !gneg || !gsolve || !gclose)
+        !gremove || !gneg || !gengine || !gsolve || !gclose)
         goto out;
     wh = ng.ng_TopEdge + ng.ng_Height + 10;
     rw = OpenWindowTags(NULL,
@@ -3422,7 +3429,7 @@ static int solver_window(oc_solver_model *m)
                 sel = -1;
                 relist = 1;
             } else if (id == 13) {
-                LONG goal = 0, neg = 0;
+                LONG goal = 0, neg = 0, engine = 0;
                 double v = 0.0;
                 sv_get_string(gtarget, rw, text, sizeof text);
                 sv_take(trim_text(text), m->target, sizeof m->target);
@@ -3430,6 +3437,8 @@ static int solver_window(oc_solver_model *m)
                 sv_take(trim_text(text), m->variables, sizeof m->variables);
                 GT_GetGadgetAttrs(ggoal, rw, NULL, GTCY_Active, (ULONG)&goal, TAG_DONE);
                 GT_GetGadgetAttrs(gneg, rw, NULL, GTCB_Checked, (ULONG)&neg, TAG_DONE);
+                GT_GetGadgetAttrs(gengine, rw, NULL, GTCY_Active, (ULONG)&engine, TAG_DONE);
+                m->engine = engine == 1 ? OC_SOLVER_NONLINEAR : OC_SOLVER_SIMPLEX;
                 m->goal = (int)goal + 1;
                 m->nonnegative = neg != 0;
                 sv_get_string(gvalue, rw, value, sizeof value);
@@ -3496,9 +3505,7 @@ static void do_solver(void)
         }
         solver_answer_text(&r, answer, sizeof answer);
         snprintf(message, sizeof message, "%s\n\nTarget and values: %s\n\nKeep these values?",
-                 r.status == OC_SOLVED ? "Solver found the best values for the model."
-                                       : "Solver stopped at its limit: these are the best values it found, "
-                                         "but there may be better ones.", answer);
+                 oc_solver_summary(&m, &r), answer);
         {
             int keep = ask_window("Solver", message, "Keep|Restore") == 1;
             /* the model is kept on the sheet either way */
@@ -6353,7 +6360,8 @@ static int rexx_pivot(const char *arg, char *out, size_t size)
 }
 
 /* SOLVE [MAX|MIN cell | VALUE cell n] [BY cells] [lhs<=rhs lhs=rhs lhs>=rhs ...] [INT cells] [BIN cells] [ANY]
- * [KEEP]: Data > Solver. With no model words, the sheet's own model. The answer is "target cell=value ...";
+ * [SIMPLEX|NONLINEAR] [KEEP]: Data > Solver. With no model words, the sheet's own model (SIMPLEX or NONLINEAR
+ * alone picks its engine; a new model is Simplex LP unless NONLINEAR is given). The answer is "target cell=value ...";
  * KEEP puts it in the cells (and keeps the model on the sheet). 1 solved; *now set when the model has no answer. */
 /* A cell or range word into a model's field: 0 when it is too long for it. */
 static int solve_ref(char *dst, size_t size, const char *word)
@@ -6371,11 +6379,13 @@ static int rexx_solve(const char *arg, char *out, size_t size, int *now)
     static oc_solver_result r;
     char word[2 * OC_SOLVER_REF], bad[64];
     const char *p = arg;
-    int keep = 0, any_model = 0, rc;
+    int keep = 0, any_model = 0, engine = -1, rc;
     oc_core_solver_model(core, &m);
     for (p = rexx_word(p, word, sizeof word); word[0]; p = rexx_word(p, word, sizeof word)) {
         char *op;
         if (!strcasecmp(word, "KEEP")) { keep = 1; continue; }
+        if (!strcasecmp(word, "SIMPLEX")) { engine = OC_SOLVER_SIMPLEX; continue; }
+        if (!strcasecmp(word, "NONLINEAR")) { engine = OC_SOLVER_NONLINEAR; continue; }
         if (!any_model) {                   /* the first model word starts a model afresh */
             any_model = 1;
             oc_solver_model_init(&m);
@@ -6423,6 +6433,8 @@ static int rexx_solve(const char *arg, char *out, size_t size, int *now)
         return 0;
     }
     if (!m.target[0]) { snprintf(out, size, "SOLVE: no model on this sheet: give MAX, MIN or VALUE and BY"); return 0; }
+    if (engine >= 0)
+        m.engine = engine;
     rc = oc_core_solve(core, &m, &r);
     if (rc == OWF_OK && r.status != OC_SOLVED && r.status != OC_SOLVED_LIMIT) {
         *now = 1;
