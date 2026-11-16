@@ -78,6 +78,14 @@ typedef struct {
     int lag_percent;                     /* 1: lag is a percentage */
 } owf_plink;
 
+/* A saved baseline: Baseline 0 is kept in the task's own baseline_ fields, Baselines 1 to 10 here. */
+typedef struct {
+    owf_ptime start, finish;
+    long duration, work, cost;
+} owf_pbaseline;
+
+#define OWF_NBASELINES 11                /* Baseline 0 (MS Project's "Baseline") and Baselines 1 to 10 */
+
 typedef struct {
     char *name;
     char *notes;
@@ -104,6 +112,8 @@ typedef struct {
     int baselined;
     owf_ptime baseline_start, baseline_finish;
     long baseline_duration, baseline_work, baseline_cost;
+    unsigned short more_baselined;       /* bit n set: Baseline n (1..10) is saved in more_baselines[n - 1] */
+    owf_pbaseline more_baselines[OWF_NBASELINES - 1];
     /* tracking: what really happened (owf_project_set_actual, owf_project_update); the scheduler starts a
      * task with an actual start there, whatever its links and constraint, and ends one with an actual
      * finish there */
@@ -210,6 +220,11 @@ void owf_project_resources_update(owf_project *p);
  * as their baseline, MS Project's Set Baseline; schedule first. */
 void owf_project_set_baseline(owf_project *p, int first, int count);
 void owf_project_clear_baseline(owf_project *p, int first, int count);
+/* The same for Baseline n, 0..10 (0 is the one above); n out of range does nothing. */
+void owf_project_set_baseline_n(owf_project *p, int n, int first, int count);
+void owf_project_clear_baseline_n(owf_project *p, int n, int first, int count);
+/* Baseline n of a task into *out; 1 when it is saved, else 0 (and *out zeroed). */
+int owf_ptask_baseline(const owf_ptask *t, int n, owf_pbaseline *out);
 /* A task's variance from its baseline, now less then; 0 with no baseline. Start and finish in working
  * minutes on the task's calendar (later is above 0), duration and work in minutes, cost in hundredths. */
 enum { OWF_VAR_START, OWF_VAR_FINISH, OWF_VAR_DURATION, OWF_VAR_WORK, OWF_VAR_COST };

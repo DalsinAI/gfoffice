@@ -270,7 +270,7 @@ static int find_column(const char *name, int resource_sheet)
         { "finishvariance", OPJ_COL_FINISH_VARIANCE },
         { "constraint", OPJ_COL_CONSTRAINT_TYPE }, { "actualstart", OPJ_COL_ACTUAL_START },
         { "actualfinish", OPJ_COL_ACTUAL_FINISH }, { "actualduration", OPJ_COL_ACTUAL_DURATION },
-        { "remaining", OPJ_COL_REMAINING_DURATION }, { "earned", OPJ_COL_BCWP }, { "planned", OPJ_COL_BCWS }, { "remainingduration", OPJ_COL_REMAINING_DURATION },
+        { "remaining", OPJ_COL_REMAINING_DURATION }, { "remainingduration", OPJ_COL_REMAINING_DURATION }, { "earned", OPJ_COL_BCWP }, { "planned", OPJ_COL_BCWS },
     }, res[] = {
         { "maxunits", OPJ_RCOL_MAX }, { "max", OPJ_RCOL_MAX }, { "rate", OPJ_RCOL_RATE },
         { "stdrate", OPJ_RCOL_RATE }, { "name", OPJ_RCOL_NAME },

@@ -478,6 +478,47 @@ static void test_earned_value(void)
     owf_project_free(p);
 }
 
+/* Baselines 1 to 10 beside Baseline 0: each saved and cleared on its own, read back by number. */
+static void test_more_baselines(void)
+{
+    owf_project *p = plan();
+    int a = owf_project_add_task(p, "A", 2 * D), b = owf_project_add_task(p, "B", D);
+    owf_pbaseline got;
+    owf_project_link(p, a, b, OWF_LINK_FS, 0, 0);
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    CHECK(!owf_ptask_baseline(TASK(p, a), 0, &got) && got.start == 0);
+    owf_project_set_baseline_n(p, 0, 0, -1);                          /* Baseline 0: the old fields */
+    CHECK(TASK(p, a)->baselined && TASK(p, a)->more_baselined == 0);
+    CHECK(owf_ptask_baseline(TASK(p, a), 0, &got));
+    CHECK_T(got.finish, AT(17, 17, 0));
+    /* A slips a day; Baseline 3 keeps the new plan, Baseline 0 the old. */
+    TASK(p, a)->duration = 3 * D;
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    owf_project_set_baseline_n(p, 3, 0, -1);
+    CHECK_N(TASK(p, a)->more_baselined, 1 << 3);
+    CHECK(owf_ptask_baseline(TASK(p, b), 3, &got));
+    CHECK_T(got.start, AT(19, 8, 0));
+    CHECK_N(got.duration, D);
+    CHECK(owf_ptask_baseline(TASK(p, b), 0, &got));
+    CHECK_T(got.start, AT(18, 8, 0));
+    CHECK(!owf_ptask_baseline(TASK(p, b), 2, &got));
+    /* Baseline 10 for B alone; clearing 3 leaves 10 and 0. */
+    owf_project_set_baseline_n(p, 10, b, 1);
+    CHECK(owf_ptask_baseline(TASK(p, b), 10, NULL) && !owf_ptask_baseline(TASK(p, a), 10, NULL));
+    owf_project_clear_baseline_n(p, 3, 0, -1);
+    CHECK(!owf_ptask_baseline(TASK(p, b), 3, &got) && got.duration == 0);
+    CHECK(owf_ptask_baseline(TASK(p, b), 10, NULL) && TASK(p, b)->baselined);
+    owf_project_clear_baseline_n(p, 0, 0, -1);
+    CHECK(!TASK(p, b)->baselined && owf_ptask_baseline(TASK(p, b), 10, NULL));
+    /* Out of range does nothing. */
+    owf_project_set_baseline_n(p, 11, 0, -1);
+    owf_project_set_baseline_n(p, -1, 0, -1);
+    owf_project_set_baseline_n(p, 2, 5, 1);
+    CHECK_N(TASK(p, a)->more_baselined, 0);
+    CHECK(!owf_ptask_baseline(TASK(p, a), 11, NULL) && !owf_ptask_baseline(NULL, 1, NULL));
+    owf_project_free(p);
+}
+
 /* Tracking: actual dates pin a task where it really ran; Update Project brings work up to a status date.
  * A 3-day task A (Mon 16 to Wed 18), B (2 days) after it, C (1 day) after B, and a summary over them. */
 static void test_actuals(void)
@@ -623,6 +664,10 @@ int main(void)
     test_resources();
     test_baseline();
     test_earned_value();
+    owf_project_free(p);
+}
+
+    test_more_baselines();
     test_actuals();
     test_summary_back_to_task();
     test_peak_cap();

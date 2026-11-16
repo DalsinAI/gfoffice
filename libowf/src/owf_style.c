@@ -13,7 +13,8 @@ void owf_charprops_apply(owf_charfmt *to, const owf_charprops *p)
 {
     static const struct { unsigned mask, flag; } bits[] = {
         { OWF_CP_BOLD, OWF_BOLD }, { OWF_CP_ITALIC, OWF_ITALIC }, { OWF_CP_UNDERLINE, OWF_UNDERLINE },
-        { OWF_CP_STRIKE, OWF_STRIKE }, { OWF_CP_POSITION, OWF_SUPER | OWF_SUB }
+        { OWF_CP_STRIKE, OWF_STRIKE }, { OWF_CP_POSITION, OWF_SUPER | OWF_SUB },
+        { OWF_CP_HIDDEN, OWF_HIDDEN }   /* 1.14 */
     };
     size_t i;
     for (i = 0; i < sizeof bits / sizeof bits[0]; i++)

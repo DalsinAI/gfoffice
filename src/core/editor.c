@@ -45,6 +45,7 @@ struct ow_editor {
      * the same author in the same minute. */
     int track;
     int final_view;          /* 2.0.37: deletions hidden (ow_editor_set_final_view): the caret steps over them */
+    int show_hidden;         /* 2.0.46: hidden text shown (ow_editor_set_show_hidden); not: the caret steps over it */
     int *gone, ngone, capgone;   /* 2.0.38: frames an accept or reject takes away, dropped when it is done */
     char *author;
     int typing_rev;
@@ -530,6 +531,8 @@ static void sync_typing_fmt(ow_editor *editor)
         editor->typing_fmt = editor->doc->base;
         editor->typing_fmt_set = 1;
     }
+    if (!editor->show_hidden)
+        editor->typing_fmt.flags &= ~(unsigned)OWF_HIDDEN;   /* 2.0.46: typing beside hidden text the reader sees */
 }
 
 static size_t para_text_offset(const owf_para *p, ow_position pos)
@@ -1369,11 +1372,31 @@ static int hidden_para(ow_editor *editor, int i)
 static int hidden_run(ow_editor *editor, ow_position pos)
 {
     const owf_para *p = &ed_story(editor)->paras[pos.paragraph];
+    const owf_run *run;
     const owf_revision *r;
-    if (!editor->final_view || pos.run < 0 || pos.run >= p->nruns) return 0;
+    if (pos.run < 0 || pos.run >= p->nruns) return 0;
+    run = &p->runs[pos.run];
+    if (!editor->show_hidden && (run->fmt.flags & OWF_HIDDEN) && !run->comment && run->note <= 0)
+        return 1;                                    /* 2.0.46: hidden text, not shown (as the layout leaves it out) */
+    if (!editor->final_view) return 0;
     if (hidden_para(editor, pos.paragraph)) return 1;
-    r = OWF_DOC_REVISION(editor->doc, p->runs[pos.run].revision);
+    r = OWF_DOC_REVISION(editor->doc, run->revision);
     return r && r->kind == OWF_REV_DELETE;
+}
+
+/* 2.0.46: whether caret moves and Backspace and Delete step over text the reader doesn't see: in the final
+ * view, or when the caret's story has hidden text that isn't shown */
+static int hiding(ow_editor *editor)
+{
+    const owf_story *story;
+    int i, j;
+    if (editor->final_view) return 1;
+    if (editor->show_hidden) return 0;
+    story = ed_story(editor);
+    for (i = 0; i < story->nparas; ++i)
+        for (j = 0; j < story->paras[i].nruns; ++j)
+            if (story->paras[i].runs[j].fmt.flags & OWF_HIDDEN) return 1;
+    return 0;
 }
 
 /* One step left (dir < 0) or right that passes a character the reader sees, or a paragraph's end: steps over
@@ -1416,7 +1439,7 @@ static int visible_unit(ow_editor *editor, ow_position caret, int dir, ow_positi
         if (np.paragraph != pos.paragraph &&
             (hidden_para(editor, np.paragraph) || hidden_para(editor, pos.paragraph)))
             return 0;                                /* 2.0.38: never into or across a hidden row */
-        if (np.paragraph != pos.paragraph && editor->track) {
+        if (np.paragraph != pos.paragraph && editor->track && editor->final_view) {
             int ended = np.paragraph < pos.paragraph ? np.paragraph : pos.paragraph;
             end_gone = rev_kind(editor->doc, ed_story(editor)->paras[ended].mark_revision) == OWF_REV_DELETE;
         }
@@ -2245,6 +2268,20 @@ void ow_editor_set_final_view(ow_editor *editor, int on)
 int ow_editor_final_view(const ow_editor *editor)
 {
     return editor ? editor->final_view : 0;
+}
+
+void ow_editor_set_show_hidden(ow_editor *editor, int on)
+{
+    if (!editor) return;
+    editor->show_hidden = on ? 1 : 0;
+    editor->selection.anchor = out_of_hidden(editor, editor->selection.anchor, -1);
+    editor->selection.focus = out_of_hidden(editor, editor->selection.focus, 1);
+    sync_typing_fmt(editor);
+}
+
+int ow_editor_show_hidden(const ow_editor *editor)
+{
+    return editor ? editor->show_hidden : 0;
 }
 
 void ow_editor_set_track_changes(ow_editor *editor, int on)
@@ -4191,8 +4228,8 @@ int ow_editor_backspace(ow_editor *editor)
 
     if (!ow_editor_selection_empty(editor)) {
         rc = editor->track ? tracked_delete_selection(editor) : delete_selection_internal(editor);
-    } else if (editor->final_view) {
-        rc = final_view_delete(editor, -1);          /* 2.0.37 */
+    } else if (hiding(editor)) {
+        rc = final_view_delete(editor, -1);          /* 2.0.37 (2.0.46: or hidden text) */
     } else if (editor->track) {
         /* 2.1.0: recording, the character before the caret is marked deleted; the caret goes before it */
         ow_position end = clamp_position(editor, editor->selection.focus);
@@ -4230,8 +4267,8 @@ int ow_editor_delete_forward(ow_editor *editor)
 
     if (!ow_editor_selection_empty(editor)) {
         rc = editor->track ? tracked_delete_selection(editor) : delete_selection_internal(editor);
-    } else if (editor->final_view) {
-        rc = final_view_delete(editor, 1);           /* 2.0.37 */
+    } else if (hiding(editor)) {
+        rc = final_view_delete(editor, 1);           /* 2.0.37 (2.0.46: or hidden text) */
     } else if (editor->track) {
         /* 2.1.0: recording, the character after the caret is marked deleted; the caret goes past it */
         ow_position end;
@@ -4303,8 +4340,8 @@ int ow_editor_move_caret(ow_editor *editor, ow_move move, int extend_selection)
     } else {
         pos = editor->selection.focus;
         switch (move) {
-        case OW_MOVE_LEFT:  pos = editor->final_view ? visible_step(editor, pos, -1) : move_left_pos(editor, pos); break;
-        case OW_MOVE_RIGHT: pos = editor->final_view ? visible_step(editor, pos, 1) : move_right_pos(editor, pos); break;
+        case OW_MOVE_LEFT:  pos = hiding(editor) ? visible_step(editor, pos, -1) : move_left_pos(editor, pos); break;
+        case OW_MOVE_RIGHT: pos = hiding(editor) ? visible_step(editor, pos, 1) : move_right_pos(editor, pos); break;
         case OW_MOVE_UP:    pos = vertical_pos(editor, pos, -1); break;
         case OW_MOVE_DOWN:  pos = vertical_pos(editor, pos, 1); break;
         case OW_MOVE_HOME:  pos = paragraph_home(editor, pos); break;
