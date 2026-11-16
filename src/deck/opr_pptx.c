@@ -70,15 +70,55 @@ static void put_colour(owf_buf *b, unsigned long rgb)
     owf_buf_printf(b, "<a:solidFill><a:srgbClr val=\"%06lX\"/></a:solidFill>", rgb & 0xFFFFFFUL);
 }
 
-/* an object's fill: a gradient (a:gradFill: a:lin's ang 60000ths of a degree clockwise, our angle
- * anticlockwise; a radial one an a:path circle from the centre), plain, or none */
+/* a colour, see-through by transparency percent (an a:alpha of the opaque part) */
+static void put_srgb(owf_buf *b, unsigned long rgb, int transparency)
+{
+    if (transparency > 0)
+        owf_buf_printf(b, "<a:srgbClr val=\"%06lX\"><a:alpha val=\"%d\"/></a:srgbClr>", rgb & 0xFFFFFFUL,
+                       (100 - (transparency > 100 ? 100 : transparency)) * 1000);
+    else
+        owf_buf_printf(b, "<a:srgbClr val=\"%06lX\"/>", rgb & 0xFFFFFFUL);
+}
+
+/* hatching as a:pattFill's nearest preset: lines across, up, rising or falling, or a grid; close ones (under
+ * 1.5 mm apart) as the narrow and small presets */
+static const char *pattern_of(const owf_look *l)
+{
+    int a = ((l->hatch_angle % 1800) + 1800) % 1800, close = l->hatch_distance > 0 && l->hatch_distance < 85;
+    int q = ((a + 225) / 450) % 4;   /* 0 across, 1 rising, 2 up, 3 falling */
+    if (l->hatch != OWF_HATCH_SINGLE)
+        return q & 1 ? "diagCross" : close ? "smGrid" : "cross";
+    switch (q) {
+    case 1: return "upDiag";
+    case 2: return close ? "narVert" : "vert";
+    case 3: return "dnDiag";
+    default: return close ? "narHorz" : "horz";
+    }
+}
+
+/* an object's fill: hatching (a:pattFill, its lines the foreground, the fill or a clear white the
+ * background), a gradient (a:gradFill: a:lin's ang 60000ths of a degree clockwise, our angle
+ * anticlockwise; a radial one an a:path circle from the centre), plain, or none; see-through as an
+ * a:alpha on each colour */
 static void put_fill(owf_buf *b, const owf_look *l)
 {
-    if (OWF_SHADE_SET(l->fill) && OWF_SHADE_SET(l->fill2) &&
-        (l->gradient == OWF_GRADIENT_LINEAR || l->gradient == OWF_GRADIENT_RADIAL)) {
-        owf_buf_printf(b, "<a:gradFill rotWithShape=\"1\"><a:gsLst><a:gs pos=\"0\"><a:srgbClr val=\"%06lX\"/></a:gs>"
-                          "<a:gs pos=\"100000\"><a:srgbClr val=\"%06lX\"/></a:gs></a:gsLst>",
-                       OWF_SHADE_RGB(l->fill), OWF_SHADE_RGB(l->fill2));
+    int t = l->transparency;
+    if (l->hatch != OWF_HATCH_NONE) {
+        owf_buf_printf(b, "<a:pattFill prst=\"%s\"><a:fgClr>", pattern_of(l));
+        put_srgb(b, OWF_SHADE_SET(l->hatch_colour) ? OWF_SHADE_RGB(l->hatch_colour) : 0, t);
+        owf_buf_puts(b, "</a:fgClr><a:bgClr>");
+        if (OWF_SHADE_SET(l->fill))
+            put_srgb(b, OWF_SHADE_RGB(l->fill), t);
+        else
+            put_srgb(b, 0xFFFFFF, 100);
+        owf_buf_puts(b, "</a:bgClr></a:pattFill>");
+    } else if (OWF_SHADE_SET(l->fill) && OWF_SHADE_SET(l->fill2) &&
+               (l->gradient == OWF_GRADIENT_LINEAR || l->gradient == OWF_GRADIENT_RADIAL)) {
+        owf_buf_puts(b, "<a:gradFill rotWithShape=\"1\"><a:gsLst><a:gs pos=\"0\">");
+        put_srgb(b, OWF_SHADE_RGB(l->fill), t);
+        owf_buf_puts(b, "</a:gs><a:gs pos=\"100000\">");
+        put_srgb(b, OWF_SHADE_RGB(l->fill2), t);
+        owf_buf_puts(b, "</a:gs></a:gsLst>");
         if (l->gradient == OWF_GRADIENT_RADIAL)
             owf_buf_puts(b, "<a:path path=\"circle\"><a:fillToRect l=\"50000\" t=\"50000\" r=\"50000\" b=\"50000\"/>"
                             "</a:path>");
@@ -87,10 +127,66 @@ static void put_fill(owf_buf *b, const owf_look *l)
                            (long)((3600 - ((l->gradient_angle % 3600) + 3600) % 3600) % 3600) * 6000L);
         owf_buf_puts(b, "</a:gradFill>");
     } else if (OWF_SHADE_SET(l->fill)) {
-        put_colour(b, OWF_SHADE_RGB(l->fill));
+        owf_buf_puts(b, "<a:solidFill>");
+        put_srgb(b, OWF_SHADE_RGB(l->fill), t);
+        owf_buf_puts(b, "</a:solidFill>");
     } else {
         owf_buf_puts(b, "<a:noFill/>");
     }
+}
+
+/* tan(degrees) * 16384, 0 to 45 */
+static const long tan_deg[46] = { 0, 286, 572, 859, 1146, 1433, 1722, 2012, 2303, 2595, 2889, 3185, 3483, 3783, 4085, 4390, 4698, 5009, 5323, 5641, 5963, 6289, 6620, 6955, 7295, 7640, 7991, 8348, 8712, 9082, 9459, 9845, 10238, 10640, 11051, 11472, 11904, 12346, 12801, 13268, 13748, 14242, 14752, 15278, 15822, 16384 };
+
+/* The direction of (dx, dy) in tenths of a degree clockwise from left to right (y runs down), 0 to 3599,
+ * without floating point */
+static int direction_of(long dx, long dy)
+{
+    long ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy, n, d, t;
+    int k, a;
+    if (!ax && !ay)
+        return 0;
+    n = ax < ay ? ax : ay;
+    d = ax < ay ? ay : ax;
+    t = (long)((long long)n * 16384 / d);   /* tan of the angle from the nearer axis, 0 to 45 degrees */
+    for (k = 0; k < 45 && tan_deg[k + 1] <= t; k++)
+        ;
+    a = k * 10 + (k < 45 ? (int)((t - tan_deg[k]) * 10 / (tan_deg[k + 1] - tan_deg[k])) : 0);
+    if (ax < ay) a = 900 - a;                 /* 0 to 90 from the x axis */
+    if (dx < 0) a = 1800 - a;
+    if (dy < 0) a = 3600 - a;
+    return a % 3600;
+}
+
+/* the whole square root of v (v >= 0) */
+static long root_of(long long v)
+{
+    long long r = 0, bit = 1LL << 40;
+    while (bit > v) bit >>= 2;
+    while (bit) {
+        if (v >= r + bit) {
+            v -= r + bit;
+            r = (r >> 1) + bit;
+        } else {
+            r >>= 1;
+        }
+        bit >>= 2;
+    }
+    return (long)r;
+}
+
+/* an object's shadow: a:effectLst's a:outerShdw, sharp (blurRad 0), dist and dir from its offset */
+static void put_shadow(owf_buf *b, const owf_look *l)
+{
+    long dist;
+    if (!l->shadow)
+        return;
+    dist = root_of((long long)l->shadow_dx * l->shadow_dx + (long long)l->shadow_dy * l->shadow_dy);
+    owf_buf_printf(b, "<a:effectLst><a:outerShdw blurRad=\"0\" dist=\"%ld\" dir=\"%ld\" algn=\"tl\" rotWithShape=\"0\">",
+                   EMU(dist), (long)direction_of(l->shadow_dx, l->shadow_dy) * 6000L);
+    put_srgb(b, OWF_SHADE_SET(l->shadow_colour) ? OWF_SHADE_RGB(l->shadow_colour) : OWF_SHADOW_COLOUR,
+             l->shadow_transparency);
+    owf_buf_puts(b, "</a:outerShdw></a:effectLst>");
 }
 
 static const char *font_name(const owf_deck *d, int font)
@@ -611,6 +707,7 @@ static void put_object(pptxw *w, owf_buf *b, const owf_obj *o, const owf_obj *bo
         put_xfrm(b, "a", box);
         owf_buf_puts(b, "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>");
         if (OWF_SHADE_SET(o->look.line)) put_line(b, &o->look);
+        put_shadow(b, &o->look);
         owf_buf_puts(b, "</p:spPr></p:pic>");
         return;
     }
@@ -637,7 +734,7 @@ static void put_object(pptxw *w, owf_buf *b, const owf_obj *o, const owf_obj *bo
     put_xfrm(b, "a", box);
     if (o->kind == OWF_OBJ_SHAPE) {
         owf_buf_printf(b, "<a:prstGeom prst=\"%s\"><a:avLst/></a:prstGeom>", preset(o));
-        if (OWF_SHADE_SET(o->look.fill) && o->shape != OWF_SHAPE_LINE) put_fill(b, &o->look);
+        if (OWF_LOOK_FILLED(&o->look) && o->shape != OWF_SHAPE_LINE) put_fill(b, &o->look);
         else owf_buf_puts(b, "<a:noFill/>");
         put_line(b, &o->look);
     } else {
@@ -645,30 +742,30 @@ static void put_object(pptxw *w, owf_buf *b, const owf_obj *o, const owf_obj *bo
         put_fill(b, &o->look);
         if (OWF_SHADE_SET(o->look.line)) put_line(b, &o->look);
     }
+    put_shadow(b, &o->look);
     owf_buf_puts(b, "</p:spPr>");
     if (o->shape != OWF_SHAPE_LINE || o->kind != OWF_OBJ_SHAPE)
         put_body(b, d, o, &o->text, 1);
     owf_buf_puts(b, "</p:sp>");
 }
 
-static void put_background(pptxw *w, owf_buf *b, unsigned long colour, int image, rels *r, int first_rid,
-                           unsigned char gradient, int angle, unsigned long colour2)
+/* a page's background: its picture (image into res->images, or -1), else its look bg */
+static void put_background(pptxw *w, owf_buf *b, const owf_look *bg, int image, rels *r, int first_rid)
 {
     int media, rid;
     if (image >= 0 && (media = media_of(w, image)) > 0 && (rid = rel_of(r, media, first_rid)) >= 0) {
-        owf_buf_printf(b, "<p:bg><p:bgPr><a:blipFill><a:blip r:embed=\"rId%d\"/><a:stretch><a:fillRect/></a:stretch>"
-                          "</a:blipFill><a:effectLst/></p:bgPr></p:bg>", rid);
+        owf_buf_printf(b, "<p:bg><p:bgPr><a:blipFill><a:blip r:embed=\"rId%d\"", rid);
+        if (bg->transparency > 0)
+            owf_buf_printf(b, "><a:alphaModFix amt=\"%d\"/></a:blip>",
+                           (100 - (bg->transparency > 100 ? 100 : bg->transparency)) * 1000);
+        else
+            owf_buf_puts(b, "/>");
+        owf_buf_puts(b, "<a:stretch><a:fillRect/></a:stretch></a:blipFill><a:effectLst/></p:bgPr></p:bg>");
         return;
     }
-    if (OWF_SHADE_SET(colour)) {
-        owf_look l;
-        memset(&l, 0, sizeof l);
-        l.fill = colour;
-        l.gradient = gradient;
-        l.gradient_angle = angle;
-        l.fill2 = colour2;
+    if (OWF_SHADE_SET(bg->fill)) {
         owf_buf_puts(b, "<p:bg><p:bgPr>");
-        put_fill(b, &l);
+        put_fill(b, bg);
         owf_buf_puts(b, "<a:effectLst/></p:bgPr></p:bg>");
     }
 }
@@ -729,8 +826,11 @@ static void put_slide(pptxw *w, int index)
         owf_buf_puts(&b, "\"");
     }
     owf_buf_puts(&b, ">");
-    put_background(w, &b, s->background, s->background_image, &r, 3, s->background_gradient, s->background_angle,
-                   s->background2);
+    {
+        owf_look bg;
+        OWF_BACKGROUND_LOOK(s, &bg);
+        put_background(w, &b, &bg, s->background_image, &r, 3);
+    }
     put_tree_start(&b);
     for (i = 0; i < s->nobjs; i++) {
         const owf_obj *o = &s->objs[i];
@@ -830,8 +930,11 @@ static void put_master(pptxw *w, int index)
     }
     owf_buf_puts(&b, ">");
     if (OWF_SHADE_SET(m->background) || m->background_image >= 0)
-        put_background(w, &b, m->background, m->background_image, &r, 3, m->background_gradient,
-                       m->background_angle, m->background2);
+        {
+            owf_look bg;
+            OWF_BACKGROUND_LOOK(m, &bg);
+            put_background(w, &b, &bg, m->background_image, &r, 3);
+        }
     else
         owf_buf_puts(&b, "<p:bg><p:bgRef idx=\"1001\"><a:schemeClr val=\"bg1\"/></p:bgRef></p:bg>");
     put_tree_start(&b);
