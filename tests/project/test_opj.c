@@ -937,6 +937,59 @@ static void test_graph(void)
     opj_doc_free(doc);
 }
 
+/* The Tracking Gantt: Build baselined at 3 days, then made 5, half done. */
+static void test_tracking(void)
+{
+    opj_doc *doc = three();
+    opj_view v;
+    opj_bar b;
+    oldraw_rect r, base;
+    oldraw *d;
+    char text[64];
+    CHECK_N(opj_set_baseline(doc, 0, -1), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_DURATION, "5d"), OWF_OK);
+    CHECK_N(opj_set_percent(doc, 1, 50), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_RESOURCES, "Dale"), OWF_OK);
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    /* the plain Gantt chart: no baseline unless asked for, resource names beside the bars */
+    CHECK(!opj_baseline_bar(&v, doc, 1, &r));
+    CHECK(opj_bar_of(&v, doc, 1, &b));
+    CHECK_N(b.bar.y, 52); CHECK_N(b.bar.h, 8);
+    CHECK(!opj_label_box(&v, doc, 2, &r));                                /* Ship: nobody on it */
+    opj_label_text(&v, doc, 0, text, sizeof text);
+    CHECK_S(text, "Dale");
+    /* tracking: the bar in the upper half, the baseline as high under it, the done part solid */
+    v.tracking = 1;
+    CHECK(opj_bar_of(&v, doc, 1, &b));
+    CHECK_N(b.bar.y, 50); CHECK_N(b.bar.h, 5);
+    CHECK_N(b.done.y, 50); CHECK_N(b.done.h, 5);
+    CHECK_N(b.done.w, b.bar.w / 2);
+    CHECK(opj_baseline_bar(&v, doc, 1, &base));
+    CHECK_N(base.y, 56); CHECK_N(base.h, 5);
+    CHECK_N(base.x, b.bar.x);                                             /* both from Wednesday */
+    CHECK_N(base.w, 57);                                                  /* Wed 08:00 to Fri 17:00 */
+    CHECK(b.bar.w > base.w);                                              /* now to Tuesday */
+    CHECK(opj_label_box(&v, doc, 2, &r));                                 /* every bar has its % */
+    opj_label_text(&v, doc, 1, text, sizeof text);
+    CHECK_S(text, "50%");
+    opj_label_text(&v, doc, 2, text, sizeof text);
+    CHECK_S(text, "0%");
+    opj_label_text(&v, doc, 7, text, sizeof text);
+    CHECK_S(text, "");
+    d = cur = oldraw_new(&ops, NULL, W, H, NULL);
+    CHECK(d != NULL);
+    memset(px, 0, sizeof px);
+    ntexts = 0;
+    opj_draw(d, &v, doc, NULL);
+    CHECK_X(px[52][b.bar.x + b.bar.w - 3], 0xD03030);                    /* Build's undone part, critical */
+    CHECK_X(px[52][b.bar.x + 2], 0x1A1A1A);                               /* its done part, the bar's height */
+    CHECK_X(px[50][b.bar.x + 2], 0x1A1A1A);
+    CHECK_X(px[58][base.x + 2], 0x909090);                                /* the baseline under it */
+    CHECK(drew("50%") && drew("0%") && !drew("Dale"));
+    oldraw_free(d);
+    opj_doc_free(doc);
+}
+
 static int has_bytes(const unsigned char *data, size_t n, const char *what)
 {
     size_t k = strlen(what), i;
@@ -1372,6 +1425,7 @@ int main(void)
     test_usage_edits();
     test_task_usage();
     test_graph();
+    test_tracking();
     test_columns();
     test_task_info();
     test_network();

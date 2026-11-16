@@ -1,7 +1,7 @@
 /* tests/arexx/project.rexx: GFOpenProject's ARexx port on the Amiga, against amicradle-teams ARexx-RULE.md
    (return codes 0/5/10/20, no requester holds up a command): the app's own commands (VERSION, FAULT,
    QUIT without FORCE), then a plan made, scheduled, baselined, saved, opened again and exported (MSPDI,
-   CSV, PDF), the same steps tests/project/test_opj_rexx.c runs on the PC; then VIEW USAGE, VIEW NETWORK, VIEW TASKUSAGE, VIEW GRAPH and VIEW GANTT, and COLUMN.
+   CSV, PDF), the same steps tests/project/test_opj_rexx.c runs on the PC; then VIEW USAGE, VIEW NETWORK, VIEW TASKUSAGE, VIEW GRAPH, VIEW TRACKING and VIEW GANTT, and COLUMN.
    rx tests/arexx/project.rexx [DIR]   (GFOpenProject running; DIR for the files, RAM: when not given;
    prints PASS/FAIL lines, then ALL PASS or n FAILED) */
 OPTIONS RESULTS
@@ -97,6 +97,9 @@ CALL same 'VIEW after VIEW TASKUSAGE', res, 'TASKUSAGE'
 CALL want 'VIEW GRAPH', 0
 CALL want 'VIEW', 0
 CALL same 'VIEW after VIEW GRAPH', res, 'GRAPH'
+CALL want 'VIEW TRACKING', 0
+CALL want 'VIEW', 0
+CALL same 'VIEW after VIEW TRACKING', res, 'TRACKING'
 CALL want 'VIEW GANTT', 0
 CALL want 'VIEW', 0
 CALL same 'VIEW after VIEW GANTT', res, 'GANTT'
