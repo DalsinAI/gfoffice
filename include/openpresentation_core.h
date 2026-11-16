@@ -412,6 +412,13 @@ int opr_obj_set_wrap(opr_undo *u, owf_deck *deck, int slide, int obj,
  * consume them. */
 int opr_obj_set_picture_crop(opr_undo *u, owf_deck *deck, int slide, int obj,
                              const int crop[4]);
+/* Replace one top-level chart object's chart (its data and look, as the
+ * chart editor gives it back) with a copy of chart, as one undo step; the
+ * caller keeps chart. A chart object with no data gets one. -2 when the
+ * object is not a top-level chart or chart is NULL, -1 for no undo or
+ * memory, 0 done. */
+int opr_obj_set_chart(opr_undo *u, owf_deck *deck, int slide, int obj,
+                      const owf_chart *chart);
 /* Link a top-level text frame to a later empty top-level text frame, or remove
  * any non-first frame from a flow. A target must not already belong to another
  * flow; an insertion before a source's existing successor closes into the
