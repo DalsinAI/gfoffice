@@ -101,6 +101,21 @@ typedef struct {
 
 #define OWF_TEXT_LEVELS 9
 
+/* A table's merged cell: the cell at (row, col) covers rows x cols cells; the cells it covers stay in the
+ * table's text, empty, so every row keeps its ncols cells. */
+typedef struct {
+    int row, col, rows, cols;
+} owf_table_merge;
+
+/* owf_obj.table_design: which of the table design's parts are on (PPTX a:tblPr, ODF table:use-...-styles) */
+#define OWF_TABLE_FIRST_ROW   0x01u   /* a header row */
+#define OWF_TABLE_LAST_ROW    0x02u   /* a total row */
+#define OWF_TABLE_FIRST_COL   0x04u
+#define OWF_TABLE_LAST_COL    0x08u
+#define OWF_TABLE_BANDED_ROWS 0x10u
+#define OWF_TABLE_BANDED_COLS 0x20u
+#define OWF_TABLE_MAX_MERGES  1024
+
 typedef struct {
     owf_obj_kind kind;
     long id;                     /* the file's own id ("id3" in ODP is 3); 0: none */
@@ -151,6 +166,15 @@ typedef struct {
        earlier field keeps its offset. */
     unsigned char wrap;
     int wrap_gap[4];
+    /* OWF_OBJ_TABLE (Presentation gap 3; libowf 1.15, appended so every earlier field keeps its offset): its
+       rows' heights in twips, nrows of them (0: as tall as its text needs; NULL: every row so), its merged
+       cells, which parts of its design are on (OWF_TABLE_...) and the design's name as the file gives it
+       (PPTX a:tableStyleId, ODF table:template-name; NULL: none). */
+    int nrows, *row_heights;
+    int nmerges;
+    owf_table_merge *merges;
+    unsigned table_design;
+    char *table_style;
 } owf_obj;
 
 /* ---- Slides, masters, layouts ---- */

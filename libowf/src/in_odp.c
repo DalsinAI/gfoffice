@@ -1647,6 +1647,22 @@ static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_
     memset(&t, 0, sizeof t);
 
     obj->kind = OWF_OBJ_TABLE;
+    {   /* its design: which parts of its template are on, and the template's name */
+        static const struct { const char *name; unsigned bit; } uses[] = {
+            { "use-first-row-styles", OWF_TABLE_FIRST_ROW }, { "use-last-row-styles", OWF_TABLE_LAST_ROW },
+            { "use-first-column-styles", OWF_TABLE_FIRST_COL }, { "use-last-column-styles", OWF_TABLE_LAST_COL },
+            { "use-banding-rows-styles", OWF_TABLE_BANDED_ROWS }, { "use-banding-columns-styles", OWF_TABLE_BANDED_COLS },
+        };
+        const char *tn = attr(tbl, NS_TABLE, "template-name");
+        size_t k;
+        for (k = 0; k < sizeof uses / sizeof uses[0]; k++)
+            if (same(attr(tbl, NS_TABLE, uses[k].name), "true"))
+                obj->table_design |= uses[k].bit;
+        if (tn && *tn && !(obj->table_style = owf_deck_strdup(tn, strlen(tn)))) {
+            o->failed = 1;
+            return;
+        }
+    }
     /* columns, inside their groups too */
     groups[ngroups++] = tbl;
     for (i = 0; i < ngroups; i++)
@@ -1686,6 +1702,15 @@ static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_
             }
             if (!is(row, NS_TABLE, "table-row"))
                 continue;
+            {   /* its height: the row style's, or its least height; none: as its text needs */
+                const gstyle *rs = find_style(o, attr(row, NS_TABLE, "style-name"), "table-row", which);
+                const char *h = prop(o, rs, "table-row-properties", NS_STYLE, "row-height");
+                int tw = 0;
+                if (!h)
+                    h = prop(o, rs, "table-row-properties", NS_STYLE, "min-row-height");
+                if (h && parse_len(h, &tw) && owf_table_set_row_height(obj, nrows, clamp(tw, 0, MAX_COORD)) < 0)
+                    o->failed = 1;
+            }
             for (cell = row->first; cell; cell = cell->next) {
                 const gstyle *cs;
                 const char *span;
@@ -1698,10 +1723,15 @@ static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_
                 }
                 if (!is(cell, NS_TABLE, "table-cell") || col >= TABLE_MAX_COLS)
                     continue;
-                if ((span = attr(cell, NS_TABLE, "number-columns-spanned")) && atoi(span) > 1)
-                    merged = 1;
-                if ((span = attr(cell, NS_TABLE, "number-rows-spanned")) && atoi(span) > 1)
-                    merged = 1;
+                {
+                    int span_c = (span = attr(cell, NS_TABLE, "number-columns-spanned")) ? atoi(span) : 1;
+                    int span_r = (span = attr(cell, NS_TABLE, "number-rows-spanned")) ? atoi(span) : 1;
+                    if (span_c > 1 || span_r > 1) {
+                        if (owf_table_add_merge(obj, nrows, col, span_r > 0 ? span_r : 1, span_c > 0 ? span_c : 1) < 0)
+                            o->failed = 1;
+                        merged = 1;
+                    }
+                }
                 cs = find_style(o, attr(cell, NS_TABLE, "style-name"), "table-cell", which);
                 t.st = cs;
                 text_blocks(&t, cell, 0, 0);
@@ -1734,6 +1764,8 @@ static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_
         o->failed = 1;
     for (i = 0; i < obj->text.nparas; i++)
         obj->text.paras[i].table_cols = ncols;
+    if (obj->nrows > 0 && obj->nrows < nrows && owf_table_set_row_height(obj, nrows - 1, 0) < 0)
+        o->failed = 1;        /* rows past the last with a height: as their text needs */
     if (merged)
         owf_report_add(o->report, OWF_NOTE_APPROX, "Merged table cells are shown apart");
     obj->ncols = ncols;
