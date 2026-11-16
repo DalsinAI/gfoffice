@@ -75,7 +75,18 @@ $(OUT)/test-dgraph-asan: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dgraph.c
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
 		-Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) tests/diagram/test_dgraph.c -lz -o $@
 
-diagram-test: $(OUT)/test-diagram $(OUT)/test-diagram-nozlib $(OUT)/test-dexport $(OUT)/test-doutline $(OUT)/test-dpdf $(OUT)/test-deps $(OUT)/test-dgraph
+# Step D6: Excalidraw.
+$(OUT)/test-dexcal: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dexcal.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		tests/diagram/test_dexcal.c -lz -o $@
+
+$(OUT)/test-dexcal-asan: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dexcal.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) tests/diagram/test_dexcal.c -lz -o $@
+
+diagram-test: $(OUT)/test-diagram $(OUT)/test-diagram-nozlib $(OUT)/test-dexport $(OUT)/test-doutline $(OUT)/test-dpdf $(OUT)/test-deps $(OUT)/test-dgraph $(OUT)/test-dexcal
 	$(OUT)/test-diagram
 	$(OUT)/test-diagram-nozlib
 	$(OUT)/test-dexport
@@ -83,14 +94,16 @@ diagram-test: $(OUT)/test-diagram $(OUT)/test-diagram-nozlib $(OUT)/test-dexport
 	$(OUT)/test-dpdf
 	$(OUT)/test-deps
 	$(OUT)/test-dgraph
+	$(OUT)/test-dexcal
 
-diagram-check: $(OUT)/test-diagram-asan $(OUT)/test-dexport-asan $(OUT)/test-doutline-asan $(OUT)/test-dpdf-asan $(OUT)/test-deps-asan $(OUT)/test-dgraph-asan
+diagram-check: $(OUT)/test-diagram-asan $(OUT)/test-dexport-asan $(OUT)/test-doutline-asan $(OUT)/test-dpdf-asan $(OUT)/test-deps-asan $(OUT)/test-dgraph-asan $(OUT)/test-dexcal-asan
 	$(OUT)/test-diagram-asan
 	$(OUT)/test-dexport-asan
 	$(OUT)/test-doutline-asan
 	$(OUT)/test-dpdf-asan
 	$(OUT)/test-deps-asan
 	$(OUT)/test-dgraph-asan
+	$(OUT)/test-dexcal-asan
 
 test: diagram-test
 check: diagram-check
