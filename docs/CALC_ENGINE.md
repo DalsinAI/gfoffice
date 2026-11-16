@@ -434,7 +434,8 @@ has both (an older GFOpenCalc's names and a newer table) takes the table.
   (and `'Sheet1:My sheet'!A1`); another book's (`[Book.xls]Sheet1!A1`,
   `SUM([Book.xls]Sheet1!A:A)`) gives the values that book last had, as
   the file kept them (`OP_XREF`: a cell, or an array cut at the last row
-  and column the values reach), so a formula on a book that is not there
+  and column the values reach, one row or column at least; an area too
+  big to hold as values is `#NUM!`), so a formula on a book that is not there
   still shows its value, not an error. A book or sheet the file kept no
   values for, and another book's defined name, are `#REF!` (or, loaded,
   the file's value). The book keeps each other

@@ -1612,6 +1612,24 @@ static void test_linked_values(void)
     EVAL("SUM('[Rates.xlsx]Q 1'!A1:A2,'[Rates.xlsx]Q 1'!A1)", "7");
     EVAL("COUNTA('[Rates.xlsx]Q 1'!A1:B2)", "3");
     EVAL("ROWS('[Rates.xlsx]Q 1'!A1:A2)", "2");
+    /* areas past the values are cut to them (one row or column at least), never a wrapped size */
+    EVAL("ROWS('[Rates.xlsx]Q 1'!B2:LFL524289)", "2");
+    EVAL("COLUMNS('[Rates.xlsx]Q 1'!B2:LFL524289)", "1");
+    EVAL("SUM('[Rates.xlsx]Q 1'!C5:XFD1048576)", "0");
+    EVAL("ROWS('[Rates.xlsx]Q 1'!C5:XFD1048576)", "1");
+    EVAL("COUNTA('[Rates.xlsx]Q 1'!A1:XFD1048576)", "4");
+    {   /* values reaching the sheet's last cell: an area of them all is too big (#NUM!), its sides tested apart */
+        owf_sheet *far = owf_extbook_sheet(eb, "Far", 1);
+        if (far) {
+            owf_cell_set_number(owf_sheet_cell(far, 0, 0, 1), 1);
+            owf_cell_set_number(owf_sheet_cell(far, 1048575, 16383, 1), 2);
+        }
+        owf_calc_free(calc);
+        calc = owf_calc_new(book);
+        EVAL("SUM('[Rates.xlsx]Far'!A1:XFD1048576)", "#NUM!");
+        EVAL("SUM('[Rates.xlsx]Far'!A1:A1000)", "1");
+        EVAL("'[Rates.xlsx]Far'!XFD1048576", "2");
+    }
     EVAL("'[Rates.xlsx]Other'!A1", "#REF!");
     EVAL("[Missing.xlsx]Sheet1!A1", "#REF!");
     /* loaded: a formula on a book the book keeps is worked out; one it does not keep keeps the file's value */
