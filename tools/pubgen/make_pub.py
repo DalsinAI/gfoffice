@@ -923,6 +923,21 @@ def masters2010():
 FILES['gen-2010-masters.pub'] = masters2010
 
 
+def long_list(n):
+    """A page list naming the first master n times, then two pages that use
+    the masters (not in FILES: tests/pub/test_pub_long_list.py makes it with
+    a long list, to time the reader on it)."""
+    pw, ph = 210 * EMU_MM, 297 * EMU_MM
+    c = Contents(0x18, pw, ph)
+    m1 = page_chunk(c, name='Master Page A', kind=1)
+    m2 = page_chunk(c, name='Master Page B', letter='B')
+    p1 = page_chunk(c, master=m1)
+    p2 = page_chunk(c, master=m2)
+    t = Text(['Times New Roman'], [DEFAULT_STYLE])
+    t.story(1, [(None, [('One', None)])])
+    return publication(c.build(doc_fields(c, pw, ph, [m1] * n + [m2, p1, p2])), t, [[], [], [], []], [], (14, 0))
+
+
 def main():
     if len(sys.argv) != 2:
         print(__doc__)

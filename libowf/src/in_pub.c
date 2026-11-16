@@ -1829,22 +1829,29 @@ static void read_scheme(reader *r)
     }
 }
 
-/* Whether page chunk pc of the page list is a master: field 0x10 is 3 (the
-   first samples), or another page of the list names it in its field
-   0x0D (the masters whose 0x10 is 1 or 0, PUB-FORMAT.md 5.4). */
-static int is_master_page(reader *r, span list, long pc)
+/* Each chunk a page of the list names as its master (field 0x0D): one pass,
+   a byte a chunk (named[nchunks]), so the reading stays linear however long
+   the list. */
+static void mark_named_masters(reader *r, span list, unsigned char *named)
 {
     size_t at = 0;
     field item;
-    if (field_value(chunk_body(r, pc), 0x10, 0) == 3)
-        return 1;
     while (next_field(list, &at, &item) > 0) {
-        long other = (long)item.value;
-        if (other != pc && other >= 0 && other < r->nchunks && r->chunks[other].kind == 0x43 &&
-            field_value(chunk_body(r, other), 0x0D, -1) == pc)
-            return 1;
+        long pc = (long)item.value, m;
+        if (pc < 0 || pc >= r->nchunks || r->chunks[pc].kind != 0x43)
+            continue;
+        m = field_value(chunk_body(r, pc), 0x0D, -1);
+        if (m >= 0 && m < r->nchunks && m != pc)
+            named[m] = 1;
     }
-    return 0;
+}
+
+/* Whether page chunk pc is a master: field 0x10 is 3 (the first samples), or
+   another page names it in 0x0D (the masters whose 0x10 is 1 or 0,
+   PUB-FORMAT.md 5.4). */
+static int is_master_page(reader *r, const unsigned char *named, long pc)
+{
+    return named[pc] || field_value(chunk_body(r, pc), 0x10, 0) == 3;
 }
 
 static void read_modern(reader *r)
@@ -1852,6 +1859,7 @@ static void read_modern(reader *r)
     owf_pub *pub = r->pub;
     long root = -1, i, master_y = 0;
     long *masters = NULL;
+    unsigned char *named = NULL;
     int nmasters = 0;
     span body;
     field f;
@@ -1887,10 +1895,15 @@ static void read_modern(reader *r)
     if (!find_field(body, 0x02, &f))         /* the pages: masters, then pages, then the program's own */
         return;
     masters = owf_malloc(sizeof *masters * (size_t)(r->nchunks + 1));
-    if (!masters) {
+    named = owf_malloc((size_t)r->nchunks + 1);
+    if (!masters || !named) {
+        owf_free(masters);
+        owf_free(named);
         r->failed = 1;
         return;
     }
+    memset(named, 0, (size_t)r->nchunks + 1);
+    mark_named_masters(r, f.body, named);
     /* masters first: field 0x10 is 3, or another page names it as its master
        (field 0x0D): some files' masters have 0x10 1 or 0 (PUB-FORMAT.md 5.4) */
     {
@@ -1901,8 +1914,10 @@ static void read_modern(reader *r)
             span pb = chunk_body(r, pc);
             field name, pos;
             owf_pub_page *page;
-            if (pc < 0 || pc >= r->nchunks || r->chunks[pc].kind != 0x43 || !is_master_page(r, f.body, pc))
+            if (pc < 0 || pc >= r->nchunks || r->chunks[pc].kind != 0x43 || !is_master_page(r, named, pc) ||
+                named[pc] == 2)          /* a master the list names twice is one master */
                 continue;
+            named[pc] = 2;
             if (!(page = add_page(r, 1)))
                 break;
             masters[nmasters++] = pc;
@@ -1933,7 +1948,7 @@ static void read_modern(reader *r)
             field f6, pos;
             owf_pub_page *page;
             int k;
-            if (pc < 0 || pc >= r->nchunks || r->chunks[pc].kind != 0x43 || is_master_page(r, f.body, pc))
+            if (pc < 0 || pc >= r->nchunks || r->chunks[pc].kind != 0x43 || is_master_page(r, named, pc))
                 continue;
             if (!find_field(pb, 0x06, &f6) || !f6.value ||
                 (nmasters && find_field(pb, 0x05, &pos) && field_value(pos.body, 0x02, 0) != master_y)) {
@@ -1954,6 +1969,7 @@ static void read_modern(reader *r)
         }
     }
     owf_free(masters);
+    owf_free(named);
     if (pub->scratch_frames)
         owf_report_add(r->report, OWF_NOTE_INFO, "%d frames on the scratch area, off the pages, are not shown", pub->scratch_frames);
 }
