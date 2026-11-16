@@ -54,7 +54,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenBase 0.10.0 (15.11.2026)"
+#define VERSION_TEXT "GFOpenBase 0.10.1 (15.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenBase, the database of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -3072,7 +3072,7 @@ enum {
     F_FIRST = 1, F_PREV, F_POS, F_NEXT, F_LAST, F_NEW, F_DELETE, F_FIND, F_SAVE, F_UNDO, F_CLOSE,
     F_BACK, F_ON, F_SUBPICK, F_SUBLIST, F_SUBCOUNT,
     F_FILTER, F_FROW, F_FHINT, F_FCLEAR, F_FCANCEL,     /* Filter by Form */
-    F_SUBADD, F_SUBEDIT, F_SUBDEL,                      /* the subform's rows */
+    F_SUBADD, F_SUBEDIT, F_SUBDEL, F_SUBOPEN,           /* the subform's rows */
     F_FIELD0
 };
 
@@ -3094,6 +3094,9 @@ static char f_count[64], f_scount[80];
 static int f_ssel = -1, f_ssub = -1;        /* the subform row chosen, for record f_skey */
 static ob_int f_skey = -2;
 static int f_slines = 7;                     /* the subform list's lines */
+static ob_relation f_go_rel;                 /* a subform row to open in its own form */
+static ob_int f_go_parent, f_go_key;
+static int f_go;
 
 /* Filter by Form (design 6.3): the form's fields take what to look for, a
  * row at a time (Look for, Or, Or); Apply Filter makes it the view's. */
@@ -3314,18 +3317,44 @@ static const char *form_find_name(void)
     return cur.nfields ? cur.fields[0].name : "";
 }
 
+static int form_window(void);
+
+/* Table > Open as Form. A subform row opened from it (Open Form, Return or
+ * a double-click on the row) closes this form and opens its table's, in
+ * the view of that record's rows, at the row. */
 static void open_form(void)
+{
+    while (form_window()) {
+        ob_int at;
+        load_tables(f_go_rel.table);
+        if (!have_cur || strcmp(cur.name, f_go_rel.table)) { tell("The subform's table isn't there any more."); break; }
+        ob_child_view(&view, &f_go_rel, f_go_parent);
+        put_text(view_table, sizeof view_table, cur.name);
+        at = ob_view_position(proj, cur.name, &view, f_go_key);
+        top_row = 0;
+        sel_row = at >= 0 ? (int)at : 0;
+        load_page();
+        refresh();
+        set_status("The record's rows: Table > Show All Rows shows every row");
+    }
+}
+
+/* The form; 1 when it closed to open a subform row in its own form. */
+static int form_window(void)
 {
     struct Window *w_;
     struct Gadget *eg = NULL, *g, *fg[ED_MAX];
     struct NewGadget ng;
     int i, page = 0, pages, per, lw = 0, vw, row_h = fh + 8, nshow, first, done = 0, bw, sub_h, top, x, iw, ih, full, wt, oh;
-    if (q_on) { set_status("Forms show a table: choose one in the list"); return; }
-    if (!proj || !have_cur) { set_status("Choose a table first"); return; }
+    int last = 0;                              /* the action before, for a double-click */
+    ULONG l_secs = 0, l_mics = 0;
+    if (q_on) { set_status("Forms show a table: choose one in the list"); return 0; }
+    if (!proj || !have_cur) { set_status("Choose a table first"); return 0; }
+    f_go = 0;
     for (i = 0; i < OB_MAX_FIELDS; i++) {
         if (!f_vals[i]) f_vals[i] = malloc(1024);
         if (!f_before[i]) f_before[i] = malloc(1024);
-        if (!f_vals[i] || !f_before[i]) { tell("Out of memory"); return; }
+        if (!f_vals[i] || !f_before[i]) { tell("Out of memory"); return 0; }
     }
     f_nsubs = ob_children(proj, cur.name, f_subs, FORM_SUBS);
     if (f_nsubs < 0) f_nsubs = 0;
@@ -3378,7 +3407,7 @@ static void open_form(void)
         WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | STRINGIDCMP
                   | BUTTONIDCMP | CYCLEIDCMP | LISTVIEWIDCMP,
         TAG_DONE);
-    if (!w_) return;
+    if (!w_) return 0;
     SetFont(w_->RPort, font);
     while (!done) {
         int action = 0;
@@ -3490,6 +3519,8 @@ static void open_form(void)
             g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_ssel < 0, TAG_DONE);
             ng.ng_LeftEdge += ng.ng_Width + 8; ng.ng_GadgetText = (UBYTE *)"Delete Row..."; ng.ng_GadgetID = F_SUBDEL;
             g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_ssel < 0, TAG_DONE);
+            ng.ng_LeftEdge += ng.ng_Width + 8; ng.ng_GadgetText = (UBYTE *)"Open Form"; ng.ng_GadgetID = F_SUBOPEN;
+            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_ssel < 0, TAG_DONE);
             top += sub_h;
         }
         /* the record bar */
@@ -3545,7 +3576,7 @@ static void open_form(void)
         AddGList(w_, eg, ~0, -1, NULL);
         RefreshGList(eg, w_, NULL, -1);
         GT_RefreshWindow(w_, NULL);
-        for (i = 0; i < nshow; i++)
+        for (i = 0; i < nshow && last != F_SUBLIST; i++)
             if (fg[i] && (f_filtering || (cur.fields[first + i].type != OB_COUNTER && cur.fields[first + i].type != OB_OBJECT))) {
                 ActivateGadget(fg[i], w_, NULL);
                 break;
@@ -3557,8 +3588,16 @@ static void open_form(void)
                 ULONG class = m->Class;
                 UWORD code = m->Code;
                 struct Gadget *gad = (struct Gadget *)m->IAddress;
+                ULONG secs = m->Seconds, mics = m->Micros;
                 GT_ReplyIMsg(m);
+                if (class == IDCMP_GADGETUP && gad->GadgetID == F_SUBLIST && (int)code == f_ssel && f_ssel >= 0
+                    && last == F_SUBLIST && DoubleClick(l_secs, l_mics, secs, mics)) {
+                    action = F_SUBOPEN;     /* a double-click on the chosen row */
+                    continue;
+                }
+                if (class == IDCMP_GADGETUP) { l_secs = secs; l_mics = mics; }
                 if (class == IDCMP_CLOSEWINDOW) action = F_CLOSE;
+                else if (class == IDCMP_VANILLAKEY && code == 13 && !f_filtering && f_ssel >= 0) action = F_SUBOPEN;
                 else if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(w_); GT_EndRefresh(w_, TRUE); }
                 else if (class == IDCMP_VANILLAKEY && code == 27) action = f_filtering ? F_FCANCEL : F_UNDO;
                 else if (class == IDCMP_GADGETUP && gad->GadgetID >= F_FIRST && gad->GadgetID < F_FIELD0
@@ -3588,6 +3627,7 @@ static void open_form(void)
         eg = NULL;
         if (full) tell("Filter by Form looks at 16 fields at most: what was typed past that is left out");
         if (f_filtering && action == F_CLOSE) action = F_FCANCEL;
+        last = action;
         switch (action) {
         case F_FROW: f_frow = (int)acode < OB_FORM_OR ? (int)acode : 0; break;
         case F_FCLEAR: ob_view_form_clear(&f_fview); break;
@@ -3618,6 +3658,20 @@ static void open_form(void)
         case F_ON: if (page < pages - 1) page++; break;
         case F_SUBPICK: f_sub = (int)acode < f_nsubs ? (int)acode : 0; break;
         case F_SUBLIST: f_ssel = (int)acode; break;
+        case F_SUBOPEN: {
+            ob_int k;
+            if (!form_save(w_)) break;
+            form_read();
+            k = ob_child_key(proj, &f_subs[f_sub], f_key, f_ssel);
+            if (k == -2) { tell(ob_error(proj)); break; }
+            if (k < 0) { tell("Choose a row in the list first."); break; }
+            f_go_rel = f_subs[f_sub];
+            f_go_parent = f_key;
+            f_go_key = k;
+            f_go = 1;
+            done = 1;
+            break;
+        }
         case F_SUBADD: case F_SUBEDIT: case F_SUBDEL: {
             ob_int k = 0;
             if (!form_save(w_)) break;
@@ -3701,6 +3755,7 @@ static void open_form(void)
     }
     ActivateWindow(win);
     refresh();
+    return f_go;
 }
 
 static void undo_last(void)
