@@ -9,6 +9,7 @@
 #include "owf.h"
 #include "owf_deck.h"
 #include "owf_internal.h"
+#include "owf_deck_int.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -284,11 +285,194 @@ static void test_embedded(void)
     owf_chart_clear(&c);
 }
 
+/* The same chart as LibreOffice Impress embeds it in an ODP: an object's content.xml, its data in local-table. */
+static const char odf_xml[] =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+    "<office:document-content xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+    "xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" "
+    "xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" "
+    "xmlns:table=\"urn:oasis:names:tc:opendocument:xmlns:table:1.0\" "
+    "xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\" "
+    "xmlns:chart=\"urn:oasis:names:tc:opendocument:xmlns:chart:1.0\" "
+    "xmlns:svg=\"urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0\" office:version=\"1.3\">"
+    "<office:automatic-styles><style:style style:name=\"ch3\" style:family=\"chart\">"
+    "<style:chart-properties chart:vertical=\"false\" chart:stacked=\"false\"/></style:style>"
+    "<style:style style:name=\"ch9\" style:family=\"chart\"><style:graphic-properties draw:fill-color=\"#004586\"/>"
+    "</style:style></office:automatic-styles>"
+    "<office:body><office:chart><chart:chart svg:width=\"16cm\" svg:height=\"9cm\" chart:class=\"chart:bar\">"
+    "<chart:title><text:p>Sales</text:p></chart:title><chart:legend chart:legend-position=\"bottom\"/>"
+    "<chart:plot-area chart:style-name=\"ch3\" table:cell-range-address=\"local-table.$A$1:.$C$4\">"
+    "<chart:axis chart:dimension=\"x\" chart:name=\"primary-x\">"
+    "<chart:categories table:cell-range-address=\"local-table.$A$2:.$A$4\"/></chart:axis>"
+    "<chart:axis chart:dimension=\"y\" chart:name=\"primary-y\"><chart:grid chart:class=\"major\"/></chart:axis>"
+    "<chart:series chart:style-name=\"ch9\" chart:values-cell-range-address=\"local-table.$B$2:.$B$4\" "
+    "chart:label-cell-address=\"local-table.$B$1\" chart:class=\"chart:bar\"/>"
+    "<chart:series chart:values-cell-range-address=\"local-table.$C$2:.$C$4\" "
+    "chart:label-cell-address=\"local-table.$C$1\" chart:class=\"chart:bar\"/></chart:plot-area>"
+    "<table:table table:name=\"local-table\"><table:table-header-columns><table:table-column/>"
+    "</table:table-header-columns><table:table-columns><table:table-column table:number-columns-repeated=\"2\"/>"
+    "</table:table-columns><table:table-header-rows><table:table-row><table:table-cell><text:p/></table:table-cell>"
+    "<table:table-cell office:value-type=\"string\"><text:p>North</text:p></table:table-cell>"
+    "<table:table-cell office:value-type=\"string\"><text:p>South</text:p></table:table-cell></table:table-row>"
+    "</table:table-header-rows><table:table-rows>"
+    "<table:table-row><table:table-cell office:value-type=\"string\"><text:p>Q1</text:p></table:table-cell>"
+    "<table:table-cell office:value-type=\"float\" office:value=\"4.3\"><text:p>4.3</text:p></table:table-cell>"
+    "<table:table-cell office:value-type=\"float\" office:value=\"2.4\"><text:p>2.4</text:p></table:table-cell>"
+    "</table:table-row>"
+    "<table:table-row><table:table-cell office:value-type=\"string\"><text:p>Q2</text:p></table:table-cell>"
+    "<table:table-cell office:value-type=\"float\" office:value=\"2.5\"><text:p>2.5</text:p></table:table-cell>"
+    "<table:table-cell/></table:table-row>"
+    "<table:table-row><table:table-cell office:value-type=\"string\"><text:p>Q3</text:p></table:table-cell>"
+    "<table:table-cell office:value-type=\"float\" office:value=\"3.5\"><text:p>3.5</text:p></table:table-cell>"
+    "<table:table-cell office:value-type=\"float\" office:value=\"1.8\"><text:p>1.8</text:p></table:table-cell>"
+    "</table:table-row></table:table-rows></table:table></chart:chart></office:chart></office:body>"
+    "</office:document-content>";
+
+/* An ODF chart object read (owf_chart_from_odf) and written (owf_chart_odf_xml) and read back; other kinds. */
+static void test_odf(void)
+{
+    owf_chart c, e;
+    owf_buf b;
+    static const int kinds[] = { OWF_CHART_BAR, OWF_CHART_LINE, OWF_CHART_AREA, OWF_CHART_PIE };
+    int k;
+    memset(&c, 0x5a, sizeof c);
+    CHECK(owf_chart_from_odf(odf_xml, strlen(odf_xml), &c) == OWF_OK, "ODF read");
+    check_sales(&c, "ODF");
+    CHECK(c.gridlines == 1, "its gridlines");
+    CHECK(c.nseries == 2 && c.series[0].colour == OWF_SHADE(0x004586) && !c.series[1].colour, "its series' colours");
+
+    owf_buf_init(&b);
+    CHECK(owf_chart_odf_xml(&c, 9072, 5103, &b) == OWF_OK && b.length, "ODF written");
+    memset(&e, 0, sizeof e);
+    CHECK(owf_chart_from_odf((const char *)b.data, b.length, &e) == OWF_OK, "ODF read back");
+    check_sales(&e, "ODF read back");
+    CHECK(e.nseries == 2 && e.series[0].colour == OWF_SHADE(0x004586) && e.gridlines, "its look read back");
+    owf_buf_putc(&b, 0);
+    CHECK(b.data && strstr((const char *)b.data, "svg:width=\"16.00cm\""), "its size");
+    owf_chart_clear(&e);
+    owf_buf_free(&b);
+
+    /* every kind, stacked, back as itself; a pie's slices keep their names */
+    for (k = 0; k < (int)(sizeof kinds / sizeof kinds[0]); k++) {
+        c.kind = kinds[k];
+        c.grouping = kinds[k] == OWF_CHART_PIE ? OWF_CHART_CLUSTERED : OWF_CHART_STACKED;
+        owf_buf_init(&b);
+        memset(&e, 0, sizeof e);
+        CHECK(owf_chart_odf_xml(&c, 7200, 4320, &b) == OWF_OK &&
+              owf_chart_from_odf((const char *)b.data, b.length, &e) == OWF_OK, "kind %d", kinds[k]);
+        CHECK(e.kind == kinds[k] && e.grouping == c.grouping, "kind %d back as %d, grouping %d", kinds[k], e.kind,
+              e.grouping);
+        CHECK(e.nseries == 2 && e.series[0].npoints == 3 && e.series[0].points[1].label &&
+              !strcmp(e.series[0].points[1].label, "Q2"), "kind %d: categories", kinds[k]);
+        owf_chart_clear(&e);
+        owf_buf_free(&b);
+    }
+
+    /* a scatter: its x values down column A */
+    c.kind = OWF_CHART_SCATTER;
+    c.grouping = OWF_CHART_CLUSTERED;
+    for (k = 0; k < 3; k++) {
+        free(c.series[0].points[k].label);
+        c.series[0].points[k].label = NULL;
+        free(c.series[1].points[k].label);
+        c.series[1].points[k].label = NULL;
+        c.series[0].points[k].x = c.series[1].points[k].x = 10.5 * (k + 1);
+        c.series[0].points[k].has_x = c.series[1].points[k].has_x = 1;
+    }
+    owf_buf_init(&b);
+    memset(&e, 0, sizeof e);
+    CHECK(owf_chart_odf_xml(&c, 7200, 4320, &b) == OWF_OK &&
+          owf_chart_from_odf((const char *)b.data, b.length, &e) == OWF_OK && e.kind == OWF_CHART_SCATTER, "scatter");
+    CHECK(e.nseries == 2 && e.series[1].npoints == 3 && e.series[1].points[2].has_x && near(e.series[1].points[2].x, 31.5) &&
+          near(e.series[1].points[2].value, 1.8) && !e.series[1].points[1].has_value, "scatter's points");
+    owf_chart_clear(&e);
+    owf_buf_free(&b);
+    owf_chart_clear(&c);
+
+    memset(&e, 0, sizeof e);
+    CHECK(owf_chart_from_odf("<office:document-content/>", 26, &e) == OWF_ERR_FORMAT && !e.series, "not a chart");
+    CHECK(owf_chart_from_odf(NULL, 0, &e) == OWF_ERR_FORMAT, "nothing");
+}
+
+static const owf_obj *chart_obj(const owf_deck *d)
+{
+    int i;
+    for (i = 0; d && d->nslides && i < d->slides[0].nobjs; i++)
+        if (d->slides[0].objs[i].kind == OWF_OBJ_CHART) return &d->slides[0].objs[i];
+    return NULL;
+}
+
+/* A part of a package as a NUL-ended string, or NULL. */
+static char *zip_part(const unsigned char *data, size_t n, const char *name)
+{
+    owf_unzip z;
+    unsigned char *p = NULL;
+    size_t len = 0;
+    char *s;
+    if (!owf_unzip_open(&z, data, n) || owf_unzip_read(&z, name, &p, &len) != OWF_OK) return NULL;
+    if ((s = malloc(len + 1))) { memcpy(s, p, len); s[len] = 0; }
+    owf_free(p);
+    return s;
+}
+
+/* The PPTX's chart saved in an ODP (as its own chart object with its data), read back, saved and read again. */
+static void test_odp_round_trip(void)
+{
+    size_t n = 0, on = 0, on2 = 0;
+    unsigned char *data = make_pptx(&n), *odp = NULL, *odp2 = NULL;
+    owf_deck *deck = NULL, *back = NULL, *again = NULL;
+    owf_report *r = owf_report_new();
+    const owf_obj *o;
+    char *s;
+    int i, lost = 0;
+    owf_note_level level;
+    CHECK(data && owf_import_deck_memory(data, n, "pptx", &deck, NULL, NULL) == OWF_OK && deck, "the PPTX read");
+    free(data);
+    if (!deck || !r) return;
+    CHECK(owf_export_odp(deck, &odp, &on, r) == OWF_OK && odp, "saved as ODP");
+    for (i = 0; i < owf_report_count(r); i++) {
+        owf_report_note(r, i, &level, NULL);
+        if (level == OWF_NOTE_LOST) lost++;
+    }
+    CHECK(lost == 0, "nothing left out (%d)", lost);
+    s = odp ? zip_part(odp, on, "META-INF/manifest.xml") : NULL;
+    CHECK(s && strstr(s, "manifest:full-path=\"GFChart1/\" manifest:version=\"1.2\" "
+                         "manifest:media-type=\"application/vnd.oasis.opendocument.chart\""), "the manifest names it");
+    free(s);
+    s = odp ? zip_part(odp, on, "content.xml") : NULL;
+    CHECK(s && strstr(s, "<draw:object xlink:href=\"./GFChart1\""), "the slide's object");
+    free(s);
+    s = odp ? zip_part(odp, on, "GFChart1/content.xml") : NULL;
+    CHECK(s && strstr(s, "table:name=\"local-table\""), "the chart with its data");
+    free(s);
+    CHECK(odp && owf_import_deck_memory(odp, on, "odp", &back, NULL, NULL) == OWF_OK && back, "the ODP read back");
+    o = chart_obj(back);
+    CHECK(o && o->chart, "a chart again");
+    if (o && o->chart) {
+        check_sales(o->chart, "ODP read back");
+        CHECK(o->x == 1440 && o->y == 2160 && o->width == 11520 && o->height == 7200, "its box %d %d %d %d", o->x, o->y,
+              o->width, o->height);
+    }
+    CHECK(back && owf_export_odp(back, &odp2, &on2, NULL) == OWF_OK &&
+          owf_import_deck_memory(odp2, on2, "odp", &again, NULL, NULL) == OWF_OK, "ODP to ODP");
+    o = chart_obj(again);
+    CHECK(o && o->chart, "still a chart");
+    if (o && o->chart) check_sales(o->chart, "ODP to ODP");
+    free(odp);
+    free(odp2);
+    owf_deck_free(deck);
+    owf_deck_free(back);
+    owf_deck_free(again);
+    owf_report_free(r);
+}
+
 int main(void)
 {
     test_part();
     test_pptx_slide();
     test_embedded();
+    test_odf();
+    test_odp_round_trip();
     printf("test_deck_chart: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }
