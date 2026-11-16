@@ -7093,6 +7093,75 @@ static void test_solver(void)
     remove(ods);
 }
 
+/* Consolidate's sources as defined names of ranges, and the names the window offers. */
+static void test_consolidate_names(void)
+{
+    oc_core *core = fresh();
+    oc_consolidate_spec spec;
+    int index[OC_CONSOLIDATE_NAMES], n, k;
+    if (!core)
+        return;
+    enter_at(core, "A1", "East");
+    enter_at(core, "B1", "10");
+    enter_at(core, "A2", "West");
+    enter_at(core, "B2", "1");
+    CHECK(oc_core_add_sheet(core, "Q2") == 1);
+    enter_at(core, "A1", "west");
+    enter_at(core, "B1", "5");
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    CHECK(oc_core_set_name(core, "Q1Sales", -1, "'Sheet1'!$A$1:$B$2") == OWF_OK);
+    CHECK(oc_core_set_name(core, "Q2Sales", -1, "'Q2'!$A$1:$B$1") == OWF_OK);
+    CHECK(oc_core_set_name(core, "Rate", -1, "0.2") == OWF_OK);                 /* not a range */
+    CHECK(oc_core_set_name(core, "Mine", 1, "'Q2'!$A$1:$B$1") == OWF_OK);       /* Q2's own: not seen here */
+    CHECK(oc_core_set_name(core, "Twice", -1, "'Sheet1'!$A$1") == OWF_OK);
+    CHECK(oc_core_set_name(core, "Twice", 0, "'Sheet1'!$B$1:$B$2") == OWF_OK);   /* this sheet's hides the book's */
+    /* the window's list: ranges only, in the book's order, the sheet's own "Twice" and not the book's */
+    n = oc_core_consolidate_names(core, index, OC_CONSOLIDATE_NAMES);
+    CHECK(n == 3);
+    for (k = 0; k < n; k++) {
+        const owf_defname *d = oc_core_name_at(core, index[k]);
+        CHECK(d && strcmp(d->name, "Rate") && strcmp(d->name, "Mine"));
+        if (d && !strcmp(d->name, "Twice"))
+            CHECK(d->sheet == 0);
+    }
+    CHECK(n >= 1 && !strcmp(oc_core_name_at(core, index[0])->name, "Q1Sales"));
+    CHECK(oc_core_consolidate_names(core, index, 1) == 1);
+    /* on Q2 its own name is offered, and the book's "Twice" */
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    n = oc_core_consolidate_names(core, index, OC_CONSOLIDATE_NAMES);
+    CHECK(n == 4);
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    /* names as sources (case aside), by row labels */
+    oc_consolidate_init(&spec);
+    spec.nsources = 2;
+    snprintf(spec.source[0], sizeof spec.source[0], "q1sales");
+    snprintf(spec.source[1], sizeof spec.source[1], " Q2Sales");
+    snprintf(spec.dest, sizeof spec.dest, "D1");
+    spec.row_labels = 1;
+    CHECK(oc_core_consolidate(core, &spec) == OWF_OK);
+    CHECK_STR(text(core, "D1"), "East");
+    CHECK_STR(text(core, "D2"), "West");
+    CHECK(num(core, "E1") == 10 && num(core, "E2") == 6);
+    /* the name kept in the settings, as typed */
+    {
+        oc_consolidate_spec back;
+        CHECK(oc_core_consolidate_settings(core, &back) == 1);
+        CHECK_STR(back.source[0], "q1sales");
+    }
+    /* a name that is not a range, or no such name */
+    snprintf(spec.source[1], sizeof spec.source[1], "Rate");
+    CHECK(oc_core_consolidate(core, &spec) == OWF_ERR_FORMAT);
+    snprintf(spec.source[1], sizeof spec.source[1], "Mine");
+    CHECK(oc_core_consolidate(core, &spec) == OWF_ERR_FORMAT);
+    /* the sheet's own "Twice" (B1:B2), by position */
+    spec.nsources = 1;
+    spec.row_labels = 0;
+    snprintf(spec.source[0], sizeof spec.source[0], "Twice");
+    snprintf(spec.dest, sizeof spec.dest, "G1");
+    CHECK(oc_core_consolidate(core, &spec) == OWF_OK && num(core, "G1") == 10 && num(core, "G2") == 1);
+    oc_core_free(core);
+}
+
 static void test_consolidate(void)
 {
     oc_core *core = fresh();
@@ -7180,6 +7249,109 @@ static void test_consolidate(void)
     oc_core_free(core);
 }
 
+/* Refresh Consolidation: the sources and destination follow rows put in and taken out, and the table
+   grows and shrinks with them. */
+static void test_consolidate_refresh(void)
+{
+    oc_core *core = fresh();
+    oc_consolidate_spec spec, back;
+    if (!core)
+        return;
+    CHECK(oc_core_consolidate_refresh(core) == OWF_ERR_UNSUPPORTED);      /* nothing to refresh */
+    enter_at(core, "A1", "East");
+    enter_at(core, "B1", "10");
+    enter_at(core, "A2", "West");
+    enter_at(core, "B2", "1");
+    CHECK(oc_core_add_sheet(core, "Q2") == 1);
+    enter_at(core, "A1", "west");
+    enter_at(core, "B1", "5");
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    oc_consolidate_init(&spec);
+    spec.nsources = 2;
+    snprintf(spec.source[0], sizeof spec.source[0], "A1:B2");
+    snprintf(spec.source[1], sizeof spec.source[1], "'Q2'!A1:B1");
+    snprintf(spec.dest, sizeof spec.dest, "A10");
+    spec.row_labels = 1;
+    CHECK(oc_core_consolidate(core, &spec) == OWF_OK);
+    CHECK_STR(text(core, "A11"), "West");
+    CHECK(num(core, "B10") == 10 && num(core, "B11") == 6);
+    /* a row put in inside the first source: it, and the table below, follow */
+    oc_core_select_cell(core, 1, 0, 0, 0);
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    enter_at(core, "A2", "North");
+    enter_at(core, "B2", "4");
+    CHECK(oc_core_consolidate_settings(core, &back) == 1);
+    CHECK_STR(back.source[0], "A1:B3");
+    CHECK_STR(back.source[1], "'Q2'!A1:B1");
+    CHECK_STR(back.dest, "A11");
+    CHECK(oc_core_consolidate_refresh(core) == OWF_OK);
+    CHECK_STR(text(core, "A11"), "East");
+    CHECK_STR(text(core, "A12"), "North");
+    CHECK_STR(text(core, "A13"), "West");
+    CHECK(num(core, "B11") == 10 && num(core, "B12") == 4 && num(core, "B13") == 6);
+    /* Undo takes the refresh back as one step */
+    CHECK(oc_core_undo(core) == OWF_OK && empty(core, "A13") && num(core, "B12") == 6);
+    CHECK(oc_core_redo(core) == OWF_OK && num(core, "B13") == 6);
+    /* the row taken out again: the table shrinks, nothing of the old one left behind */
+    oc_core_select_cell(core, 1, 0, 0, 0);
+    CHECK(oc_core_delete(core, 0) == OWF_OK);
+    CHECK(oc_core_consolidate_settings(core, &back) == 1);
+    CHECK_STR(back.source[0], "A1:B2");
+    CHECK_STR(back.dest, "A10");
+    CHECK_STR(text(core, "A12"), "West");                  /* the old table, a row up */
+    CHECK(oc_core_consolidate_refresh(core) == OWF_OK);
+    CHECK_STR(text(core, "A10"), "East");
+    CHECK_STR(text(core, "A11"), "West");
+    CHECK(num(core, "B11") == 6 && empty(core, "A12") && empty(core, "B12"));
+    /* a row put in above the other sheet's source: it moves, the table is the same */
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    oc_core_select_cell(core, 0, 0, 0, 0);
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    CHECK(oc_core_consolidate_settings(core, &back) == 1);
+    CHECK_STR(back.source[1], "'Q2'!A2:B2");
+    CHECK(oc_core_consolidate_refresh(core) == OWF_OK && num(core, "B11") == 6);
+    /* linked: refreshed, the formulas reach the new rows */
+    spec.link = 1;
+    snprintf(spec.source[1], sizeof spec.source[1], "'Q2'!A2:B2");
+    CHECK(oc_core_consolidate(core, &spec) == OWF_OK && num(core, "B11") == 6);
+    oc_core_select_cell(core, 1, 0, 0, 0);
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    enter_at(core, "A2", "South");
+    enter_at(core, "B2", "100");
+    CHECK(oc_core_consolidate_refresh(core) == OWF_OK);
+    CHECK_STR(text(core, "A12"), "South");
+    CHECK(num(core, "B12") == 100 && strstr(formula(core, "B12"), "SUM(") == formula(core, "B12"));
+    CHECK(num(core, "B13") == 6 && empty(core, "A14"));
+    enter_at(core, "B2", "200");                           /* and follow their sources */
+    CHECK(num(core, "B12") == 200);
+    /* kept in an Excel workbook: reopened, a row put in still grows the table on Refresh */
+    CHECK(oc_core_save(core, "build/host/calc-core-consolidate.xlsx", NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, "build/host/calc-core-consolidate.xlsx", NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    oc_core_select_cell(core, 1, 0, 0, 0);
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    enter_at(core, "A2", "Central");
+    enter_at(core, "B2", "7");
+    CHECK(oc_core_consolidate_settings(core, &back) == 1);
+    CHECK_STR(back.source[0], "A1:B4");
+    CHECK_STR(back.dest, "A12");
+    CHECK(oc_core_consolidate_refresh(core) == OWF_OK);
+    CHECK_STR(text(core, "A13"), "Central");
+    CHECK(num(core, "B13") == 7 && num(core, "B14") == 200 && num(core, "B15") == 6 && empty(core, "A16"));
+    remove("build/host/calc-core-consolidate.xlsx");
+    /* a row put in inside the table: Refresh empties it too, nothing of the old table left below */
+    oc_core_select_cell(core, 13, 0, 0, 0);
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    CHECK_STR(text(core, "A16"), "West");                  /* the old last row, pushed down */
+    CHECK(oc_core_consolidate_refresh(core) == OWF_OK);
+    CHECK_STR(text(core, "A15"), "West");
+    CHECK(empty(core, "A16") && empty(core, "B16"));
+    /* another sheet has none */
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK && oc_core_consolidate_refresh(core) == OWF_ERR_UNSUPPORTED);
+    oc_core_free(core);
+}
+
 /* The shown scenario's frame round each range and its name's tab, in the grid's draw list. */
 static int scenario_items(const oc_draw_list *l, int kind, int *first)
 {
@@ -7223,13 +7395,24 @@ static void test_scenario_frame(void)
         CHECK(f->row == 1 && f->col == 1 && f->clip_x == 40 && f->clip_y == 18);
     }
     /* its name in a tab above the first range's top left corner: 8 points (15 pixels with its margin),
-       the name's width and 4 pixels each side; the text white, after it */
+       the name's width and 4 pixels each side, then the list's 13-pixel button; the text white, after it */
     CHECK(scenario_items(&l, OC_DRAW_FILL, &tab) == 1);
     {
-        const oc_draw_item *t = &l.items[tab], *x = &l.items[tab + 1];
-        CHECK(t->x == 103 && t->y == 35 - 1 - 15 && t->w == 3 * 6 + 8 && t->h == 15);
+        const oc_draw_item *t = &l.items[tab], *x = &l.items[tab + 1], *b = &l.items[tab + 2];
+        CHECK(t->x == 103 && t->y == 35 - 1 - 15 && t->w == 3 * 6 + 8 + 13 + 1 && t->h == 15);
         CHECK(x->kind == OC_DRAW_TEXT && x->text && !strcmp(x->text, "Low") && x->rgb == 0xFFFFFFUL &&
               x->text_x == 107 && x->size == 160 && x->clip_x == 103 && x->clip_w == 26);
+        CHECK(b->kind == OC_DRAW_DROPDOWN && b->role == OC_ROLE_SCENARIO && b->x == 103 + 26 && b->y == 20 &&
+              b->w == 13 && b->h == 13);
+    }
+    /* a click on the tab is the scenarios' list; just below it, the cell */
+    {
+        oc_hit hit;
+        CHECK(oc_view_hit(core, 110, 25, &hit) == OC_HIT_SCENARIO && hit.row == 1 && hit.col == 1 && hit.x == 103 &&
+              hit.y == 19 && hit.w == 40 && hit.h == 15);
+        CHECK(oc_view_hit(core, 135, 25, &hit) == OC_HIT_SCENARIO);            /* its button */
+        CHECK(oc_view_hit(core, 110, 40, &hit) == OC_HIT_CELL && hit.row == 1 && hit.col == 1);
+        CHECK(oc_view_hit(core, 150, 25, &hit) == OC_HIT_CELL && hit.row == 0);  /* beside the tab */
     }
     /* under the active cell's frame */
     for (i = 0, cursor = -1; i < l.n; i++)
@@ -7242,15 +7425,29 @@ static void test_scenario_frame(void)
     CHECK(scenario_items(&l, OC_DRAW_FRAME, &frame) == 1 && scenario_items(&l, OC_DRAW_FILL, &tab) == 1);
     CHECK(l.items[frame].x == 39 && l.items[frame].y == 17 && l.items[frame].h == 2 * 17 + 1);
     CHECK(l.items[tab].x == 40 && l.items[tab].y == 18 && l.items[tab + 1].text && !strcmp(l.items[tab + 1].text, "Top"));
+    {
+        oc_hit hit;
+        CHECK(oc_view_hit(core, 45, 22, &hit) == OC_HIT_SCENARIO && hit.row == 0 && hit.col == 0);
+        CHECK(oc_view_hit(core, 45, 45, &hit) == OC_HIT_CELL && hit.row == 1);
+    }
     /* scrolled so that its first row is above the view: the frame goes on past the top (no tab) */
     oc_view_scroll_to(core, 1, 0);
     CHECK(oc_view_draw(core, &l) == OWF_OK);
     CHECK(scenario_items(&l, OC_DRAW_FRAME, &frame) == 1 && scenario_items(&l, OC_DRAW_FILL, &tab) == 0);
+    CHECK(scenario_items(&l, OC_DRAW_DROPDOWN, &tab) == 0);
     CHECK(l.items[frame].y < 18 && l.items[frame].y + l.items[frame].h == 18 + 17);
+    {
+        oc_hit hit;
+        CHECK(oc_view_hit(core, 45, 22, &hit) == OC_HIT_CELL);               /* no tab, no list */
+    }
     oc_view_scroll_to(core, 0, 0);
     /* Undo goes back to "Low" shown; deleting the shown one takes the frame away */
     CHECK(oc_core_undo(core) == OWF_OK && oc_core_scenario_active(core) == 0);
     CHECK(oc_core_scenario_delete(core, 0) == OWF_OK && oc_core_scenario_active(core) == -1);
+    {
+        oc_hit hit;
+        CHECK(oc_view_hit(core, 110, 25, &hit) == OC_HIT_CELL);
+    }
     CHECK(oc_view_draw(core, &l) == OWF_OK);
     CHECK(scenario_items(&l, OC_DRAW_FRAME, &frame) == 0 && scenario_items(&l, OC_DRAW_FILL, &tab) == 0);
     /* Undo brings it back, shown */
@@ -7429,8 +7626,10 @@ int main(void)
     test_solver_lp();
     test_solver();
     test_scenarios();
+    test_consolidate_refresh();
     test_scenario_frame();
     test_consolidate();
+    test_consolidate_names();
     test_pdf();
     test_book_reads();
     test_rexx_utf8();

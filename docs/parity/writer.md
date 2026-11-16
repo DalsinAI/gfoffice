@@ -20,6 +20,19 @@ undoes; **Part** = some of it; **Gap** = missing.
 | 12 Nov 2026 | 2.0.35 | Word completion | 78% |
 | 14 Nov 2026 | 2.0.36 | Print and export comments | 78% |
 | 15 Nov 2026 | 2.0.37 | Merge to the printer; own label sheets; envelopes with a return address and the printer's feed (gap 4.2) | 79% |
+| 16 Nov 2026 | 2.0.37 (main 72b77cb) | Re-score, merged work only: tracked format changes accepted, rejected and stepped to (#228 #231 #235), the final view (#243), tracked pictures (#244), comments by author and picked in the margin (#258 #261 #265), note numbering and formatted note text (#274 #285), RTF notes read (#218), Markdown in and out (#217) | 82% |
+
+The 16 November re-score counts only what is merged on main. Reviewing gets
+most of its three points: format changes now accept, reject and step like text
+changes, Show Changes off gives the final view, and pictures are tracked (one
+point); comments can be shown by author and picked in the margin (half a
+point). Notes get numbering settings, formatted text and RTF import (one
+point), and Markdown in and out adds half a point.
+
+Waiting to merge, not scored: #247 tracked frames, #255 and #259 tracked table
+rows, #269 comments printed in the margin, #288 note numbering restarted per
+page or section, #292 number ranges (SEQ), #298 references to figures and
+tables.
 
 Track changes was the largest single gap for reviewing documents, so it carries
 about a third of the nine points Phase 1 is meant to add to Writer (target 72%
@@ -36,6 +49,7 @@ completion adds one more.
 
 | Feature | Status | Since | Notes |
 | --- | --- | --- | --- |
+| Markdown in and out | Done | libowf (#217) | CommonMark 0.31 (a subset) with GitHub's tables and strike-through: headings, paragraphs, hard breaks, bold, italic, strike-through, code spans and blocks, links and autolinks, escapes, bullet and numbered lists, block quotes, thematic breaks and pipe tables, read and written; a .md or .markdown file opens by its name. Raw HTML and link reference definitions stay as text. |
 | Track changes: record, show, accept/reject | Done | 2.0.27 | Tools > Track Changes. Typed and pasted text, Return, Backspace and Delete are recorded under the review author (ENV USER, or Review Author...). Insertions underlined and deletions struck through, coloured by author. Next/Previous, Accept/Reject (one, the selection, or all), all undoable. Rec shows in the status bar. ARexx TRACKCHANGES, CHANGES, NEXTCHANGE, PREVCHANGE, ACCEPTCHANGE, REJECTCHANGE, ACCEPTALL, REJECTALL, REVIEWAUTHOR. |
 | Track changes: ODT | Done | 2.0.27 | text:tracked-changes with insertion and deletion regions, office:change-info (author and date), change-start/end and change marks, deleted paragraph ends, insertions across paragraphs, the record setting. |
 | Track changes: DOCX | Done | 2.0.27 | w:ins, w:del with w:delText, w:moveTo/w:moveFrom (read as insertion/deletion), inserted and deleted paragraph marks, w:trackRevisions. |
@@ -43,7 +57,8 @@ completion adds one more.
 | Tracked format changes of text (w:rPrChange) | Part | libowf 1.11 | DOCX keeps them in and out, with who, when and the format before; other formats save the format as it is now (the ODT save report says so). GFOpenWrite shows their text in the author's colour, and Accept and Reject (one at the caret, or all) keep the format or give the one before back; Next and Previous Change stop at them ("Format change by ..."). |
 | Tracked format changes of paragraphs (w:pPrChange) and ODT format-change | Gap | | Read as the new format, with a note in the import report. |
 | Tracked picture changes (in the line) | Done | 2.0.38, libowf 1.12 | A picture put in while recording is an insertion (with the paragraph ends round it), one deleted is marked deleted; Next/Previous, Accept and Reject take them like text. The pages frame a changed picture in its author's colour, crossed out when deleted; the final view leaves a deleted one out. DOCX (w:ins and w:del round w:drawing) and ODT keep them. |
-| Tracked frame and table-structure changes | Gap | | Frames put in while recording are plain insertions; table row and column inserts and deletes are not recorded. |
+| Tracked frame changes (text boxes, placed pictures) | Done | 2.0.38, libowf 1.12 | A text box or placed picture put in while recording is an insertion; Delete Frame marks someone else's deleted (the author's own goes). Accept and Reject take the frame or keep it. The pages edge a changed frame in its author's colour; the final view leaves a deleted one out. DOCX keeps them; ODT saves them accepted and the save report says so. |
+| Tracked table-structure changes | Gap | | Table row and column inserts and deletes are not recorded. |
 | Show/hide changes (final view while recording) | Done | 2.0.37 | Tools > Track Changes > Show Changes: off, the pages show the document with its changes accepted (deleted text takes no room, no change colours) while they are kept and recorded, and the caret steps over deleted text. A deleted paragraph end still ends its paragraph in this view. |
 | Comments: insert, reply, edit, done, delete | Done | 2.0.28 | Insert > Comment... on the selection (a range) or at the caret (a point), under the review author. Tools > Comments: Next/Previous (replies passed over), Reply..., Edit Comment..., Mark Done, Delete Comment (with its replies), all undoable. Typing at a comment's place goes after it. ARexx ADDCOMMENT, COMMENTS, NEXTCOMMENT, PREVCOMMENT, GETCOMMENT, REPLYCOMMENT, EDITCOMMENT, RESOLVECOMMENT, DELETECOMMENT. |
 | Comments: margin display | Done | 2.0.28 | Notes in the right margin beside their line, stacked, initials and date, the first line of the text; the one at the caret outlined, replies indented, done ones grey. Commented text is highlighted. |
@@ -66,7 +81,8 @@ completion adds one more.
 | Footnotes and endnotes: other formats | Done | 2.0.30 | RTF its own \footnote (and \ftnalt for endnotes); HTML links each mark to its note after the text; plain text and PDF list the notes after the text. |
 | Footnotes and endnotes: numbering settings | Done | 2.0.40 | Tools > Notes > Numbering...: each kind's format (1, 2, 3; i, ii; I, II; a, b; A, B; symbols *, dagger, double dagger, section, then doubled, as Word's Chicago) and first number, undoable. DOCX w:footnotePr and w:endnotePr (w:numFmt, w:numStart); ODT text:notes-configuration (style:num-format, text:start-value as LibreOffice's offset from 1); ODT has no symbols, so they are saved as 1, 2, 3 and the save report says so. RTF, HTML, plain text and PDF show the marks as numbered (PDF's daggers WinAnsi's own); the window's Latin-1 fonts have no daggers, so it draws a dagger as + and a double dagger as #. ARexx NOTENUMBERING FOOTNOTE or ENDNOTE [1, i, I, a, A or *] [start]. |
 | Footnotes and endnotes: formatted note text | Done | 2.0.41 | libowf 1.12.2: a note's runs keep bold, italic, underline, strike, raised and lowered, font, size and colour (owf_doc.note_stories, the plain text still beside them). DOCX reads them from footnotes.xml and endnotes.xml and writes them back; on the page they are sized as a plain note is (the note's own size at five sixths of the text's, other sizes in proportion). Made the other kind, a note keeps them; a note whose text is edited in Edit Note... is plain. ODT, RTF, HTML, plain text and PDF still save the note's plain text. |
-| Footnotes and endnotes: notes continued onto the next page, footnotes in columns, restart numbering each page, RTF notes read, formatted text in ODT | Gap | | A note taller than the room left runs on below the foot; in a document with columns footnotes go after the text; numbering runs through the document; RTF notes are not read yet. |
+| Footnotes and endnotes: RTF notes read | Done | 2.0.37 | RTF's {\footnote} and \ftnalt endnotes are read as footnotes and endnotes (#218). |
+| Footnotes and endnotes: notes continued onto the next page, footnotes in columns, restart numbering each page or section, formatted text in ODT | Gap | | A note taller than the room left runs on below the foot; in a document with columns footnotes go after the text; numbering runs through the document; ODT notes save their plain text. |
 | Mail merge: data source and fields | Done | 2.0.31 | Tools > Mail Merge > Data Source... reads a CSV file (comma, semicolon or tab separated, found from its first line; quoted cells; UTF-8 or Latin-1) whose first row names the columns; Insert Merge Field... picks a column. Fields show «Column», or a record's values with Next/Previous Record (Show Field Names goes back). The document keeps its data source and reads it again when opened. ARexx MERGESOURCE, MERGEFIELDS, MERGERECORDS, MERGERECORD, INSERTMERGEFIELD; GETTEXT shows what the fields show. |
 | Mail merge: the merge | Done | 2.0.31 | Merge to Document... saves every record into one document, each from a new page; Merge to Files... saves a file each (letter1.odt, letter2.odt ...). The fields become plain text (a line break in a value stays one), tracked changes are accepted and comments left out. ARexx MERGE file [FILES]. |
 | Mail merge: DOCX and ODT | Done | 2.0.31 | DOCX MERGEFIELD (simple and complex fields) and settings' w:mailMerge query for the data source. ODT text:database-display with its column and database. RTF, HTML, plain text and PDF get the value shown. |
