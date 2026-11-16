@@ -36,18 +36,57 @@ static int sheet_width(const opj_view *v)
 
 void opj_view_init(opj_view *v, const opj_doc *doc, int width, int height, int row_height, int zoom)
 {
-    static const int widths[OPJ_NCOLS] = { 32, 180, 56, 96, 96, 84, 0, 0, 0, 0, 0, 0, 0 };
     long day;
+    int c;
     memset(v, 0, sizeof *v);
     v->width = width;
     v->height = height;
     v->row_height = row_height > 4 ? row_height : 16;
-    memcpy(v->columns, widths, sizeof widths);
+    for (c = OPJ_COL_ID; c <= OPJ_COL_PREDECESSORS; c++) v->columns[c] = opj_column_width(c);
     v->zoom = zoom >= 0 && zoom < OPJ_NZOOMS ? zoom : OPJ_ZOOM_DAYS;
     day = floor_div(doc && doc->plan ? doc->plan->start : 0, DAY);
     day -= (owf_ptime_weekday(day * DAY) + 6) % 7;                 /* back to the Monday */
     v->origin = day * DAY;
     v->selected = -1;
+}
+
+int opj_column_width(int column)
+{
+    static const int widths[OPJ_NCOLS] = { 32, 180, 56, 96, 96, 84, 64, 48, 140, 96, 96, 72, 72 };
+    return column >= 0 && column < OPJ_NCOLS ? widths[column] : 0;
+}
+
+int opj_view_column_shown(const opj_view *v, int column)
+{
+    return v && column >= 0 && column < OPJ_NCOLS && v->columns[column] > 0;
+}
+
+int opj_view_show_column(opj_view *v, int column, int show)
+{
+    int c, others = 0;
+    if (!v || column < 0 || column >= OPJ_NCOLS) return 0;
+    if (show) {
+        if (v->columns[column] <= 0) v->columns[column] = opj_column_width(column);
+        return 1;
+    }
+    for (c = 0; c < OPJ_NCOLS; c++)
+        if (c != column && v->columns[c] > 0) others++;
+    if (!others && v->columns[column] > 0) return 0;              /* the table keeps one column */
+    v->columns[column] = 0;
+    return 1;
+}
+
+int opj_view_near_column(const opj_view *v, int column)
+{
+    int c;
+    if (!v) return -1;
+    if (column < 0) column = 0;
+    if (column >= OPJ_NCOLS) column = OPJ_NCOLS - 1;
+    for (c = column; c < OPJ_NCOLS; c++)
+        if (v->columns[c] > 0) return c;
+    for (c = column - 1; c >= 0; c--)
+        if (v->columns[c] > 0) return c;
+    return -1;
 }
 
 int opj_chart_left(const opj_view *v)

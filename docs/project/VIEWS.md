@@ -40,6 +40,13 @@ the next PR and only wires windows, menus and requesters to these calls.
   between the halves, a task's bar (its middle, its right end for stretching, its done part) or the
   chart.
 
+- **The column chooser** (View > Columns in the window, ARexx `COLUMN`): any of the 13 task sheet
+  columns is shown or hidden, staying in the sheet's order (`opj_view_show_column`); a column shown gets
+  its width (`opj_column_width`: 140 for Resource Names, 64 for % Complete), one with a width of its own
+  keeps it, and the table always keeps one column. The selected cell moves to the next column shown when
+  its own is hidden (`opj_view_near_column`). Showing Resource Names lets resources be typed onto tasks in
+  the window.
+
 ## Resources
 
 - **Resource Names** is a task sheet column (hidden in the Gantt view's table by default). Typing

@@ -109,7 +109,7 @@ enum {
     M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK, M_SUBTOTALS,
     M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_PIVOT_DETAILS, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER, M_SCENARIOS, M_CONSOLIDATE, M_CONSOLIDATE_REFRESH, M_NAME_MANAGE, M_ADV_FILTER,
     M_TEXT_COLUMNS, M_REMOVE_DUPS,
-    M_PROTECT_SHEET, M_UNPROTECT_SHEET, M_CELL_PROTECT, M_PROTECT_BOOK, M_UNPROTECT_BOOK
+    M_PROTECT_SHEET, M_UNPROTECT_SHEET, M_CELL_PROTECT, M_PROTECT_BOOK, M_UNPROTECT_BOOK, M_EDIT_LINKS
 };
 
 static struct NewMenu menus[] = {
@@ -258,6 +258,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Pivot Table...", NULL, 0, 0, (APTR)M_PIVOT_SUMMARY },
     { NM_ITEM, "Refresh Pivot Table", NULL, 0, 0, (APTR)M_PIVOT_REFRESH },
     { NM_ITEM, "Show Pivot Details", NULL, 0, 0, (APTR)M_PIVOT_DETAILS },
+    { NM_ITEM, "Edit Links...", NULL, 0, 0, (APTR)M_EDIT_LINKS },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Validity...", NULL, 0, 0, (APTR)M_VALIDITY },
     { NM_ITEM, "Clear Validity", NULL, 0, 0, (APTR)M_VALIDITY_CLEAR },
@@ -4671,6 +4672,73 @@ static void do_unprotect_book(void)
     else result(rc, "The workbook's structure is no longer protected.");
 }
 
+/* ---- Links to other workbooks ---- */
+
+/* The folder the book's file is in ("Work:Books", "Work:"), or "" when it has none. */
+static void book_folder(char *out, size_t size)
+{
+    size_t n = strlen(current_path), cut = 0, i;
+    for (i = 0; i < n; i++)
+        if (current_path[i] == '/' || current_path[i] == ':')
+            cut = current_path[i] == ':' ? i + 1 : i;
+    if (cut >= size) cut = 0;
+    memcpy(out, current_path, cut);
+    out[cut] = 0;
+}
+
+/* A link (from 0) updated from its file: OWF_OK and how many sheets, or why not in why. */
+static int update_link(int index, int *sheets, char *why, size_t size)
+{
+    const char *name = NULL, *target = NULL;
+    char base[512], path[512], shown[300];
+    int rc;
+    *sheets = 0;
+    if (oc_core_link(core, index, &name, &target, NULL) != OWF_OK) { snprintf(why, size, "There is no link %d.", index + 1); return OWF_ERR_UNSUPPORTED; }
+    book_folder(base, sizeof base);
+    to_latin1(name, strlen(name), shown, sizeof shown);
+    if (!oc_link_path(target, base, path, sizeof path)) {
+        snprintf(why, size, "%s is not a file GFOpenCalc can read: it keeps its last values.", shown);
+        return OWF_ERR_UNSUPPORTED;
+    }
+    rc = oc_core_update_link(core, index, path, NULL, sheets);
+    if (rc == OWF_OK && !*sheets) snprintf(why, size, "%s: the file has none of its sheets now; the last values stay.", shown);
+    else if (rc == OWF_OK) snprintf(why, size, "%s updated (%d sheet%s).", shown, *sheets, *sheets == 1 ? "" : "s");
+    else snprintf(why, size, "%s could not be read (%s): it keeps its last values.", shown, owf_error_text(rc));
+    return rc;
+}
+
+/* Data > Edit Links...: the links, and Update All or Update One. */
+static void do_edit_links(void)
+{
+    char text[1600], line[400], why[400], number[16];
+    size_t at = 0;
+    int n = oc_core_link_count(core), i, pick, sheets, done = 0;
+    if (!n) { set_status("This workbook has no links to other workbooks."); return; }
+    at += (size_t)snprintf(text, sizeof text, "Formulas here use the values these workbooks last had:\n");
+    for (i = 0; i < n && at + 2 < sizeof text; i++) {
+        const char *name = NULL, *target = NULL;
+        char a[200], b[200];
+        int ks = 0;
+        oc_core_link(core, i, &name, &target, &ks);
+        to_latin1(name, strlen(name), a, sizeof a);
+        to_latin1(target, strlen(target), b, sizeof b);
+        snprintf(line, sizeof line, "%d. %.180s (%.180s, %d sheet%s)\n", i + 1, a, b, ks, ks == 1 ? "" : "s");
+        at += (size_t)snprintf(text + at, sizeof text - at, "%s", line);
+    }
+    pick = ask_window("Edit Links", text, "Update All|Update One...|Close");
+    if (pick == 1) {
+        for (i = 0; i < n; i++)
+            if (update_link(i, &sheets, why, sizeof why) == OWF_OK && sheets) done++;
+        if (n == 1) set_status(why);
+        else { snprintf(line, sizeof line, "%d of %d links updated.", done, n); set_status(line); }
+    } else if (pick == 2) {
+        if (!text_requester("Update Link", "Link number", "1", number, sizeof number)) return;
+        i = atoi(number) - 1;
+        update_link(i, &sheets, why, sizeof why);
+        set_status(why);
+    }
+}
+
 static void do_cell_protection(void)
 {
     char words[64], why[120];
@@ -6072,6 +6140,7 @@ static void menu_action(ULONG id)
     case M_REMOVE_DUPS: do_remove_duplicates(); break;
     case M_PROTECT_SHEET: do_protect_sheet(); break;
     case M_PROTECT_BOOK: do_protect_book(); break;
+    case M_EDIT_LINKS: do_edit_links(); break;
     case M_UNPROTECT_BOOK: do_unprotect_book(); break;
     case M_UNPROTECT_SHEET: do_unprotect_sheet(); break;
     case M_CELL_PROTECT: do_cell_protection(); break;
@@ -6713,7 +6782,7 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
                  "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK CHARTSELECT CHARTMOVE "
-                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO PIVOTDETAILS PIVOTSET SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER MULTIOP TEXTTOCOLUMNS REMOVEDUPS CONDFMT PROTECT UNPROTECT CELLPROTECT ISPROTECTED PROTECTBOOK UNPROTECTBOOK ISBOOKPROTECTED QUIT");
+                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO PIVOTDETAILS PIVOTSET SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER MULTIOP TEXTTOCOLUMNS REMOVEDUPS CONDFMT PROTECT UNPROTECT CELLPROTECT ISPROTECTED PROTECTBOOK UNPROTECTBOOK ISBOOKPROTECTED LINKS UPDATELINK QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {   /* a DOS error code's text, as every Open app's port */
         if (!*arg) { ok = 0; snprintf(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -6856,6 +6925,35 @@ static int rexx_do_command(const char *command, char **result_out)
         snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc == OC_WRONG_PASSWORD ? "Wrong password"
                  : rc == OWF_ERR_UNSUPPORTED ? (on ? "The workbook is protected already" : "The workbook is not protected")
                  : owf_error_text(rc));
+    } else if (starts_word_ci(command, "LINKS", &arg)) {
+        /* LINKS: the links to other workbooks, "name=target" each, by commas */
+        size_t at = 0;
+        int i;
+        result_text[0] = 0;
+        for (i = 0; i < oc_core_link_count(core) && at + 2 < sizeof result_text; i++) {
+            const char *name = NULL, *target = NULL;
+            char t[400], u[400];
+            oc_core_link(core, i, &name, &target, NULL);
+            snprintf(t, sizeof t, "%.190s=%.190s", name, target);
+            to_latin1(t, strlen(t), u, sizeof u);
+            at += (size_t)snprintf(result_text + at, sizeof result_text - at, "%s%s", at ? "," : "", u);
+        }
+    } else if (starts_word_ci(command, "UPDATELINK", &arg)) {
+        /* UPDATELINK n | ALL: from each link's file; the result says how it went */
+        char which[16];
+        int sheets, rc = OWF_OK, i, n = oc_core_link_count(core);
+        rexx_word(arg, which, sizeof which);
+        if (!strcasecmp(which, "ALL")) {
+            int done = 0;
+            for (i = 0; i < n; i++)
+                if (update_link(i, &sheets, result_text, sizeof result_text) == OWF_OK && sheets) done++;
+            ok = done == n;
+            if (n != 1) snprintf(result_text, sizeof result_text, "%d of %d links updated", done, n);
+        } else {
+            rc = update_link(atoi(which) - 1, &sheets, result_text, sizeof result_text);
+            ok = rc == OWF_OK && sheets;
+            if (rc == OWF_ERR_UNSUPPORTED && (atoi(which) < 1 || atoi(which) > n)) rc_fail = RX_NOW;
+        }
     } else if (starts_word_ci(command, "ISBOOKPROTECTED", &arg)) {
         int has = 0, on = oc_core_book_protection(core, &has);
         snprintf(result_text, sizeof result_text, "%d %d", on, has);
