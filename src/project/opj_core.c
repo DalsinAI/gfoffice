@@ -635,7 +635,12 @@ int opj_set_days_hours(opj_doc *doc, int cal, const char *days, const char *hour
     const char *h = hours;
     if (!kind || !hours) return OWF_ERR_FORMAT;
     while (*h == ' ') h++;
-    def = same_name_ci(h, "default");
+    {   /* "default" with spaces around it */
+        char word[16];
+        size_t n = strlen(h);
+        while (n && h[n - 1] == ' ') n--;
+        def = n < sizeof word && (memcpy(word, h, n), word[n] = 0, same_name_ci(word, "default"));
+    }
     if (kind == 1) return def ? OWF_ERR_FORMAT : opj_set_week_hours(doc, cal, wd, hours);
     opj_days_parse(days, NULL, &first, &last);
     return opj_set_day_hours(doc, cal, first, last, def ? NULL : hours);

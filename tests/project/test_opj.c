@@ -1558,7 +1558,7 @@ static void test_worktime_days(void)
     CHECK_N(doc->plan->calendars[0].nexceptions, 9);
     opj_days_hours_text(doc->plan, 0, "28/12/26", text);
     CHECK_S(text, "off");
-    CHECK_N(opj_set_days_hours(doc, 0, "28/12/26", " Default"), OWF_OK);
+    CHECK_N(opj_set_days_hours(doc, 0, "28/12/26", " Default "), OWF_OK);
     CHECK_N(doc->plan->calendars[0].nexceptions, 8);
     opj_days_hours_text(doc->plan, 0, "28/12/26", text);
     CHECK_S(text, "08:00-12:00, 13:00-17:00");
