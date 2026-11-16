@@ -56,6 +56,7 @@ static owf_deck *table_deck(opr_undo *u, int *obj)
     owf_table_add_merge(o, 0, 0, 1, 2);
     owf_table_add_merge(o, 1, 0, 2, 1);
     owf_table_set_row_height(o, 1, ROW);
+    owf_table_set_row_height(o, 2, 0);     /* three rows, as the readers leave them */
     opr_undo_clear(u);
     return d;
 }
