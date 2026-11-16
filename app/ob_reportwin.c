@@ -2,9 +2,10 @@
  * GFOpenBase's Report window (app/ob_reportwin.h; Design-OpenBase.md section 7).
  *
  * One report at a time is edited in it: its name, title, source (a table or a saved query), the field it
- * groups by, and its columns with a total under each. Keep puts it in the project (oadb_reports, through
- * ob_report_store), the list at the top opens a kept one, and Make Document... saves it through libowf as
- * the requester's file name says (.odt, .docx, .pdf, .txt; no extension: .odt).
+ * groups by, and its columns with a total under each. Preview... shows its pages as the PDF gets them
+ * (app/ob_previewwin.c). Keep puts it in the project (oadb_reports, through ob_report_store), the list at
+ * the top opens a kept one, and Make Document... saves it through libowf as the requester's file name says
+ * (.odt, .docx, .pdf, .txt; no extension: .odt).
  *
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
@@ -29,10 +30,11 @@
 
 #include "openbase_report.h"
 #include "ob_reportwin.h"
+#include "ob_previewwin.h"
 
 enum {
     R_KEPT = 1, R_NAME, R_TITLE, R_KIND, R_SOURCE, R_GROUP, R_COLS, R_ADD, R_REMOVE, R_FIELD, R_TOTAL, R_HEAD,
-    R_KEEP, R_DELETE, R_MAKE, R_CLOSE, R_COUNT
+    R_PREVIEW, R_KEEP, R_DELETE, R_MAKE, R_CLOSE, R_COUNT
 };
 
 /* The totals a column can have, in ob_total's order with OB_TOTAL_GROUP left out. */
@@ -247,6 +249,19 @@ static int ask_document(char *out, size_t size)
     return ok;
 }
 
+/* The report's pages in the preview window. */
+static void preview(void)
+{
+    static char vals[OB_QUERY_PARAMS][OB_VALUE_MAX];
+    const char *ptrs[OB_QUERY_PARAMS];
+    char err[OB_ERR_MAX];
+    int nparams;
+    if (!rr.name[0]) put_text(rr.name, sizeof rr.name, "Report");
+    if (ob_report_check(env->proj, &rr, err, sizeof err)) { say(err); return; }
+    if (!ask_params(vals, ptrs, &nparams)) return;
+    if (!ob_preview_window(env, rw, &rr, nparams ? ptrs : NULL, err, sizeof err)) say(err);
+}
+
 static void make_document(void)
 {
     static char vals[OB_QUERY_PARAMS][OB_VALUE_MAX];
@@ -375,6 +390,10 @@ void ob_report_window(const ob_rwin_env *e)
             ng.ng_GadgetText = (UBYTE *)"Take Column Out";
             ng.ng_GadgetID = R_REMOVE;
             g = gad[R_REMOVE] = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, c == NULL, TAG_DONE);
+            ng.ng_TopEdge = y + 2 * rowh;
+            ng.ng_GadgetText = (UBYTE *)"Preview...";
+            ng.ng_GadgetID = R_PREVIEW;
+            g = gad[R_PREVIEW] = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
             ng.ng_Flags = PLACETEXT_LEFT;
             ng.ng_LeftEdge = l + lw;
             /* the chosen column, or the one Add Column adds */
@@ -515,6 +534,7 @@ void ob_report_window(const ob_rwin_env *e)
                     }
                     break;
                 case R_MAKE: make_document(); break;
+                case R_PREVIEW: preview(); break;
                 case R_CLOSE: done = may_drop(); break;
                 }
             }
