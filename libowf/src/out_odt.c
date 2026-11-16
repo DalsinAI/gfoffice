@@ -766,7 +766,7 @@ static void put_para_part(owf_buf *out, const owf_doc *doc, const owf_para *para
             continue;
         }
         t=char_style(s,&run->fmt);
-        kind = run->kind == OWF_RUN_FRAME || run->kind == OWF_RUN_IMAGE ? 0 : change_kind(doc, run->revision);
+        kind = run->kind == OWF_RUN_FRAME ? 0 : change_kind(doc, run->revision);   /* 1.12: pictures too */
         if (kind == OWF_REV_DELETE) {
             /* 1.5: deleted text: in the deletion's region (written accepted when there is none: left out) */
             if (tk) {
@@ -910,6 +910,23 @@ static void put_named_styles(owf_buf *out, const owf_doc *doc)
                        i, i, i, heading_size[i]);
     owf_buf_puts(out, "<style:style style:name=\"Header\" style:family=\"paragraph\" style:parent-style-name=\"Standard\" style:class=\"extra\"/>");
     owf_buf_puts(out, "<style:style style:name=\"Footer\" style:family=\"paragraph\" style:parent-style-name=\"Standard\" style:class=\"extra\"/>");
+    {   /* 1.12.1: how footnotes and endnotes are numbered, when not the usual way. text:start-value is
+         * LibreOffice's offset from 1 (0: start at 1), as it reads and writes it. ODF has no symbols: those go
+         * as numbers (export_odt's report says so). */
+        static const char *const cls[2] = { "footnote", "endnote" };
+        static const char *const fmt[OWF_NOTE_FORMAT_COUNT] = { NULL, "1", "i", "I", "a", "A", "1" };
+        const owf_page *pg = &doc->page;
+        int k;
+        for (k = 0; k < 2; ++k) {
+            int f = pg->note_format[k] > OWF_NOTE_FORMAT_DEFAULT && pg->note_format[k] < OWF_NOTE_FORMAT_COUNT
+                    ? pg->note_format[k] : OWF_NOTE_FORMAT_DEFAULT;
+            if (!f && pg->note_start[k] <= 1) continue;
+            owf_buf_printf(out, "<text:notes-configuration text:note-class=\"%s\" style:num-format=\"%s\"", cls[k],
+                           f ? fmt[f] : k ? "i" : "1");
+            if (pg->note_start[k] > 1) owf_buf_printf(out, " text:start-value=\"%d\"", pg->note_start[k] - 1);
+            owf_buf_puts(out, k ? "/>" : " text:footnotes-position=\"page\" text:start-numbering-at=\"document\"/>");
+        }
+    }
     owf_buf_puts(out, "</office:styles>");
 }
 
@@ -1088,6 +1105,8 @@ static int export_odt(const owf_doc *doc, unsigned char **data, size_t *length, 
         return OWF_ERR_MEMORY;
 
     owf_zip_add(zip, "mimetype", mimetype, sizeof mimetype - 1, 0);
+    if (doc->page.note_format[0] == OWF_NOTE_FORMAT_SYMBOL || doc->page.note_format[1] == OWF_NOTE_FORMAT_SYMBOL)
+        owf_report_add(report, OWF_NOTE_APPROX, "Notes numbered with symbols were saved numbered 1, 2, 3: ODT has no symbols");
 
     owf_buf_puts(&part, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                         "<manifest:manifest xmlns:manifest=\"urn:oasis:names:tc:opendocument:xmlns:manifest:1.0\" manifest:version=\"1.3\">"
