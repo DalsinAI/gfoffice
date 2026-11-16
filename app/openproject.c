@@ -1077,8 +1077,11 @@ static void change_working_time(void)
         if (rc == OWF_ERR_MEMORY) { edit_failed(rc, "Change Working Time"); return; }
         tell("Hours are spans in order, 08:00-12:00, 13:00-17:00, or off;\ndefault gives dates their week's hours again");
     }
-    snprintf(title, sizeof title, "%.60s: %.24s now %.60s", cal_name(cal), days, hours);
-    set_status(title);
+    {
+        char done[160];                  /* 60 + 24 + 60 and the words between */
+        snprintf(done, sizeof done, "%.60s: %.24s now %.60s", cal_name(cal), days, hours);
+        set_status(done);
+    }
 }
 
 static void plan_calendar(void)
