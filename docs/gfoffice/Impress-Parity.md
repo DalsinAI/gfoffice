@@ -55,7 +55,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Slide layouts (Blank, Title Slide, Title Content, Title and 2 Content, Title Only, Centered Text, and the rest) | P3 | Model: a new deck has six; a file's layouts are read and written with their placeholders |
 | Page setup: slide size (Screen 4:3, 16:9, 16:10, A4, Letter, custom), orientation, numbering format | P3 | Model: any size, orientation from it; numbering format No |
 | Slide background: colour | P1 | Yes |
-| Background: gradient, hatching | Later | Approx.: drawn and saved in one colour |
+| Background: gradient, hatching | Later | Gradient: linear and radial slide and master backgrounds read from ODP and PPTX, saved to both, drawn in the PDF, print and on screen (GFOpenPresentation 0.6.35). Hatching: one colour |
 | Background: bitmap | P1 | Yes (stretched) |
 | Insert slide from file, expand slide, summary slide | P8 | Insert Slides from File: Yes in 0.6.31 (every slide of an ODP or PPTX, one Undo step); expand and summary slide: No |
 | Header and footer: date (fixed or current), footer text, slide number, per slide or all | P1 (data), P3 (dialog) | Yes: read, written, drawn in the master's boxes |

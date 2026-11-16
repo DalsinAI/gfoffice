@@ -19,6 +19,9 @@ Each file sets out to reach one part of the reader (libowf/src/in_pub.c):
                          DIB pictures
   gen-2003-names.pub     a named master, a page that uses it, surrogate pairs,
                          tabs and line breaks
+  gen-2010-masters.pub   masters with field 0x10 1 and 0, as some files have (found
+                         only by the pages naming them): a text frame on the
+                         first, four pages taking the two in turn
   gen-98.pub, gen-2000.pub  the 98/2000 form: text frames, a table, a shape
   gen-cut.pub            a 2010 file cut short: what is left is read
   gen-colours.pub        260 runs, each its own text colour: more than the
@@ -169,8 +172,12 @@ def qf(fid, typ, value=None):
     return fv(fid, typ, value, wide=True)
 
 
-def char_props(bold=None, italic=None, size=None, font=None, old=False, underline=None, colour=None):
+def char_props(bold=None, italic=None, size=None, font=None, old=False, underline=None, colour=None, field=None):
     out = b''
+    if field is not None:                    # 0x200: the run's field, low byte 5 a page number; 0x222 beside it
+        out += qf(0x200, 0x10, field)
+        if field & 0xFF == 5:
+            out += qf(0x222, 0x20, 0xFFFFFFFF)
     if bold is not None:
         out += qf(0x202, 0x08 if bold else 0x10, None if bold else 0)
     if italic is not None:
@@ -589,8 +596,8 @@ def frame_chunk(c, page, kind=0x01, text_id=None, chain=None, prev=None, nxt=Non
     return c.add(kind, page, *f)
 
 
-def page_chunk(c, master=None, name=None, letter=None, y=0, scratch=False):
-    f = [fv(0x10, 0x18, 3 if master is None and name else 5)]
+def page_chunk(c, master=None, name=None, letter=None, y=0, scratch=False, kind=None):
+    f = [fv(0x10, 0x18, kind if kind is not None else 3 if master is None and name else 5)]
     if name:
         f += [fv(0x0E, 0xC0, u16text(letter or 'A')), fv(0x0F, 0xC0, u16text(name))]
     else:
@@ -883,6 +890,30 @@ def colours():
     return publication(c.build(doc_fields(c, pw, ph, [m, p])), t, [[], shapes], [], (12, 0))
 
 
+def pagenum():
+    """A page number on the master (" #", its "#" field 5, as Publisher 2010
+    writes it) and one in a page's own text ("Page #", 0xFF05 as 2003's
+    files have it), beside a "#" with field 6 (a link's, as Sample has),
+    which stays text."""
+    pw, ph = 148 * EMU_MM, 210 * EMU_MM
+    c = Contents(0x15, pw, ph)
+    m = page_chunk(c, name='Master Page A')
+    p1 = page_chunk(c, master=m)
+    p2 = page_chunk(c, master=m)
+    t = Text(['Calibri'], [DEFAULT_STYLE])
+    t.story(1, [(para_props(align='right'), [(' ', char_props(size=10)), ('#', char_props(size=10, field=5))])])
+    t.story(2, [(None, [('Page ', None), ('#', char_props(bold=True, field=0xFF05))]),
+                (None, [('Turn to ', None), ('#', char_props(field=6)), (' for more.', None)])])
+    t.story(3, [(None, [('Page two, numbered by its master', None)])])
+    fm = frame_chunk(c, m, text_id=1)
+    f2 = frame_chunk(c, p1, text_id=2)
+    f3 = frame_chunk(c, p2, text_id=3)
+    master = [Shape(fm, box_mm(pw, ph, 13, 197, 122, 8), text_id=1)]
+    page1 = [Shape(f2, box_mm(pw, ph, 20, 20, 100, 30), text_id=2)]
+    page2 = [Shape(f3, box_mm(pw, ph, 20, 20, 100, 30), text_id=3)]
+    return publication(c.build(doc_fields(c, pw, ph, [m, p1, p2])), t, [master, page1, page2], [], (14, 0))
+
+
 def damaged():
     t = Text(['Times New Roman'], [DEFAULT_STYLE])
     t.story(1, [(None, [('text without a publication', None)])])
@@ -893,8 +924,46 @@ FILES = {
     'gen-2007-plain.pub': plain, 'gen-2007-runs.pub': runs, 'gen-2010-styles.pub': styles,
     'gen-2013-look.pub': look, 'gen-2003-columns.pub': columns, 'gen-2003-names.pub': names,
     'gen-98.pub': lambda: old(0xB2D2, 2), 'gen-2000.pub': lambda: old(0xB2E8, 4),
-    'gen-cut.pub': cut, 'gen-colours.pub': colours, 'gen-notpub.pub': notpub, 'gen-damaged.pub': damaged,
+    'gen-pagenum.pub': pagenum, 'gen-cut.pub': cut, 'gen-colours.pub': colours, 'gen-notpub.pub': notpub, 'gen-damaged.pub': damaged,
 }
+
+
+def masters2010():
+    """Two masters as some Publisher files have them (PUB-FORMAT.md 5.4): field
+    0x10 is 1 and 0, not 3, so only the pages' field 0x0D shows they are
+    masters. The first has a text frame; four pages take the two in turn."""
+    pw, ph = 210 * EMU_MM, 297 * EMU_MM
+    c = Contents(0x18, pw, ph)
+    m1 = page_chunk(c, name='Master Page A', kind=1)
+    m2 = page_chunk(c, name='Master Page B', letter='B', kind=0)
+    pages = [page_chunk(c, master=m1 if k % 2 == 0 else m2) for k in range(4)]
+    t = Text(['Times New Roman'], [DEFAULT_STYLE])
+    t.story(1, [(None, [('On every page of master A', None)])])
+    t.story(2, [(None, [('Page one', None)])])
+    fm = frame_chunk(c, m1, text_id=1)
+    fp = frame_chunk(c, pages[0], text_id=2)
+    master_shapes = [Shape(fm, box_mm(pw, ph, 20, 270, 170, 12), text_id=1, look=NO_FILL_LINE + INSET)]
+    page_shapes = [Shape(fp, box_mm(pw, ph, 20, 20, 170, 20), text_id=2, look=NO_FILL_LINE + INSET)]
+    return publication(c.build(doc_fields(c, pw, ph, [m1, m2] + pages)), t,
+                       [master_shapes, [], page_shapes, [], [], []], [], (14, 0))
+
+
+FILES['gen-2010-masters.pub'] = masters2010
+
+
+def long_list(n):
+    """A page list naming the first master n times, then two pages that use
+    the masters (not in FILES: tests/pub/test_pub_long_list.py makes it with
+    a long list, to time the reader on it)."""
+    pw, ph = 210 * EMU_MM, 297 * EMU_MM
+    c = Contents(0x18, pw, ph)
+    m1 = page_chunk(c, name='Master Page A', kind=1)
+    m2 = page_chunk(c, name='Master Page B', letter='B')
+    p1 = page_chunk(c, master=m1)
+    p2 = page_chunk(c, master=m2)
+    t = Text(['Times New Roman'], [DEFAULT_STYLE])
+    t.story(1, [(None, [('One', None)])])
+    return publication(c.build(doc_fields(c, pw, ph, [m1] * n + [m2, p1, p2])), t, [[], [], [], []], [], (14, 0))
 
 
 def main():

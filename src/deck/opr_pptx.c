@@ -527,7 +527,8 @@ static void put_object(pptxw *w, owf_buf *b, const owf_obj *o, const owf_obj *bo
     owf_buf_puts(b, "</p:sp>");
 }
 
-static void put_background(pptxw *w, owf_buf *b, unsigned long colour, int image, rels *r, int first_rid)
+static void put_background(pptxw *w, owf_buf *b, unsigned long colour, int image, rels *r, int first_rid,
+                           unsigned char gradient, int angle, unsigned long colour2)
 {
     int media, rid;
     if (image >= 0 && (media = media_of(w, image)) > 0 && (rid = rel_of(r, media, first_rid)) >= 0) {
@@ -536,8 +537,14 @@ static void put_background(pptxw *w, owf_buf *b, unsigned long colour, int image
         return;
     }
     if (OWF_SHADE_SET(colour)) {
+        owf_look l;
+        memset(&l, 0, sizeof l);
+        l.fill = colour;
+        l.gradient = gradient;
+        l.gradient_angle = angle;
+        l.fill2 = colour2;
         owf_buf_puts(b, "<p:bg><p:bgPr>");
-        put_colour(b, OWF_SHADE_RGB(colour));
+        put_fill(b, &l);
         owf_buf_puts(b, "<a:effectLst/></p:bgPr></p:bg>");
     }
 }
@@ -598,7 +605,8 @@ static void put_slide(pptxw *w, int index)
         owf_buf_puts(&b, "\"");
     }
     owf_buf_puts(&b, ">");
-    put_background(w, &b, s->background, s->background_image, &r, 3);
+    put_background(w, &b, s->background, s->background_image, &r, 3, s->background_gradient, s->background_angle,
+                   s->background2);
     put_tree_start(&b);
     for (i = 0; i < s->nobjs; i++) {
         const owf_obj *o = &s->objs[i];
@@ -698,7 +706,8 @@ static void put_master(pptxw *w, int index)
     }
     owf_buf_puts(&b, ">");
     if (OWF_SHADE_SET(m->background) || m->background_image >= 0)
-        put_background(w, &b, m->background, m->background_image, &r, 3);
+        put_background(w, &b, m->background, m->background_image, &r, 3, m->background_gradient,
+                       m->background_angle, m->background2);
     else
         owf_buf_puts(&b, "<p:bg><p:bgRef idx=\"1001\"><a:schemeClr val=\"bg1\"/></p:bgRef></p:bg>");
     put_tree_start(&b);
