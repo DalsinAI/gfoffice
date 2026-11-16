@@ -233,6 +233,21 @@ showValue="0". `oc_condfmt_spec` takes `OC_CF_DATA_BAR` and `OC_CF_ICON_SET`
 (`opencalc_core.h` 0.34.0) and writes the cfRule; ARexx `CONDFMT range rule`
 takes the window's words ("bar blue only", "icons 3Arrows reverse") and
 `CONDFMT range CLEAR`.
+## Links to other workbooks
+
+A formula on another book (`'[Rates.xlsx]Q1'!A1`) works from the values
+that book last had, which the book keeps (`owf_book.extbooks`, from XLSX's
+externalLink parts and ODS's value tables), so a book whose links' files
+are not there still shows its values. The core's Edit Links
+(`oc_links.c`) lists the links (`oc_core_link_count`, `oc_core_link`: the
+name formulas give, the target as the file wrote it, the sheets kept),
+turns a target into a file (`oc_link_path`: `file:///C:/x.xlsx`,
+`file:///home/x.ods`, a name beside the book, "%20" decoded; not `http:`)
+and updates a link from its file (`oc_core_update_link`): each sheet kept
+takes the values the file's sheet has now, as an Undo step, and the
+formulas are worked out again. A file that cannot be read changes
+nothing; a sheet the file no longer has keeps its last values.
+
 ## Sheet and cell protection
 
 owf.library 2.6 gives `owf_sheet` its protection (`protect`, the
