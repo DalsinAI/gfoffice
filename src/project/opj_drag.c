@@ -25,7 +25,7 @@ static const owf_pcal *calendar_of(const owf_project *p, const owf_ptask *t)
     return &p->calendars[c];
 }
 
-int opj_drag_begin(const opj_view *v, const opj_doc *doc, const opj_hit *hit, int x, opj_drag *d)
+int opj_drag_begin(const opj_view *v, const opj_doc *doc, const opj_hit *hit, int x, int y, opj_drag *d)
 {
     opj_bar b;
     if (!v || !doc || !hit || !d) return 0;
@@ -35,6 +35,7 @@ int opj_drag_begin(const opj_view *v, const opj_doc *doc, const opj_hit *hit, in
     if (!opj_bar_of(v, doc, hit->row, &b)) return 0;
     d->row = hit->row;
     d->x0 = x;
+    d->y0 = y;
     if (b.kind == OPJ_BAR_TASK && (hit->part == 2 || x < b.bar.x + EDGE)) d->kind = OPJ_DRAG_PROGRESS;
     else if (b.kind == OPJ_BAR_TASK && hit->part == 1) d->kind = OPJ_DRAG_STRETCH;
     else d->kind = OPJ_DRAG_MOVE;            /* a summary or milestone moves only by linking (below) */
@@ -65,6 +66,9 @@ static int plan_drop(const opj_view *v, const opj_doc *doc, const opj_drag *d, i
     long days;
     int target;
     if (d->row < 0 || d->row >= p->ntasks) return -1;
+    if (x - d->x0 <= OPJ_DRAG_SLOP && d->x0 - x <= OPJ_DRAG_SLOP && y - d->y0 <= OPJ_DRAG_SLOP &&
+        d->y0 - y <= OPJ_DRAG_SLOP)
+        return -1;                               /* a click (or the first of a double-click), not a drag */
     t = &p->tasks[d->row];
     if ((target = link_target(v, doc, d, x, y)) >= 0) {
         *value = target;

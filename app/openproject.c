@@ -1145,7 +1145,7 @@ static void click(int x, int y, ULONG secs, ULONG micros)
         redraw();
         if (dbl) { last_row = -1; task_info(); }
         else if (hit.what == OPJ_HIT_BAR && !rexx_busy && edit_allowed(OPJ_EDIT_CELL))
-            dragging = opj_drag_begin(&view, DOC, &hit, x, &drag);
+            dragging = opj_drag_begin(&view, DOC, &hit, x, y, &drag);
     } else if (hit.what == OPJ_HIT_COLUMN_TITLE) {
         if (hit.column >= 0 && hit.column < OPJ_NCOLS) { sel_col = hit.column; redraw(); }
     }

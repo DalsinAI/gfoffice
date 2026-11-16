@@ -341,15 +341,17 @@ enum { OPJ_DRAG_MOVE, OPJ_DRAG_STRETCH, OPJ_DRAG_PROGRESS, OPJ_DRAG_LINK };
 typedef struct {
     int kind;                            /* OPJ_DRAG_MOVE, _STRETCH or _PROGRESS (a link is found on the drop) */
     int row;                             /* the bar's task */
-    int x0;                              /* where the button went down */
+    int x0, y0;                          /* where the button went down */
 } opj_drag;
-/* A drag from where the button went down (hit, x): 1 when it is on a bar that can be dragged. */
-int opj_drag_begin(const opj_view *v, const opj_doc *doc, const opj_hit *hit, int x, opj_drag *d);
+/* A drag from where the button went down (hit, x, y): 1 when it is on a bar that can be dragged. Letting
+ * go within OPJ_DRAG_SLOP pixels of there is a click, not a drag, and does nothing. */
+#define OPJ_DRAG_SLOP 3
+int opj_drag_begin(const opj_view *v, const opj_doc *doc, const opj_hit *hit, int x, int y, opj_drag *d);
 /* What letting go at x, y would do, for the status line: "Start: Mon 23/11/26", "Duration: 4d",
  * "% Complete: 50%", "Link 2 to 3, finish to start"; 0 (out "") when it would do nothing. */
 int opj_drag_text(const opj_view *v, const opj_doc *doc, const opj_drag *d, int x, int y, char *out, size_t size);
-/* Lets go at x, y: OWF_OK, or OWF_ERR_FORMAT when it does nothing (no change, off the row, a link that
- * would loop) and the plan is as it was. */
+/* Lets go at x, y: OWF_OK, or OWF_ERR_FORMAT when it does nothing (a click, no change, off the row, a
+ * link that would loop) and the plan is as it was. */
 int opj_drag_end(opj_doc *doc, const opj_view *v, const opj_drag *d, int x, int y);
 
 /* ---- ARexx (opj_rexx.c): the plan's commands of the GFOPENPROJECT port ----
