@@ -1091,6 +1091,7 @@ static LONG role_pen(int role, unsigned long rgb)
     case OC_ROLE_COMMENT: return rgb_pen(0xD01010UL);        /* Excel's red mark */
     case OC_ROLE_NOTE: return rgb_pen(0xFFFFE1UL);           /* and its comment's pale yellow */
     case OC_ROLE_NOTE_LINE: return rgb_pen(0x808080UL);
+    case OC_ROLE_SCENARIO: return rgb_pen(0x6B7F99UL);       /* the shown scenario's frame and tab */
     }
     return rgb_pen(0xFFFFFFUL);                      /* the paper, behind typing */
 }
@@ -3682,7 +3683,7 @@ static void cs_list(const oc_consolidate_spec *spec, cs_line *lines, struct List
 static int cs_result(int rc)
 {
     if (rc == OWF_ERR_FORMAT) {
-        set_status("Give each source as a range (B2:D9, 'Q1'!A1:C20) and a destination cell outside them.");
+        set_status("Give each source as a range (B2:D9, 'Q1'!A1:C20) or a range's name, and a destination cell outside them.");
         return 0;
     }
     if (rc == OWF_ERR_UNSUPPORTED) { set_status("The sources have too many cells or labels to consolidate."); return 0; }
@@ -3703,14 +3704,27 @@ static int cs_take(char *dst, size_t size, const char *typed)
 static void do_consolidate(void)
 {
     static oc_consolidate_spec spec;
-    struct Gadget *glist = NULL, *last, *gfn, *glv, *gsrc, *gadd, *gremove, *gdest, *grows, *gcols, *glink, *gok, *gcancel;
+    struct Gadget *glist = NULL, *last, *gfn, *gnames, *glv, *gsrc, *gadd, *gremove, *gdest, *grows, *gcols, *glink, *gok,
+                  *gcancel;
     struct NewGadget ng;
     struct Window *rw = NULL;
     struct List list;
     cs_line *lines = calloc(OC_CONSOLIDATE_SOURCES, sizeof *lines);
+    /* the named ranges one may pick as a source: "Names" first, then each name */
+    static char name_text[OC_CONSOLIDATE_NAMES][OC_CONSOLIDATE_REF];
+    static STRPTR name_labels[OC_CONSOLIDATE_NAMES + 2];
+    int name_index[OC_CONSOLIDATE_NAMES], nnames;
     char typed[OC_CONSOLIDATE_REF], dest[OC_CONSOLIDATE_REF];
     int done = 0, ok = 0, sel = -1, ww = 440, wh, lh = fh + 6, rc, active = 0, k;
     if (!scr || !vi || !lines) { free(lines); return; }
+    nnames = oc_core_consolidate_names(core, name_index, OC_CONSOLIDATE_NAMES);
+    name_labels[0] = (STRPTR)(nnames ? "Named range..." : "No named ranges");
+    for (k = 0; k < nnames; ++k) {
+        const owf_defname *d = oc_core_name_at(core, name_index[k]);
+        to_latin1(d->name, strlen(d->name), name_text[k], sizeof name_text[k]);
+        name_labels[k + 1] = (STRPTR)name_text[k];
+    }
+    name_labels[nnames + 1] = NULL;
     rc = oc_edit_commit(core, OC_MOVE_NONE);
     if (rc == OC_INVALID) { validation_alert(); free(lines); return; }
     typed[0] = 0;
@@ -3737,6 +3751,9 @@ static void do_consolidate(void)
     ng.ng_LeftEdge = 100; ng.ng_TopEdge = 8; ng.ng_Width = 160; ng.ng_Height = fh + 6;
     ng.ng_GadgetText = (STRPTR)"Function"; ng.ng_GadgetID = 1;
     last = gfn = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)cs_function_labels, GTCY_Active, active, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_LeftEdge = 270; ng.ng_Width = ww - 280; ng.ng_GadgetText = NULL; ng.ng_GadgetID = 12;
+    last = gnames = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)name_labels, GTCY_Active, 0,
+                                 GA_Disabled, nnames ? FALSE : TRUE, TAG_DONE);
     ng.ng_Flags = PLACETEXT_ABOVE;
     ng.ng_LeftEdge = 10; ng.ng_TopEdge = 8 + fh + 6 + fh + 10; ng.ng_Width = ww - 20; ng.ng_Height = lh * 5 + 4;
     ng.ng_GadgetText = (STRPTR)"Source ranges"; ng.ng_GadgetID = 2;
@@ -3767,7 +3784,7 @@ static void do_consolidate(void)
     last = gok = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
     ng.ng_LeftEdge = ww - 106; ng.ng_GadgetText = (STRPTR)"Cancel"; ng.ng_GadgetID = 11;
     last = gcancel = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
-    if (!gfn || !glv || !gsrc || !gadd || !gremove || !gdest || !grows || !gcols || !glink || !gok || !gcancel) goto out;
+    if (!gfn || !gnames || !glv || !gsrc || !gadd || !gremove || !gdest || !grows || !gcols || !glink || !gok || !gcancel) goto out;
     wh = ng.ng_TopEdge + ng.ng_Height + 10;
     rw = OpenWindowTags(NULL,
         WA_Title, (ULONG)"Consolidate", WA_PubScreen, (ULONG)scr,
@@ -3796,6 +3813,10 @@ static void do_consolidate(void)
                 sel = code;
                 if (sel < spec.nsources)
                     GT_SetGadgetAttrs(gsrc, rw, NULL, GTST_String, (ULONG)lines[sel].label, TAG_DONE);
+            } else if (id == 12) {                           /* a named range: into the source box, to Add */
+                if (code >= 1 && code <= (UWORD)nnames)
+                    GT_SetGadgetAttrs(gsrc, rw, NULL, GTST_String, (ULONG)name_text[code - 1], TAG_DONE);
+                GT_SetGadgetAttrs(gnames, rw, NULL, GTCY_Active, 0, TAG_DONE);
             } else if (id == 3 || id == 4) {                 /* Return in the range, or Add */
                 sv_get_string(gsrc, rw, typed, sizeof typed);
                 if (!trim_text(typed)[0]) continue;
@@ -4676,7 +4697,10 @@ static void pv_item(const owf_pivotdef *def, unsigned field, const char *latin1,
 /* Fills def's fields from the window's choices; 0 (with a status line) when they do not make a table. */
 static int pv_collect(pv_field *fields, unsigned n, owf_pivotdef *def)
 {
-    unsigned want, i;
+    unsigned want, i, k;
+    owf_pivot_data was[OWF_PIVOT_DATA];
+    unsigned nwas = def->ndata <= OWF_PIVOT_DATA ? def->ndata : OWF_PIVOT_DATA;
+    memcpy(was, def->data, sizeof was);      /* a data field keeps how it is shown */
     def->nrow = def->ncol = def->npage = def->ndata = 0;
     for (want = 1; want <= n * 2u + 2u; ++want)
         for (i = 0; i < n; ++i) {
@@ -4695,6 +4719,12 @@ static int pv_collect(pv_field *fields, unsigned n, owf_pivotdef *def)
             if (fields[i].data && fields[i].data_order == want) {
                 if (def->ndata == OWF_PIVOT_DATA) { set_status("A pivot table takes up to 8 data fields."); return 0; }
                 def->data[def->ndata].field = i;
+                def->data[def->ndata].show = OWF_PIVOT_SHOW_NORMAL;
+                for (k = 0; k < nwas; ++k)
+                    if (was[k].field == i) {
+                        def->data[def->ndata].show = was[k].show;
+                        break;
+                    }
                 def->data[def->ndata++].function = pv_data_function[fields[i].data];
             }
         }
@@ -4887,6 +4917,7 @@ static void do_pivot_table(void)
         def.ndata = 1;
         def.data[0].field = selection.ranges[0].last_col - selection.ranges[0].first_col;
         def.data[0].function = OC_SUBTOTAL_SUM;
+        def.data[0].show = OWF_PIVOT_SHOW_NORMAL;
     }
     if (pivot_layout_window(&def, 0))
         pivot_result(oc_core_pivot_create(core, &def), "Pivot table created on a new sheet; Undo removes it.");
@@ -6125,6 +6156,7 @@ static int rexx_pivot(const char *arg, char *out, size_t size)
             else if (mode == 2 && def.ncol < OWF_PIVOT_FIELDS) def.col[def.ncol++] = col;
             else if (mode == 3 && def.ndata < OWF_PIVOT_DATA && subtotal_function(sep + 1)) {
                 def.data[def.ndata].field = col;
+                def.data[def.ndata].show = OWF_PIVOT_SHOW_NORMAL;
                 def.data[def.ndata++].function = subtotal_function(sep + 1);
             } else if (mode == 4 && def.npage < OWF_PIVOT_PAGES)
                 pv_item(&def, col, sep + 1, &def.page[def.npage++]);
