@@ -146,7 +146,7 @@ typedef struct {
     int nout;
     unsigned long colours[256];          /* PL: the text's colours as 0x00BBGGRR */
     int ncolours;
-    int lost_pictures, lost_kinds, lost_colours;
+    int lost_pictures, lost_kinds, lost_colours, lost_deep;
 } writer;
 
 static int npages_all(const owf_pub *pub)
@@ -545,18 +545,25 @@ static int wordart_format(const owf_pub *pub, owf_charfmt *out)
     return 0;
 }
 
-/* Whether every run written says its own colour: only then can the default
- * style have one, which a run in the automatic colour would take instead. */
-static int all_runs_coloured(const writer *w)
+/* What every run written says for itself: 1 its size, 2 its typeface, 4
+ * its colour. Only those can go in the default style, which a run that
+ * leaves one out (new text, in the automatic colour) would take instead. */
+#define OWN_SIZE 1
+#define OWN_FONT 2
+#define OWN_COLOUR 4
+static int runs_own(const writer *w)
 {
-    int i, j, k;
+    int i, j, k, own = OWN_SIZE | OWN_FONT | OWN_COLOUR;
     for (i = 0; i < w->pub->nstories; i++)
         if (w->story_out[i] >= 0)
             for (j = 0; j < w->pub->stories[i].nparas; j++)
-                for (k = 0; k < w->pub->stories[i].paras[j].nruns; k++)
-                    if (w->pub->stories[i].paras[j].runs[k].fmt.colour == OWF_COLOUR_AUTO)
-                        return 0;
-    return 1;
+                for (k = 0; k < w->pub->stories[i].paras[j].nruns; k++) {
+                    const owf_charfmt *f = &w->pub->stories[i].paras[j].runs[k].fmt;
+                    if (f->size <= 0) own &= ~OWN_SIZE;
+                    if (f->font < 0) own &= ~OWN_FONT;
+                    if (f->colour == OWF_COLOUR_AUTO) own &= ~OWN_COLOUR;
+                }
+    return own;
 }
 
 /* WordArt's text as 0xC0C0 holds it: UTF-16, its paragraphs apart by
@@ -695,6 +702,21 @@ static void write_shape(writer *w, owf_buf *b, const owf_pub_frame *f, long chun
     close_rec(b, sp);
 }
 
+/* Groups in groups: no deeper than the reader's MAX_DEPTH (in_pub.c, 24)
+ * leaves room for, with the page's own containers around them. */
+#define MAX_GROUP_DEPTH 16
+
+/* A frame and everything in it, when it is a group. */
+static int count_tree(const owf_pub_page *pg, int i)
+{
+    int j, n = 1;
+    if (pg->frames[i].kind == OWF_PUB_GROUP)
+        for (j = i + 1; j < pg->nframes; j++)
+            if (pg->frames[j].parent == i)
+                n += count_tree(pg, j);
+    return n;
+}
+
 /* A frame whose group is written goes in that group's container, not on the page. */
 static int in_written_group(const writer *w, int k, int i)
 {
@@ -718,8 +740,10 @@ static void write_tree(writer *w, owf_buf *b, int k, int i, unsigned long base, 
     if (f->kind == OWF_PUB_GROUP) {
         for (j = i + 1; j < pg->nframes; j++)
             if (pg->frames[j].parent == i && w->frame_chunk[k][j] >= 0) {
-                if (depth + 1 < 16)
+                if (depth + 1 < MAX_GROUP_DEPTH)
                     write_tree(w, b, k, j, base, shapes, depth + 1);
+                else
+                    w->lost_deep += count_tree(pg, j);   /* nested past what our reader reads back */
             }
         close_rec(b, c);
     }
@@ -1158,17 +1182,18 @@ static void write_quill(writer *w, owf_buf *out)
             owf_buf_free(&names);
             owf_free(offs);
         }
-        /* STSH 0 and 1: one style, the default. Every run says its own size and
-         * typeface, so the default's matter only to WordArt, whose text has no
-         * runs: it takes the first WordArt's size, typeface and colour, as read. */
+        /* STSH 0 and 1: one style, the default. It matters to WordArt, whose
+         * text has no runs: it takes the first WordArt's size, typeface and
+         * colour, as read, each only when every run written has its own. */
         {
             owf_buf dc;
             owf_charfmt def;
             owf_buf_init(&dc);
             if (wordart_format(w->pub, &def)) {
-                if (def.size > 0)
+                int own = runs_own(w);
+                if (def.size > 0 && (own & OWN_SIZE))
                     f32(&dc, 0x20C, 0x20, (unsigned long)def.size * 635UL, 1);
-                if (def.font >= 0) {
+                if (def.font >= 0 && (own & OWN_FONT)) {
                     size_t a = open_field(&dc, 0x224, 0x88, 1), sl;
                     for (i = 0; i < 2; i++) {
                         sl = open_field(&dc, (unsigned)i, 0x88, 1);
@@ -1177,7 +1202,7 @@ static void write_quill(writer *w, owf_buf *out)
                     }
                     close_block(&dc, a);
                 }
-                if (def.colour != OWF_COLOUR_AUTO && all_runs_coloured(w)) {
+                if (def.colour != OWF_COLOUR_AUTO && (own & OWN_COLOUR)) {
                     int c = colour_place(w, def.colour);
                     if (c > 0) {
                         size_t a = open_field(&dc, 0x244, 0x88, 1);
@@ -1444,6 +1469,9 @@ int owf_pub_write(const owf_pub *pub, unsigned char **data, size_t *length, owf_
         if (w.lost_colours)
             owf_report_add(report, OWF_NOTE_APPROX, "%d run(s) of text past the first 255 colours saved in the automatic colour",
                            w.lost_colours);
+        if (w.lost_deep)
+            owf_report_add(report, OWF_NOTE_LOST, "%d object(s) in groups nested more than %d deep were left out",
+                           w.lost_deep, MAX_GROUP_DEPTH);
         if (pub->scratch_frames)
             owf_report_add(report, OWF_NOTE_LOST, "%d object(s) on the scratch area were not kept", pub->scratch_frames);
     }

@@ -598,13 +598,17 @@ our reader; whether Publisher checks them is not known). Groups: an F003
 container whose first shape has F009 (the group's rectangle, set to its own
 box about the page centre, so its frames' F00F boxes are the same numbers)
 and flags 0x201; its frames follow with flag 0x2 and their Contents chunks
-have the group's chunk as parent. Shape numbers are the file's own for the
+have the group's chunk as parent. Groups nest 16 deep at most (the reader
+reads 24 containers); frames deeper are left out with a note. Shape numbers are the file's own for the
 2002-or-later forms (202 for text boxes). WordArt: its shape number, and its
 text in 0xC0C0 (UTF-16, paragraphs apart by CR, a NUL), not in Quill. The
-default style (STSH 1, style 0) gets the first WordArt's size and typeface,
-and its colour when every run written has a colour of its own; every run
-writes its own size and typeface, so only WordArt takes the default's.
-Not written yet, named in the report: the scratch area. PL holds 255 text colours; runs past them keep the automatic colour,
+default style (STSH 1, style 0) gets the first WordArt's size, typeface and
+colour, each only when every run written has its own (runs from our reader
+always do; new text may not, and would take the default's instead).
+Not written yet, named in the report: the scratch area (the reader keeps only
+its count). GFOpenPublisher's own pages reach the writer through
+`opp_deck_to_pub` (src/pub/opp_export.c), the inverse of `opp_pub_to_deck`:
+frames sharing a text flow share one story, boxes are kept in twips. PL holds 255 text colours; runs past them keep the automatic colour,
 with a note. tests/pub/test_pub_save.py reads every generated file back through
 our own reader; whether Publisher itself opens these files has not been
 checked yet.
