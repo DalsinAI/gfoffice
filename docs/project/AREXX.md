@@ -87,7 +87,9 @@ Columns are named by their titles, with case, spaces and punctuation ignored. Fo
 `"Finish Var."`, and the worked-out `Work`, `"Actual Work"`, `"Remaining Work"`, `Cost` and `"Actual Cost"`.
 
 On the resource sheet: `Name`, `Type`, `Initials`, `Group`, `"Max. Units"` or `max`,
-`"Std. Rate"` or `rate`, `Work` and `Cost`.
+`"Std. Rate"` or `rate`, `Work`, `Cost` and `"Base Calendar"` or `calendar` (a calendar's name or number,
+`""` or `-` for the plan's). A task with no calendar of its own is scheduled on the calendar of its first
+work resource that has one.
 
 ```rexx
 /* A small plan */
