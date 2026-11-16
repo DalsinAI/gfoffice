@@ -1,6 +1,6 @@
 /*
  * A mail merge's data source as a table (src/core/ow_merge.c), shared by
- * GFOpenWrite and GFOpenPublisher. MIT, Copyright (c) 2026 AmiCradle Team.
+ * GFOpenWrite and GFOpenPressmaster. MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OW_MERGE_H
 #define OW_MERGE_H

@@ -1,12 +1,12 @@
-/* tests/arexx/publisher-print.rexx: GFOpenPublisher's PDF for a printer through its ARexx port (ARexx-RULE.md
+/* tests/arexx/pressmaster-print.rexx: GFOpenPressmaster's PDF for a printer through its ARexx port (ARexx-RULE.md
    return codes 0/5/10/20, no requester holds up a command): EXPORT MARKS and BLEED n make each PDF page larger by
    the bleed and the crop marks' room, and refuse what cannot be.
-   rx tests/arexx/publisher-print.rexx   (GFOpenPublisher running with a publication open; writes RAM:pree-*.pdf;
+   rx tests/arexx/pressmaster-print.rexx   (GFOpenPressmaster running with a publication open; writes RAM:pree-*.pdf;
    prints PASS/FAIL lines, then ALL PASS or n FAILED) */
 OPTIONS RESULTS
-port = 'GFOPENPUBLISHER'
+port = 'GFOPENPRESSMASTER'
 IF ~SHOW('P', port) THEN DO
-    SAY 'FAIL' port 'is not there: start GFOpenPublisher first'
+    SAY 'FAIL' port 'is not there: start GFOpenPressmaster first'
     EXIT 20
 END
 ADDRESS VALUE port

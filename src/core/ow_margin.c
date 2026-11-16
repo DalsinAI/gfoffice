@@ -1,6 +1,6 @@
 /*
  * GFOpenWrite's comment notes in the page's right margin (2.0.40): placed from the editor's comments and the
- * layout, apart from ow_layout.c, which GFOpenPresentation and GFOpenPublisher link without the editor.
+ * layout, apart from ow_layout.c, which GFOpenPresentation and GFOpenPressmaster link without the editor.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "ow_layout.h"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GFOpenPublisher's .pub writer (libowf/src/out_pub.c), through pub_resave
+"""GFOpenPressmaster's .pub writer (libowf/src/out_pub.c), through pub_resave
 and pub_dump.
 
     test_pub_save.py PUB_RESAVE PUB_DUMP

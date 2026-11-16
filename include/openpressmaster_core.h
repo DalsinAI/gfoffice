@@ -1,11 +1,11 @@
 /*
- * GFOpenPublisher's portable core.  The first reusable slice turns libowf's
+ * GFOpenPressmaster's portable core.  The first reusable slice turns libowf's
  * clean-room Publisher model into the suite's shared positioned-page model,
  * so GFOpenPresentation's GFOpenLayout/PDF pipeline can display and print it.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
-#ifndef OPENPUBLISHER_CORE_H
-#define OPENPUBLISHER_CORE_H
+#ifndef OPENPRESSMASTER_CORE_H
+#define OPENPRESSMASTER_CORE_H
 
 #include "owf_pub.h"
 #include "owf_deck.h"
@@ -23,7 +23,7 @@ extern "C" {
 int opp_pub_to_deck(const owf_pub *pub, owf_deck **deck, owf_report *report);
 int opp_import_pub_file(const char *path, owf_deck **deck, owf_report *report, int *version);
 
-/* GFOpenPublisher save: a deck (as opp_pub_to_deck makes, or as edited)
+/* GFOpenPressmaster save: a deck (as opp_pub_to_deck makes, or as edited)
  * back into libowf's Publisher model, and through owf_pub_write a .pub.
  * Frames sharing a flow_story share one story, its text the first frame's;
  * boxes are kept in twips, looks, tables, groups and pictures as the deck

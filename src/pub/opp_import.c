@@ -1,5 +1,5 @@
-/* GFOpenPublisher P1a: .pub pages onto the suite's shared deck/page model. */
-#include "openpublisher_core.h"
+/* GFOpenPressmaster P1a: .pub pages onto the suite's shared deck/page model. */
+#include "openpressmaster_core.h"
 
 #include <stdlib.h>
 #include <string.h>

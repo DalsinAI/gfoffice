@@ -1,4 +1,4 @@
-#include "openpublisher_core.h"
+#include "openpressmaster_core.h"
 #include "openpresentation_core.h"
 #include "owf_metafile.h"
 
@@ -499,7 +499,7 @@ int main(void)
         }
     }
 
-    /* GFOpenPublisher save: the deck back to .pub */
+    /* GFOpenPressmaster save: the deck back to .pub */
     deck_round_trip(PUB("gen-2007-plain.pub"), report);
     deck_round_trip(PUB("gen-2007-runs.pub"), report);
     deck_round_trip(PUB("gen-2010-styles.pub"), report);
@@ -614,6 +614,6 @@ int main(void)
     }
 
     owf_report_free(report);
-    printf("openpublisher core tests passed (%d checks)\n", checks);
+    printf("openpressmaster core tests passed (%d checks)\n", checks);
     return failed ? 1 : 0;
 }

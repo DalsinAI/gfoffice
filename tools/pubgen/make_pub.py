@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""make_pub.py OUTDIR: writes GFOpenPublisher's test .pub files.
+"""make_pub.py OUTDIR: writes GFOpenPressmaster's test .pub files.
 
 Every .pub the tests read is made here, from the clean-room notes in
 docs/gfoffice/PUB-FORMAT.md, so the repository holds no outside documents.
