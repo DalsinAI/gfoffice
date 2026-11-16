@@ -163,7 +163,7 @@ Counts are over the 24 samples (in how many samples).
 | 0x44 | the document (item 256) | 24 (24) | [V 24] |
 | 0x43 | a page: master pages, the document's pages and the program's own (5.4) | 153 (24) | [V 24] |
 | 0x01 | a frame or shape | 370 (24) | [V 24] |
-| 0x10 | a table | 8 (8) | [V 8]: Sample's table, checked on its text (6.3) |
+| 0x10 | a table | 8 (8) | [V 8]: Sample's table, checked on its text (6.2) |
 | 0x63 | a table's child (its grid, [H]) | 8 (8) | [H] |
 | 0x60, 0x77 | one of each per page (the page's fields 0x09, 0x0B) | 153 each (24) | what they hold: unknown |
 | others | 0x46, 0x4A, 0x4B, 0x4C, 0x4F, 0x54, 0x5B, 0x5C, 0x61, 0x65, 0x6C, 0x72, 0x73, 0x7F (one each per file); 0x20, 0x30, 0x31, 0x4D, 0x58, 0x59, 0x5A, 0x66, 0x70, 0x7D, 0x83, 0x8A, 0x8B, 0x8C | | unknown: styles, colour schemes, fonts and the like are likely [H] |
@@ -195,6 +195,16 @@ section 7, in 289 of 290 frames); 0x02, 0x03 flags; 0x04 = 3; 0x0C and 0x0D
 (8 bytes each) zero in every sample. Its position is in the drawing
 (section 7), not here.
 
+**Linked frames** [V 1: SampleNewsletter, 13 chains of 2 or 3 frames, every
+one left to right on its page as its thumbnail's columns are]: frames that
+share a text id are one story flowing through them. 0x28 = the frame's place
+in its chain (none: the first, then 1, 2); 0x36 = the chunk of the frame
+before it and 0x37 the one after. The chunks, and the drawing, may list a
+chain's frames in another order (page 2: middle, left, right), so the reader
+orders them by 0x28. 0x46 and the array 0x47 (items of type 0x68, chunk
+numbers) [H: the objects the frame's text wraps around; 0x46 their count is
+not always the array's length].
+
 **A table (0x10)** [V 8]: 0x27 the text id; 0x66 the rows and 0x67 the
 columns (3 and 2 in Sample, whose thumbnail shows its table's six cells'
 text, in that order); 0x68 and 0x69 two lengths in EMU [H: width and
@@ -221,6 +231,18 @@ document's when it is not a master, its field 0x06's first u32 is not 0,
 and its 0x05 y equals the master's. The y test is needed because in the
 2003 files the scratch area's 0x06 is (2, 1), as a document page's can be
 [V 3].
+
+### 5.5 The colour scheme [V 6]
+
+One chunk of kind 0x5C in each 2002-or-later sample [V 6]: field 0x01 is 8;
+0x02 an array of 8 items, each a block whose field 0x01 is a colour, its
+bytes red, green, blue then 0 (the opposite order to the drawing's), or an
+empty item (0x78) for black; 0x06 the scheme's name in UTF-16 ("Bluebird",
+"Waterfall", "Black & White") [V 6]. A drawing colour with 0x08 in its top
+byte names a place in this list: SampleBrochure's 0x08000002 fills its
+heading box with its third colour, #9999CC, which its thumbnail shows
+light blue-grey; its 0x08000000 lines are its first, #000080, navy [V 2].
+Empty items as black: [H, though "Black & White" has two].
 
 ## 6. The text: `Quill/QuillSub/CONTENTS`
 
@@ -270,11 +292,111 @@ Chunks seen (in how many of the 26): `TEXT`, `STRS`, `SYID`, `FONT`, `STSH`,
   counted from +0x14, then at each offset a u16 length and the name in
   UTF-16, then a u32 [V 26]. The list holds the fonts the document uses,
   plus many script fonts every file lists ("Sylfaen", "Mangal"...).
-- **Formatting** (bold, sizes, which font, colours, paragraph alignment)
-  lives in `STSH` (style sheets [H]), `FDPC` and `FDPP` (character and
-  paragraph runs in 512-byte pages [H]), `BTEC` and `BTEP` (their indexes
-  [H]): not worked out yet. Table cells: `TCD ` [H]. Fields and hyperlinks:
+- **Formatting** lives in `FDPC` (character runs, 6.4), `FDPP` (paragraph
+  runs, 6.5), `STSH` (paragraph styles, 6.6) and `BTEC` and `BTEP` (the run
+  pages' indexes [H]). Table cells: `TCD ` [H]. Fields and hyperlinks:
   `TOKN` [H].
+
+### 6.3 Fields in the text storage [V 8]
+
+The property blocks in `FDPC`, `FDPP` and `STSH` use section 4's types, but
+an id has 11 bits: the low 3 bits of the type byte are the id's high bits.
+`0C 22` is id 0x20C, type 0x20 (4 bytes); `02 02` is id 0x202, type 0x00
+[V 8: all 316 FDPC and FDPP property blocks of the 8 checked-in samples
+with text are used up exactly this way; the fetched corpus is still to be
+run]. Source: Sample `FDPC` (stream 0x0800 on).
+
+### 6.4 Character runs: `FDPC` [V 8]
+
+One or more `FDPC` chunks (numbered from 0, in the text's order), each one
+or more 512-byte pages. A page: u16 the number of runs n, u16, u32, then n
+u32 run ends, then n u16 offsets in the page, then (at the page's end, back
+to front) the runs' property blocks: a u32 length counting itself, then
+fields (6.3). A run's end is a byte offset in the stream: TEXT's own offset
+(0x200 in all 8) plus twice the characters [V 8: the ends land on
+the paragraph and story ends that `STRS` and 0x0D give]. Runs follow on from
+one page and chunk to the next. The fields seen:
+
+| Id | What | Mark |
+|---|---|---|
+| 0x202 | bold: type 0x00 (no value) or a value not 0 | [V 3: Sample's "This is in bold and italic" in 2007, 2010, 2000 and 98; SampleBrochure's headings, as its thumbnail shows them] |
+| 0x203 | italic, the same way | [V 1 (in 4 saves): Sample] |
+| 0x20C | the size in EMU (12700 a point) | [V 1 (in 4 saves): Sample's "Arial, 20 point font" is 254000; its 18-point text 228600] |
+| 0x224 | the typeface: an array of slots, each giving a place in `FONT`'s list (6.2). 2002 or later: slot blocks (0x88, ids 0, 1, 2...) each holding one 0x18 field; 98/2000: 0x18 fields with ids 0, 8, 0x10... The reader takes slot 0, else the first | [V 1 (in 4 saves): Sample's "It's Arial" names place 27, "Arial"]; what the other slots are for: [H] (scripts: East Asian, complex) |
+| 0x237, 0x238, 0x239 | beside 0x202, 0x203 and 0x20C with the same values in the 2002-or-later files; not in the 98/2000 files | [V 6]; [H]: complex-script bold, italic and size |
+| 0x212, 0x23E | 0x809 (English, UK), 0x409, 0xC09 | [H]: languages (Windows LCIDs) |
+| 0x22D | set on SampleBrochure's en dashes | unknown |
+| 0x21E, 0x244, 0x248, 0x22E, 0x200 | on Sample's hyperlinks | [H]: underline and colour; not read yet |
+
+A run's fields are laid over its paragraph style's (6.6): Sample's plain
+text says it is Times New Roman 10 point, has no fields of its own, and its
+default style (style 0) is exactly that [V 1 in 4 saves].
+
+### 6.5 Paragraph runs: `FDPP` [V 8]
+
+The same pages as `FDPC`, one run per paragraph. The fields seen:
+
+| Id | What | Mark |
+|---|---|---|
+| 0x219 | the paragraph's style: k is style k of 6.6. None: style 0 | [V 2: 60685's headings are 4, its body 5, which give its thumbnail's italic headings and centred text; SampleBrochure's back cover is 0xB, centred 9 point, as its thumbnail shows] |
+| 0x204 | the alignment, over the style's: its low byte (0: left, 1: right, 2: centred) | [V 3 for 2: as above, and 51318's styles, 0x5A02, whose headline and line its thumbnail shows centred; the high byte: unknown]; [V 1 for 0 and 1: SampleNewsletter's "Page #" lines are 1 (right, as a page number in a header's right corner), its "Volume 1, Issue 1" says 0 over its style's 1 and sits at its frame's left in the thumbnail; govdocs1-923566 has 0xFF00 and 0xFF01]; SampleBrochure's 6 on its banner's lines: unknown |
+| 0x230, 0x234, 0x213, 0x23C | | unknown ([H]: 0x213 a space in EMU, 76200 = 6 pt) |
+
+### 6.6 Paragraph styles: `STSH` [V 8]
+
+Three `STSH` chunks, numbered 0, 1 and 2. Each starts with u32 its length,
+u32 a count n, u32 and u32 at +0x0C (0 or 4), u32 at +0x10 (the +0x08 and
++0x10 values are the same in all three of a file), then n u32 offsets
+counted from +0x14 [V 8]. In `STSH` 1, entry 2k holds style k's
+character properties and entry 2k+1 its paragraph properties; each is a
+u16 (the entry's length in u16s, less one), a block (u32 length counting
+itself, then 6.3's fields) and a u16 [V 8: every entry's block ends 2 bytes
+before the next entry]. `STSH` 0 has one 6-byte entry per style (u16 0,
+then an i32: -1 for style 0 [H: Publisher's built-in style numbers]);
+`STSH` 2 has one 16-byte entry per `STSH` 1 entry: u16 7, i32 -1, then
+u32 the style's number [V 8].
+
+- Character properties: 6.4's ids. Style 0 is Times New Roman 10 point in
+  Simple, Sample and SampleBrochure [V 3].
+- Paragraph properties: 6.5's ids; also 0x202, 0x206, 0x20C (negative) and
+  0x20D in 60685's style 3, a list-like style ([H]: spaces and a hanging
+  indent, EMU).
+- No style seems to name another as its parent [H: the `STSH` 2 i32 that
+  could is -1 in all 8]. A style without a size or typeface takes style 0's
+  [H].
+
+### 6.7 Hyperlinks: `TOKN` [V 7: Sample's stories 4 and 5, and POI's six LinkAt files, whose names say where their links are]
+
+`TOKN` n (a `PLC` chunk) holds story n's links. The six LinkAt files settle
+the places: `LinkAt10` has one link at character 10, `LinkAt0And10` two at
+0 and 10, and so on, and each file's text shows "LINK" there.
+
+| Offset | What |
+|---|---|
+| 0x00 | u32 n, the number of links |
+| 0x04, 0x08 | u32 12, u32 0x1FFFF [unknown] |
+| 0x0C | n + 1 u32: each link's first character in the story, then the story's length |
+
+Then n blocks (u32 length counting itself, then fields with 11-bit ids,
+6.3), one per link. Each holds only what changed from the link before it,
+so an empty block (length 4) is a link like the one before:
+
+| Field | What | Mark |
+|---|---|---|
+| 0x200 | 0x8C0, in the first block only | unknown |
+| 0x201 | the link's length in characters | [V 7: "LINK" 4, "LINK2" 5, "Link to a file" 14, "email link" 10, "Within doc to page 1" 20] |
+| 0x202 | the kind: 1 a web address or a file, 3 a place in the publication, 4 an e-mail address | [V 3; the e-mail one is a `mailto:`] |
+
+Then n more blocks, one per link, each with 0x200, the link's place in the
+table that follows [V 3: `LinkAt10And20And30`'s three links go to its
+three addresses in order; Sample's story 5 goes 1, 0, 2].
+
+The table: u32 the size of the offsets and strings, u32 the count, 12 bytes
+(a u32 that changes from file to file, then 8 zero bytes) [unknown], then
+count u32 offsets counted from the first offset, and at each a u16 length
+and that many UTF-16 characters [V 7: all their addresses]. A place in the
+publication is one character (0x010A in Sample) [H: the page's chunk
+number]; the reader keeps those links' words as plain text for now.
 
 ## 7. The drawing: `Escher/EscherStm`
 
@@ -333,8 +455,18 @@ Other shapes can hold text too: christmas's ellipses have (empty) text ids
 | 0x4104 | the picture: its number (from 1) in the picture store (section 8) | [V: 51318's one picture frame and its one picture; 68 such properties in 24 samples, against reference counts adding up to 77 in the stores, so 9 references come from elsewhere [H: fills, masters]] |
 | 0xC0C0 | WordArt's text, UTF-16 with a NUL | [V 4: "Haunted" and "Halloween" (halloween-flyer), "Easter Egg Hunt" (easter-egg-hunt-flyer), "Liberty" (SampleNewsletter), each where its thumbnail shows it] |
 | 0xC0C5 | WordArt's font name, UTF-16 | [V 1: "skullphabet"] |
-| 0x181 | fill colour; 0x1C0 line colour [H] | colours: 0x00BBGGRR, red in the low byte [V by hue on christmas: 0x0000CCFF shows yellow, 0xCC0000 red, 0x006600 green; 5 exact matches elsewhere]. A top byte of 0x08 (47 values) marks a colour from the scheme [H] |
-| 0x81-0x84 | 0x8EE0 (36576 EMU, 0.04 inch) in most text boxes | [H: the text's margins] |
+| 0x181 | fill colour; 0x1C0 line colour | colours: 0x00BBGGRR, red in the low byte [V by hue on christmas: 0x0000CCFF shows yellow, 0xCC0000 red, 0x006600 green; 5 exact matches elsewhere]. A top byte of 0x08 marks a place in the colour scheme (5.5) [V 2: 51318 and SampleBrochure, every fill and line their thumbnails show] |
+| 0x1BF | fill switches: bit 4 filled, counted only when bit 20 is set; filled with no 0x181 is white, [MS-ODRAW]'s default | [V 2: as 0x181; 0x1F001C filled, 0x100000 not] |
+| 0x1FF | line switches: bit 3 outlined, counted only when bit 19 is set | [V 2: 0xF000E and 0x80008 outlined (lines, borders), 0xF0006 and 0x80000 not] |
+| 0x1CB | line width, EMU | [V 2: 51318's border 38100 (3 pt) and header 12700 (1 pt); SampleBrochure's panel lines 3175] |
+| 0x81-0x84 | a text box's margins, EMU: left, top, right, bottom | 0x8D63 (36195) in SampleBrochure's and 51318's text boxes, 0x8EE0 (36576, 0.04 inch) in shapes [H: measured nowhere yet] |
+
+These ids and their meanings are the ones Microsoft's published [MS-ODRAW]
+specification gives its drawing properties (2.3: fill, line and text
+properties); the marks say where the samples agree with it. The reader reads
+only these and 0x4104 and 0xC0C0. Seen but not read: 0x384-0x387 (0x8EE0 in
+most shapes), 0x17F, 0x1C2, 0x201, 0x23F, 0x33F, 0x37F, 0x3BF, and a second
+table (0xF122) in most shapes.
 
 ## 8. Pictures [V 24]
 
@@ -409,16 +541,19 @@ path in section 5.1.
 
 ## 12. Not known yet (phase 1's work)
 
-- Character and paragraph formatting, styles, colour schemes (`STSH`, `FDPC`,
-  `FDPP`; `Contents` kinds 0x46-0x8C).
-- Linked text frames (one story through several frames), columns, text
-  wrap, layering beyond the back-to-front order, rotation and flips.
+- Paragraph spacing, indents and the alignments other than left, right and
+  centred (6.5, 6.6; justified not seen yet, SampleBrochure's 6 unknown); style names; colour schemes (`Contents` kinds 0x46-0x8C); underline
+  and colour in `FDPC` (6.4).
+- A frame's own text columns (none of the samples has one: their columns
+  are linked frames, 5.3), text wrap (5.3's 0x47 is a guess), layering beyond the back-to-front order, rotation and flips.
 - Tables' cell borders, merged cells, and which paragraph goes in which cell
   (`TCD `).
 - Master pages' own frames (the samples' masters are empty), headers and
   footers, page numbers.
-- Hyperlinks and fields (`TOKN`), catalog and mail-merge data.
-- Shape numbers beyond those in 7.3, gradients, picture crops and fills.
+- Links to places in the publication (6.7), fields, catalog and mail-merge
+  data.
+- Shape numbers beyond those in 7.3, gradients, picture crops and fills;
+  rotation and flips (not looked for yet); columns and wrap.
 - The 98/2000 form's masters and pictures; the older form (section 10).
 - Publisher 2002 and 2016-or-later files (no samples).
 

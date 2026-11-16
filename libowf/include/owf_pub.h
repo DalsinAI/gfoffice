@@ -4,8 +4,11 @@
  * Phase 0's reader (docs/gfoffice/Design-OpenPublisher.md): it tells the
  * version, gives the page size, the pages and master pages, each page's
  * frames with their boxes and kinds, the text of text frames and tables as
- * paragraphs, the fonts the text names and the pictures. Formatting,
- * colours, wrap and the rest come in phase 1.
+ * paragraphs, the fonts the text names and the pictures. Phase 1 adds the
+ * text's character runs (bold, italic, size, typeface: PUB-FORMAT.md 6.4)
+ * over their paragraph styles, and centred paragraphs (6.5, 6.6), and each
+ * frame's fill, outline and margins over the colour scheme (5.5, 7.4);
+ * spacing, columns, wrap and the rest follow.
  *
  * There is no published specification of .pub. Everything this reader
  * knows was worked out from sample files' bytes (a clean room); the record
@@ -66,6 +69,13 @@ typedef struct {
     int image;                   /* a picture: into owf_pub.res->images; -1: none */
     int rows, cols;              /* a table's */
     int wordart;                 /* 1: the story is WordArt's text, drawn as a shape */
+    /* owfpub.library 3.2: the frame's look, from its drawing's properties
+     * (PUB-FORMAT.md 7.4) with the publication's colour scheme */
+    int filled;                  /* 1: filled with fill; 0: not filled; -1: the file doesn't say */
+    int lined;                   /* 1: outlined with line; 0: no outline; -1: the file doesn't say */
+    unsigned long fill, line;    /* 0xRRGGBB */
+    long line_width;             /* EMU; -1: not said */
+    long inset[4];               /* a text box's margins, EMU: left, top, right, bottom; -1: not said */
 } owf_pub_frame;
 
 typedef struct {
@@ -88,6 +98,9 @@ typedef struct owf_pub {
     int nstories, capstories;
     owf_story *stories;          /* every text in the file, in the file's order; then WordArt's */
     owf_doc *res;                /* the fonts the text names, and the pictures */
+    /* 3.2: the colour scheme's colours (PUB-FORMAT.md 5.5), 0xRRGGBB */
+    int nscheme;
+    unsigned long scheme[16];
     int scratch_frames;          /* frames on the scratch area, not on any page (not kept) */
 } owf_pub;
 

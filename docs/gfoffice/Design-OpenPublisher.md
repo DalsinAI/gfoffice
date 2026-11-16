@@ -170,9 +170,13 @@ Amiga has none of them. The plan, through the shared font module
   A DIB gets a BMP file header and goes to the BMP datatype.
 - **Windows metafiles** (WMF, and EMF [H]) are common in older files
   (SampleBrochure, SampleNewsletter). We know of no Windows metafile datatype for OS 3.2,
-  so P1 needs a small metafile player that turns the records into GFOpenLayout's
-  drawing operations and the PDF writer's paths. Until then the frame shows
-  its box and the report says why.
+  so libowf has a small metafile player (`owf_metafile.c`, from [MS-WMF] and [MS-EMF])
+  that turns the records into the PDF writer's paths and, for the screen, pixels
+  (`owf_mfraster.c`). EMF plays too: its Frame, mapping modes, pens, brushes, fonts,
+  stock objects, the 16 and 32-bit Poly records (curves as lines), paths and
+  ExtTextOutW. Arc, Chord and Pie (WMF and EMF, with SetArcDirection) and EMF ArcTo are
+  drawn as 64-sided pieces of the ellipse, the way round they are seen. Pictures inside,
+  clipping and world transforms are left out and the report says so.
 - **Embedded objects** (Excel tables and the like, in the `Objects`
   storage) are shown by the preview picture saved with them.
 - **Memory:** pictures stay in the file's bytes until shown; christmas.pub
@@ -251,7 +255,8 @@ publisher. Its versions: 1 and 2 (the `.pgs` era), 3, 4 and 5.
 | --- | --- |
 | `libowf/src/in_pub.c`, `libowf/include/owf_pub.h` | The .pub reader (P0); in P1 it fills the deck model instead |
 | `libowf/src/owf_cfb.c` | Compound files; P0 added entries by number and storages by path |
-| `tests/pub/` | Samples, expected dumps, `pub_dump.c`, `test_pub.py`, `CORPUS.md`, `fetch_samples.sh` |
+| `tests/pub/` | Expected dumps, `pub_dump.c`, `test_pub.py`, `CORPUS.md`, `fetch_samples.sh` (outside samples, never committed) |
+| `tools/pubgen/` | `make_pub.py`: the .pub files the tests read, made from PUB-FORMAT's notes |
 | `tools/publab/` | The format lab's tools (PUB-FORMAT 1) |
 | `src/pub/` (P1) | GFOpenPublisher's portable core, host-tested, as `src/calc` |
 | `app/openpresent.c` with `OPENPUBLISHER` (P1a) | The Amiga page window, sharing Presentation's GFOpenLayout renderer rather than copying it |

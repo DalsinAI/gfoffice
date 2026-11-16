@@ -194,8 +194,12 @@ fi
 mkdir -p "$OUT/tests/samples" "$OUT/tests/fixtures"
 cp "$HERE/samples/OpenWrite-Tour.docx" "$HERE/samples/OpenWrite-Tour.odt" "$OUT/tests/samples/"
 cp "$HERE/tests/book/fixtures/book.xls" "$HERE/tests/book/fixtures/book-lo.xlsx" \
-    "$HERE/tests/book/fixtures/book-lo.ods" "$HERE/tests/pub/samples/Sample.pub" \
+    "$HERE/tests/book/fixtures/book-lo.ods" \
     "$HERE/tests/deck/fixtures/libreoffice.odp" "$OUT/tests/fixtures/"
+# Sample.pub: a .pub of our own, made by tools/pubgen/make_pub.py
+python3 "$HERE/tools/pubgen/make_pub.py" "$OUT/tests/pubgen" >/dev/null
+cp "$OUT/tests/pubgen/gen-2007-runs.pub" "$OUT/tests/fixtures/Sample.pub"
+rm -rf "$OUT/tests/pubgen"
 for name in $LIBS; do
     sha256sum "$OUT/$name.library"
 done

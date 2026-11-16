@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OC_CORE_VERSION "0.35.1"
+#define OC_CORE_VERSION "0.36.0"
 
 /* The sheet's size, as Excel 2007 and later. */
 #define OC_MAX_ROWS 1048576u
@@ -392,6 +392,15 @@ int oc_core_scenario_show(oc_core *core, int index);
 int oc_core_scenario_delete(oc_core *core, int index);
 /* A scenario's ranges as one types them: "B2:C4,E7". 0 when they do not fit. */
 int oc_core_scenario_cells_text(const oc_core *core, const owf_scenario *sc, char *out, size_t size);
+/* The scenario shown last on the active sheet (from 0), or -1. The grid
+ * draws a frame round each of its ranges (OC_DRAW_FRAME, OC_ROLE_SCENARIO,
+ * 1 pixel) and its name in a tab (OC_DRAW_FILL, OC_ROLE_SCENARIO, then its
+ * text in white, then a list button, OC_DRAW_DROPDOWN) on the first range's
+ * top left corner: above the range when there is room in its pane, else
+ * just inside it. Over the cells and charts, under the selection's outline
+ * and the active cell's frame. A click on the tab is OC_HIT_SCENARIO: the
+ * window offers the sheet's scenarios, and shows the one chosen. */
+int oc_core_scenario_active(const oc_core *core);
 
 /* Data > Solver: make a target cell as large or as small as it can be, or
  * equal to a value, by changing variable cells, under constraints. Models
@@ -497,6 +506,21 @@ int oc_core_refresh_multiple_operations(oc_core *core);
 #define OC_MULTIOP_AUTO_TRIALS 4096UL
 #define OC_MULTIOP_AUTO_CELLS 20000UL
 int oc_core_auto_multiple_operations(oc_core *core);
+/* A bigger book's tables are kept live too, a few at a time while the
+ * program is idle: past the limits above, oc_core_auto_multiple_operations
+ * works none out and marks them behind, and each call of this works out the
+ * next of them, tables in turn until their results add up to budget, in the
+ * same way (no Undo step; Undo, Redo, the selections and the unsaved-changes
+ * flag left as they were). A table with more results than budget is left for
+ * Refresh, as before, so that one call never takes long. A change to the book
+ * in between starts them over from the first. It returns how many tables it
+ * worked out (the program repaints when that is not 0), and does nothing
+ * while a cell is being edited. */
+#define OC_MULTIOP_STEP_TRIALS 1024UL
+int oc_core_auto_multiple_operations_step(oc_core *core, unsigned long budget);
+/* 1 while a big book's tables are behind its last change (the program can
+ * say so, and keeps calling the step above). */
+int oc_core_multiple_operations_behind(const oc_core *core);
 
 /* ---- Commands on the selection (each one undo step) ---- */
 
@@ -586,7 +610,7 @@ int oc_core_remove_duplicates(oc_core *core, const unsigned *cols, unsigned ncol
                               int has_header, unsigned *removed_out);
 
 /* ---- Data > Consolidate ----
- * Several source ranges (on any sheets, up to OC_CONSOLIDATE_SOURCES) are
+ * Several source ranges or names of ranges (on any sheets, up to OC_CONSOLIDATE_SOURCES) are
  * put together with one of the OC_SUBTOTAL_ functions into one table whose
  * top left cell is dest: cell by cell where they sit, or matched by the
  * labels in their first column (row_labels), their first row
@@ -606,12 +630,27 @@ typedef struct {
 } oc_consolidate_spec;
 /* SUM, no labels, no link, no sources. */
 void oc_consolidate_init(oc_consolidate_spec *spec);
+/* The defined names a source can be, for the window to offer: those the
+ * active sheet sees (its own, and the workbook's that no name of its own
+ * hides), not hidden, whose formula is one range. Their indexes for
+ * oc_core_name_at into index, in the book's order: the count (at most
+ * max). A source typed as a name (case aside) reads as its range. */
+#define OC_CONSOLIDATE_NAMES 32
+int oc_core_consolidate_names(const oc_core *core, int *index, int max);
 /* The active sheet's last settings: 1 when it has some. */
 int oc_core_consolidate_settings(const oc_core *core, oc_consolidate_spec *spec);
 /* OWF_OK (the table is selected when it is on the active sheet),
  * OWF_ERR_FORMAT (a range, the function or the destination is wrong),
  * OWF_ERR_UNSUPPORTED (too many cells or labels), OWF_ERR_MEMORY. */
 int oc_core_consolidate(oc_core *core, const oc_consolidate_spec *spec);
+/* Data > Refresh Consolidation: runs the active sheet's last consolidation
+ * again over its sources as they are now, the old table emptied first. A
+ * source typed as a range, and the destination, follow rows and columns
+ * put in or taken out (the settings then give them where they are now), so
+ * the table grows and shrinks with them; one typed as a name reads its
+ * range afresh. OWF_ERR_UNSUPPORTED when the sheet has none; otherwise as
+ * oc_core_consolidate. One Undo step. */
+int oc_core_consolidate_refresh(oc_core *core);
 
 /* ---- Pivot tables (DataPilot) ----
  * A pivot table summarises a headed source table by row, column, data and
@@ -745,6 +784,15 @@ char *oc_core_selection_text(const oc_core *core, size_t *length);
 char *oc_text_to_latin1(const char *utf8, size_t length, size_t *out_length);
 char *oc_text_from_latin1(const char *latin1, size_t length, size_t *out_length);
 
+/* ARexx: GETCELL and GETFORMULA answer in Latin-1, so a character Latin-1
+ * hasn't (a Gantt's U+25A0 bar) comes back as '?'. With the word UTF8 after the
+ * cell they answer the cell's UTF-8 as it is. oc_rexx_wants_utf8: 1 when
+ * REST (what follows the cell) is the word UTF8, any case, spaces around it.
+ * oc_rexx_utf8_copy: UTF-8 into OUT (CAP bytes with the NUL), never cutting
+ * a character in half; its length. */
+int oc_rexx_wants_utf8(const char *rest);
+size_t oc_rexx_utf8_copy(const char *utf8, char *out, size_t cap);
+
 /* ---- Styles of the selection (each one undo step) ---- */
 
 /* The active cell's style. */
@@ -849,7 +897,8 @@ enum {
     OC_HIT_COL_EDGE,        /* a column letter's right edge: drag to size it */
     OC_HIT_ROW_EDGE,
     OC_HIT_DROPDOWN,        /* the active cell's list's dropdown button (row, col: the cell) */
-    OC_HIT_FILTER           /* an AutoFilter button (row: heading, col: filtered column) */
+    OC_HIT_FILTER,          /* an AutoFilter button (row: heading, col: filtered column) */
+    OC_HIT_SCENARIO         /* the shown scenario's tab (row, col: its first cell): the list of scenarios to show */
 };
 typedef struct {
     int kind;
@@ -900,7 +949,8 @@ enum {
     OC_ROLE_NOTE,           /* behind the active cell's comment (pale yellow) */
     OC_ROLE_NOTE_LINE,      /* its frame */
     OC_ROLE_FILTER,         /* an AutoFilter's button */
-    OC_ROLE_CHART           /* a chart's area, bars and lines (its text is OC_ROLE_TEXT): rgb */
+    OC_ROLE_CHART,          /* a chart's area, bars and lines (its text is OC_ROLE_TEXT): rgb */
+    OC_ROLE_SCENARIO        /* the shown scenario's frame and its name's tab (its text is OC_ROLE_TEXT) */
 };
 enum { OC_ALIGN_LEFT, OC_ALIGN_CENTRE, OC_ALIGN_RIGHT };
 
@@ -1184,6 +1234,25 @@ void oc_core_pivot_heading(const oc_core *core, const owf_pivotdef *def, unsigne
  * "East" a text, "TRUE" a truth), else the text itself. */
 void oc_core_pivot_item(const oc_core *core, const owf_pivotdef *def, unsigned field, const char *utf8,
                         owf_pivot_page *page);
+/* A field of the pivot table's source by its heading (case aside), or by its
+ * number ("1" the source's first column): from 0, or -1. */
+int oc_core_pivot_field(const oc_core *core, const owf_pivotdef *def, const char *name);
+/* The active sheet's pivot table changed by one line of words, as ARexx's
+ * PIVOTSET takes it (a word with spaces in "double quotes"; fields as
+ * oc_core_pivot_field names them; an item as oc_core_pivot_item reads it,
+ * "(blank)" the empty one):
+ *   SORT field ASCENDING | DESCENDING | SOURCE
+ *   HIDE field item [item...]          SHOW field item [item...] | ALL
+ *   GROUP field YEARS | QUARTERS | MONTHS | NONE | start end step
+ *   NAME field group item [item...]    UNNAME field item [item...]
+ *   SHOWAS data NORMAL | ROW | COLUMN | TOTAL | INDEX
+ * (data: the data field's place, 1 the first, or its source field). The
+ * table is laid out again as one Undo step. OWF_OK; OWF_ERR_UNSUPPORTED: no
+ * pivot table here, no room (16 sorts, 32 hidden items, 8 groups, 8 groups
+ * by hand of 24 items), a field grouped one way and asked the other, or a
+ * table too large; OWF_ERR_FORMAT: words that are not one of these. out
+ * gets why, for the status line (may be NULL). */
+int oc_core_pivot_command(oc_core *core, const char *text, char *out, size_t size);
 
 /* The book as it is, written to path (a copy: the edit line, the sheet saved as
  * active and the dirty mark are left as they are; owf_export_book_file). */

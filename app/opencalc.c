@@ -71,7 +71,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenCalc 0.1.77 (14.11.2026)"
+#define VERSION_TEXT "GFOpenCalc 0.1.78 (14.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenCalc, the spreadsheet of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -107,7 +107,7 @@ enum {
     M_NAME_DEFINE, M_NAME_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
     M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE, M_CONDFMT, M_CONDFMT_CLEAR,
     M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK, M_SUBTOTALS,
-    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER, M_SCENARIOS, M_CONSOLIDATE, M_NAME_MANAGE, M_ADV_FILTER,
+    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER, M_SCENARIOS, M_CONSOLIDATE, M_CONSOLIDATE_REFRESH, M_NAME_MANAGE, M_ADV_FILTER,
     M_TEXT_COLUMNS, M_REMOVE_DUPS,
     M_PROTECT_SHEET, M_UNPROTECT_SHEET, M_CELL_PROTECT
 };
@@ -249,6 +249,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Solver...", NULL, 0, 0, (APTR)M_SOLVER },
     { NM_ITEM, "Scenarios...", NULL, 0, 0, (APTR)M_SCENARIOS },
     { NM_ITEM, "Consolidate...", NULL, 0, 0, (APTR)M_CONSOLIDATE },
+    { NM_ITEM, "Refresh Consolidation", NULL, 0, 0, (APTR)M_CONSOLIDATE_REFRESH },
     { NM_ITEM, "Multiple Operations...", NULL, 0, 0, (APTR)M_MULTIPLE_OPS },
     { NM_ITEM, "Refresh Multiple Operations", NULL, 0, 0, (APTR)M_MULTIPLE_REFRESH },
     { NM_ITEM, "Subtotals...", NULL, 0, 0, (APTR)M_SUBTOTALS },
@@ -1091,6 +1092,7 @@ static LONG role_pen(int role, unsigned long rgb)
     case OC_ROLE_COMMENT: return rgb_pen(0xD01010UL);        /* Excel's red mark */
     case OC_ROLE_NOTE: return rgb_pen(0xFFFFE1UL);           /* and its comment's pale yellow */
     case OC_ROLE_NOTE_LINE: return rgb_pen(0x808080UL);
+    case OC_ROLE_SCENARIO: return rgb_pen(0x6B7F99UL);       /* the shown scenario's frame and tab */
     }
     return rgb_pen(0xFFFFFFUL);                      /* the paper, behind typing */
 }
@@ -3682,7 +3684,7 @@ static void cs_list(const oc_consolidate_spec *spec, cs_line *lines, struct List
 static int cs_result(int rc)
 {
     if (rc == OWF_ERR_FORMAT) {
-        set_status("Give each source as a range (B2:D9, 'Q1'!A1:C20) and a destination cell outside them.");
+        set_status("Give each source as a range (B2:D9, 'Q1'!A1:C20) or a range's name, and a destination cell outside them.");
         return 0;
     }
     if (rc == OWF_ERR_UNSUPPORTED) { set_status("The sources have too many cells or labels to consolidate."); return 0; }
@@ -3703,14 +3705,27 @@ static int cs_take(char *dst, size_t size, const char *typed)
 static void do_consolidate(void)
 {
     static oc_consolidate_spec spec;
-    struct Gadget *glist = NULL, *last, *gfn, *glv, *gsrc, *gadd, *gremove, *gdest, *grows, *gcols, *glink, *gok, *gcancel;
+    struct Gadget *glist = NULL, *last, *gfn, *gnames, *glv, *gsrc, *gadd, *gremove, *gdest, *grows, *gcols, *glink, *gok,
+                  *gcancel;
     struct NewGadget ng;
     struct Window *rw = NULL;
     struct List list;
     cs_line *lines = calloc(OC_CONSOLIDATE_SOURCES, sizeof *lines);
+    /* the named ranges one may pick as a source: "Names" first, then each name */
+    static char name_text[OC_CONSOLIDATE_NAMES][OC_CONSOLIDATE_REF];
+    static STRPTR name_labels[OC_CONSOLIDATE_NAMES + 2];
+    int name_index[OC_CONSOLIDATE_NAMES], nnames;
     char typed[OC_CONSOLIDATE_REF], dest[OC_CONSOLIDATE_REF];
     int done = 0, ok = 0, sel = -1, ww = 440, wh, lh = fh + 6, rc, active = 0, k;
     if (!scr || !vi || !lines) { free(lines); return; }
+    nnames = oc_core_consolidate_names(core, name_index, OC_CONSOLIDATE_NAMES);
+    name_labels[0] = (STRPTR)(nnames ? "Named range..." : "No named ranges");
+    for (k = 0; k < nnames; ++k) {
+        const owf_defname *d = oc_core_name_at(core, name_index[k]);
+        to_latin1(d->name, strlen(d->name), name_text[k], sizeof name_text[k]);
+        name_labels[k + 1] = (STRPTR)name_text[k];
+    }
+    name_labels[nnames + 1] = NULL;
     rc = oc_edit_commit(core, OC_MOVE_NONE);
     if (rc == OC_INVALID) { validation_alert(); free(lines); return; }
     typed[0] = 0;
@@ -3737,6 +3752,9 @@ static void do_consolidate(void)
     ng.ng_LeftEdge = 100; ng.ng_TopEdge = 8; ng.ng_Width = 160; ng.ng_Height = fh + 6;
     ng.ng_GadgetText = (STRPTR)"Function"; ng.ng_GadgetID = 1;
     last = gfn = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)cs_function_labels, GTCY_Active, active, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_LeftEdge = 270; ng.ng_Width = ww - 280; ng.ng_GadgetText = NULL; ng.ng_GadgetID = 12;
+    last = gnames = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)name_labels, GTCY_Active, 0,
+                                 GA_Disabled, nnames ? FALSE : TRUE, TAG_DONE);
     ng.ng_Flags = PLACETEXT_ABOVE;
     ng.ng_LeftEdge = 10; ng.ng_TopEdge = 8 + fh + 6 + fh + 10; ng.ng_Width = ww - 20; ng.ng_Height = lh * 5 + 4;
     ng.ng_GadgetText = (STRPTR)"Source ranges"; ng.ng_GadgetID = 2;
@@ -3767,7 +3785,7 @@ static void do_consolidate(void)
     last = gok = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
     ng.ng_LeftEdge = ww - 106; ng.ng_GadgetText = (STRPTR)"Cancel"; ng.ng_GadgetID = 11;
     last = gcancel = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
-    if (!gfn || !glv || !gsrc || !gadd || !gremove || !gdest || !grows || !gcols || !glink || !gok || !gcancel) goto out;
+    if (!gfn || !gnames || !glv || !gsrc || !gadd || !gremove || !gdest || !grows || !gcols || !glink || !gok || !gcancel) goto out;
     wh = ng.ng_TopEdge + ng.ng_Height + 10;
     rw = OpenWindowTags(NULL,
         WA_Title, (ULONG)"Consolidate", WA_PubScreen, (ULONG)scr,
@@ -3796,6 +3814,10 @@ static void do_consolidate(void)
                 sel = code;
                 if (sel < spec.nsources)
                     GT_SetGadgetAttrs(gsrc, rw, NULL, GTST_String, (ULONG)lines[sel].label, TAG_DONE);
+            } else if (id == 12) {                           /* a named range: into the source box, to Add */
+                if (code >= 1 && code <= (UWORD)nnames)
+                    GT_SetGadgetAttrs(gsrc, rw, NULL, GTST_String, (ULONG)name_text[code - 1], TAG_DONE);
+                GT_SetGadgetAttrs(gnames, rw, NULL, GTCY_Active, 0, TAG_DONE);
             } else if (id == 3 || id == 4) {                 /* Return in the range, or Add */
                 sv_get_string(gsrc, rw, typed, sizeof typed);
                 if (!trim_text(typed)[0]) continue;
@@ -4676,7 +4698,10 @@ static void pv_item(const owf_pivotdef *def, unsigned field, const char *latin1,
 /* Fills def's fields from the window's choices; 0 (with a status line) when they do not make a table. */
 static int pv_collect(pv_field *fields, unsigned n, owf_pivotdef *def)
 {
-    unsigned want, i;
+    unsigned want, i, k;
+    owf_pivot_data was[OWF_PIVOT_DATA];
+    unsigned nwas = def->ndata <= OWF_PIVOT_DATA ? def->ndata : OWF_PIVOT_DATA;
+    memcpy(was, def->data, sizeof was);      /* a data field keeps how it is shown */
     def->nrow = def->ncol = def->npage = def->ndata = 0;
     for (want = 1; want <= n * 2u + 2u; ++want)
         for (i = 0; i < n; ++i) {
@@ -4695,6 +4720,12 @@ static int pv_collect(pv_field *fields, unsigned n, owf_pivotdef *def)
             if (fields[i].data && fields[i].data_order == want) {
                 if (def->ndata == OWF_PIVOT_DATA) { set_status("A pivot table takes up to 8 data fields."); return 0; }
                 def->data[def->ndata].field = i;
+                def->data[def->ndata].show = OWF_PIVOT_SHOW_NORMAL;
+                for (k = 0; k < nwas; ++k)
+                    if (was[k].field == i) {
+                        def->data[def->ndata].show = was[k].show;
+                        break;
+                    }
                 def->data[def->ndata++].function = pv_data_function[fields[i].data];
             }
         }
@@ -4887,6 +4918,7 @@ static void do_pivot_table(void)
         def.ndata = 1;
         def.data[0].field = selection.ranges[0].last_col - selection.ranges[0].first_col;
         def.data[0].function = OC_SUBTOTAL_SUM;
+        def.data[0].show = OWF_PIVOT_SHOW_NORMAL;
     }
     if (pivot_layout_window(&def, 0))
         pivot_result(oc_core_pivot_create(core, &def), "Pivot table created on a new sheet; Undo removes it.");
@@ -5869,6 +5901,16 @@ static void menu_action(ULONG id)
     case M_SOLVER: do_solver(); break;
     case M_SCENARIOS: do_scenarios(); break;
     case M_CONSOLIDATE: do_consolidate(); break;
+    case M_CONSOLIDATE_REFRESH:
+        {
+            static oc_consolidate_spec probe;
+            int rc = oc_core_consolidate_refresh(core);
+            if (rc == OWF_ERR_UNSUPPORTED && !oc_core_consolidate_settings(core, &probe))
+                set_status("The active sheet has not been consolidated (Data > Consolidate...).");
+            else if (cs_result(rc))
+                refresh();
+        }
+        break;
     case M_MULTIPLE_OPS: do_multiple_operations(); break;
     case M_MULTIPLE_REFRESH:
         {
@@ -6125,6 +6167,7 @@ static int rexx_pivot(const char *arg, char *out, size_t size)
             else if (mode == 2 && def.ncol < OWF_PIVOT_FIELDS) def.col[def.ncol++] = col;
             else if (mode == 3 && def.ndata < OWF_PIVOT_DATA && subtotal_function(sep + 1)) {
                 def.data[def.ndata].field = col;
+                def.data[def.ndata].show = OWF_PIVOT_SHOW_NORMAL;
                 def.data[def.ndata++].function = subtotal_function(sep + 1);
             } else if (mode == 4 && def.npage < OWF_PIVOT_PAGES)
                 pv_item(&def, col, sep + 1, &def.page[def.npage++]);
@@ -6311,7 +6354,8 @@ static int rexx_scenario(const char *arg, char *out, size_t size, int *now)
 }
 
 /* CONSOLIDATE function range [range ...] TO cell [ROWLABELS] [COLUMNLABELS] [LINK]: Data > Consolidate. A range
- * with spaces (a sheet's name) in double quotes. 1 done. */
+ * with spaces (a sheet's name) in double quotes. CONSOLIDATE REFRESH: the active sheet's last one again, over its
+ * sources as they are now. 1 done. */
 static int rexx_consolidate(const char *arg, char *out, size_t size)
 {
     static oc_consolidate_spec spec;
@@ -6319,6 +6363,15 @@ static int rexx_consolidate(const char *arg, char *out, size_t size)
     const char *p = rexx_word(arg, word, sizeof word);
     int to = 0, rc;
     oc_consolidate_init(&spec);
+    if (!strcasecmp(word, "REFRESH")) {
+        rc = oc_core_consolidate_refresh(core);
+        if (rc == OWF_ERR_UNSUPPORTED && !oc_core_consolidate_settings(core, &spec))
+            snprintf(status, sizeof status, "The active sheet has not been consolidated");
+        else
+            cs_result(rc);
+        snprintf(out, size, "%s", rc == OWF_OK ? "OK" : status);
+        return rc == OWF_OK;
+    }
     if (!(spec.function = subtotal_function(word))) {
         snprintf(out, size, "CONSOLIDATE: SUM, COUNT, AVERAGE, MAX, MIN, PRODUCT, COUNTA, STDEV, STDEVP, VAR or VARP first");
         return 0;
@@ -6647,18 +6700,22 @@ static int rexx_do_command(const char *command, char **result_out)
         else if (oc_core_comment_info(core, oc_core_sheet(core), row, col, text, sizeof text, NULL, 0, NULL) >= 0)
             to_latin1(text, strlen(text), result_text, sizeof result_text);
     } else if (starts_word_ci(command, "GETCELL", &arg)) {
-        if (!rexx_cell(arg, &row, &col, NULL)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a cell"); }
+        const char *rest;   /* GETCELL cell [UTF8]: UTF8 answers the cell's UTF-8, not Latin-1's '?' for U+25A0 */
+        if (!rexx_cell(arg, &row, &col, &rest)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a cell"); }
         else {
             char shown[512];
             oc_core_cell_text(core, oc_core_sheet(core), row, col, shown, sizeof shown);
-            to_latin1(shown, strlen(shown), result_text, sizeof result_text);
+            if (oc_rexx_wants_utf8(rest)) oc_rexx_utf8_copy(shown, result_text, sizeof result_text);
+            else to_latin1(shown, strlen(shown), result_text, sizeof result_text);
         }
     } else if (starts_word_ci(command, "GETFORMULA", &arg)) {
-        if (!rexx_cell(arg, &row, &col, NULL)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a cell"); }
+        const char *rest;
+        if (!rexx_cell(arg, &row, &col, &rest)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a cell"); }
         else {
             char *in = oc_core_cell_input(core, oc_core_sheet(core), row, col);
-            if (in) to_latin1(in, strlen(in), result_text, sizeof result_text);
-            else ok = 0;
+            if (!in) ok = 0;
+            else if (oc_rexx_wants_utf8(rest)) oc_rexx_utf8_copy(in, result_text, sizeof result_text);
+            else to_latin1(in, strlen(in), result_text, sizeof result_text);
             owf_free(in);
         }
     } else if (starts_word_ci(command, "SETCELL", &arg)) {
@@ -7036,6 +7093,32 @@ static void pick_from_list(int bx, int by, int bw, int bh)
     refresh();
 }
 
+/* The shown scenario's tab: the sheet's scenarios in a list under it; the one chosen is shown. */
+static void pick_scenario(int bx, int by, int bw, int bh)
+{
+    char **items;
+    int n = oc_core_scenario_count(core), i, got = 0, chosen, now = oc_core_scenario_active(core);
+    if (n <= 0) return;
+    items = calloc((size_t)n, sizeof *items);
+    if (!items) { set_status("Not enough memory for the list."); return; }
+    for (i = 0; i < n; ++i) {
+        owf_scenario sc;
+        if (!oc_core_scenario_get(core, i, &sc)) break;
+        items[i] = malloc(strlen(sc.name) + 1);
+        if (items[i]) strcpy(items[i], sc.name);
+        owf_scenario_free(&sc);
+        if (!items[i]) break;
+        got++;
+    }
+    chosen = got == n ? choice_popup(bx, by, bw, bh, items, n, now >= 0 ? items[now] : "") : -1;
+    if (got != n) set_status("Not enough memory for the list.");
+    if (chosen >= 0 && chosen != now && result(oc_core_scenario_show(core, chosen), NULL))
+        set_status("Scenario shown; Undo puts the old values back.");
+    for (i = 0; i < got; ++i) free(items[i]);
+    free(items);
+    refresh();
+}
+
 static int filter_condition_text(const char *text, int *op, const char **value)
 {
     while (*text == ' ' || *text == '\t') text++;
@@ -7234,6 +7317,10 @@ static void grid_press(int mx, int my, UWORD qual, ULONG secs, ULONG micros)
     oc_view_hit(core, mx - grid_box.x, my - grid_box.y, &hit);
     if (hit.kind == OC_HIT_DROPDOWN) {               /* the list's button: its choices */
         pick_from_list(grid_box.x + hit.x, grid_box.y + hit.y, hit.w, hit.h);
+        return;
+    }
+    if (hit.kind == OC_HIT_SCENARIO) {               /* the shown scenario's tab: the sheet's scenarios */
+        pick_scenario(grid_box.x + hit.x, grid_box.y + hit.y, hit.w, hit.h);
         return;
     }
     if (hit.kind == OC_HIT_FILTER) {                 /* an AutoFilter heading's distinct values */
@@ -7496,7 +7583,9 @@ static void events(void)
             if (mouse_down && !resizing && !chart_drag) {   /* held past the edge: keep scrolling */
                 int x = mx - grid_box.x, y = my - grid_box.y;
                 if (x < 0 || y < 0 || x >= grid_box.w || y >= grid_box.h) grid_drag(mx, my);
-            }
+            } else if (core && !mouse_down && !resizing && !chart_drag &&
+                       oc_core_auto_multiple_operations_step(core, OC_MULTIOP_STEP_TRIALS))
+                refresh();      /* a big book's Multiple Operations tables, a few at a time while idle */
             break;
         case IDCMP_MOUSEBUTTONS:
             if (code == SELECTDOWN) {

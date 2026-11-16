@@ -94,6 +94,17 @@ static int fill_object(owf_obj *o, const owf_pub_frame *f, const owf_pub *pub, i
         o->shape = OWF_SHAPE_RECT;
         o->look.line = OWF_SHADE(0x000000);
     }
+    /* the file's own look over those defaults (PUB-FORMAT.md 7.4) */
+    if (f->filled == 1) o->look.fill = OWF_SHADE(f->fill);
+    else if (f->filled == 0) o->look.fill = 0;
+    if (f->lined == 1) o->look.line = OWF_SHADE(f->line);
+    else if (f->lined == 0) o->look.line = 0;
+    if (f->line_width >= 0) o->look.line_width = (int)((f->line_width + 317) / 635);
+    {
+        int k;
+        for (k = 0; k < 4; k++)
+            if (f->inset[k] >= 0) o->inset[k] = (int)((f->inset[k] + 317) / 635);
+    }
     if (f->kind == OWF_PUB_TABLE) o->ncols = f->cols > 0 ? f->cols : 1;
     if (f->story >= 0 && f->story < pub->nstories && copy_story(&o->text, &pub->stories[f->story]) < 0)
         return -1;

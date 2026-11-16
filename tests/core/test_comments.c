@@ -3,7 +3,8 @@
  * the editor, undo, and the comments through ODT and DOCX and out to formats without them. Word's and
  * OpenOffice's forms of the files are made here by hand from the formats' specifications (ECMA-376 part 1,
  * 17.13.4; [MS-DOCX] 2.5.39 for commentsExtended; ODF 1.3 part 3, 14.1), so no document from either program
- * goes into the repository. make comments-test, make comments-check (ASan).
+ * goes into the repository. 2.0.36: the comments printed, through "pdf-comments". make comments-test, make
+ * comments-check (ASan).
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include <stdio.h>
@@ -290,6 +291,92 @@ static void test_other_formats(void)
     owf_doc_free(doc);
 }
 
+static unsigned char *pdf_of(const owf_doc *doc, const char *format, const char *tag, size_t *n, owf_report *rp)
+{
+    unsigned char *data = NULL;
+    char path[64];
+    FILE *f;
+    long size;
+    *n = 0;
+    snprintf(path, sizeof path, "/tmp/openwrite-comments-%s%s.pdf", tag, format);
+    if (owf_export_file(doc, path, format, rp) != OWF_OK) return NULL;
+    if (!(f = fopen(path, "rb"))) return NULL;
+    if (fseek(f, 0, SEEK_END) == 0 && (size = ftell(f)) > 0 && fseek(f, 0, SEEK_SET) == 0 &&
+        (data = (unsigned char *)malloc((size_t)size + 1)) != NULL) {
+        *n = fread(data, 1, (size_t)size, f);
+        data[*n] = 0;
+    }
+    fclose(f);
+    return data;
+}
+
+/* how many times s is in the PDF's bytes */
+static int pdf_count(const unsigned char *pdf, size_t n, const char *s)
+{
+    size_t m = strlen(s), i;
+    int c = 0;
+    for (i = 0; m && i + m <= n; ++i)
+        if (!memcmp(pdf + i, s, m)) ++c;
+    return c;
+}
+
+/* 2.0.36: Print Comments: the PDF with the comments, a raised mark where each is and the list after the text */
+static void test_print_comments(void)
+{
+    static const char *const plain_text[] = { "No comments here" };
+    owf_doc *doc = commented_doc(), *plain = doc_of(plain_text, 1);
+    owf_report *rp = owf_report_new();
+    unsigned char *with = NULL, *without = NULL, *a = NULL, *b = NULL;
+    size_t nw = 0, no = 0, na = 0, nb = 0;
+    int i, kept = 0;
+    char when[24];
+    if (!doc || !plain || !rp) { CHECK(0, "document"); goto out; }
+    CHECK(owf_format_named("pdf-comments") != NULL, "the pdf-comments format");
+    CHECK(owf_format_for_filename("Letter.pdf") == owf_format_named("pdf"), "a .pdf name is still plain pdf");
+    with = pdf_of(doc, "pdf-comments", "", &nw, NULL);
+    without = pdf_of(doc, "pdf", "", &no, rp);
+    CHECK(with && nw > 0 && without && no > 0, "both PDFs written");
+    if (!with || !without) goto out;
+    /* the marks: the ranged comment [1], its reply [2] beside it, the done one [3] in the second paragraph; each
+     * in the text once and in the list once, and [1] again where the reply says what it answers */
+    CHECK(pdf_count(with, nw, "([1]) Tj") == 3 && pdf_count(with, nw, "([2]) Tj") == 2 &&
+          pdf_count(with, nw, "([3]) Tj") == 2, "each mark in the text and in the list");
+    CHECK(pdf_count(with, nw, "(Comments) Tj") == 1, "the list's heading");
+    CHECK(pdf_count(with, nw, "(Which) Tj") == 1 && pdf_count(with, nw, "(<fox>?) Tj") == 1 &&
+          pdf_count(with, nw, "(red) Tj") == 1 && pdf_count(with, nw, "(brown) Tj") == 1 &&
+          pdf_count(with, nw, "(Over.) Tj") == 1, "every comment's text, each paragraph of it");
+    CHECK(pdf_count(with, nw, "(Ann) Tj") == 1 && pdf_count(with, nw, "(Bob,) Tj") == 2, "who wrote each");
+    snprintf(when, sizeof when, "(%.10s) Tj", doc->comments[0].date ? doc->comments[0].date : "");
+    CHECK(doc->comments[0].date && pdf_count(with, nw, when) >= 1, "the date, without its T");
+    CHECK(pdf_count(with, nw, "(answering) Tj") == 1, "the reply names the comment it answers");
+    CHECK(pdf_count(with, nw, "(done) Tj") == 1, "the done one says so");
+    /* the order: the text, then the list */
+    {
+        const char *body = strstr((const char *)with, "(jumps) Tj"), *list = strstr((const char *)with, "(Comments) Tj");
+        CHECK(body && list && body < list, "the list after the text");
+    }
+    /* plain pdf, as before: no marks, no list, and the report says where they are */
+    CHECK(!pdf_count(without, no, "([1]) Tj") && !pdf_count(without, no, "(Comments) Tj") &&
+          !pdf_count(without, no, "(Which) Tj"), "plain pdf leaves the comments out");
+    CHECK(pdf_count(without, no, "(jumps) Tj") == 1, "plain pdf has the text");
+    for (i = 0; i < owf_report_count(rp); ++i) {
+        owf_note_level level;
+        const char *note = owf_report_note(rp, i, &level, NULL);
+        if (note && strstr(note, "pdf-comments keeps them")) kept = 1;
+    }
+    CHECK(kept, "the plain pdf's report names pdf-comments");
+    /* a document without comments: the same PDF either way */
+    a = pdf_of(plain, "pdf", "plain-", &na, NULL);
+    b = pdf_of(plain, "pdf-comments", "plain-", &nb, NULL);
+    CHECK(a && b && na == nb && !memcmp(a, b, na), "no comments: the same bytes");
+    CHECK(!strcmp(dump(doc), commented_dump), dump(doc));
+out:
+    free(with); free(without); free(a); free(b);
+    owf_report_free(rp);
+    owf_doc_free(doc);
+    owf_doc_free(plain);
+}
+
 static int zip_import(const char *const *names, const char *const *parts, int n, owf_doc **doc)
 {
     owf_buf out;
@@ -382,6 +469,76 @@ static void test_odf_form(void)
     owf_doc_free(doc);
 }
 
+/* 2.0.39: Show Comments By: the authors listed once; the filter marks which comments the margin shows, and
+ * Next/Previous Comment go only to threads with one shown; the document is not changed */
+static void test_filter(void)
+{
+    owf_doc *doc = commented_doc();
+    ow_editor *ed = doc ? ow_editor_new(doc) : NULL;
+    ow_comment_info info;
+    char names[8][72];
+    int i, n, shown[3];
+    CHECK(ed != NULL, "editor");
+    if (!ed) { owf_doc_free(doc); return; }
+    n = ow_editor_comment_authors(ed, names, 8);
+    CHECK(n == 2 && !strcmp(names[0], "Ann & co") && !strcmp(names[1], "Bob"), "the authors, once each");
+    CHECK(ow_editor_comment_authors(ed, names, 1) == 1, "no more than max");
+    CHECK(!ow_editor_comment_filter(ed), "everyone's at first");
+    for (i = 0; i < 3; ++i) shown[i] = ow_editor_comment_info(ed, i, &info) && info.shown;
+    CHECK(shown[0] && shown[1] && shown[2], "all shown");
+
+    CHECK(ow_editor_set_comment_filter(ed, "Bob") == OWF_OK && !strcmp(ow_editor_comment_filter(ed), "Bob"), "Bob's");
+    for (i = 0; i < 3; ++i) shown[i] = ow_editor_comment_info(ed, i, &info) && info.shown;
+    CHECK(!shown[0] && shown[1] && shown[2], "Ann's comment not shown, Bob's reply and comment shown");
+    caret(ed, 0, 0);
+    CHECK(ow_editor_next_comment(ed, 0) == 1 && ow_editor_current_comment(ed, &info) && info.index == 1,
+          "Next: Bob's reply (2.0.40), not Ann's hidden comment it answers");
+    CHECK(ow_editor_set_comment_text(ed, "The brown one!") == OWF_OK &&
+          ow_editor_comment_info(ed, 1, &info) && !strcmp(info.text, "The brown one!") &&
+          ow_editor_comment_info(ed, 0, &info) && !strcmp(info.text, "Which <fox>?\nThe red one."),
+          "Edit Comment changes the reply, not Ann's");
+    ow_editor_undo(ed);
+    CHECK(ow_editor_next_comment(ed, 0) == 1 && ow_editor_current_comment(ed, &info) && info.index == 2,
+          "Next again: Bob's comment");
+
+    CHECK(ow_editor_set_comment_filter(ed, "Ann & co") == OWF_OK, "Ann's");
+    for (i = 0; i < 3; ++i) shown[i] = ow_editor_comment_info(ed, i, &info) && info.shown;
+    CHECK(shown[0] && !shown[1] && !shown[2], "only Ann's");
+    caret(ed, 0, 0);
+    CHECK(ow_editor_next_comment(ed, 0) == 1 && ow_editor_current_comment(ed, &info) && info.index == 0, "Next: Ann's");
+    CHECK(ow_editor_next_comment(ed, 0) == 2 && ow_editor_current_comment(ed, &info) && info.index == 0,
+          "Next again: round to it, past Bob's");
+    CHECK(ow_editor_next_comment(ed, 1) == 2 && ow_editor_current_comment(ed, &info) && info.index == 0,
+          "Previous: the same");
+
+    CHECK(ow_editor_set_comment_filter(ed, "Nobody") == OWF_OK && ow_editor_next_comment(ed, 0) == 0, "no one's: none");
+    CHECK(ow_editor_set_comment_filter(ed, "") == OWF_OK && !ow_editor_comment_filter(ed), "\"\": everyone's again");
+    CHECK(ow_editor_set_comment_filter(ed, NULL) == OWF_OK && ow_editor_comment_info(ed, 0, &info) && info.shown, "NULL too");
+    CHECK(!strcmp(dump(doc), commented_dump), dump(doc));
+
+    /* 2.0.40: a name longer than the list keeps (71 bytes): picked from the list, its comments are shown */
+    {
+        char longname[96], cut[72];
+        memset(longname, 'L', 80);
+        longname[80] = 0;
+        ow_editor_set_review_author(ed, longname);
+        caret(ed, 1, 0);
+        CHECK(ow_editor_insert_comment(ed, "Long.") == OWF_OK, "a long name's comment");
+        n = ow_editor_comment_authors(ed, names, 8);
+        CHECK(n == 3 && strlen(names[2]) == 71, "the list cuts it at 71");
+        memcpy(cut, names[2], sizeof cut);
+        CHECK(ow_editor_set_comment_filter(ed, cut) == OWF_OK, "filter by the cut name");
+        for (i = 0, n = 0; ow_editor_comment_info(ed, i, &info); ++i) n += info.shown;
+        CHECK(n == 1 && ow_editor_comment_info(ed, 2, &info) && !strcmp(info.text, "Long.") && info.shown,
+              "its comment shown, and only it");
+        cut[70] = 0;
+        CHECK(ow_editor_set_comment_filter(ed, cut) == OWF_OK && ow_editor_comment_info(ed, 2, &info) && !info.shown,
+              "a shorter name is not a start");
+    }
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+}
+
 int main(void)
 {
     test_editing();
@@ -390,8 +547,10 @@ int main(void)
     /* ODF keeps no replies or done: they come back as comments of their own */
     test_round_trip("odt", "The <quick[Which <fox>?\nThe red one.][The brown one.] fox|jumps[Over.] over");
     test_other_formats();
+    test_print_comments();
     test_word_form();
     test_odf_form();
+    test_filter();
     printf("comments: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

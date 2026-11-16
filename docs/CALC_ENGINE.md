@@ -173,7 +173,14 @@ changed the book, `oc_core_auto_multiple_operations` works each table out
 again, with no Undo step of its own and Undo, Redo, the selections and the
 unsaved-changes flag left as they were. That happens while the tables have
 at most 4096 results together and the book at most 20,000 cells, so typing
-stays quick on a 68040; past that, Refresh does it by hand. ARexx `MULTIOP
+stays quick on a 68040. Past that they are kept live too, but not at once:
+they are marked behind, and while GFOpenCalc is idle (its window's ticks,
+ten a second) `oc_core_auto_multiple_operations_step` works out the next of
+them, tables in turn until about 1024 results (`OC_MULTIOP_STEP_TRIALS`). A
+table with more results than that is left for Refresh, as before, so that a
+tick never holds the window up. A change in between starts them over from the
+first, and Refresh still does the table at the cursor at once. ARexx commands read a
+big book's tables as the last idle tick left them. ARexx `MULTIOP
 trials formula input` makes a column table.
 
 ## Grouped subtotal authoring
@@ -259,6 +266,13 @@ test of 13 Nov:
   has no such glyphs, so it showed "?" before. Text with anything else in it
   stays text. ARexx `GETCELL` still returns Latin-1, so it gives "?" for these
   cells (#178).
+
+GFOpenCalc 0.1.78 (`opencalc_core.h` 0.36.0):
+- ARexx `GETCELL` and `GETFORMULA` take the word `UTF8` after the cell
+  (`GETCELL G2 UTF8`). Then they answer the cell's UTF-8 as it is, so a
+  script can see a Gantt's "■" (E2 96 A0) instead of Latin-1's "?". The
+  answer is never cut in the middle of a character. Without the word, the
+  answer is Latin-1 as before.
 
 ## Pivot-summary aggregation
 

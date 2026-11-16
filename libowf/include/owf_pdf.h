@@ -12,7 +12,8 @@
  * outside it is drawn as "?". Text is fitted to the width the layout
  * measured (PDF's horizontal scaling), so the PDF breaks lines where the
  * layout did, whatever fonts the layout measured with. Pictures: JPEG as
- * it is, PNG decoded (as out_pdf.c does). No floating point.
+ * it is, PNG decoded (as out_pdf.c does), WMF played as paths and text
+ * (owf_metafile.c). No floating point.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OWF_PDF_H
@@ -47,7 +48,7 @@ int owf_pdf_path(owf_pdf *pdf, const int *xy, int npoints, int closed, unsigned 
 void owf_pdf_dash(owf_pdf *pdf, int dash);
 /* A picture in the box x, y, w, h; with clip, only what is inside it shows
  * (a cropped picture). 0, or -1 when memory runs out; a picture the PDF
- * can't hold (only JPEG and PNG) is left out and reported at the end. */
+ * can't hold (only JPEG, PNG and WMF) is left out and reported at the end. */
 int owf_pdf_image(owf_pdf *pdf, const owf_image *image, int x, int y, int w, int h, const int *clip);
 /* A link to href over the box. */
 int owf_pdf_link(owf_pdf *pdf, int x, int y, int w, int h, const char *href);

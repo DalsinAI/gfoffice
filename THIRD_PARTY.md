@@ -16,8 +16,6 @@ own licences.
 
 | Part | What for | Licence | How |
 | --- | --- | --- | --- |
-| Apache POI's Publisher test files | `tests/pub/samples`: the .pub reader's tests | Apache-2.0 (`licenses/Apache-2.0.txt`; POI's notice in `tests/pub/samples/NOTICE-Apache-POI.txt`) | Sample files only, no code; sources and checksums in `tests/pub/CORPUS.md` |
-| gabriel-vasile/mimetype's `testdata/pub.pub` | `tests/pub/samples/mimetype-pub.pub`: a cut-short file | MIT (`licenses/MIT-gabriel-vasile-mimetype.txt`) | The same |
 
 ## Runtime/system integrations
 
