@@ -7249,6 +7249,109 @@ static void test_consolidate(void)
     oc_core_free(core);
 }
 
+/* Refresh Consolidation: the sources and destination follow rows put in and taken out, and the table
+   grows and shrinks with them. */
+static void test_consolidate_refresh(void)
+{
+    oc_core *core = fresh();
+    oc_consolidate_spec spec, back;
+    if (!core)
+        return;
+    CHECK(oc_core_consolidate_refresh(core) == OWF_ERR_UNSUPPORTED);      /* nothing to refresh */
+    enter_at(core, "A1", "East");
+    enter_at(core, "B1", "10");
+    enter_at(core, "A2", "West");
+    enter_at(core, "B2", "1");
+    CHECK(oc_core_add_sheet(core, "Q2") == 1);
+    enter_at(core, "A1", "west");
+    enter_at(core, "B1", "5");
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    oc_consolidate_init(&spec);
+    spec.nsources = 2;
+    snprintf(spec.source[0], sizeof spec.source[0], "A1:B2");
+    snprintf(spec.source[1], sizeof spec.source[1], "'Q2'!A1:B1");
+    snprintf(spec.dest, sizeof spec.dest, "A10");
+    spec.row_labels = 1;
+    CHECK(oc_core_consolidate(core, &spec) == OWF_OK);
+    CHECK_STR(text(core, "A11"), "West");
+    CHECK(num(core, "B10") == 10 && num(core, "B11") == 6);
+    /* a row put in inside the first source: it, and the table below, follow */
+    oc_core_select_cell(core, 1, 0, 0, 0);
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    enter_at(core, "A2", "North");
+    enter_at(core, "B2", "4");
+    CHECK(oc_core_consolidate_settings(core, &back) == 1);
+    CHECK_STR(back.source[0], "A1:B3");
+    CHECK_STR(back.source[1], "'Q2'!A1:B1");
+    CHECK_STR(back.dest, "A11");
+    CHECK(oc_core_consolidate_refresh(core) == OWF_OK);
+    CHECK_STR(text(core, "A11"), "East");
+    CHECK_STR(text(core, "A12"), "North");
+    CHECK_STR(text(core, "A13"), "West");
+    CHECK(num(core, "B11") == 10 && num(core, "B12") == 4 && num(core, "B13") == 6);
+    /* Undo takes the refresh back as one step */
+    CHECK(oc_core_undo(core) == OWF_OK && empty(core, "A13") && num(core, "B12") == 6);
+    CHECK(oc_core_redo(core) == OWF_OK && num(core, "B13") == 6);
+    /* the row taken out again: the table shrinks, nothing of the old one left behind */
+    oc_core_select_cell(core, 1, 0, 0, 0);
+    CHECK(oc_core_delete(core, 0) == OWF_OK);
+    CHECK(oc_core_consolidate_settings(core, &back) == 1);
+    CHECK_STR(back.source[0], "A1:B2");
+    CHECK_STR(back.dest, "A10");
+    CHECK_STR(text(core, "A12"), "West");                  /* the old table, a row up */
+    CHECK(oc_core_consolidate_refresh(core) == OWF_OK);
+    CHECK_STR(text(core, "A10"), "East");
+    CHECK_STR(text(core, "A11"), "West");
+    CHECK(num(core, "B11") == 6 && empty(core, "A12") && empty(core, "B12"));
+    /* a row put in above the other sheet's source: it moves, the table is the same */
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    oc_core_select_cell(core, 0, 0, 0, 0);
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    CHECK(oc_core_consolidate_settings(core, &back) == 1);
+    CHECK_STR(back.source[1], "'Q2'!A2:B2");
+    CHECK(oc_core_consolidate_refresh(core) == OWF_OK && num(core, "B11") == 6);
+    /* linked: refreshed, the formulas reach the new rows */
+    spec.link = 1;
+    snprintf(spec.source[1], sizeof spec.source[1], "'Q2'!A2:B2");
+    CHECK(oc_core_consolidate(core, &spec) == OWF_OK && num(core, "B11") == 6);
+    oc_core_select_cell(core, 1, 0, 0, 0);
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    enter_at(core, "A2", "South");
+    enter_at(core, "B2", "100");
+    CHECK(oc_core_consolidate_refresh(core) == OWF_OK);
+    CHECK_STR(text(core, "A12"), "South");
+    CHECK(num(core, "B12") == 100 && strstr(formula(core, "B12"), "SUM(") == formula(core, "B12"));
+    CHECK(num(core, "B13") == 6 && empty(core, "A14"));
+    enter_at(core, "B2", "200");                           /* and follow their sources */
+    CHECK(num(core, "B12") == 200);
+    /* kept in an Excel workbook: reopened, a row put in still grows the table on Refresh */
+    CHECK(oc_core_save(core, "build/host/calc-core-consolidate.xlsx", NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, "build/host/calc-core-consolidate.xlsx", NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    oc_core_select_cell(core, 1, 0, 0, 0);
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    enter_at(core, "A2", "Central");
+    enter_at(core, "B2", "7");
+    CHECK(oc_core_consolidate_settings(core, &back) == 1);
+    CHECK_STR(back.source[0], "A1:B4");
+    CHECK_STR(back.dest, "A12");
+    CHECK(oc_core_consolidate_refresh(core) == OWF_OK);
+    CHECK_STR(text(core, "A13"), "Central");
+    CHECK(num(core, "B13") == 7 && num(core, "B14") == 200 && num(core, "B15") == 6 && empty(core, "A16"));
+    remove("build/host/calc-core-consolidate.xlsx");
+    /* a row put in inside the table: Refresh empties it too, nothing of the old table left below */
+    oc_core_select_cell(core, 13, 0, 0, 0);
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    CHECK_STR(text(core, "A16"), "West");                  /* the old last row, pushed down */
+    CHECK(oc_core_consolidate_refresh(core) == OWF_OK);
+    CHECK_STR(text(core, "A15"), "West");
+    CHECK(empty(core, "A16") && empty(core, "B16"));
+    /* another sheet has none */
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK && oc_core_consolidate_refresh(core) == OWF_ERR_UNSUPPORTED);
+    oc_core_free(core);
+}
+
 /* The shown scenario's frame round each range and its name's tab, in the grid's draw list. */
 static int scenario_items(const oc_draw_list *l, int kind, int *first)
 {
@@ -7523,6 +7626,7 @@ int main(void)
     test_solver_lp();
     test_solver();
     test_scenarios();
+    test_consolidate_refresh();
     test_scenario_frame();
     test_consolidate();
     test_consolidate_names();

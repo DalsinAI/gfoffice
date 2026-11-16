@@ -19,8 +19,29 @@ docs/gfoffice/Impress-Parity.md.
 | 12 Nov 2026 | 0.6.30 | 81% | P7: the Master view and Slide Design |
 | 12 Nov 2026 | 0.6.31 | 83% | P8: slides on the clipboard, Insert Slides from File |
 | 12 Nov 2026 | 0.6.32 | 84% | P9: Export as Pictures (PNG, IFF ILBM); Phase 2 done |
+| 16 Nov 2026 | 0.6.32 | 85% | WMF and EMF pictures drawn on the slide and in the PDF (#232, #267, #278, #279): charts' and objects' replacement pictures and clip art from PPTX and ODP show as drawn, not left out |
 
 Phase 1 target: 76% after P1 to P5. Phase 2 (P6 to P9) aims at 84%.
+
+Re-scored 16 Nov 2026 against main 72b77cb, counting only what is merged.
+The program is still 0.6.32; the step comes from libowf, which Presentation
+shares with Publisher. A WMF or EMF picture (lines, shapes, text, arcs,
+chords, pies and ArcTo) is drawn on screen through `owf_metafile_render`
+and as vectors in the PDF. PowerPoint and Impress often keep a chart's or
+an embedded object's look as such a picture, so those now show as drawn.
+
+**Waiting to merge, not scored:** #291 (clipping in WMF and EMF pictures),
+#248 > #253 > #262 (gradient fills from ODP and PPTX, in the PDF, on screen,
+and gradient slide backgrounds; #248 waits for gfopenlayout #66), #281
+(the show on a screen of its own).
+
+**Largest gaps, workflow-weighted:**
+1. Fills: gradient, hatching, bitmap and transparency on objects and
+   backgrounds, and shadows (gradients are in the chain above).
+2. Charts and embedded objects: kept and drawn as their picture, not
+   edited.
+3. Spelling: Presentation has no spell check yet; tables also lack merged
+   cells, row heights and designs.
 
 ## Phase 1 deliverables
 

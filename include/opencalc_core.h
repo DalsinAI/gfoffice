@@ -643,6 +643,14 @@ int oc_core_consolidate_settings(const oc_core *core, oc_consolidate_spec *spec)
  * OWF_ERR_FORMAT (a range, the function or the destination is wrong),
  * OWF_ERR_UNSUPPORTED (too many cells or labels), OWF_ERR_MEMORY. */
 int oc_core_consolidate(oc_core *core, const oc_consolidate_spec *spec);
+/* Data > Refresh Consolidation: runs the active sheet's last consolidation
+ * again over its sources as they are now, the old table emptied first. A
+ * source typed as a range, and the destination, follow rows and columns
+ * put in or taken out (the settings then give them where they are now), so
+ * the table grows and shrinks with them; one typed as a name reads its
+ * range afresh. OWF_ERR_UNSUPPORTED when the sheet has none; otherwise as
+ * oc_core_consolidate. One Undo step. */
+int oc_core_consolidate_refresh(oc_core *core);
 
 /* ---- Pivot tables (DataPilot) ----
  * A pivot table summarises a headed source table by row, column, data and
