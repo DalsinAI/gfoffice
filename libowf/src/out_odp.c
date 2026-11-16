@@ -962,8 +962,34 @@ static void put_alt(owf_buf *out, const owf_obj *o)
     }
 }
 
+/* The merge whose first cell is row, col; or (cover) the one that covers it otherwise. */
+static const owf_table_merge *table_merge_at(const owf_obj *o, int row, int col, int cover)
+{
+    int i;
+    for (i = 0; o->merges && i < o->nmerges; i++) {
+        const owf_table_merge *m = &o->merges[i];
+        int first = m->row == row && m->col == col;
+        if (cover ? !first && row >= m->row && row < m->row + m->rows && col >= m->col && col < m->col + m->cols
+                  : first)
+            return m;
+    }
+    return NULL;
+}
+
+/* A cell with nothing in it: covered by a merge, or empty. */
+static void put_empty_cell(owf_buf *out, const owf_obj *o, int row, int col)
+{
+    owf_buf_puts(out, table_merge_at(o, row, col, 1) ? "<table:covered-table-cell/>" : "<table:table-cell/>");
+}
+
 static void put_table(odpw *w, owf_buf *out, const owf_obj *o)
 {
+    static const struct { const char *attr; unsigned flag; } design[] = {
+        { "table:use-first-row-styles", OWF_TABLE_FIRST_ROW }, { "table:use-last-row-styles", OWF_TABLE_LAST_ROW },
+        { "table:use-first-column-styles", OWF_TABLE_FIRST_COL }, { "table:use-last-column-styles", OWF_TABLE_LAST_COL },
+        { "table:use-banding-rows-styles", OWF_TABLE_BANDED_ROWS },
+        { "table:use-banding-columns-styles", OWF_TABLE_BANDED_COLS },
+    };
     int ncols = o->ncols > 0 ? o->ncols : 1, i = 0, c, row;
     char name[32];
     owf_buf body;
@@ -974,7 +1000,17 @@ static void put_table(odpw *w, owf_buf *out, const owf_obj *o)
             ncols = o->text.paras[c].table_cols;
     if (ncols > 64)
         ncols = 64;
-    owf_buf_puts(out, "<table:table>");
+    /* its design: the template's name and which of its parts are on */
+    owf_buf_puts(out, "<table:table");
+    if (o->table_style && *o->table_style) {
+        owf_buf_puts(out, " table:template-name=\"");
+        owf_buf_put_xml(out, o->table_style, strlen(o->table_style));
+        owf_buf_putc(out, '"');
+    }
+    for (c = 0; c < (int)(sizeof design / sizeof design[0]); c++)
+        if (o->table_design & design[c].flag)
+            owf_buf_printf(out, " %s=\"true\"", design[c].attr);
+    owf_buf_putc(out, '>');
     for (c = 0; c < ncols; c++) {
         int width = o->col_widths && c < o->ncols ? o->col_widths[c] : o->width / ncols;
         body.length = 0;
@@ -986,16 +1022,44 @@ static void put_table(odpw *w, owf_buf *out, const owf_obj *o)
     }
     while (i < o->text.nparas) {
         int col = 0;
+        const owf_table_merge *m;
         row = o->text.paras[i].table_row;
-        owf_buf_puts(out, "<table:table-row>");
+        owf_buf_puts(out, "<table:table-row");
+        if (o->row_heights && row >= 0 && row < o->nrows && o->row_heights[row] > 0) {
+            /* its height: the least it is (Impress's row height) */
+            body.length = 0;
+            owf_buf_puts(&body, "<style:table-row-properties");
+            len_attr(&body, "style:row-height", o->row_heights[row]);
+            owf_buf_puts(&body, "/>");
+            reg_style(w->reg, EL_STYLE, "table-row", "ro", NULL, &body, name);
+            owf_buf_printf(out, " table:style-name=\"%s\"", name);
+        }
+        owf_buf_putc(out, '>');
         while (i < o->text.nparas && o->text.paras[i].table_row == row) {
             const owf_para *p = &o->text.paras[i];
             int target = p->table_col < ncols ? p->table_col : ncols - 1;
             while (col < target) {
-                owf_buf_puts(out, "<table:table-cell/>");
+                put_empty_cell(out, o, row, col);
                 col++;
             }
+            if (table_merge_at(o, row, col, 1)) {
+                /* covered: its text, if any, is not shown, as in Impress */
+                owf_buf_puts(out, "<table:covered-table-cell/>");
+                while (i < o->text.nparas && o->text.paras[i].table_row == row && o->text.paras[i].table_col == p->table_col)
+                    i++;
+                col++;
+                if (col >= ncols)
+                    while (i < o->text.nparas && o->text.paras[i].table_row == row)
+                        i++;
+                continue;
+            }
             owf_buf_puts(out, "<table:table-cell office:value-type=\"string\"");
+            if ((m = table_merge_at(o, row, col, 0)) != NULL) {
+                if (m->cols > 1)
+                    owf_buf_printf(out, " table:number-columns-spanned=\"%d\"", m->cols);
+                if (m->rows > 1)
+                    owf_buf_printf(out, " table:number-rows-spanned=\"%d\"", m->rows);
+            }
             if (OWF_SHADE_SET(p->cell_shading)) {
                 body.length = 0;
                 owf_buf_printf(&body, "<style:graphic-properties draw:fill=\"solid\" draw:fill-color=\"#%06lx\"/>"
@@ -1017,7 +1081,7 @@ static void put_table(odpw *w, owf_buf *out, const owf_obj *o)
                     i++;
         }
         while (col < ncols) {
-            owf_buf_puts(out, "<table:table-cell/>");
+            put_empty_cell(out, o, row, col);
             col++;
         }
         owf_buf_puts(out, "</table:table-row>");
