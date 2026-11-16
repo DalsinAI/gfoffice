@@ -1530,6 +1530,102 @@ static int filter_buttons(drawing *d)
     return 1;
 }
 
+/* ---- The shown scenario ----
+ * A 1-pixel frame round each of its ranges in each pane they reach (a side that goes on past the pane is
+ * not drawn), and its name in a tab on the first range's top left corner, as LibreOffice shows one: above
+ * the range when the pane has room, else inside it; the book's font at 8 points, white on the frame's
+ * colour. */
+#define SCENARIO_TAB_TWIPS 160
+
+static int scenario_tab(drawing *d, const char *name, unsigned row, unsigned col, int x, int y, int qx, int qy, int qw,
+                        int qh)
+{
+    oc_core *core = d->core;
+    owf_cellstyle font;
+    size_t n = strlen(name);
+    int pad = 3 * core->zoom / 100 + 1, th, tw, ty, cx, cy, cw, ch;
+    oc_draw_item *it;
+    owf_cellstyle_init(&font);
+    font.font.font = -1;
+    font.font.size = SCENARIO_TAB_TWIPS;
+    th = oc_line_px(core, SCENARIO_TAB_TWIPS) + 2;
+    tw = oc_measure(core, name, n, &font) + 2 * pad;
+    ty = y - 1 - th >= qy ? y - 1 - th : y;
+    /* the tab, cut to its pane */
+    cx = x - 1 > qx ? x - 1 : qx;
+    cy = ty > qy ? ty : qy;
+    cw = (x - 1 + tw < qx + qw ? x - 1 + tw : qx + qw) - cx;
+    ch = (ty + th < qy + qh ? ty + th : qy + qh) - cy;
+    if (cw <= 0 || ch <= 0)
+        return 1;
+    if (!(it = add_box(d->list, OC_DRAW_FILL, OC_ROLE_SCENARIO, cx, cy, cw, ch)))
+        return 0;
+    it->row = row;
+    it->col = col;
+    if (!(it = add(d->list, OC_DRAW_TEXT, OC_ROLE_TEXT)))
+        return 0;
+    it->x = x - 1;
+    it->y = ty;
+    it->w = tw;
+    it->h = th;
+    it->clip_x = cx;
+    it->clip_y = cy;
+    it->clip_w = cw;
+    it->clip_h = ch;
+    it->text_x = x - 1 + pad;
+    it->align = OC_ALIGN_LEFT;
+    it->valign = OWF_VALIGN_CENTRE;
+    it->flags = 0;
+    it->font = -1;
+    it->size = SCENARIO_TAB_TWIPS;
+    it->rgb = 0xFFFFFFUL;
+    it->row = row;
+    it->col = col;
+    return add_text(d->list, it, name, n);
+}
+
+static int scenario_frame(drawing *d)
+{
+    owf_scenario sc;
+    int index = oc_core_scenario_active(d->core), ok = 1, pr, pc;
+    unsigned k;
+    if (index < 0 || !oc_core_scenario_get(d->core, index, &sc))
+        return 1;
+    for (k = 0; k < sc.nranges && ok; k++)
+        for (pr = 0; pr < 2 && ok; pr++)
+            for (pc = 0; pc < 2 && ok; pc++) {
+                const owf_range *r = &sc.range[k];
+                int x, y, w, h, open, qx, qy, qw, qh, fx, fy, fw, fh;
+                oc_draw_item *it;
+                if (!range_box(d, r, pr, pc, &x, &y, &w, &h, &open))
+                    continue;
+                quadrant(d, pr, pc, &qx, &qy, &qw, &qh);
+                fx = x;
+                fy = y;
+                fw = w;
+                fh = h;
+                if (open & 1) { fy -= 4; fh += 4; }
+                if (open & 2) fh += 4;
+                if (open & 4) { fx -= 4; fw += 4; }
+                if (open & 8) fw += 4;
+                if (!(it = add_box(d->list, OC_DRAW_FRAME, OC_ROLE_SCENARIO, fx - 1, fy - 1, fw + 1, fh + 1))) {
+                    ok = 0;
+                    break;
+                }
+                it->line = 1;
+                it->row = r->first_row;
+                it->col = r->first_col;
+                it->clip_x = qx;
+                it->clip_y = qy;
+                it->clip_w = qw;
+                it->clip_h = qh;
+                if (k == 0 && !(open & 5))
+                    ok = scenario_tab(d, sc.name, r->first_row, r->first_col, x, y, qx, qy, qw, qh);
+            }
+    owf_scenario_free(&sc);
+    return ok;
+}
+
 /* The active cell's comment, beside it, as Excel shows one when the pointer is over its cell: a pale yellow
  * box (OC_ROLE_NOTE) with a grey frame, its author on the first line in bold (unless the text begins with
  * the name, as Excel's own comments do) and the text wrapped to the box, in the book's font at 9 points.
@@ -2244,6 +2340,10 @@ static int build(drawing *d)
 
     /* charts, over the cells */
     if (!charts(d))
+        return 0;
+
+    /* the shown scenario's frame and name, over the cells and charts */
+    if (!scenario_frame(d))
         return 0;
 
     /* 6. the row numbers and column letters */

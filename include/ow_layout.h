@@ -52,6 +52,14 @@ size_t ow_layout_estimate_ops(const owf_doc *doc);
 void ow_layout_free(ow_layout *layout);
 
 ol_document *ow_layout_body(const ow_layout *layout);
+
+/* 2.0.38: a picture in the line that is a tracked change, where the layout shows changes (not in the final
+ * view): OW_PICTURE_INSERTED or OW_PICTURE_DELETED for its node (an OL_OP_IMAGE's node_id), *rgb its author's
+ * colour (0xRRGGBB, as the changed text's); 0 for anything else. The window draws a frame round it in that
+ * colour, and a deleted one crossed out. */
+#define OW_PICTURE_INSERTED 1
+#define OW_PICTURE_DELETED 2
+int ow_layout_picture_change(const ow_layout *layout, ol_id node, unsigned long *rgb);
 int ow_layout_page_count(const ow_layout *layout);
 /* The page in GFOpenLayout units (twips times 4). */
 const ol_page *ow_layout_page(const ow_layout *layout);

@@ -491,8 +491,15 @@ static void test_filter(void)
     for (i = 0; i < 3; ++i) shown[i] = ow_editor_comment_info(ed, i, &info) && info.shown;
     CHECK(!shown[0] && shown[1] && shown[2], "Ann's comment not shown, Bob's reply and comment shown");
     caret(ed, 0, 0);
-    CHECK(ow_editor_next_comment(ed, 0) == 1 && ow_editor_current_comment(ed, &info) && info.index == 0,
-          "Next: Ann's comment, for Bob's reply to it");
+    CHECK(ow_editor_next_comment(ed, 0) == 1 && ow_editor_current_comment(ed, &info) && info.index == 1,
+          "Next: Bob's reply (2.0.40), not Ann's hidden comment it answers");
+    CHECK(ow_editor_set_comment_text(ed, "The brown one!") == OWF_OK &&
+          ow_editor_comment_info(ed, 1, &info) && !strcmp(info.text, "The brown one!") &&
+          ow_editor_comment_info(ed, 0, &info) && !strcmp(info.text, "Which <fox>?\nThe red one."),
+          "Edit Comment changes the reply, not Ann's");
+    ow_editor_undo(ed);
+    CHECK(ow_editor_next_comment(ed, 0) == 1 && ow_editor_current_comment(ed, &info) && info.index == 2,
+          "Next again: Bob's comment");
 
     CHECK(ow_editor_set_comment_filter(ed, "Ann & co") == OWF_OK, "Ann's");
     for (i = 0; i < 3; ++i) shown[i] = ow_editor_comment_info(ed, i, &info) && info.shown;
@@ -508,6 +515,26 @@ static void test_filter(void)
     CHECK(ow_editor_set_comment_filter(ed, "") == OWF_OK && !ow_editor_comment_filter(ed), "\"\": everyone's again");
     CHECK(ow_editor_set_comment_filter(ed, NULL) == OWF_OK && ow_editor_comment_info(ed, 0, &info) && info.shown, "NULL too");
     CHECK(!strcmp(dump(doc), commented_dump), dump(doc));
+
+    /* 2.0.40: a name longer than the list keeps (71 bytes): picked from the list, its comments are shown */
+    {
+        char longname[96], cut[72];
+        memset(longname, 'L', 80);
+        longname[80] = 0;
+        ow_editor_set_review_author(ed, longname);
+        caret(ed, 1, 0);
+        CHECK(ow_editor_insert_comment(ed, "Long.") == OWF_OK, "a long name's comment");
+        n = ow_editor_comment_authors(ed, names, 8);
+        CHECK(n == 3 && strlen(names[2]) == 71, "the list cuts it at 71");
+        memcpy(cut, names[2], sizeof cut);
+        CHECK(ow_editor_set_comment_filter(ed, cut) == OWF_OK, "filter by the cut name");
+        for (i = 0, n = 0; ow_editor_comment_info(ed, i, &info); ++i) n += info.shown;
+        CHECK(n == 1 && ow_editor_comment_info(ed, 2, &info) && !strcmp(info.text, "Long.") && info.shown,
+              "its comment shown, and only it");
+        cut[70] = 0;
+        CHECK(ow_editor_set_comment_filter(ed, cut) == OWF_OK && ow_editor_comment_info(ed, 2, &info) && !info.shown,
+              "a shorter name is not a start");
+    }
     ow_editor_free(ed);
     owf_doc_free(doc);
 }
