@@ -45,7 +45,7 @@ working. Phase 1's target is 74%.
 | Feature | Status | Deliverable | Notes |
 | --- | --- | --- | --- |
 | Links to other workbooks | Done (most) | Gap 2 | Formulas on other workbooks' cells read and kept in XLSX and ODS both ways with the values last seen; a missing file shows the last values, not an error; Data > Edit Links... and ARexx LINKS/UPDATELINK update them from their files, one Undo step (lab owed). Not yet: databases and web pages as sources, refresh on open |
-| Tracked changes in sheets | Gap | Gap 3 | Core in review (#335); the Track Changes menu, Manage Changes window and ARexx are ready to open after it; XLSX and ODS next. Not scored until merged |
+| Tracked changes in sheets | Part | Gap 3 | The core records cell edits, rows and columns put in and taken out, sheets added and renamed, with author and time (#335); Edit > Track Changes: Record Changes, Manage Changes... (the list, its place shown; Accept, Reject, Accept All, Reject All), Changes Author...; ARexx TRACKCHANGES, CHANGES, CHANGE, SHOWCHANGE, ACCEPTCHANGE, REJECTCHANGE, CHANGEAUTHOR (lab owed). Not yet: XLSX and ODS, changes shown on the sheet. Scored at the next re-score |
 | Macro recorder | Gap | - | The ARexx port covers the menus; recording a session as a script does not exist yet |
 
 ## The second 16 November re-score
@@ -110,10 +110,6 @@ Top three gaps by workflow weight:
    Edit Links... and ARexx LINKS/UPDATELINK list them and update them
    from their files (lab owed).
 3. Sharing and review: tracked changes in sheets (Edit > Track Changes).
-   Started: the core records and reviews them; Edit > Track Changes (Record
-   Changes, Manage Changes..., Accept All, Reject All, Changes Author...) and
-   ARexx TRACKCHANGES/CHANGES/CHANGE/SHOWCHANGE/ACCEPTCHANGE/REJECTCHANGE/
-   CHANGEAUTHOR (lab owed); XLSX and ODS next.
    Workbook structure protection is in, with its Sheet menu items and
    ARexx (lab owed).
 
