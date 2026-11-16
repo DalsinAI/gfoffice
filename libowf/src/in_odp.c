@@ -1717,6 +1717,16 @@ static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_
                 unsigned long fill;
                 int before = obj->text.nparas, k;
                 if (is(cell, NS_TABLE, "covered-table-cell")) {
+                    /* still a cell: an empty paragraph, so the row has every column */
+                    if (col < TABLE_MAX_COLS) {
+                        t.b.parafmt = m->other.para;
+                        owf_builder_end_para(&t.b);
+                        for (k = before; k < obj->text.nparas; k++) {
+                            obj->text.paras[k].table_id = 0;
+                            obj->text.paras[k].table_row = nrows;
+                            obj->text.paras[k].table_col = col;
+                        }
+                    }
                     col++;
                     merged = 1;
                     continue;
