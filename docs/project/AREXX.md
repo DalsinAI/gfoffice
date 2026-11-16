@@ -56,6 +56,9 @@ Amiga (start GFOpenProject, then `rx project.rexx RAM:`).
 | REPLACE | `ROW/A/N,FROM/A,TO/A,UNITS/K` | Assign Resources' Replace: the row's assignment of FROM goes to TO, keeping its units unless UNITS gives them ("50%", "2.5", "120.00") |
 | LEVEL | `WITHINSLACK/S` | Level Resources: delays tasks until no work resource is over-allocated where a move can mend it; how many tasks were delayed. WITHINSLACK: only within each task's slack |
 | CLEARLEVELING | | every task's Leveling Delay back to 0 |
+| SORT | `BY/A,DESC/S,THEN/K,THENDESC/S,LAST/K,LASTDESC/S` | Project > Sort, renumbering the tasks and keeping the outline: by up to three columns, each ascending unless its DESC is given |
+| FIND | `TEXT/A,COLUMN/K,FROM/K/N,BACK/S,EXACT/S,BEGINS/S,RESOURCES/S` | Edit > Find: the next row (after FROM, or from the top) whose COLUMN (default Name) holds TEXT, case ignored, going round the end; EXACT: the whole cell, BEGINS: its start; BACK: upwards; RESOURCES: on the resource sheet. RC 5 when none |
+| REPLACETEXT | `COLUMN/A,FIND/A,WITH/A,ROW/K/N` | Edit > Replace All (or only ROW): FIND becomes WITH in that column's cells, case ignored, as one edit; how many cells changed. When a cell wouldn't take its new text, nothing changes |
 | RESOURCES | | how many resources |
 | ADDRESOURCE | `NAME/A` | the new resource's number |
 | DELETERESOURCE | `ROW/A/N,COUNT/N` | |

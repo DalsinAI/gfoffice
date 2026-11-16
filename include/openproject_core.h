@@ -193,6 +193,34 @@ int opj_date_parse(const char *s, int default_minute, owf_ptime *t);
 int opj_level(opj_doc *doc, int within_slack, int *delayed);
 int opj_clear_leveling(opj_doc *doc);
 
+/* ---- Sort, Find and Replace (Project > Sort, Edit > Find..., Edit > Replace...) ---- */
+
+typedef struct {
+    int column;                          /* an OPJ_COL_ */
+    int descending;
+} opj_sort_key;
+/* Project > Sort with "Permanently renumber tasks" and "Keep outline structure": each summary's subtasks
+ * (and the top level) reordered by the keys, first key first; a summary carries its subtasks along. Dates,
+ * durations, numbers and money sort by value (NA after every value), the rest by their text, case ignored;
+ * ties keep their order. Links and assignments follow their tasks. One edit; OWF_ERR_FORMAT for no keys
+ * (more than 3) or a column out of range. */
+int opj_sort_tasks(opj_doc *doc, const opj_sort_key *keys, int nkeys);
+
+enum { OPJ_FIND_CONTAINS, OPJ_FIND_EQUALS, OPJ_FIND_BEGINS };
+/* Find: the next row after from (-1: start at the top; with backward, the one before, -1: from the bottom)
+ * whose cell in column, as the sheet shows it, matches text by how (an OPJ_FIND_), case ignored; going
+ * round the end once. -1 when none does (or text is empty). */
+int opj_find_task(const opj_doc *doc, int column, const char *text, int how, int from, int backward);
+/* The same over the resource sheet's cells (an OPJ_RCOL_). */
+int opj_find_resource_row(const opj_doc *doc, int column, const char *text, int how, int from, int backward);
+/* Replace: in rows first..first+count-1 (count -1: every row), every place find is in column's cell (case
+ * ignored) becomes with, and the cell is set as if typed. One edit for them all, how many cells changed in
+ * *changed (either may be NULL). When a cell won't take its new text, nothing changes: OWF_ERR_FORMAT, with
+ * how many wouldn't in *refused. OWF_ERR_FORMAT too for an empty find, a column that can't be typed, or rows
+ * out of range. */
+int opj_replace_text(opj_doc *doc, int column, const char *find, const char *with, int first, int count,
+                     int *changed, int *refused);
+
 /* ---- The resource sheet ---- */
 
 enum {
