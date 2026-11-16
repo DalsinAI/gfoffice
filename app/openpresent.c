@@ -81,6 +81,9 @@
 #include "owf_pdf.h"
 #include "owf_metafile.h"
 #include "ow_stack.h"
+#ifdef OPR_CHART_EDITOR
+#include "opr_chartwin.h"         /* a slide chart's data and look, on GFOpenCalc's core */
+#endif
 #include "lastdir.h"
 #include "ogt_theme.h"
 #include "ogt_draw.h"
@@ -140,7 +143,7 @@ enum {
     M_ALIGN_LEFT, M_ALIGN_CENTRE, M_ALIGN_RIGHT,
     M_ALIGN_TOP, M_ALIGN_MIDDLE, M_ALIGN_BOTTOM,
     M_DISTRIBUTE_ACROSS, M_DISTRIBUTE_DOWN, M_GROUP, M_UNGROUP,
-    M_POSITION_SIZE, M_APPEARANCE, M_PICTURE_CROP,
+    M_POSITION_SIZE, M_APPEARANCE, M_PICTURE_CROP, M_CHART_DATA,
     M_TABLE_INSERT_ROW, M_TABLE_DELETE_ROW, M_TABLE_INSERT_COLUMN, M_TABLE_DELETE_COLUMN,
     M_TABLE_STYLE,
     M_DUPLICATE_OBJECT, M_DELETE_OBJECT,
@@ -250,6 +253,9 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Position and Size...", NULL, 0, 0, (APTR)M_POSITION_SIZE },
     { NM_ITEM, "Appearance...", NULL, 0, 0, (APTR)M_APPEARANCE },
     { NM_ITEM, "Picture Crop...", NULL, 0, 0, (APTR)M_PICTURE_CROP },
+#ifdef OPR_CHART_EDITOR
+    { NM_ITEM, "Chart Data...", NULL, 0, 0, (APTR)M_CHART_DATA },
+#endif
     { NM_ITEM, "Table Rows", NULL, 0, 0, NULL },
     { NM_SUB, "Insert Row Below", NULL, 0, 0, (APTR)M_TABLE_INSERT_ROW },
     { NM_SUB, "Delete Current Row", NULL, 0, 0, (APTR)M_TABLE_DELETE_ROW },
@@ -7124,6 +7130,69 @@ static void edit_selected_appearance(void)
     draw_status();
 }
 
+#ifdef OPR_CHART_EDITOR
+static LONG chart_pen(unsigned long rgb)
+{
+    return ogt_pen_rgb(&ctx, (ogt_rgb){ (UBYTE)(rgb >> 16), (UBYTE)(rgb >> 8), (UBYTE)rgb });
+}
+
+/* Chart Data... (or a double click on a chart): the selected chart in the chart editor, its result put on the
+ * slide as one undo step (opr_obj_set_chart). */
+static void edit_selected_chart(void)
+{
+    opr_cwin_env cenv;
+    owf_chart edited;
+    const owf_obj *o;
+    int rc;
+    if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
+        set_status("Select a chart to edit its data.");
+        draw_status();
+        return;
+    }
+    o = &deck->slides[current].objs[selected_obj];
+    if (o->parent >= 0 || o->kind != OWF_OBJ_CHART) {
+        set_status("Chart Data edits one chart that is not in a group.");
+        draw_status();
+        return;
+    }
+    if (!o->chart) {
+        tell("Chart Data", "This chart's data was not kept when the file was read, so it can only be moved and sized.");
+        return;
+    }
+    stop_typing();
+    memset(&cenv, 0, sizeof cenv);
+    cenv.scr = scr;
+    cenv.vi = vi;
+    cenv.font = font;
+    cenv.ta = &font_attr;
+    cenv.parent = win;
+    cenv.pen = chart_pen;
+    memset(&edited, 0, sizeof edited);
+    if (!opr_chart_window(&cenv, o->chart, &edited)) {
+        draw_slide();
+        draw_status();
+        return;
+    }
+    rc = opr_obj_set_chart(undo, deck, current, selected_obj, &edited);
+    owf_chart_clear(&edited);
+    if (rc < 0) {
+        set_status("The chart could not be changed: there is not enough memory.");
+        draw_slide();
+        draw_status();
+        return;
+    }
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status("Chart changed.");
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+#endif
+
 static void edit_selected_picture_crop(void)
 {
     owf_obj *o;
@@ -8000,6 +8069,9 @@ static void menu_action(ULONG id)
     case M_POSITION_SIZE: edit_selected_geometry(); break;
     case M_APPEARANCE: edit_selected_appearance(); break;
     case M_PICTURE_CROP: edit_selected_picture_crop(); break;
+#ifdef OPR_CHART_EDITOR
+    case M_CHART_DATA: edit_selected_chart(); break;
+#endif
     case M_TABLE_INSERT_ROW: edit_table_row(0); break;
     case M_TABLE_DELETE_ROW: edit_table_row(1); break;
     case M_TABLE_INSERT_COLUMN: edit_table_column(0); break;
@@ -8178,7 +8250,29 @@ static void events(void)
             }
             if (outline_view) break;
             mouse_qual = qual;
+#ifdef OPR_CHART_EDITOR
+            if (code == SELECTDOWN) {
+                /* a double click on a chart opens its data (the first click selected it) */
+                static ULONG chart_click_secs, chart_click_micros;
+                static int chart_click_obj = -1;
+                int was = selected_obj;
+                slide_mouse_down(mx, my);
+                if (deck && selected_obj >= 0 && selected_obj == was && selected_obj == chart_click_obj &&
+                    selected_obj < deck->slides[current].nobjs &&
+                    deck->slides[current].objs[selected_obj].kind == OWF_OBJ_CHART &&
+                    DoubleClick(chart_click_secs, chart_click_micros, secs, micros)) {
+                    memset(&object_drag, 0, sizeof object_drag);
+                    chart_click_obj = -1;
+                    edit_selected_chart();
+                    break;
+                }
+                chart_click_obj = selected_obj;
+                chart_click_secs = secs;
+                chart_click_micros = micros;
+            }
+#else
             if (code == SELECTDOWN) slide_mouse_down(mx, my);
+#endif
             else if (code == SELECTUP) {
                 if (text_selecting) {
                     drag_text_selection(mx, my);
