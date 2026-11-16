@@ -141,6 +141,9 @@ typedef struct {
     long field, position;        /* libowf's own (gfocalc:): its column in the source, its place; -1 */
     int orientation, function, kind, has_page;
     int sort;                    /* table:data-pilot-sort-info by name: OWF_PIVOT_SORT_... */
+    int show;                    /* table:data-pilot-field-reference: OWF_PIVOT_SHOW_... */
+    int subtotal;                /* a table:data-pilot-subtotal: a subtotal per item */
+    owf_pivot_group group;       /* table:data-pilot-groups (by NONE when it has none) */
     char *page;                  /* table:selected-page */
 } ods_pivot_field;
 
@@ -151,6 +154,12 @@ typedef struct {
     ods_pivot_field fields[ODS_PIVOT_FIELDS];
     int nfields;
     int open_field;              /* the data-pilot-field being read was kept as fields[nfields - 1] */
+    struct {                     /* hidden items (data-pilot-member display="false") */
+        int slot;                /* in fields[] */
+        int kind;                /* gfocalc:item-kind, or -1 */
+        char *name;
+    } hides[OWF_PIVOT_HIDES];
+    int nhides;
 } ods_pivot;
 
 /* A scenario table (table:scenario): the sheet it was read into, its ranges and words. */
@@ -3853,7 +3862,9 @@ static void body_start(ods *o, const owf_xml_event *e)
             } else if (!strcmp(n, "dde-link")) {
                 owf_report_add(o->report, OWF_NOTE_LOST, "Links to other programs (DDE) keep their last values");
             } else if (!strcmp(n, "data-pilot-table") || !strcmp(n, "source-cell-range") ||
-                       !strcmp(n, "data-pilot-field") || !strcmp(n, "data-pilot-sort-info")) {
+                       !strcmp(n, "data-pilot-field") || !strcmp(n, "data-pilot-sort-info") ||
+                       !strcmp(n, "data-pilot-member") || !strcmp(n, "data-pilot-field-reference") ||
+                       !strcmp(n, "data-pilot-groups") || !strcmp(n, "data-pilot-subtotal")) {
                 pivot_start(o, e);
             }
         } else if (!strcmp(n, "scenario")) {
@@ -3943,6 +3954,31 @@ static void body_end(ods *o, const owf_xml_event *e)
         cf_end(o, e);
 }
 
+/* office:spreadsheet's table:structure-protected: the workbook's sheets stay as they are. The password as
+   gfocalc's Excel hash, or ODF's digest (SHA-1 when it names none) kept as it was. */
+static void read_book_protection(ods *o, const owf_xml_event *e)
+{
+    const char *v = ev(e, NS_TABLE, "structure-protected");
+    const char *key = ev(e, NS_TABLE, "protection-key"), *alg = ev(e, NS_TABLE, "protection-key-digest-algorithm");
+    const char *xl = ev(e, NS_GFO, "protection-key-excel");
+    if (!v || strcmp(v, "true") || o->book->protect_structure)
+        return;
+    o->book->protect_structure = 1;
+    if (xl && strlen(xl) == 4)
+        o->book->protect_hash = copy(o, xl);
+    else if (key && *key) {
+        const char *a = alg && *alg ? alg : "http://www.w3.org/2000/09/xmldsig#sha1";
+        size_t size = strlen(a) + strlen(key) + 6;
+        char *k = malloc(size);
+        if (!k)
+            o->failed = 1;
+        else {
+            snprintf(k, size, "ods:%s %s", a, key);
+            o->book->protect_kept = k;
+        }
+    }
+}
+
 /* One part (content.xml, styles.xml, settings.xml) or the whole of a
  * flat file, as a stream. */
 static int read_part(ods *o, char *data, size_t length)
@@ -4018,6 +4054,8 @@ static int read_part(ods *o, char *data, size_t length)
             } else if (is(&e, NS_STYLE, "font-face")) {
                 read_face(o, &e);
             } else if (is(&e, NS_OFFICE, "body") || is(&e, NS_OFFICE, "spreadsheet")) {
+                if (e.name[0] == 's')
+                    read_book_protection(o, &e);
                 if (!o->in_body) {       /* cells with no style have the default's */
                     owf_cellstyle base;
                     base_style(o, &base);
@@ -4107,6 +4145,58 @@ static void pivot_start(ods *o, const owf_xml_event *e)
     if (is(e, NS_TABLE, "source-cell-range")) {
         if (!pv->source)
             pv->source = copy(o, ev(e, NS_TABLE, "cell-range-address"));
+    } else if (is(e, NS_TABLE, "data-pilot-member")) {
+        const char *display = ev(e, NS_TABLE, "display");
+        if (!pv->open_field || !pv->nfields || !display || strcmp(display, "false"))
+            return;
+        if (pv->nhides == OWF_PIVOT_HIDES) {
+            owf_report_add(o->report, OWF_NOTE_LOST, "A pivot table with more than 32 hidden items shows the rest");
+            return;
+        }
+        pv->hides[pv->nhides].slot = pv->nfields - 1;
+        pv->hides[pv->nhides].kind = (int)pivot_whole(ev(e, NS_GFO, "item-kind"));
+        pv->hides[pv->nhides].name = copy(o, ev(e, NS_TABLE, "name") ? ev(e, NS_TABLE, "name") : "");
+        pv->nhides++;
+    } else if (is(e, NS_TABLE, "data-pilot-groups")) {
+        ods_pivot_field *f = pv->open_field && pv->nfields ? &pv->fields[pv->nfields - 1] : NULL;
+        const char *by = ev(e, NS_TABLE, "grouped-by"), *start = ev(e, NS_TABLE, "start");
+        const char *end = ev(e, NS_TABLE, "end"), *step = ev(e, NS_TABLE, "step");
+        owf_pivot_group g;
+        if (!f || (f->orientation != PV_ROW && f->orientation != PV_COLUMN))
+            return;
+        memset(&g, 0, sizeof g);
+        if (by) {
+            g.by = !strcmp(by, "years") ? OWF_PIVOT_GROUP_YEARS : !strcmp(by, "quarters") ? OWF_PIVOT_GROUP_QUARTERS
+                 : !strcmp(by, "months") ? OWF_PIVOT_GROUP_MONTHS : OWF_PIVOT_GROUP_NONE;
+        } else if (start && end && step && owf_number_parse(start, strlen(start), &g.start) &&
+                   owf_number_parse(end, strlen(end), &g.end) && owf_number_parse(step, strlen(step), &g.step)) {
+            g.by = OWF_PIVOT_GROUP_RANGE;
+        }
+        if (g.by == OWF_PIVOT_GROUP_NONE)
+            owf_report_add(o->report, OWF_NOTE_APPROX,
+                           "A pivot table field grouped by hand, by day or by time shows its items ungrouped");
+        else
+            f->group = g;
+    } else if (is(e, NS_TABLE, "data-pilot-field-reference")) {
+        ods_pivot_field *f = pv->open_field && pv->nfields ? &pv->fields[pv->nfields - 1] : NULL;
+        const char *type = ev(e, NS_TABLE, "type");
+        int show = owf_pivot_show_from_word(type);
+        if (!f || f->orientation != PV_DATA || !type)
+            return;
+        if (show >= 0)
+            f->show = show;
+        else
+            owf_report_add(o->report, OWF_NOTE_APPROX,
+                           "A pivot table data field shown as a difference or running total shows its values");
+    } else if (is(e, NS_TABLE, "data-pilot-subtotal")) {
+        const char *fn = ev(e, NS_TABLE, "function");
+        ods_pivot_field *f = pv->open_field && pv->nfields ? &pv->fields[pv->nfields - 1] : NULL;
+        if (!f || (f->orientation != PV_ROW && f->orientation != PV_COLUMN))
+            return;
+        if (fn && strcmp(fn, "auto") && !f->subtotal)
+            owf_report_add(o->report, OWF_NOTE_APPROX,
+                           "A pivot table subtotal with its own function uses each data field's function");
+        f->subtotal = 1;
     } else if (is(e, NS_TABLE, "data-pilot-sort-info")) {
         const char *mode = ev(e, NS_TABLE, "sort-mode"), *order = ev(e, NS_TABLE, "order");
         ods_pivot_field *f = pv->open_field && pv->nfields ? &pv->fields[pv->nfields - 1] : NULL;
@@ -4166,6 +4256,19 @@ static long pivot_field_index(const owf_book *book, const owf_pivotdef *def, con
     return -1;
 }
 
+/* An item from the file's text and libowf's own kind (-1 when the file has none). */
+static void pivot_item(owf_pivot_page *pg, const char *text, int kind)
+{
+    owf_pivot_item_from_text(pg, text);
+    if (kind == OWF_PIVOT_TEXT && pg->kind != OWF_PIVOT_TEXT) {
+        pg->kind = OWF_PIVOT_TEXT;
+        snprintf(pg->text, sizeof pg->text, "%s", text ? text : "");
+    } else if (kind == OWF_PIVOT_BOOL) {
+        pg->kind = OWF_PIVOT_BOOL;
+        pg->number = text && (!strcmp(text, "TRUE") || !strcmp(text, "1"));
+    }
+}
+
 /* Turns one data-pilot-table into a definition; 1 when it fits GFOpenCalc's. */
 static int pivot_def(ods *o, const ods_pivot *pv, int *sheet, owf_pivotdef *def)
 {
@@ -4198,14 +4301,27 @@ static int pivot_def(ods *o, const ods_pivot *pv, int *sheet, owf_pivotdef *def)
             case PV_ROW:
                 if (def->nrow < OWF_PIVOT_FIELDS) def->row[def->nrow++] = (unsigned)index; else ok = 0;
                 if (ok && f->sort) owf_pivot_set_sort(def, (unsigned)index, f->sort);
+                if (ok && f->subtotal) owf_pivot_set_subtotal(def, (unsigned)index, 1);
+                if (ok && f->group.by) {
+                    owf_pivot_group g = f->group;
+                    g.field = (unsigned)index;
+                    owf_pivot_set_group(def, &g);
+                }
                 break;
             case PV_COLUMN:
                 if (def->ncol < OWF_PIVOT_FIELDS) def->col[def->ncol++] = (unsigned)index; else ok = 0;
                 if (ok && f->sort) owf_pivot_set_sort(def, (unsigned)index, f->sort);
+                if (ok && f->subtotal) owf_pivot_set_subtotal(def, (unsigned)index, 1);
+                if (ok && f->group.by) {
+                    owf_pivot_group g = f->group;
+                    g.field = (unsigned)index;
+                    owf_pivot_set_group(def, &g);
+                }
                 break;
             case PV_DATA:
                 if (def->ndata < OWF_PIVOT_DATA) {
                     def->data[def->ndata].field = (unsigned)index;
+                    def->data[def->ndata].show = f->show;
                     def->data[def->ndata++].function = f->function;
                 } else
                     ok = 0;
@@ -4215,21 +4331,26 @@ static int pivot_def(ods *o, const ods_pivot *pv, int *sheet, owf_pivotdef *def)
                     owf_pivot_page *pg = &def->page[def->npage++];
                     pg->field = (unsigned)index;
                     pg->kind = OWF_PIVOT_ALL;
-                    if (f->has_page) {
-                        owf_pivot_item_from_text(pg, f->page);
-                        if (f->kind == OWF_PIVOT_TEXT && pg->kind != OWF_PIVOT_TEXT) {
-                            pg->kind = OWF_PIVOT_TEXT;
-                            snprintf(pg->text, sizeof pg->text, "%s", f->page ? f->page : "");
-                        } else if (f->kind == OWF_PIVOT_BOOL) {
-                            pg->kind = OWF_PIVOT_BOOL;
-                            pg->number = f->page && (!strcmp(f->page, "TRUE") || !strcmp(f->page, "1"));
-                        }
-                    }
+                    if (f->has_page)
+                        pivot_item(pg, f->page, f->kind);
                 } else
                     ok = 0;
                 break;
             }
         }
+    }
+    for (k = 0; k < pv->nhides && ok; k++) {        /* hidden items of the row and column fields */
+        const ods_pivot_field *f = &pv->fields[pv->hides[k].slot];
+        long index;
+        owf_pivot_page item;
+        if (f->orientation != PV_ROW && f->orientation != PV_COLUMN)
+            continue;
+        if ((index = pivot_field_index(o->book, def, f)) < 0)
+            continue;
+        memset(&item, 0, sizeof item);
+        pivot_item(&item, pv->hides[k].name, pv->hides[k].kind);
+        item.field = (unsigned)index;
+        owf_pivot_set_hidden(def, &item, 1);
     }
     return ok && owf_pivot_check(o->book, def);
 }
@@ -4341,6 +4462,8 @@ static void free_reader(ods *o)
             free(o->pivots[i].fields[k].name);
             free(o->pivots[i].fields[k].page);
         }
+        for (k = 0; k < o->pivots[i].nhides; k++)
+            free(o->pivots[i].hides[k].name);
     }
     free(o->pivots);
     for (i = 0; i < o->nscens; i++) {

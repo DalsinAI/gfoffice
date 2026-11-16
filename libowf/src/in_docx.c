@@ -691,7 +691,7 @@ static int special_field(const char *instr, owf_field *field, char *arg, size_t 
     else if (!strcmp(word, "PAGEREF") && *arg) *field = OWF_FIELD_REF_PAGE;
     else if (!strcmp(word, "MERGEFIELD") && *arg) *field = OWF_FIELD_MERGE;      /* 1.9 */
     else if (!strcmp(word, "XE") && *arg) *field = OWF_FIELD_INDEX;               /* 1.10 */
-    else if (!strcmp(word, "SEQ") && *arg) *field = OWF_FIELD_SEQ;                /* 1.12.4: its switches go */
+    else if (!strcmp(word, "SEQ") && *arg) *field = OWF_FIELD_SEQ;                /* 1.12.6: its switches go */
     else return 0;
     if (*field <= OWF_FIELD_TIME || *field == OWF_FIELD_CHAPTER) arg[0] = 0;
     return 1;
@@ -1395,19 +1395,17 @@ static void run(docx *d, const owf_xml_node *r, const owf_charfmt *para_char)
             const owf_xml_node *ostyle = wchild(d, old, "rStyle");
             owf_charfmt before = *para_char;
             owf_format_span span;
-            int number;
             if (ostyle)
                 owf_styles_resolve(d->tables, 1, wval(d, ostyle), OWF_FAMILY_TEXT, NULL, &before);
             memset(&cp, 0, sizeof cp);
             read_rpr(d, old, &cp);
             owf_charprops_apply(&before, &cp);
             before = relative(d, before);            /* as the runs' formats are kept (set_fmt) */
-            number = owf_track_format_add(d->doc, owf_xml_attr(chg, d->w, "author"), owf_xml_attr(chg, d->w, "date"),
-                                          &before);
-            if (!number) d->failed = 1;
             owf_format_begin(&span, d->b);
             run_children(d, r, &f);
-            owf_format_end(&span, d->b, number);
+            if (owf_format_end(&span, d->b, owf_xml_attr(chg, d->w, "author"), owf_xml_attr(chg, d->w, "date"),
+                               &before) < 0)
+                d->failed = 1;
             return;
         }
     }
@@ -1965,8 +1963,16 @@ static void table(docx *d, const owf_xml_node *t)
                 table(d, wchild(d, row, "sdtContent") ? wchild(d, row, "sdtContent") : row);
             continue;
         }
+        int row_rev = 0;
         for (cell=row->first;cell;cell=cell->next) if(is_w(d,cell,"tc")) ++cols;
         if(!cols)continue;
+        {   /* 1.12: the row put in or deleted as a tracked change (w:trPr/w:ins, w:del) */
+            const owf_xml_node *trpr = wchild(d, row, "trPr"), *ins = wchild(d, trpr, "ins"), *del = wchild(d, trpr, "del");
+            const owf_xml_node *chg = del ? del : ins;
+            if (chg && !(row_rev = owf_track_add(d->doc, del ? OWF_REV_DELETE : OWF_REV_INSERT,
+                                                 owf_xml_attr(chg, d->w, "author"), owf_xml_attr(chg, d->w, "date"))))
+                d->failed = 1;
+        }
         for (cell = row->first; cell; cell = cell->next) {
             int first = 1, before;
             owf_para *p;
@@ -1987,7 +1993,7 @@ static void table(docx *d, const owf_xml_node *t)
                 para_names(d, ps ? wval(d, ps) : NULL);
             }
             p=&d->b->story->paras[d->b->story->nparas-1];
-            p->table_id=table_id;p->table_row=row_index;p->table_col=col;p->table_cols=cols;
+            p->table_id=table_id;p->table_row=row_index;p->table_col=col;p->table_cols=cols;p->row_revision=row_rev;
             { const owf_xml_node *shd = wchild(d, wchild(d, cell, "tcPr"), "shd");
               p->cell_shading = shd ? docx_fill(d, shd) : cell_style_shading(d); }
             ++col;

@@ -111,6 +111,9 @@ owf_dcell *owf_dpage_find(const owf_dpage *p, const char *id);
 int owf_dpage_index(const owf_dpage *p, const char *id);
 /* A new cell at the end (on top); id NULL makes a new one. NULL when the id is taken or memory ran out. */
 owf_dcell *owf_dpage_add(owf_dpage *p, const char *id, const char *parent, int kind);
+/* A copy of src (every field and attribute) at the end, with id (NULL makes a new one) in place of src's. NULL
+ * when the id is taken or memory ran out. src must not be a cell of p: p's cells may move. */
+owf_dcell *owf_dpage_add_copy(owf_dpage *p, const owf_dcell *src, const char *id);
 /* Removes the cell, every cell inside it, and the edges joined to any of them; how many went. */
 int owf_dpage_remove(owf_dpage *p, const char *id);
 /* An id no cell has, into buf (at least 16 bytes). */
@@ -164,6 +167,39 @@ int owf_dstyle_is(const char *style, const char *word);
 char *owf_dlabel_text(const char *value, int html, size_t *length);
 /* The box round everything drawn on a page; 0 when nothing is. */
 int owf_dpage_bounds(const owf_dpage *p, owf_dnum box[4]);
+
+/* ---- Shapes ----
+ * The outlines of the shapes beyond the first flowchart set (owf_dshape.c), for the canvas and every writer to draw
+ * the same way: cylinder, cloud, document and multi-document, actor, note, card, cube, step, trapezoid, tape,
+ * internal storage, callout, stored data, manual input, delay, display, off-page reference, cross, summing junction
+ * and or, loop limit, sort, collate, single and double arrows, and a triangle turned by direction or flipped. A
+ * shape is named in its style as draw.io names it ("shape=cylinder3;", "shape=mxgraph.flowchart.delay;"), and
+ * turned with direction=south, west or north and flipped with flipH=1 and flipV=1. */
+
+#define OWF_DSHAPE_POINTS 160
+#define OWF_DSHAPE_PARTS 8
+#define OWF_DSHAPE_CLOSED 0x01u          /* the part's last point joins its first */
+#define OWF_DSHAPE_FILL   0x02u          /* filled with the fill colour */
+#define OWF_DSHAPE_LINE   0x04u          /* drawn round with the line colour */
+
+typedef struct {
+    int first, n;                        /* its points: points[first .. first + n - 1] */
+    unsigned flags;                      /* OWF_DSHAPE_ */
+} owf_dshape_part;
+
+typedef struct {
+    owf_dpoint points[OWF_DSHAPE_POINTS];   /* on the page, in hundredths */
+    int npoints;
+    owf_dshape_part parts[OWF_DSHAPE_PARTS];   /* in drawing order */
+    int nparts;
+} owf_dshape;
+
+/* The outline of the shape a style names, in box (x, y, width, height), into s: 1 when it is one of these shapes,
+ * 0 when not (a rectangle, ellipse or another shape the drawing code has itself; s is then empty). */
+int owf_dshape_outline(const char *style, const owf_dnum box[4], owf_dshape *s);
+/* The word GFOpenDiag writes for the shape a style names ("cylinder3" for "shape=cylinder;" too), NULL when it is
+ * none of these. */
+const char *owf_dshape_name(const char *style);
 
 /* ---- SVG and PNG with the diagram inside ----
  * As diagrams.net exports them, so that a picture opens again as the diagram it came from: an SVG holds
@@ -224,6 +260,23 @@ int owf_dpdf_write(const owf_diagram *d, int page, unsigned char **data, size_t 
 
 /* page as EPS, into owf_malloc'd *data. OWF_OK; OWF_ERR_FORMAT when there is no such page; OWF_ERR_MEMORY. */
 int owf_deps_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
+
+/* ---- Graphs in text: Mermaid and Graphviz DOT ----
+ * One page as a graph for tools that lay it out themselves: shapes as nodes (the nearest shape the format has),
+ * shapes with shapes inside as subgraphs (DOT clusters), connectors joined at both ends as edges with their labels,
+ * dashes and arrowheads, and colours. Places are not kept. */
+
+/* page as a Mermaid flowchart, into owf_malloc'd *data. OWF_OK; OWF_ERR_FORMAT when there is no such page;
+ * OWF_ERR_MEMORY. */
+int owf_dmermaid_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
+/* page as a Graphviz DOT digraph; as owf_dmermaid_write. */
+int owf_ddot_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
+/* page as a GraphML graph: shapes as nodes keeping their places and sizes, a container as a node holding a
+ * nested graph; as owf_dmermaid_write. */
+int owf_dgraphml_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
+/* page as an Excalidraw scene (JSON): shapes, their labels and the arrows joining them where they are on the
+ * page; as owf_dmermaid_write. */
+int owf_dexcal_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
 
 #ifdef __cplusplus
 }

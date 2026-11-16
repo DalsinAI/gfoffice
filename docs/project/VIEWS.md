@@ -55,6 +55,15 @@ the next PR and only wires windows, menus and requesters to these calls.
   (`opj_period_start`/`opj_period_next`: a day, a week from Monday, a month, a quarter). A period is
   marked over when the resource's work in it passes its calendar's working time there times its max
   units.
+- **The Resource Usage view** (`opj_usage_draw`), MS Project's: a row for each resource (its name
+  bold, its ID with "!" when over-allocated, its total work), then a row for each of its assignments
+  (the task's name, indented, and the assignment's work), in the order they were made. The chart
+  holds each row's work in every period of the timescale's lower tier, right-aligned, in red where
+  the resource is over its max units; a resource's row is shaded. Its table is its own (ID, Resource
+  Name, Work: 32, 180 and 72 pixels), and it shares the Gantt view's zoom, timescale place, row
+  height and font (`opj_usage_view` gives its places). `opj_usage_rows`, `opj_usage_row` and
+  `opj_usage_cell_text` give its rows and cells. The app's View menu switches between Gantt Chart
+  and Resource Usage (ARexx `VIEW`); the usage view is read only, and Resources... edits.
 
 ## Baseline
 
@@ -74,6 +83,14 @@ The first page across holds the table and the start of the chart; later pages ac
 chart, whole days each, to a day past the plan's finish. `opj_print_page_view` gives the view for a
 page, and `opj_print_draw` draws it with the footer (the plan's title, and "Page n of m") onto any
 `oldraw` target. The Amiga app's PRINT gives it a printer.device target.
+
+`opj_pdf_write` (src/project/opj_pdf.c) prints the same pages to a PDF: A4 landscape with a 1 cm
+margin, 12 twips (0.6 pt) a pixel, so 1308 by 897 pixels a page. It draws through an `oldraw` target
+on libowf's page PDF writer (owf_pdf.h): fills become rectangles, text is Helvetica at 7.2 pt in rows
+17 pixels high, whatever the screen's font, so the PDF is small and its text searchable. It is
+printed black on white; white fills are left out, as the paper is white already. The window's columns
+and zoom are kept. The app's Project menu has Export PDF..., and ARexx has EXPORT with FORMAT PDF or a
+.pdf name.
 
 ## Checked
 

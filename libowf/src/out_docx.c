@@ -468,7 +468,7 @@ static long change_id(const owf_doc *doc, const owf_story *story, const owf_para
     if (k > 900) k = 900;
     for (q = story->paras; q < para; ++q)
         before += q->nruns + 1;
-    return base + (long)k * 2000000L + (before + j) * 8L;    /* +1 to +3: a run's later pieces */
+    return base + (long)k * 2000000L + (before + j) * 8L;    /* +1 to +3: a run's later pieces, +4 to +7 their format changes */
 }
 
 static const owf_revision *run_change(const owf_doc *doc, int number)
@@ -697,7 +697,7 @@ static void field_instr(const owf_run *run, char *out, size_t size)
     else if (f == OWF_FIELD_MERGE && strchr(arg, ' ')) snprintf(out, size, " MERGEFIELD \"%s\" ", arg);
     else if (f == OWF_FIELD_MERGE) snprintf(out, size, " MERGEFIELD %s ", arg);
     else if (f == OWF_FIELD_INDEX) snprintf(out, size, " XE \"%s\" ", arg);      /* 1.10 */
-    else if (f == OWF_FIELD_SEQ && strchr(arg, ' ')) snprintf(out, size, " SEQ \"%s\" \\* ARABIC ", arg);   /* 1.12.4 */
+    else if (f == OWF_FIELD_SEQ && strchr(arg, ' ')) snprintf(out, size, " SEQ \"%s\" \\* ARABIC ", arg);   /* 1.12.6 */
     else if (f == OWF_FIELD_SEQ) snprintf(out, size, " SEQ %s \\* ARABIC ", arg);
     else snprintf(out, size, " %s ", word[f]);
 }
@@ -744,8 +744,9 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
             put_note_mark(out, doc, story, run, report);
             continue;
         }
-        /* 1.5: a tracked change's run inside w:ins or w:del (a picture or frame is never one) */
-        const owf_revision *chg = run->kind != OWF_RUN_IMAGE && run->kind != OWF_RUN_FRAME ? run_change(doc, run->revision) : NULL;
+        /* 1.5: a tracked change's run inside w:ins or w:del (1.12: a picture in the line or a frame's run too,
+         * its w:drawing inside) */
+        const owf_revision *chg = run_change(doc, run->revision);
         int del = chg && chg->kind == OWF_REV_DELETE;
         /* 1.11: its tracked format change, in each of its w:r's w:rPr */
         const owf_format_change *fc = run->kind != OWF_RUN_IMAGE && run->kind != OWF_RUN_FRAME ?
@@ -834,7 +835,15 @@ static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, 
             int id = p->table_id, row = -1;
             owf_buf_puts(out,"<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\"/><w:left w:val=\"single\" w:sz=\"4\"/><w:bottom w:val=\"single\" w:sz=\"4\"/><w:right w:val=\"single\" w:sz=\"4\"/><w:insideH w:val=\"single\" w:sz=\"4\"/><w:insideV w:val=\"single\" w:sz=\"4\"/></w:tblBorders></w:tblPr>");
             while (i < story->nparas && story->paras[i].table_id == id) {
-                p=&story->paras[i];if(p->table_row!=row){if(row>=0)owf_buf_puts(out,"</w:tr>");owf_buf_puts(out,"<w:tr>");row=p->table_row;}
+                p=&story->paras[i];if(p->table_row!=row){
+                    const owf_revision *rc=run_change(doc,p->row_revision);
+                    if(row>=0)owf_buf_puts(out,"</w:tr>");
+                    owf_buf_puts(out,"<w:tr>");row=p->table_row;
+                    if(rc){   /* 1.12: the row a tracked change */
+                        owf_buf_puts(out,rc->kind==OWF_REV_DELETE?"<w:trPr><w:del":"<w:trPr><w:ins");
+                        put_change_attrs(out,rc,4000000L+(long)i);owf_buf_puts(out,"/></w:trPr>");
+                    }
+                }
                 owf_buf_puts(out,"<w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"auto\"/>");
                 if(OWF_SHADE_SET(p->cell_shading))owf_buf_printf(out,"<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"%06lX\"/>",OWF_SHADE_RGB(p->cell_shading));
                 owf_buf_puts(out,"</w:tcPr>");put_para(out,doc,story,p,report,0,NULL,0);owf_buf_puts(out,"</w:tc>");++i;

@@ -329,7 +329,7 @@ static void test_odf_form(void)
     owf_doc_free(doc);
 }
 
-/* libowf 1.12.4: number ranges (SEQ): numbered by name in order, renumbered on an edit, undone, through DOCX
+/* libowf 1.12.6: number ranges (SEQ): numbered by name in order, renumbered on an edit, undone, through DOCX
  * and ODT (its text:sequence-decls), and Word's SEQ with its switches */
 static void test_seq(void)
 {
