@@ -934,6 +934,112 @@ static void test_task_info(void)
     opj_doc_free(doc);
 }
 
+/* Dragging on the chart, at Days zoom (24 pixels a day). Plan Mon 16-Tue 17, Build Wed 18-Fri 20, Ship
+ * (a milestone) Fri 20 17:00. */
+static int mid_y(const opj_view *v, int row)
+{
+    return opj_row_y(v, row) + v->row_height / 2;
+}
+
+static void test_drag(void)
+{
+    opj_doc *doc = three();
+    opj_view v;
+    opj_hit h;
+    opj_drag d;
+    opj_bar b;
+    char text[80], want[40];
+    int x, y;
+    unsigned long changes;
+    opj_view_init(&v, doc, 800, 400, 16, OPJ_ZOOM_DAYS);
+    /* move: Build's middle two days on, to Fri 20 (Start No Earlier Than) */
+    CHECK(opj_bar_of(&v, doc, 1, &b));
+    x = b.bar.x + b.bar.w / 2;
+    y = mid_y(&v, 1);
+    opj_hit_test(&v, doc, x, y, &h);
+    CHECK(opj_drag_begin(&v, doc, &h, x, &d));
+    CHECK_N(d.kind, OPJ_DRAG_MOVE);
+    CHECK_N(d.row, 1);
+    CHECK(!opj_drag_text(&v, doc, &d, x + 5, y, text, sizeof text));     /* under half a day: nothing */
+    CHECK_S(text, "");
+    CHECK_N(opj_drag_end(doc, &v, &d, x + 5, y), OWF_ERR_FORMAT);
+    CHECK(opj_drag_text(&v, doc, &d, x + 48, y, text, sizeof text));
+    CHECK_S(text, "Start: Fri 20/11/26");
+    CHECK(opj_drag_text(&v, doc, &d, x + 72, y, text, sizeof text));     /* Saturday: the next working day */
+    CHECK_S(text, "Start: Mon 23/11/26");
+    CHECK(!opj_drag_text(&v, doc, &d, x + 48, mid_y(&v, 0) - 20, text, sizeof text));   /* off its row */
+    changes = doc->changes;
+    CHECK_N(opj_drag_end(doc, &v, &d, x + 48, y), OWF_OK);
+    CHECK_N(doc->changes, changes + 1);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_START), "Fri 20/11/26");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_TYPE), "Start No Earlier Than");
+    CHECK_S(cell_of(doc, 2, OPJ_COL_FINISH), "Tue 24/11/26");
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_START), "Wed 18/11/26");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_TYPE), "As Soon As Possible");
+    /* stretch: Build's right end three days on, to Mon 23: 4 days */
+    CHECK(opj_bar_of(&v, doc, 1, &b));
+    x = b.bar.x + b.bar.w - 1;
+    opj_hit_test(&v, doc, x, y, &h);
+    CHECK_N(h.part, 1);
+    CHECK(opj_drag_begin(&v, doc, &h, x, &d));
+    CHECK_N(d.kind, OPJ_DRAG_STRETCH);
+    CHECK(!opj_drag_text(&v, doc, &d, x + 24, y, text, sizeof text));    /* to Saturday: still 3 days */
+    CHECK(opj_drag_text(&v, doc, &d, x + 72, y, text, sizeof text));
+    CHECK_S(text, "Duration: 4d");
+    CHECK_N(opj_drag_end(doc, &v, &d, x + 72, y), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "4d");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_FINISH), "Mon 23/11/26");
+    CHECK(!opj_drag_text(&v, doc, &d, x - 200, y, text, sizeof text));   /* its finish before its start */
+    CHECK_N(opj_drag_end(doc, &v, &d, x - 200, y), OWF_ERR_FORMAT);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "4d");
+    /* % Complete: from the left end to the middle */
+    CHECK(opj_bar_of(&v, doc, 1, &b));
+    x = b.bar.x + 1;
+    opj_hit_test(&v, doc, x, y, &h);
+    CHECK(opj_drag_begin(&v, doc, &h, x, &d));
+    CHECK_N(d.kind, OPJ_DRAG_PROGRESS);
+    CHECK(opj_drag_text(&v, doc, &d, b.bar.x + b.bar.w / 4, y, text, sizeof text));
+    sprintf(want, "%% Complete: %d%%", (b.bar.w / 4 * 100 + b.bar.w / 2) / b.bar.w);   /* a quarter, rounded */
+    CHECK_S(text, want);
+    CHECK_N(opj_drag_end(doc, &v, &d, b.bar.x + b.bar.w / 4, y), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), want + 12);
+    CHECK_N(opj_drag_end(doc, &v, &d, b.bar.x + b.bar.w + 40, y), OWF_OK);   /* past the end: 100 */
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "100%");
+    /* a link: Plan's bar dropped on Ship's diamond */
+    CHECK(opj_bar_of(&v, doc, 0, &b));
+    x = b.bar.x + b.bar.w / 2;
+    opj_hit_test(&v, doc, x, mid_y(&v, 0), &h);
+    CHECK(opj_drag_begin(&v, doc, &h, x, &d));
+    CHECK(opj_bar_of(&v, doc, 2, &b));
+    CHECK(opj_drag_text(&v, doc, &d, b.bar.x + b.bar.w / 2, mid_y(&v, 2), text, sizeof text));
+    CHECK_S(text, "Link 1 to 3, finish to start");
+    CHECK_N(opj_drag_end(doc, &v, &d, b.bar.x + b.bar.w / 2, mid_y(&v, 2)), OWF_OK);
+    CHECK_S(cell_of(doc, 2, OPJ_COL_PREDECESSORS), "2,1");
+    CHECK_N(opj_drag_end(doc, &v, &d, b.bar.x + b.bar.w / 2, mid_y(&v, 2)), OWF_ERR_FORMAT);   /* linked already */
+    /* Ship's diamond on Plan's bar would be a loop: refused, the plan as it was */
+    x = b.bar.x + b.bar.w / 2;
+    opj_hit_test(&v, doc, x, mid_y(&v, 2), &h);
+    CHECK(opj_drag_begin(&v, doc, &h, x, &d));
+    CHECK_N(d.kind, OPJ_DRAG_MOVE);
+    CHECK(!opj_drag_text(&v, doc, &d, x + 48, mid_y(&v, 2), text, sizeof text));   /* a milestone isn't moved */
+    CHECK(opj_bar_of(&v, doc, 0, &b));
+    changes = doc->changes;
+    CHECK_N(opj_drag_end(doc, &v, &d, b.bar.x + 4, mid_y(&v, 0)), OWF_ERR_FORMAT);
+    CHECK_N(doc->changes, changes);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_PREDECESSORS), "");
+    /* not on a bar; the core's own refusals */
+    opj_hit_test(&v, doc, 790, mid_y(&v, 0), &h);
+    CHECK(!opj_drag_begin(&v, doc, &h, 790, &d));
+    CHECK(!opj_drag_begin(NULL, doc, &h, 0, &d));
+    CHECK_N(opj_link_tasks(doc, 1, 1), OWF_ERR_FORMAT);
+    CHECK_N(opj_link_tasks(doc, 0, 9), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_duration(doc, 1, -1), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_duration(doc, 1, 960), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "2d");
+    opj_doc_free(doc);
+}
+
 static void test_pdf(void)
 {
     opj_doc *doc = three(), *empty;
@@ -991,6 +1097,7 @@ int main(void)
     test_usage_edits();
     test_columns();
     test_task_info();
+    test_drag();
     if (fails) {
         printf("project view tests: %d of %d checks failed\n", fails, checks);
         return 1;

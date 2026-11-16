@@ -287,6 +287,36 @@ int opj_link_rows(opj_doc *doc, int first, int count)
     return commit(doc, work);
 }
 
+int opj_link_tasks(opj_doc *doc, int pred, int succ)
+{
+    owf_project *work;
+    const owf_ptask *t;
+    int i, rc;
+    if (!doc || pred < 0 || succ < 0 || pred == succ || pred >= doc->plan->ntasks || succ >= doc->plan->ntasks)
+        return OWF_ERR_FORMAT;
+    t = &doc->plan->tasks[succ];
+    for (i = 0; i < t->nlinks; i++)
+        if (t->links[i].pred == pred) return OWF_ERR_FORMAT;   /* linked already */
+    if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
+    if ((rc = owf_project_link(work, pred, succ, OWF_LINK_FS, 0, 0)) != OWF_OK) return fail(work, rc);
+    return commit(doc, work);
+}
+
+int opj_set_duration(opj_doc *doc, int row, long minutes)
+{
+    owf_project *work;
+    owf_ptask *t;
+    int rc;
+    if (minutes < 0 || minutes > 200000000L) return OWF_ERR_FORMAT;
+    if (!(work = begin(doc, row, &rc))) return rc;
+    t = &work->tasks[row];
+    if (t->summary) return fail(work, OWF_ERR_FORMAT);
+    t->duration = minutes;
+    t->estimated = 0;
+    t->milestone = minutes == 0;
+    return commit(doc, work);
+}
+
 int opj_unlink_rows(opj_doc *doc, int first, int count)
 {
     owf_project *work;
