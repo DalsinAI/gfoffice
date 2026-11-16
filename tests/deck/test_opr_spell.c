@@ -8,7 +8,9 @@
  *   - the next misspelt word through each slide's text boxes and shapes in
  *     order, then its notes, wrapping once; a word added to the user's list
  *     is no longer found; a line, a hidden box and a placeholder showing its
- *     prompt are not checked; a clean deck says so.
+ *     prompt are not checked; a clean deck says so;
+ *   - one object's marks for the wavy underline as you type, the word at
+ *     the caret (still being typed) left out, the notes' too.
  *
  * Prints what fails; exit 1 when anything did.
  * MIT, Copyright (c) 2026 AmiCradle Team.
@@ -120,13 +122,52 @@ static void test_deck(ow_spell *sp)
     owf_deck_free(d);
 }
 
+static void test_marks(ow_spell *sp)
+{
+    owf_deck *d = owf_deck_new(10000, 7500);
+    opr_spell_mark m[4];
+    opr_pos caret;
+    int obj, line, n;
+    if (!d || !owf_deck_add_slide(d, -1, -1)) {
+        CHECK(0, "deck");
+        owf_deck_free(d);
+        return;
+    }
+    obj = add_text(d, 0, OWF_OBJ_TEXT, "hellp world\nwrlds and mroe");
+    line = add_text(d, 0, OWF_OBJ_SHAPE, "lnie");
+    if (line >= 0) d->slides[0].objs[line].shape = OWF_SHAPE_LINE;
+    n = opr_spell_marks(d, sp, 0, obj, NULL, m, 4);
+    CHECK(n == 3 && m[0].para == 0 && m[0].start == 0 && m[0].end == 5 && m[1].para == 1 && m[1].start == 0
+          && m[2].para == 1 && m[2].start == 10 && m[2].end == 14, "three marks: %d", n);
+    caret.para = 1; caret.offset = 14;
+    n = opr_spell_marks(d, sp, 0, obj, &caret, m, 4);
+    CHECK(n == 2 && m[1].para == 1 && m[1].start == 0, "the word just typed left out: %d", n);
+    caret.para = 0; caret.offset = 2;
+    n = opr_spell_marks(d, sp, 0, obj, &caret, m, 4);
+    CHECK(n == 2 && m[0].para == 1, "the caret in a word leaves it out: %d", n);
+    caret.para = 1; caret.offset = 7;
+    CHECK(opr_spell_marks(d, sp, 0, obj, &caret, m, 4) == 3, "the caret between words leaves all in");
+    CHECK(opr_spell_marks(d, sp, 0, obj, NULL, m, 1) == 3 && m[0].start == 0, "one written, three counted");
+    CHECK(opr_spell_marks(d, sp, 0, obj, NULL, NULL, 0) == 3, "counted with no room");
+    CHECK(opr_spell_marks(d, sp, 0, line, NULL, m, 4) == 0, "a line has none");
+    CHECK(opr_notes_set(NULL, d, 0, "speker notes") == 0, "notes");
+    n = opr_spell_marks(d, sp, 0, OPR_NOTES, NULL, m, 4);
+    CHECK(n == 1 && m[0].start == 0 && m[0].end == 6, "the notes' marks: %d", n);
+    d->slides[0].objs[obj].flags |= OWF_OBJ_EMPTY;
+    CHECK(opr_spell_marks(d, sp, 0, obj, NULL, m, 4) == 0, "a prompt has none");
+    CHECK(opr_spell_marks(d, sp, 0, 9, NULL, m, 4) == -1 && opr_spell_marks(d, sp, 3, 0, NULL, m, 4) == -1
+          && opr_spell_marks(d, NULL, 0, 0, NULL, m, 4) == -1 && opr_spell_marks(NULL, sp, 0, 0, NULL, m, 4) == -1,
+          "bad input");
+    owf_deck_free(d);
+}
+
 int main(void)
 {
     FILE *f = fopen(dict_path, "w");
     ow_spell *sp;
     char status[128];
     if (!f) return 1;
-    fputs("hello\nworld\nit's\nopenwrite\nquoted\ncaf\xc3\xa9\nhere\na\nshape\nto\nadd\ntext\nclick\n", f);
+    fputs("hello\nworld\nit's\nopenwrite\nquoted\ncaf\xc3\xa9\nhere\nand\nnotes\na\nshape\nto\nadd\ntext\nclick\n", f);
     fclose(f);
     remove(user_path);
     sp = ow_spell_open(dict_path, user_path, status, sizeof status);
@@ -134,6 +175,7 @@ int main(void)
     if (sp) {
         test_words(sp);
         test_deck(sp);
+        test_marks(sp);
         ow_spell_close(sp);
     }
     remove(dict_path);

@@ -106,3 +106,31 @@ int opr_spell_next(const owf_deck *deck, ow_spell *spell, int start_slide, int s
     else return 0;
     return 1;
 }
+
+int opr_spell_marks(const owf_deck *deck, ow_spell *spell, int slide, int obj, const opr_pos *caret,
+                    opr_spell_mark *marks, int max_marks)
+{
+    const owf_obj *o;
+    int n = 0, para;
+    if (!deck || !spell || slide < 0 || slide >= deck->nslides) return -1;
+    if (!(o = spell_object(deck, slide, obj))) return -1;
+    if ((o->flags & OWF_OBJ_EMPTY) || !opr_obj_editable(deck, slide, obj)) return 0;
+    for (para = 0; para < o->text.nparas; ++para) {
+        size_t len, from = 0, a, b;
+        char *text = opr_para_text(&o->text.paras[para], &len);
+        if (!text) return -1;
+        while (from < len && ow_spell_scan(spell, text, from, len, &a, &b)) {
+            from = b;
+            /* the word being typed: the caret in it or just after it */
+            if (caret && caret->para == para && caret->offset >= a && caret->offset <= b) continue;
+            if (marks && n < max_marks) {
+                marks[n].para = para;
+                marks[n].start = a;
+                marks[n].end = b;
+            }
+            n++;
+        }
+        owf_free(text);
+    }
+    return n;
+}

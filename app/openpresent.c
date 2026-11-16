@@ -72,6 +72,7 @@
 #include <clib/alib_protos.h>
 
 #include "openpresentation_core.h"
+#include "ow_spell_dict.h"
 #include "ow_clipboard.h"
 #ifdef OPENPUBLISHER
 #include "openpublisher_core.h"
@@ -153,7 +154,8 @@ enum {
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_FIT,
     M_SHOW_FIRST, M_SHOW_CURRENT, M_SHOW_LOOP, M_SHOW_ON_AUTO, M_SHOW_ON_OWN, M_SHOW_ON_WB,
     M_VIEW_NORMAL, M_VIEW_SORTER, M_VIEW_NOTES, M_VIEW_OUTLINE,
-    M_VIEW_MASTER, M_SLIDE_DESIGN, M_INSERT_FILE, M_PICTURES
+    M_VIEW_MASTER, M_SLIDE_DESIGN, M_INSERT_FILE, M_PICTURES,
+    M_SPELL_AS_YOU_TYPE
 };
 
 static struct NewMenu menus[] = {
@@ -324,6 +326,9 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Its Own Screen", NULL, CHECKIT, ~2 & 7, (APTR)M_SHOW_ON_OWN },
     { NM_SUB, "The Workbench Screen", NULL, CHECKIT, ~4 & 7, (APTR)M_SHOW_ON_WB },
 
+    { NM_TITLE, "Tools", NULL, 0, 0, NULL },
+    { NM_ITEM, "Spelling as You Type", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)M_SPELL_AS_YOU_TYPE },
+
     { NM_TITLE, "Help", NULL, 0, 0, NULL },
     { NM_ITEM, "About " PROGRAM "...", NULL, 0, 0, (APTR)M_ABOUT },
     { NM_END, NULL, NULL, 0, 0, NULL }
@@ -435,6 +440,11 @@ static int sorter_click_index = -1;
 
 static int selected_obj = -1;
 static int edit_obj = -1;
+/* Spelling (GFOpenWrite's dictionary, PROGDIR:Dictionaries/): opened the
+ * first time it is wanted; misspelt words in the text being typed get a
+ * wavy underline while spell_as_you_type is on. */
+static ow_spell *spell;
+static int spell_tried, spell_as_you_type = 1;
 static opr_pos caret;
 static opr_selection text_selection;
 static int text_selecting;
@@ -2697,6 +2707,62 @@ static void draw_text_selection(const opr_slide *s, const ol_scale *sc)
     SetDrMd(rp, JAM1);
 }
 
+
+/* The dictionary, opened once; loud says why when there is none. */
+static int spell_ready(int loud)
+{
+    static const char *const paths[] = { "PROGDIR:Dictionaries/en_GB.words", "PROGDIR:Dictionaries/en_US.words",
+                                         "SYS:Dictionaries/en_GB.words", NULL };
+    char msg[160];
+    int i;
+    if (spell) return 1;
+    if (spell_tried && !loud) return 0;
+    spell_tried = 1;
+    for (i = 0; paths[i]; i++)
+        if ((spell = ow_spell_open(paths[i], "PROGDIR:Dictionaries/user.words", msg, sizeof msg)) != NULL) return 1;
+    if (loud) set_status("No dictionary: GFOpenWrite's en_GB.words goes in PROGDIR:Dictionaries/.");
+    return 0;
+}
+
+/* A wavy line under each misspelt word of the text being typed, under the
+ * glyphs the caret mapping places, so wrapping and columns need nothing more. */
+static void draw_spell_marks(const opr_slide *s, const ol_scale *sc)
+{
+    static opr_spell_mark marks[200];
+    struct RastPort *rp = win ? win->RPort : NULL;
+    int frame, n, i, guard = 0;
+    if (!rp || !spell_as_you_type || edit_obj < 0 || !s || (frame = opr_slide_frame_for(s, edit_obj)) < 0 ||
+        !spell_ready(0))
+        return;
+    n = opr_spell_marks(deck, spell, current, edit_obj, &caret, marks, 200);
+    if (n > 200) n = 200;
+    if (n <= 0) return;
+    SetAPen(rp, (ULONG)argb_pen(0xffd02020u));
+    SetDrMd(rp, JAM1);
+    for (i = 0; i < n; i++) {
+        opr_pos at, end;
+        at.para = end.para = marks[i].para;
+        at.offset = marks[i].start;
+        end.offset = marks[i].end;
+        while (app_compare_pos(at, end) < 0 && guard++ < 100000) {
+            opr_pos next = at;
+            ol_rect a, b;
+            int x, x2, y;
+            if (opr_text_move(deck, current, edit_obj, &next, OPR_MOVE_RIGHT) < 0 || app_compare_pos(next, at) <= 0)
+                break;
+            if (app_compare_pos(next, end) > 0) next = end;
+            if (opr_caret_box(s, frame, at, NULL, NULL, &a) && opr_caret_box(s, frame, next, NULL, NULL, &b) &&
+                a.y == b.y) {
+                x = ol_scale_x(sc, a.x);
+                x2 = ol_scale_x(sc, b.x);
+                y = ol_scale_y(sc, a.y) + ol_scale_length(sc, a.height) - 2;
+                for (; x < x2; x++) WritePixel(rp, x, y + ((x >> 1) & 1));
+            }
+            at = next;
+        }
+    }
+}
+
 static void draw_caret(const opr_slide *s, const ol_scale *sc)
 {
     int frame;
@@ -2838,6 +2904,7 @@ static void draw_slide_part(const box *part)
         draw_guides(&sc);
     }
     draw_selection(s);
+    draw_spell_marks(s, &sc);
     draw_text_selection(s, &sc);
     draw_caret(s, &sc);
     if (region) {
@@ -7786,6 +7853,15 @@ static void menu_action(ULONG id)
     case M_ZOOM_IN: zoom_step(1); break;
     case M_ZOOM_OUT: zoom_step(-1); break;
     case M_ZOOM_FIT: set_zoom(100); break;
+    case M_SPELL_AS_YOU_TYPE:
+        spell_as_you_type = !spell_as_you_type;
+        if (spell_as_you_type && !spell_ready(1)) {
+            draw_status();
+            break;
+        }
+        set_status(spell_as_you_type ? "Misspelt words are underlined as you type." : "Spelling as you type off.");
+        draw_slide(); draw_status();
+        break;
     case M_SHOW_GRID:
         show_grid = !show_grid;
         set_status(show_grid ? "Half-inch grid shown." : "Grid hidden.");
@@ -8814,6 +8890,7 @@ out:
     opr_clip_free(slide_clip);
     if (deck) owf_deck_free(deck);
     opr_undo_free(undo);
+    ow_spell_close(spell);
     if (theme.text) ogt_theme_free(&theme);
     if (LayersBase) CloseLibrary(LayersBase);
     if (OpenFontTextBase) CloseLibrary(OpenFontTextBase);
