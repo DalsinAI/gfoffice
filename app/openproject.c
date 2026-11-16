@@ -1296,10 +1296,12 @@ static void menu_action(ULONG id, struct MenuItem *item)
     case M_SET_BASELINE: baseline_n(0); break;
     case M_CLEAR_BASELINE: baseline_n(1); break;
     case M_LEVEL: level_resources(); break;
-    case M_CLEAR_LEVELING:
-        if ((i = opj_clear_leveling(DOC)) == OWF_OK) set_status("Leveling cleared");
-        else edit_failed(i, "Clear Leveling");
+    case M_CLEAR_LEVELING: {
+        int rc = opj_clear_leveling(DOC);
+        if (rc == OWF_OK) set_status("Leveling cleared");
+        else edit_failed(rc, "Clear Leveling");
         break;
+    }
     case M_UPDATE_PROJECT: update_project(); break;
     case M_WORKTIME: change_working_time(); break;
     case M_PLAN_CALENDAR: plan_calendar(); break;
