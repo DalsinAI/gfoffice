@@ -110,6 +110,31 @@ check: diagram-check
 
 .PHONY: diagram-test diagram-check
 
+# The shapes palette (src/diag/odg_stencil.c), in sets, each named back to draw.io by the shapes' outlines.
+ODG_STENCIL_DEPS = $(DIAG_DEPS) src/diag/odg_stencil.c include/opendiag_stencil.h tests/diag/test_odg_stencil.c
+
+$(OUT)/test-odg-stencil: $(ODG_STENCIL_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		src/diag/odg_stencil.c tests/diag/test_odg_stencil.c -lz -o $@
+
+$(OUT)/test-odg-stencil-asan: $(ODG_STENCIL_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) src/diag/odg_stencil.c \
+		tests/diag/test_odg_stencil.c -lz -o $@
+
+diagram-stencil-test: $(OUT)/test-odg-stencil
+	$(OUT)/test-odg-stencil
+
+diagram-stencil-check: $(OUT)/test-odg-stencil-asan
+	$(OUT)/test-odg-stencil-asan
+
+test: diagram-stencil-test
+check: diagram-stencil-check
+
+.PHONY: diagram-stencil-test diagram-stencil-check
+
 # The shapes' outlines (libowf/diagram/owf_dshape.c), shared by the canvas and the writers.
 $(OUT)/test-dshape: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dshape.c
 	mkdir -p $(OUT)

@@ -164,15 +164,8 @@ static struct NewMenu menus[] = {
     TOOL_ITEM("Rhombus", "5", ODG_TOOL_RHOMBUS),
     TOOL_ITEM("Text", "6", ODG_TOOL_TEXT),
     TOOL_ITEM("Connector", "7", ODG_TOOL_CONNECTOR),
-    { NM_TITLE, "Shapes", NULL, 0, 0, NULL },          /* opendiag_stencil.h's, in its order */
-    { NM_ITEM, "Process", NULL, 0, 0, (APTR)(M_SHAPE + 0) },
-    { NM_ITEM, "Decision", NULL, 0, 0, (APTR)(M_SHAPE + 1) },
-    { NM_ITEM, "Terminator", NULL, 0, 0, (APTR)(M_SHAPE + 2) },
-    { NM_ITEM, "Data", NULL, 0, 0, (APTR)(M_SHAPE + 3) },
-    { NM_ITEM, "Predefined Process", NULL, 0, 0, (APTR)(M_SHAPE + 4) },
-    { NM_ITEM, "Preparation", NULL, 0, 0, (APTR)(M_SHAPE + 5) },
-    { NM_ITEM, "Triangle", NULL, 0, 0, (APTR)(M_SHAPE + 6) },
-    { NM_ITEM, "Circle", NULL, 0, 0, (APTR)(M_SHAPE + 7) },
+    { NM_TITLE, "Shapes", NULL, 0, 0, NULL },          /* filled from opendiag_stencil.h by build_menus */
+    { NM_IGNORE, NULL, NULL, 0, 0, NULL },             /* where build_menus puts the sets */
     { NM_TITLE, "Map", NULL, 0, 0, NULL },             /* the map mode (opendiag_mind.h); the keys are in map_keys */
     { NM_ITEM, "New Map", NULL, 0, 0, (APTR)M_MAP_NEW },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -190,6 +183,38 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Export Outline...", NULL, 0, 0, (APTR)M_MAP_EXPORT },
     { NM_END, NULL, NULL, 0, 0, NULL }
 };
+
+/* The menu strip with the Shapes menu filled: an item for each set of opendiag_stencil.h, its shapes under it in
+ * the palette's order (M_SHAPE + the shape's number). Built once, before CreateMenus. */
+static struct NewMenu built[sizeof menus / sizeof menus[0] + ODG_NSETS + 64];
+
+static struct NewMenu *build_menus(void)
+{
+    int i, n = 0, set, nth, k_shape, shapes_at = -1;
+    for (i = 0; i < (int)(sizeof menus / sizeof menus[0]); i++)
+        if (menus[i].nm_Type == NM_IGNORE)   /* the one after the "Shapes" title */
+            shapes_at = i;
+    if (shapes_at < 0 || odg_stencil_count() > 64 || M_SHAPE + odg_stencil_count() > M_MAP)
+        return menus;                    /* the strip as it is, the Shapes menu empty */
+    for (i = 0; i < (int)(sizeof menus / sizeof menus[0]); i++) {
+        if (i != shapes_at) {
+            built[n++] = menus[i];
+            continue;
+        }
+        for (set = 0; set < ODG_NSETS; set++) {
+            struct NewMenu item = { NM_ITEM, NULL, NULL, 0, 0, NULL };
+            item.nm_Label = (STRPTR)odg_stencil_set_name((odg_stencil_set)set);
+            built[n++] = item;
+            for (nth = 0; nth < 31 && (k_shape = odg_stencil_in_set((odg_stencil_set)set, nth)) >= 0; nth++) {
+                struct NewMenu sub = { NM_SUB, NULL, NULL, 0, 0, NULL };
+                sub.nm_Label = (STRPTR)odg_stencil_at(k_shape)->name;
+                sub.nm_UserData = (APTR)(M_SHAPE + k_shape);
+                built[n++] = sub;
+            }
+        }
+    }
+    return built;
+}
 
 static struct Screen *scr;
 static APTR vi;
@@ -1398,7 +1423,7 @@ static int rexx_do_command(const char *command, char *result, size_t size)
     } else if (starts_word_ci(command, "SHAPE", &arg)) {
         int k;
         if (!*arg) put_text(result, size, ed.tool == ODG_TOOL_SHAPE ? odg_stencil_at(ed.shape)->name : "");
-        else if ((k = odg_stencil_find(arg)) < 0) rc = app_error(ODG_RX_ERROR, "SHAPE: Process, Decision, Terminator, Data, Predefined Process, Preparation, Triangle or Circle");
+        else if ((k = odg_stencil_find(arg)) < 0) rc = app_error(ODG_RX_ERROR, "SHAPE: a name from the Shapes menu, such as Process, Decision, Document or Cloud");
         else { ed.shape = k; set_tool(ODG_TOOL_SHAPE); }
     } else if (starts_word_ci(command, "SELECT", &arg)) {
         follow_doc();
@@ -1507,7 +1532,7 @@ static int open_window(void)
         fw = TextLength(&rp, (STRPTR)"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", 62) / 62;
         if (fw < 4) fw = 8;
     }
-    menu = CreateMenus(menus, TAG_DONE);
+    menu = CreateMenus(build_menus(), TAG_DONE);
     if (menu) LayoutMenus(menu, vi, GTMN_NewLookMenus, TRUE, TAG_DONE);
     w = scr->Width < 900 ? scr->Width : 900;
     h = scr->Height - scr->BarHeight - 1 < 600 ? scr->Height - scr->BarHeight - 1 : 600;

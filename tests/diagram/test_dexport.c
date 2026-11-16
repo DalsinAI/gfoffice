@@ -251,10 +251,42 @@ static void test_png(void)
     owf_diagram_free(&d);
 }
 
+/* The shapes past the old eight (owf_dshape.c) as paths: a note's page and its fold, and a cylinder whose top's near
+ * edge is a line only, dashed and in its colour. */
+static void test_svg_outlines(void)
+{
+    static const char page[] =
+        "<mxfile host=\"test\"><diagram id=\"a\" name=\"One\"><mxGraphModel><root>"
+        "<mxCell id=\"0\"/><mxCell id=\"1\" parent=\"0\"/>"
+        "<mxCell id=\"n\" value=\"Memo\" style=\"shape=note;size=20;fillColor=#fff2cc;\" vertex=\"1\" parent=\"1\">"
+        "<mxGeometry x=\"10\" y=\"10\" width=\"100\" height=\"60\" as=\"geometry\"/></mxCell>"
+        "<mxCell id=\"c\" style=\"shape=cylinder3;size=10;dashed=1;strokeColor=#0000ff;\" vertex=\"1\" parent=\"1\">"
+        "<mxGeometry x=\"200\" y=\"10\" width=\"100\" height=\"60\" as=\"geometry\"/></mxCell>"
+        "</root></mxGraphModel></diagram></mxfile>";
+    owf_diagram d;
+    unsigned char *svg = NULL;
+    size_t n = 0;
+    CHECK_N(read_text(page, &d), OWF_OK);
+    CHECK_N(owf_dsvg_write(&d, 0, &svg, &n), OWF_OK);
+    if (svg) {
+        CHECK_NOT(svg, "<rect");
+        CHECK_HAS(svg, "<path d=\"M 10 10 L 90 10 L 110 30 L 110 70 L 10 70 Z\" fill=\"#fff2cc\" stroke=\"#000000\" />");
+        CHECK_HAS(svg, "<path d=\"M 90 10 L 90 30 L 110 30\" fill=\"none\" stroke=\"#000000\" />");
+        CHECK_HAS(svg, "<path d=\"M 200 20 L 200.96 18.05 ");                 /* the cylinder's far side round */
+        CHECK_HAS(svg, "L 200 60 Z\" fill=\"#ffffff\" stroke=\"#0000ff\" stroke-dasharray=\"3 3\" />");
+        CHECK_HAS(svg, "L 250 30 L ");                                          /* the top's near edge */
+        CHECK_HAS(svg, "L 300 20\" fill=\"none\" stroke=\"#0000ff\" stroke-dasharray=\"3 3\" />");
+        CHECK_HAS(svg, ">Memo</tspan>");
+        owf_free(svg);
+    }
+    owf_diagram_free(&d);
+}
+
 int main(void)
 {
     test_places();
     test_svg();
+    test_svg_outlines();
     test_png();
     printf("diagram export: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
