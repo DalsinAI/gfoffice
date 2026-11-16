@@ -1,4 +1,4 @@
-/* tests/arexx/calc-protect.rexx: GFOpenCalc's sheet and cell protection through its ARexx port.
+/* tests/arexx/calc-protect.rexx: GFOpenCalc's sheet, cell and workbook protection through its ARexx port.
    rx tests/arexx/calc-protect.rexx   (GFOpenCalc running with a new workbook; prints PASS/FAIL lines, then
    ALL PASS or n FAILED). Leaves RAM:protect-test.xlsx and RAM:protect-test.ods. */
 OPTIONS RESULTS
@@ -47,6 +47,23 @@ CALL want 'SETCELL A1 5', 0
 CALL cell 'B1', '10'
 CALL want 'GETFORMULA C1', 0
 IF res ~= '=A1+1' THEN CALL bad 'GETFORMULA C1 gave' res '(wanted =A1+1)'
+
+/* the workbook's structure */
+CALL want 'SHEETS', 0
+sheets = res
+CALL want 'PROTECTBOOK book', 0
+CALL want 'PROTECTBOOK', 5                           /* protected already */
+CALL want 'ISBOOKPROTECTED', 0
+IF res ~= '1 1' THEN CALL bad 'ISBOOKPROTECTED gave' res '(wanted 1 1)'
+CALL want 'ADDSHEET Extra', 10
+CALL want 'RENAMESHEET Other', 10
+CALL want 'SHEETS', 0
+IF res ~= sheets THEN CALL bad 'SHEETS gave' res '(wanted' sheets')'
+CALL want 'SETCELL A1 6', 0                          /* cells still change */
+CALL want 'UNPROTECTBOOK wrong', 10
+CALL want 'UNPROTECTBOOK book', 0
+CALL want 'UNPROTECTBOOK book', 5                    /* not protected */
+CALL want 'ADDSHEET Extra', 0
 
 IF fails = 0 THEN SAY 'ALL PASS'
 ELSE SAY fails 'FAILED'
