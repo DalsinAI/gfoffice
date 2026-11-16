@@ -86,19 +86,31 @@ enum {
     OPJ_COL_BASELINE_FINISH,
     OPJ_COL_START_VARIANCE,              /* working time later than the baseline: "2d", "-4h", "0d" */
     OPJ_COL_FINISH_VARIANCE,
+    OPJ_COL_CONSTRAINT_TYPE,             /* "Start No Earlier Than", as MS Project names them */
+    OPJ_COL_CONSTRAINT_DATE,             /* "NA" for As Soon / Late As Possible */
+    OPJ_COL_NOTES,
     OPJ_NCOLS
 };
 
 /* A column's heading. */
 const char *opj_column_title(int column);
+/* A constraint type's name, "As Soon As Possible" .. "Finish No Later Than" (OWF_CON_), "" out of range. */
+const char *opj_constraint_name(int constraint);
 /* A cell as the sheet shows it, into out (cut to size, NUL-terminated):
  * a duration "5d", "3ed", "1d?"; a date "Mon 16/11/26" (day/month/year); predecessors "2,3SS+1d". */
 void opj_cell_text(const opj_doc *doc, int row, int column, char *out, size_t size);
 /* Typed text into a cell, as one edit. Name; Duration (owf_pduration_parse's text); Start (sets Start No
  * Earlier Than, as MS Project does), Finish (Finish No Earlier Than); Predecessors (replaces the row's
  * links); % Complete; Resource Names (replaces the row's assignments; a name not in the plan is added as
- * a work resource). ID and WBS can't be typed into (OWF_ERR_FORMAT). */
+ * a work resource); Constraint Type (its name, any case, or a short one: ASAP, ALAP, MSO, MFO, SNET, SNLT, FNET,
+ * FNLT; a type with a date and none yet takes the task's start, or finish for the finish types); Constraint
+ * Date (NA makes it As Soon As Possible; a date on an ASAP or ALAP task makes it Start No Earlier Than);
+ * Notes. ID, WBS and the baseline columns can't be typed into (OWF_ERR_FORMAT). */
 int opj_set_cell(opj_doc *doc, int row, int column, const char *text);
+/* Task Information's OK: several of row's cells typed at once, in the order given, as one edit (one Undo
+ * step), scheduled once at the end. Nothing changes when any cell is refused: its place in columns goes
+ * in *bad (when not NULL; -1 when none was), with OWF_ERR_FORMAT, or OWF_ERR_MEMORY. */
+int opj_set_cells(opj_doc *doc, int row, const int *columns, const char *const *texts, int n, int *bad);
 /* The outline number of a row, "1.2.3". */
 void opj_outline_number(const opj_doc *doc, int row, char *out, size_t size);
 /* "Mon 16/11/26" (with_time: "Mon 16/11/26 08:00"). out holds at least 24 bytes. */
@@ -174,6 +186,17 @@ typedef struct {
 /* A view of doc, width by height pixels, rows row_height high, at a zoom, starting at the Monday on or
  * before the plan's start. Shows ID, Name, Duration, Start, Finish and Predecessors. */
 void opj_view_init(opj_view *v, const opj_doc *doc, int width, int height, int row_height, int zoom);
+/* The column chooser (View > Columns, ARexx COLUMN). A column's width when shown: 32 ID, 180 Task Name, 56
+ * Duration, 96 Start and Finish, 84 Predecessors, 64 % Complete, 48 WBS, 140 Resource Names, 96 the baseline
+ * dates, 72 the variances, 140 Constraint Type, 96 Constraint Date, 160 Notes; 0 out of range. */
+int opj_column_width(int column);
+/* 1 when v's table shows column. */
+int opj_view_column_shown(const opj_view *v, int column);
+/* Shows column at its width (a shown column keeps its own) or hides it; the columns stay in the sheet's
+ * order. 1 done (nothing to do counts), 0 out of range or when it would hide the last column shown. */
+int opj_view_show_column(opj_view *v, int column, int show);
+/* column when shown, else the next shown column after it, else the last one before it; -1 when none is. */
+int opj_view_near_column(const opj_view *v, int column);
 /* Pixels a day takes at a zoom: 24, 6, 2, 1. */
 int opj_zoom_day_width(int zoom);
 /* The chart's left edge (where origin is). */
@@ -246,10 +269,11 @@ void opj_usage_cell_text(const opj_doc *doc, int row, int column, char *out, siz
  * opj_view_time, opj_chart_left and opj_row_y give the usage view's places. */
 void opj_usage_view(const opj_view *v, opj_view *usage);
 void opj_usage_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area);
-/* The task edits, which act on the Gantt chart's selected task, from the Edit menu or a key. Resource
+/* The task edits, which act on the Gantt chart's selected task, from the Edit menu or a key (OPJ_EDIT_INFO:
+ * Task Information). Resource
  * Usage hides that selection, so none of them runs while it shows. */
 enum { OPJ_EDIT_NONE = -1, OPJ_EDIT_CELL, OPJ_EDIT_INSERT, OPJ_EDIT_DELETE, OPJ_EDIT_INDENT, OPJ_EDIT_OUTDENT,
-       OPJ_EDIT_LINK, OPJ_EDIT_UNLINK, OPJ_NEDITS };
+       OPJ_EDIT_LINK, OPJ_EDIT_UNLINK, OPJ_EDIT_INFO, OPJ_NEDITS };
 /* The edit a key in the window asks for: Return the cell, Del the task's deletion, Tab indent (shift:
  * outdent). OPJ_EDIT_NONE for any other key. */
 int opj_edit_for_key(int key, int shift);
@@ -317,8 +341,9 @@ typedef struct {
     char file[256];                      /* the plan's file, "" when it has none */
     char lasterror[256];
     unsigned long docs;                  /* bumped each time NEW or OPEN replaces doc: a new plan, even at the old address */
-    const opj_view *view;                /* the window's view, whose columns and zoom EXPORT FORMAT PDF prints;
-                                          * NULL: a fresh one at days zoom */
+    opj_view *view;                      /* the window's view: EXPORT FORMAT PDF prints its columns and zoom,
+                                          * COLUMN shows and hides its columns; NULL: a fresh one at days zoom
+                                          * for EXPORT, and COLUMN is not possible (5) */
 } opj_rexx;
 
 /* A command, its answer into result (cut to size, "" when it has none). */

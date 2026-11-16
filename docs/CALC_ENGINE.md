@@ -57,11 +57,24 @@ side first, pruned by the best answer so far, up to 5000 programmes. The
 tableau is at most 512K numbers (4 MB). Values within 1e-9 of a whole number
 are written as that number.
 
+The Nonlinear engine (the model's engine `OC_SOLVER_NONLINEAR`, Excel's GRG
+Nonlinear) takes smooth models that are not linear. It is Nelder and Mead's
+simplex search, started from the variables' present values (first steps a
+tenth of each value, or 0.5 for zero), with the constraints and a value goal
+as a squared penalty whose weight starts at 10 and grows a hundredfold for up
+to 12 rounds, each round searching again from the last answer. It stops when
+the points come together, or at the trial limit (4000 points worked out by
+default; the result then says it stopped there). The answer is a local one:
+other starting values may find a better one. It takes no whole or binary
+variables (use Simplex LP for those). Answers are checked on the sheet:
+constraints broken by more than a millionth of the target give "no values
+meet every constraint"; a target past 1e30 gives "no limit".
+
 The window keeps the model on the sheet whether or not the answer is kept,
 as hidden names named as Excel names its Solver models (`solver_opt`,
 `solver_typ`, `solver_val`, `solver_adj`, `solver_num`, `solver_lhsN`,
-`solver_relN`, `solver_rhsN`, `solver_neg`, with `solver_eng` 2 for a linear
-model), so a model made in Excel opens in GFOpenCalc and the other way round.
+`solver_relN`, `solver_rhsN`, `solver_neg`, and `solver_eng`: 2 Simplex LP,
+1 GRG Nonlinear; Excel's 3, Evolutionary, opens as Nonlinear), so a model made in Excel opens in GFOpenCalc and the other way round.
 ODS keeps them as named expressions (ODF has no hidden names, which the save
 notes). Keeping the answer is one Undo step.
 
@@ -233,6 +246,28 @@ showValue="0". `oc_condfmt_spec` takes `OC_CF_DATA_BAR` and `OC_CF_ICON_SET`
 (`opencalc_core.h` 0.34.0) and writes the cfRule; ARexx `CONDFMT range rule`
 takes the window's words ("bar blue only", "icons 3Arrows reverse") and
 `CONDFMT range CLEAR`.
+## Links to other workbooks
+
+A formula on another book (`'[Rates.xlsx]Q1'!A1`) works from the values
+that book last had, which the book keeps (`owf_book.extbooks`, from XLSX's
+externalLink parts and ODS's value tables), so a book whose links' files
+are not there still shows its values. The core's Edit Links
+(`oc_links.c`) lists the links (`oc_core_link_count`, `oc_core_link`: the
+name formulas give, the target as the file wrote it, the sheets kept),
+turns a target into a file (`oc_link_path`: `file:///C:/x.xlsx`,
+`file:///home/x.ods`, a name beside the book, "%20" decoded; not `http:`)
+and updates a link from its file (`oc_core_update_link`): each sheet kept
+takes the values the file's sheet has now, as an Undo step, and the
+formulas are worked out again. A file that cannot be read changes
+nothing; a sheet the file no longer has keeps its last values.
+
+GFOpenCalc shows them in Data > Edit Links... (each link's name, target
+and sheets kept; Update All or Update One...), a target beside the book
+being looked for in the book's own folder. ARexx `LINKS` gives
+`name=target` for each, by commas, and `UPDATELINK n` or
+`UPDATELINK ALL` updates them (RC 10 when a file cannot be read, 5 for a
+link that is not there); tests/arexx/calc-links.rexx runs them.
+
 ## Sheet and cell protection
 
 owf.library 2.6 gives `owf_sheet` its protection (`protect`, the

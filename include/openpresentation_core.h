@@ -162,6 +162,39 @@ typedef struct {
 int opr_text_find(const owf_deck *deck, int start_slide, int start_obj,
                   opr_pos start, const char *needle, int match_case,
                   opr_find_result *result);
+
+/* ---- Spelling (opr_spell.c) ----
+ *
+ * GFOpenWrite's dictionary and word rules (include/ow_spell_dict.h; the
+ * app opens one with ow_spell_open). The next misspelt word at or after
+ * (start_slide, start_obj, start): each slide's objects that can be typed
+ * in, in order, then its notes (obj OPR_NOTES), wrapping once to the first
+ * slide. A placeholder still showing its prompt is left alone. 1 with
+ * result's selection on the word and its text in word (cut to word_size),
+ * 0 when the deck is clean, -1 for bad input or no memory. */
+struct ow_spell;
+int opr_spell_next(const owf_deck *deck, struct ow_spell *spell, int start_slide, int start_obj,
+                   opr_pos start, opr_find_result *result, char *word, size_t word_size);
+/* The misspelt words of one paragraph's text (opr_para_text's), for the
+ * wavy underline as you type: up to max_ranges byte ranges written; the
+ * return is how many there are in all. */
+typedef struct {
+    size_t start, end;
+} opr_spell_range;
+int opr_spell_words(struct ow_spell *spell, const char *text, size_t length,
+                    opr_spell_range *ranges, int max_ranges);
+/* The misspelt words of one object's text (obj OPR_NOTES: the slide's
+ * notes), for the wavy underline as you type. With caret not NULL the word
+ * the caret is in, or just after, is left out: it is still being typed. A
+ * placeholder showing its prompt, a line or a hidden object has none. Up to
+ * max_marks written; the return is how many there are in all, -1 for bad
+ * input or no memory. */
+typedef struct {
+    int para;
+    size_t start, end;
+} opr_spell_mark;
+int opr_spell_marks(const owf_deck *deck, struct ow_spell *spell, int slide, int obj, const opr_pos *caret,
+                    opr_spell_mark *marks, int max_marks);
 /* Delete exactly the selected characters and paragraph separators. Both ends
  * collapse to the start. The caller owns the Undo snapshot, as for typing. */
 int opr_text_delete_selection(owf_deck *deck, int slide, int obj,
