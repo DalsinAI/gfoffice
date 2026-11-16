@@ -48,7 +48,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenProject 0.1.4 (16.11.2026)"
+#define VERSION_TEXT "GFOpenProject 0.1.10 (16.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenProject, the project planner of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -57,12 +57,14 @@ static const char version[] __attribute__((used)) =
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_XML, M_EXPORT_CSV, M_EXPORT_PDF, M_PRINT, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_EDIT, M_INSERT, M_DELETE, M_INDENT, M_OUTDENT, M_LINK, M_UNLINK,
-    M_DAYS, M_WEEKS, M_MONTHS, M_QUARTERS, M_SHOW_BASELINE, M_RESOURCES, M_START, M_GANTT, M_USAGE,
+    M_DAYS, M_WEEKS, M_MONTHS, M_QUARTERS, M_SHOW_BASELINE, M_RESOURCES, M_START, M_GANTT, M_USAGE, M_NETWORK, M_TASK_USAGE, M_GRAPH, M_TRACKING,
     M_SET_BASELINE, M_CLEAR_BASELINE,
     M_INFO,
     M_COLUMN                                 /* View > Columns: M_COLUMN + the column (OPJ_COL_) */
 };
-#define COLUMNS_ITEM 13                      /* View's item number of Columns */
+/* View's items 10 to 15 are the views, one ticked at a time: the others an item excludes. */
+#define VIEWS_BUT(item) (0xFC00L & ~(1L << (item)))
+#define COLUMNS_ITEM 17                      /* View's item number of Columns */
 
 static struct NewMenu menus[] = {
     { NM_TITLE, "Project", NULL, 0, 0, NULL },
@@ -103,8 +105,12 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Resources...", "R", 0, 0, (APTR)M_RESOURCES },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
-    { NM_ITEM, "Gantt Chart", "G", CHECKIT | CHECKED, 1 << 11, (APTR)M_GANTT },
-    { NM_ITEM, "Resource Usage", "W", CHECKIT, 1 << 10, (APTR)M_USAGE },
+    { NM_ITEM, "Gantt Chart", "G", CHECKIT | CHECKED, VIEWS_BUT(10), (APTR)M_GANTT },
+    { NM_ITEM, "Resource Usage", "W", CHECKIT, VIEWS_BUT(11), (APTR)M_USAGE },
+    { NM_ITEM, "Network Diagram", "D", CHECKIT, VIEWS_BUT(12), (APTR)M_NETWORK },
+    { NM_ITEM, "Task Usage", "K", CHECKIT, VIEWS_BUT(13), (APTR)M_TASK_USAGE },
+    { NM_ITEM, "Resource Graph", "H", CHECKIT, VIEWS_BUT(14), (APTR)M_GRAPH },
+    { NM_ITEM, "Tracking Gantt", "J", CHECKIT, VIEWS_BUT(15), (APTR)M_TRACKING },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Columns", NULL, 0, 0, NULL },
     { NM_SUB, "ID", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)(M_COLUMN + OPJ_COL_ID) },
@@ -146,11 +152,30 @@ static oldraw *od;
 static int sel_col = OPJ_COL_NAME;
 /* The Resource Usage view in place of the Gantt view (View menu): it shares the zoom and the timescale's
  * place, and keeps its own top row and selected row (a resource or an assignment). Read only. */
-static int usage_mode, usage_first, usage_sel = -1;
+static int usage_mode, usage_first, usage_sel = -1;   /* usage_mode: 0, OPJ_VIEW_USAGE, OPJ_VIEW_TASK_USAGE or OPJ_VIEW_GRAPH (whose usage_sel is the resource) */
+/* The Network Diagram in place of the Gantt view (View menu): the same selected task, its boxes laid out
+ * again at every redraw, so every edit shows. */
+static int network_mode;
+static opj_network net;
 static char status[256];
 static char title_text[300];
 
 #define DOC (rx.doc)
+
+/* The rows of the usage view showing (Task Usage or Resource Usage). */
+static int usage_rows(void)
+{
+    if (usage_mode == OPJ_VIEW_GRAPH) return DOC->plan->nresources;
+    return usage_mode == OPJ_VIEW_TASK_USAGE ? opj_task_usage_rows(DOC) : opj_usage_rows(DOC);
+}
+
+/* Shows a usage view (OPJ_VIEW_USAGE, OPJ_VIEW_TASK_USAGE or OPJ_VIEW_GRAPH), its selection kept to its rows. */
+static void show_usage(int mode)
+{
+    if (usage_mode != mode) usage_sel = -1, usage_first = 0;
+    usage_mode = mode;
+    if (usage_sel < 0 && usage_rows()) usage_sel = 0;
+}
 
 /* ---- Small helpers ---- */
 
@@ -315,17 +340,18 @@ static int inner_h(void) { return win ? win->GZZHeight : 0; }
 /* The view for the doc shown: a new doc gets a new view, the same doc keeps its scroll and choices. */
 static void view_for_doc(void)
 {
-    int zoom = view.zoom, base = view.show_baseline;
+    int zoom = view.zoom, base = view.show_baseline, tracking = view.tracking;
     if (shown != rx.docs + 1) {
         opj_view_init(&view, DOC, inner_w(), inner_h(), fh + 5, shown ? zoom : OPJ_ZOOM_DAYS);
         view.show_baseline = base;
+        view.tracking = tracking;
         view.selected = DOC->plan->ntasks ? 0 : -1;
         shown = rx.docs + 1;
     }
     view.width = inner_w();
     view.height = inner_h();
     if (view.selected >= DOC->plan->ntasks) view.selected = DOC->plan->ntasks - 1;
-    if (usage_sel >= opj_usage_rows(DOC)) usage_sel = opj_usage_rows(DOC) - 1;
+    if (usage_sel >= usage_rows()) usage_sel = usage_rows() - 1;
     if (usage_first > usage_sel && usage_first > 0) usage_first = usage_sel > 0 ? usage_sel : 0;
 }
 
@@ -362,7 +388,13 @@ static void draw_cb(void *user, oldraw *d, const oldraw_rect *area)
         opj_view u = view;
         u.first_row = usage_first;
         u.selected = usage_sel;
-        opj_usage_draw(d, &u, DOC, area);
+        if (usage_mode == OPJ_VIEW_GRAPH) opj_graph_draw(d, &view, DOC, usage_sel, area);
+        else if (usage_mode == OPJ_VIEW_TASK_USAGE) opj_task_usage_draw(d, &u, DOC, area);
+        else opj_usage_draw(d, &u, DOC, area);
+        return;
+    }
+    if (network_mode) {
+        opj_network_draw(d, &view, &net, DOC, area);
         return;
     }
     opj_draw(d, &view, DOC, area);
@@ -382,6 +414,11 @@ static void redraw(void)
     if (!od) od = oldraw_new_rastport(win->RPort, scr, inner_w(), inner_h());
     if (!od) return;
     oldraw_resize(od, inner_w(), inner_h());
+    if (network_mode) {
+        opj_network_free(&net);
+        opj_network_layout(DOC, &net);                  /* none on no memory: an empty diagram */
+        opj_network_scroll(&view, &net, 0, 0);          /* kept to the diagram as it is now */
+    }
     oldraw_damage_all(od);
     oldraw_redraw(od, draw_cb, NULL);
     update_title();
@@ -400,7 +437,7 @@ static void keep_selection_shown(void)
 /* Up and down the Resource Usage view's rows, scrolled to keep the selection on show. */
 static void move_usage(int rows)
 {
-    int n = opj_usage_rows(DOC), shown_rows = opj_rows_shown(&view), s;
+    int n = usage_rows(), shown_rows = opj_rows_shown(&view), s;
     if (!n) return;
     s = usage_sel < 0 ? 0 : usage_sel + rows;
     usage_sel = s < 0 ? 0 : s >= n ? n - 1 : s;
@@ -415,6 +452,19 @@ static void move_selection(int rows, int cols)
     int n = DOC->plan->ntasks;
     if (usage_mode) {
         if (rows) move_usage(rows);
+        return;
+    }
+    if (network_mode) {                                 /* up and down the tasks; left and right scroll */
+        if (rows && n) {                                /* over summaries, which have no box */
+            int s = view.selected < 0 ? 0 : view.selected + rows, step = rows > 0 ? 1 : -1;
+            oldraw_rect b;
+            s = s < 0 ? 0 : s >= n ? n - 1 : s;
+            while (s >= 0 && s < n && !opj_network_box(&view, &net, s, &b)) s += step;
+            if (s >= 0 && s < n) view.selected = s;
+            opj_network_reveal(&view, &net, view.selected);
+        }
+        if (cols) opj_network_scroll(&view, &net, cols * (OPJ_NET_BOX_W + OPJ_NET_GAP_X) / 2, 0);
+        redraw();
         return;
     }
     if (rows && n) {
@@ -434,6 +484,11 @@ static void move_selection(int rows, int cols)
 /* The timescale moved a period at its zoom (back when by < 0). */
 static void scroll_time(int by)
 {
+    if (network_mode) {
+        opj_network_scroll(&view, &net, by * (view.width * 3 / 4), 0);
+        redraw();
+        return;
+    }
     long step = opj_period_next(view.zoom, opj_period_start(view.zoom, view.origin)) - opj_period_start(view.zoom, view.origin);
     if (step <= 0) step = 24L * 60L;
     if (view.zoom == OPJ_ZOOM_DAYS) step = 24L * 60L;
@@ -1017,7 +1072,7 @@ static void menu_action(ULONG id, struct MenuItem *item)
         break;
     case M_ABOUT:
         tell(VERSION_TEXT "\nThe project planner of the GFOffice Suite.\n\nPlans in .gfproj, MSPDI XML and CSV;\n"
-             "MPX and .gan read; the Gantt chart exported as PDF;\nthe Resource Usage view.\nMIT, Copyright (c) 2026 AmiCradle Team");
+             "MPX and .gan read; the Gantt chart exported as PDF;\nthe Tracking Gantt, Resource Usage, Task Usage, Resource Graph and\nNetwork Diagram views.\nMIT, Copyright (c) 2026 AmiCradle Team");
         break;
     case M_QUIT: if (may_drop()) quit_now = 1; break;
     case M_UNDO: undo_redo(0); return;
@@ -1044,10 +1099,27 @@ static void menu_action(ULONG id, struct MenuItem *item)
     case M_SHOW_BASELINE: view.show_baseline = item && (item->Flags & CHECKED) ? 1 : 0; break;
     case M_START: view.origin = opj_period_start(OPJ_ZOOM_WEEKS, DOC->plan->start); break;
     case M_RESOURCES: resources_window(); break;
-    case M_GANTT: usage_mode = 0; set_status(""); break;
+    case M_GANTT: usage_mode = network_mode = view.tracking = 0; set_status(""); break;
+    case M_TRACKING:
+        usage_mode = network_mode = 0;
+        view.tracking = 1;
+        if (DOC->plan->ntasks && !DOC->plan->tasks[0].baselined) set_status("No baseline yet: Tools > Set Baseline keeps one");
+        break;
+    case M_NETWORK:
+        usage_mode = 0;
+        network_mode = 1;
+        opj_network_free(&net);
+        if (opj_network_layout(DOC, &net) == OWF_OK && view.selected >= 0) opj_network_reveal(&view, &net, view.selected);
+        break;
+    case M_TASK_USAGE: network_mode = 0; show_usage(OPJ_VIEW_TASK_USAGE); break;
+    case M_GRAPH:                                       /* up and down choose the resource */
+        network_mode = 0;
+        show_usage(OPJ_VIEW_GRAPH);
+        if (!DOC->plan->nresources) set_status("No resources yet: Resources... adds them");
+        break;
     case M_USAGE:
-        usage_mode = 1;
-        if (usage_sel < 0 && opj_usage_rows(DOC)) usage_sel = 0;
+        network_mode = 0;
+        show_usage(OPJ_VIEW_USAGE);
         if (!DOC->plan->nresources) set_status("No resources yet: Resources... adds them");
         break;
     case M_SET_BASELINE: edit_failed(opj_set_baseline(DOC, 0, -1), "Set Baseline"); view.show_baseline = 1; break;
@@ -1059,15 +1131,25 @@ static void menu_action(ULONG id, struct MenuItem *item)
 /* The View menu's Gantt Chart and Resource Usage ticks, after ARexx VIEW changed the view. */
 static void tick_view(void)
 {
-    struct MenuItem *g, *u;
+    struct MenuItem *g, *u, *n, *k, *h, *tg;
     int c;
     if (!win || !menu) return;
     g = ItemAddress(menu, FULLMENUNUM(2, 10, NOSUB));
     u = ItemAddress(menu, FULLMENUNUM(2, 11, NOSUB));
-    if (!g || !u) return;
+    n = ItemAddress(menu, FULLMENUNUM(2, 12, NOSUB));
+    k = ItemAddress(menu, FULLMENUNUM(2, 13, NOSUB));
+    h = ItemAddress(menu, FULLMENUNUM(2, 14, NOSUB));
+    tg = ItemAddress(menu, FULLMENUNUM(2, 15, NOSUB));
+    if (!g || !u || !n || !k || !h || !tg) return;
     ClearMenuStrip(win);
-    if (usage_mode) { g->Flags &= ~CHECKED; u->Flags |= CHECKED; }
-    else { u->Flags &= ~CHECKED; g->Flags |= CHECKED; }
+    g->Flags &= ~CHECKED;
+    u->Flags &= ~CHECKED;
+    n->Flags &= ~CHECKED;
+    k->Flags &= ~CHECKED;
+    h->Flags &= ~CHECKED;
+    tg->Flags &= ~CHECKED;
+    (usage_mode == OPJ_VIEW_GRAPH ? h : usage_mode == OPJ_VIEW_TASK_USAGE ? k : usage_mode ? u
+     : network_mode ? n : view.tracking ? tg : g)->Flags |= CHECKED;
     for (c = 0; c < OPJ_NCOLS; c++) {                       /* View > Columns follows the table */
         struct MenuItem *it = ItemAddress(menu, FULLMENUNUM(2, COLUMNS_ITEM, c));
         if (!it) continue;
@@ -1075,6 +1157,41 @@ static void tick_view(void)
         else it->Flags &= ~CHECKED;
     }
     ResetMenuStrip(win, menu);
+}
+
+/* ---- Dragging on the Gantt chart (opj_drag.c works out the edit) ---- */
+
+static opj_drag drag;
+static int dragging;
+static char drag_shown[80];
+
+static void drag_move(int x, int y)
+{
+    char text[80];
+    if (!dragging) return;
+    if (!opj_drag_text(&view, DOC, &drag, x, y, text, sizeof text)) text[0] = 0;
+    if (!strcmp(text, drag_shown)) return;          /* redraw only when what the drop would do changes */
+    put_text(drag_shown, sizeof drag_shown, text);
+    set_status(text);
+    redraw();
+}
+
+static void drag_drop(int x, int y)
+{
+    static const char *what[] = { "Move", "Stretch", "% Complete", "Link" };
+    char text[80];
+    int rc;
+    if (!dragging) return;
+    dragging = 0;
+    drag_shown[0] = 0;
+    if (!opj_drag_text(&view, DOC, &drag, x, y, text, sizeof text)) { set_status(""); redraw(); return; }
+    rc = opj_drag_end(DOC, &view, &drag, x, y);
+    set_status(rc == OWF_OK && DOC->schedule_error ? "The links make a loop: the plan can't be scheduled" : "");
+    if (rc != OWF_OK) {
+        int k = !strncmp(text, "Link", 4) ? OPJ_DRAG_LINK : drag.kind;
+        edit_failed(rc, k >= 0 && k < (int)(sizeof what / sizeof what[0]) ? what[k] : "Drag");
+    }
+    redraw();
 }
 
 static void click(int x, int y, ULONG secs, ULONG micros)
@@ -1085,7 +1202,21 @@ static void click(int x, int y, ULONG secs, ULONG micros)
     if (usage_mode) {
         int row = y >= 2 * view.row_height ? usage_first + (y - 2 * view.row_height) / view.row_height : -1;
         (void)secs; (void)micros;
-        if (row >= 0 && row < opj_usage_rows(DOC)) { usage_sel = row; redraw(); }
+        if (usage_mode == OPJ_VIEW_GRAPH) return;       /* its rows are resources chosen by up and down */
+        if (row >= 0 && row < usage_rows()) { usage_sel = row; redraw(); }
+        return;
+    }
+    if (network_mode) {                                 /* a box selects its task; a double-click opens it */
+        int row = opj_network_hit(&view, &net, x, y), dbl;
+        if (row < 0) return;
+        dbl = row == last_row && last_col == -3 && DoubleClick(last_s, last_m, secs, micros);
+        view.selected = row;
+        last_row = row;
+        last_col = -3;                                  /* a box */
+        last_s = secs;
+        last_m = micros;
+        redraw();
+        if (dbl) { last_row = -1; task_info(); }
         return;
     }
     opj_hit_test(&view, DOC, x, y, &hit);
@@ -1109,6 +1240,8 @@ static void click(int x, int y, ULONG secs, ULONG micros)
         last_m = micros;
         redraw();
         if (dbl) { last_row = -1; task_info(); }
+        else if (hit.what == OPJ_HIT_BAR && !rexx_busy && edit_allowed(OPJ_EDIT_CELL))
+            dragging = opj_drag_begin(&view, DOC, &hit, x, y, &drag);
     } else if (hit.what == OPJ_HIT_COLUMN_TITLE) {
         if (hit.column >= 0 && hit.column < OPJ_NCOLS) { sel_col = hit.column; redraw(); }
     }
@@ -1140,7 +1273,9 @@ static void events(void)
             break;
         case IDCMP_MOUSEBUTTONS:
             if (code == SELECTDOWN) click(mx, my, secs, micros);
+            else if (code == SELECTUP) drag_drop(mx, my);
             break;
+        case IDCMP_MOUSEMOVE: drag_move(mx, my); break;
         case IDCMP_VANILLAKEY: {
             int edit = opj_edit_for_key(code, (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0);
             if (!edit_allowed(edit)) break;
@@ -1202,15 +1337,23 @@ static int rexx_do_command(const char *command, char *result, size_t size)
         char why[200];
         if (!print_plan(why, sizeof why)) { rc = OPJ_RX_ERROR; put_text(app_lasterror, sizeof app_lasterror, why); }
     } else if (starts_word_ci(command, "VIEW", &arg)) {
-        if (!*arg) put_text(result, size, usage_mode ? "USAGE" : "GANTT");
-        else if (starts_word_ci(arg, "GANTT", NULL) || starts_word_ci(arg, "USAGE", NULL)) {
-            usage_mode = starts_word_ci(arg, "USAGE", NULL);
-            if (usage_mode && usage_sel < 0 && opj_usage_rows(DOC)) usage_sel = 0;
+        if (!*arg)
+            put_text(result, size, usage_mode == OPJ_VIEW_GRAPH ? "GRAPH" : usage_mode == OPJ_VIEW_TASK_USAGE ? "TASKUSAGE"
+                                   : usage_mode ? "USAGE" : network_mode ? "NETWORK" : view.tracking ? "TRACKING" : "GANTT");
+        else if (starts_word_ci(arg, "GANTT", NULL) || starts_word_ci(arg, "USAGE", NULL) ||
+                 starts_word_ci(arg, "NETWORK", NULL) || starts_word_ci(arg, "TASKUSAGE", NULL) ||
+                 starts_word_ci(arg, "GRAPH", NULL) || starts_word_ci(arg, "TRACKING", NULL)) {
+            network_mode = starts_word_ci(arg, "NETWORK", NULL);
+            view.tracking = starts_word_ci(arg, "TRACKING", NULL);
+            if (starts_word_ci(arg, "USAGE", NULL)) show_usage(OPJ_VIEW_USAGE);
+            else if (starts_word_ci(arg, "TASKUSAGE", NULL)) show_usage(OPJ_VIEW_TASK_USAGE);
+            else if (starts_word_ci(arg, "GRAPH", NULL)) show_usage(OPJ_VIEW_GRAPH);
+            else usage_mode = 0;
             tick_view();
             redraw();
         } else {
             rc = OPJ_RX_ERROR;
-            put_text(app_lasterror, sizeof app_lasterror, "VIEW: GANTT or USAGE");
+            put_text(app_lasterror, sizeof app_lasterror, "VIEW: GANTT, TRACKING, USAGE, TASKUSAGE, GRAPH or NETWORK");
         }
     } else if (starts_word_ci(command, "QUIT", &arg)) {
         if (DOC->dirty && !starts_word_ci(arg, "FORCE", NULL)) {
@@ -1318,7 +1461,8 @@ static int open_window(void)
         WA_GimmeZeroZero, TRUE,
         WA_Activate, TRUE, WA_SmartRefresh, TRUE, WA_NewLookMenus, TRUE, WA_AutoAdjust, TRUE,
         WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_MENUPICK | IDCMP_NEWSIZE | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY |
-                  IDCMP_RAWKEY | IDCMP_MOUSEBUTTONS,
+                  IDCMP_RAWKEY | IDCMP_MOUSEBUTTONS | IDCMP_MOUSEMOVE,
+        WA_ReportMouse, TRUE,
         TAG_DONE);
     if (!win) return 0;
     if (menu) SetMenuStrip(win, menu);
@@ -1393,6 +1537,7 @@ out:
     if (RexxSysBase) { CloseLibrary((struct Library *)RexxSysBase); RexxSysBase = NULL; }
     close_window();
     res_free();
+    opj_network_free(&net);
     if (rx.doc) opj_doc_free(rx.doc);
     if (AslBase) CloseLibrary(AslBase);
     if (GadToolsBase) CloseLibrary(GadToolsBase);

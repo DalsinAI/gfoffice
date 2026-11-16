@@ -10,7 +10,10 @@
  *     is no longer found; a line, a hidden box and a placeholder showing its
  *     prompt are not checked; a clean deck says so;
  *   - one object's marks for the wavy underline as you type, the word at
- *     the caret (still being typed) left out, the notes' too.
+ *     the caret (still being typed) left out, the notes' too;
+ *   - Ignore All: the word passes from then on and is not saved;
+ *   - ARexx SPELL: COUNT, LIST, CHECK, SUGGEST, ADD and IGNORE, the
+ *     answers and the return codes, LIST cut to its room.
  *
  * Prints what fails; exit 1 when anything did.
  * MIT, Copyright (c) 2026 AmiCradle Team.
@@ -153,11 +156,67 @@ static void test_marks(ow_spell *sp)
     CHECK(opr_notes_set(NULL, d, 0, "speker notes") == 0, "notes");
     n = opr_spell_marks(d, sp, 0, OPR_NOTES, NULL, m, 4);
     CHECK(n == 1 && m[0].start == 0 && m[0].end == 6, "the notes' marks: %d", n);
+    CHECK(ow_spell_ignore(sp, "MROE") && opr_spell_marks(d, sp, 0, obj, NULL, m, 4) == 2, "ignored in any case");
+    {
+        FILE *u = fopen(user_path, "r");
+        char buf[256];
+        size_t got = u ? fread(buf, 1, sizeof buf - 1, u) : 0;
+        if (u) fclose(u);
+        buf[got] = 0;
+        CHECK(!strstr(buf, "mroe") && strstr(buf, "wrld"), "ignored words are not saved, added ones are: %s", buf);
+    }
+    CHECK(!ow_spell_ignore(sp, "") && !ow_spell_ignore(NULL, "x"), "nothing to ignore");
+    CHECK(ow_spell_add(sp, "mroe"), "an ignored word added");
+    {
+        FILE *u = fopen(user_path, "r");
+        char buf[256];
+        size_t got = u ? fread(buf, 1, sizeof buf - 1, u) : 0;
+        if (u) fclose(u);
+        buf[got] = 0;
+        CHECK(strstr(buf, "mroe\n") != NULL, "an ignored word, added, is saved: %s", buf);
+    }
     d->slides[0].objs[obj].flags |= OWF_OBJ_EMPTY;
     CHECK(opr_spell_marks(d, sp, 0, obj, NULL, m, 4) == 0, "a prompt has none");
     CHECK(opr_spell_marks(d, sp, 0, 9, NULL, m, 4) == -1 && opr_spell_marks(d, sp, 3, 0, NULL, m, 4) == -1
           && opr_spell_marks(d, NULL, 0, 0, NULL, m, 4) == -1 && opr_spell_marks(NULL, sp, 0, 0, NULL, m, 4) == -1,
           "bad input");
+    owf_deck_free(d);
+}
+
+static void test_rexx(ow_spell *sp)
+{
+    owf_deck *d = owf_deck_new(10000, 7500);
+    char out[256], small[20];
+    if (!d || !owf_deck_add_slide(d, -1, -1) || !owf_deck_add_slide(d, -1, -1)) {
+        CHECK(0, "deck");
+        owf_deck_free(d);
+        return;
+    }
+    add_text(d, 0, OWF_OBJ_TEXT, "hello qzxa");
+    add_text(d, 1, OWF_OBJ_TEXT, "world");
+    add_text(d, 1, OWF_OBJ_SHAPE, "a shape qzxb");
+    opr_notes_set(NULL, d, 1, "qzxc here");
+    CHECK(opr_spell_rexx(d, sp, "", out, sizeof out) == 0 && !strcmp(out, "3"), "SPELL: %s", out);
+    CHECK(opr_spell_rexx(d, sp, "  count", out, sizeof out) == 0 && !strcmp(out, "3"), "SPELL COUNT: %s", out);
+    CHECK(opr_spell_rexx(d, sp, "LIST", out, sizeof out) == 0 && !strcmp(out, "1 1 qzxa\n2 2 qzxb\n2 NOTES qzxc"),
+          "SPELL LIST: %s", out);
+    CHECK(opr_spell_rexx(d, sp, "LIST", small, sizeof small) == 0 && !strcmp(small, "1 1 qzxa\n2 2 qzxb"),
+          "LIST cut to its room: %s", small);
+    CHECK(opr_spell_rexx(d, sp, "CHECK World", out, sizeof out) == 0 && !strcmp(out, "1"), "CHECK World: %s", out);
+    CHECK(opr_spell_rexx(d, sp, "check \"qzxa\"", out, sizeof out) == 0 && !strcmp(out, "0"), "CHECK qzxa: %s", out);
+    CHECK(opr_spell_rexx(d, sp, "SUGGEST wordd", out, sizeof out) == 0 && !strcmp(out, "world"),
+          "SUGGEST wordd: %s", out);
+    CHECK(opr_spell_rexx(d, sp, "SUGGEST zzzzzzzz", out, sizeof out) == 0 && !out[0], "no suggestions: %s", out);
+    CHECK(opr_spell_rexx(d, sp, "IGNORE qzxa", out, sizeof out) == 0 && opr_spell_rexx(d, sp, "", out, sizeof out) == 0
+          && !strcmp(out, "2"), "IGNORE: %s", out);
+    CHECK(opr_spell_rexx(d, sp, "ADD qzxb", out, sizeof out) == 0 && opr_spell_rexx(d, sp, "COUNT", out, sizeof out) == 0
+          && !strcmp(out, "1"), "ADD: %s", out);
+    CHECK(opr_spell_rexx(d, sp, "CHECK", out, sizeof out) == 10 && strstr(out, "CHECK needs a word"), "a word needed: %s", out);
+    CHECK(opr_spell_rexx(d, sp, "FIX qzxc", out, sizeof out) == 10 && strstr(out, "SPELL takes"), "unknown: %s", out);
+    CHECK(opr_spell_rexx(d, NULL, "", out, sizeof out) == 5, "no dictionary");
+    CHECK(opr_spell_rexx(NULL, sp, "COUNT", out, sizeof out) == 10 && opr_spell_rexx(NULL, sp, "CHECK hello", out, sizeof out) == 0,
+          "no deck: counting refused, checking a word still works");
+    CHECK(opr_spell_rexx(d, sp, "", NULL, 0) == 10, "no room");
     owf_deck_free(d);
 }
 
@@ -176,6 +235,7 @@ int main(void)
         test_words(sp);
         test_deck(sp);
         test_marks(sp);
+        test_rexx(sp);
         ow_spell_close(sp);
     }
     remove(dict_path);

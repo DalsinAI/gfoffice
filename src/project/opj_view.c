@@ -121,6 +121,14 @@ int opj_rows_shown(const opj_view *v)
 
 /* ---- Bars and lines ---- */
 
+/* The Tracking Gantt's halves: the bar from TRACK_TOP down, the baseline under it, each track_h high. */
+#define TRACK_TOP 2
+static int track_h(int rh)
+{
+    int h = (rh - 2 * TRACK_TOP - 1) / 2;
+    return h > 1 ? h : 1;
+}
+
 int opj_bar_of(const opj_view *v, const opj_doc *doc, int row, opj_bar *bar)
 {
     const owf_ptask *t;
@@ -149,10 +157,10 @@ int opj_bar_of(const opj_view *v, const opj_doc *doc, int row, opj_bar *bar)
         bar->kind = OPJ_BAR_TASK;
         bar->bar.x = (int)x0;
         bar->bar.w = x1 > x0 ? (int)(x1 - x0) : 1;
-        bar->bar.y = y + rh / 4;
-        bar->bar.h = rh / 2;
+        bar->bar.y = v->tracking ? y + TRACK_TOP : y + rh / 4;
+        bar->bar.h = v->tracking ? track_h(rh) : rh / 2;
         if (t->percent > 0) {
-            int third = bar->bar.h / 3;
+            int third = v->tracking ? 0 : bar->bar.h / 3;   /* Tracking Gantt: the done part is solid */
             bar->done.x = bar->bar.x;
             bar->done.w = (int)((long)bar->bar.w * t->percent / 100);
             if (bar->done.w < 1) bar->done.w = 1;
@@ -394,7 +402,7 @@ int opj_baseline_bar(const opj_view *v, const opj_doc *doc, int row, oldraw_rect
     const owf_ptask *t;
     long x0, x1;
     int rh;
-    if (!v || !bar || !v->show_baseline || !doc || row < 0 || row >= doc->plan->ntasks) return 0;
+    if (!v || !bar || !(v->show_baseline || v->tracking) || !doc || row < 0 || row >= doc->plan->ntasks) return 0;
     t = &doc->plan->tasks[row];
     if (!t->baselined) return 0;
     rh = v->row_height;
@@ -402,6 +410,11 @@ int opj_baseline_bar(const opj_view *v, const opj_doc *doc, int row, oldraw_rect
     x1 = opj_view_x(v, t->baseline_finish);
     bar->x = (int)x0;
     bar->w = x1 > x0 ? (int)(x1 - x0) : 1;
+    if (v->tracking) {                           /* the lower half, as high as the bar */
+        bar->y = opj_row_y(v, row) + TRACK_TOP + track_h(rh) + 1;
+        bar->h = track_h(rh);
+        return 1;
+    }
     bar->y = opj_row_y(v, row) + rh * 3 / 4 + 1;
     bar->h = rh / 6 > 1 ? rh / 6 : 2;
     return 1;
@@ -415,14 +428,23 @@ int opj_label_box(const opj_view *v, const opj_doc *doc, int row, oldraw_rect *b
     opj_bar b;
     int i;
     if (!v || !box || !opj_bar_of(v, doc, row, &b)) return 0;
-    for (i = 0; i < doc->plan->nassigns; i++)
+    for (i = 0; i < doc->plan->nassigns && !v->tracking; i++)
         if (doc->plan->assigns[i].task == row) break;
-    if (i == doc->plan->nassigns) return 0;
+    if (!v->tracking && i == doc->plan->nassigns) return 0;
     box->x = b.bar.x + b.bar.w + LABEL_GAP;
     box->y = opj_row_y(v, row);
     box->w = LABEL_WIDTH;
     box->h = v->row_height;
     return 1;
+}
+
+void opj_label_text(const opj_view *v, const opj_doc *doc, int row, char *out, size_t size)
+{
+    if (!out || !size) return;
+    out[0] = 0;
+    if (!v || !doc || row < 0 || row >= doc->plan->ntasks) return;
+    if (v->tracking) snprintf(out, size, "%d%%", doc->plan->tasks[row].percent);
+    else owf_presource_names_text(doc->plan, row, out, size);
 }
 
 static void draw_sheet_row(oldraw *d, const opj_view *v, const opj_doc *doc, int row)
@@ -491,7 +513,7 @@ void opj_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rec
             oldraw_rect r;
             char text[256];
             if (!opj_label_box(v, doc, row, &r) || !crosses(area, r.x, r.y, r.w, r.h)) continue;
-            owf_presource_names_text(doc->plan, row, text, sizeof text);
+            opj_label_text(v, doc, row, text, sizeof text);
             oldraw_text_box(d, &r, text, (size_t)-1, &v->font, OLDRAW_PEN(OLDRAW_PEN_TEXT), 0, OLDRAW_LEFT);
         }
         for (i = 0; i < doc->plan->ntasks; i++)
@@ -574,6 +596,50 @@ int opj_usage_row(const opj_doc *doc, int row, int *resource, int *assign)
     return 0;
 }
 
+int opj_task_usage_rows(const opj_doc *doc)
+{
+    const owf_project *p;
+    int i, n;
+    if (!doc || !doc->plan) return 0;
+    p = doc->plan;
+    n = p->ntasks;
+    for (i = 0; i < p->nassigns; i++)
+        if (p->assigns[i].task >= 0 && p->assigns[i].task < p->ntasks) n++;
+    return n;
+}
+
+int opj_task_usage_row(const opj_doc *doc, int row, int *task, int *assign)
+{
+    const owf_project *p;
+    int t, i;
+    if (!doc || !doc->plan || row < 0) return 0;
+    p = doc->plan;
+    for (t = 0; t < p->ntasks; t++) {
+        if (row == 0) {
+            if (task) *task = t;
+            if (assign) *assign = -1;
+            return 1;
+        }
+        row--;
+        for (i = 0; i < p->nassigns; i++) {
+            if (p->assigns[i].task != t) continue;
+            if (row == 0) {
+                if (task) *task = t;
+                if (assign) *assign = i;
+                return 1;
+            }
+            row--;
+        }
+    }
+    return 0;
+}
+
+const char *opj_task_usage_column_title(int column)
+{
+    static const char *const titles[OPJ_NUCOLS] = { "ID", "Task Name", "Work" };
+    return column >= 0 && column < OPJ_NUCOLS ? titles[column] : "";
+}
+
 const char *opj_usage_column_title(int column)
 {
     static const char *const titles[OPJ_NUCOLS] = { "ID", "Resource Name", "Work" };
@@ -593,6 +659,9 @@ int opj_edit_for_key(int key, int shift)
 const char *opj_edit_refused(int usage, int edit)
 {
     if (!usage || edit < 0 || edit >= OPJ_NEDITS) return NULL;
+    if (usage == OPJ_VIEW_TASK_USAGE) return "Task Usage is read only: Gantt Chart (G) edits tasks";
+    if (usage == OPJ_VIEW_GRAPH)
+        return "The Resource Graph is read only: Gantt Chart (G) edits tasks, Resources... edits resources";
     return "Resource Usage is read only: Gantt Chart (G) edits tasks, Resources... edits resources";
 }
 
@@ -618,6 +687,40 @@ static void usage_cell(const opj_doc *doc, int r, int a, int column, char *out, 
     }
 }
 
+/* A cell of task t's row (a -1) or of its assignment a's: its ID, name and work, or "", the resource's
+ * name and the assignment's work. */
+static void task_usage_cell(const opj_doc *doc, int t, int a, int column, char *out, size_t size)
+{
+    const owf_project *p = doc->plan;
+    char text[16];
+    if (a < 0) {
+        if (column == OPJ_UCOL_ID) snprintf(out, size, "%d", t + 1);
+        else if (column == OPJ_UCOL_NAME) snprintf(out, size, "%s", p->tasks[t].name ? p->tasks[t].name : "");
+        else {
+            opj_work_text(p->tasks[t].work, text);
+            snprintf(out, size, "%s", text);
+        }
+        return;
+    }
+    if (column == OPJ_UCOL_NAME) {
+        int r = p->assigns[a].resource;
+        snprintf(out, size, "%s", r >= 0 && r < p->nresources && p->resources[r].name ? p->resources[r].name : "");
+    } else if (column == OPJ_UCOL_WORK && p->assigns[a].resource >= 0 && p->assigns[a].resource < p->nresources &&
+               p->resources[p->assigns[a].resource].type == OWF_RES_WORK) {
+        opj_work_text(p->assigns[a].work, text);
+        snprintf(out, size, "%s", text);
+    }
+}
+
+void opj_task_usage_cell_text(const opj_doc *doc, int row, int column, char *out, size_t size)
+{
+    int t, a;
+    if (!out || !size) return;
+    out[0] = 0;
+    if (column < 0 || column >= OPJ_NUCOLS || !opj_task_usage_row(doc, row, &t, &a)) return;
+    task_usage_cell(doc, t, a, column, out, size);
+}
+
 void opj_usage_cell_text(const opj_doc *doc, int row, int column, char *out, size_t size)
 {
     int r, a;
@@ -635,7 +738,7 @@ void opj_usage_view(const opj_view *v, opj_view *usage)
     usage->sheet_width = USAGE_SHEET;
 }
 
-static void draw_usage_titles(oldraw *d, const opj_view *u)
+static void draw_usage_titles(oldraw *d, const opj_view *u, int tasks)
 {
     static const int widths[OPJ_NUCOLS] = { OPJ_USAGE_ID_W, OPJ_USAGE_NAME_W, OPJ_USAGE_WORK_W };
     int c, x = 0;
@@ -649,13 +752,14 @@ static void draw_usage_titles(oldraw *d, const opj_view *u)
         oldraw_frame(d, &r, 0);
         r.x += 3;
         r.w -= 6;
-        oldraw_text_box(d, &r, opj_usage_column_title(c), (size_t)-1, &u->font, OLDRAW_PEN(OLDRAW_PEN_TEXT),
+        oldraw_text_box(d, &r, tasks ? opj_task_usage_column_title(c) : opj_usage_column_title(c), (size_t)-1, &u->font, OLDRAW_PEN(OLDRAW_PEN_TEXT),
                         OLDRAW_BOLD, OLDRAW_CENTRE);
         x += widths[c];
     }
 }
 
-static void draw_usage_row(oldraw *d, const opj_view *u, const opj_doc *doc, int row, int resource, int assign)
+/* owner: the resource (tasks 0) or the task (tasks 1) the row is, or whose assignment it is. */
+static void draw_usage_row(oldraw *d, const opj_view *u, const opj_doc *doc, int row, int owner, int assign, int tasks)
 {
     static const int widths[OPJ_NUCOLS] = { OPJ_USAGE_ID_W, OPJ_USAGE_NAME_W, OPJ_USAGE_WORK_W };
     int c, x = 0, y = opj_row_y(u, row), selected = row == u->selected;
@@ -664,15 +768,18 @@ static void draw_usage_row(oldraw *d, const opj_view *u, const opj_doc *doc, int
     for (c = 0; c < OPJ_NUCOLS; c++) {
         char text[256];
         oldraw_rect r;
-        int indent = c == OPJ_UCOL_NAME && assign >= 0 ? u->row_height * 3 / 4 : 0;
+        int indent = c == OPJ_UCOL_NAME ? (assign >= 0 ? u->row_height * 3 / 4 : 0) +
+                     (tasks ? (doc->plan->tasks[owner].level - 1) * (u->row_height * 3 / 4) : 0) : 0;
         text[0] = 0;
-        usage_cell(doc, resource, assign, c, text, sizeof text);
+        if (tasks) task_usage_cell(doc, owner, assign, c, text, sizeof text);
+        else usage_cell(doc, owner, assign, c, text, sizeof text);
         r.x = x + 3 + indent;
         r.y = y;
         r.w = widths[c] - 6 - indent;
         r.h = u->row_height;
         if (r.w > 0)
-            oldraw_text_box(d, &r, text, (size_t)-1, &u->font, ink, assign < 0 && c == OPJ_UCOL_NAME ? OLDRAW_BOLD : 0,
+            oldraw_text_box(d, &r, text, (size_t)-1, &u->font, ink,
+                            assign < 0 && c == OPJ_UCOL_NAME && (!tasks || doc->plan->tasks[owner].summary) ? OLDRAW_BOLD : 0,
                             c == OPJ_UCOL_NAME ? OLDRAW_LEFT : OLDRAW_RIGHT);
         x += widths[c];
         fill(d, x - 1, y, 1, u->row_height, OPJ_COLOUR_GRID);
@@ -682,7 +789,7 @@ static void draw_usage_row(oldraw *d, const opj_view *u, const opj_doc *doc, int
 
 /* The work in each period across a row of the chart, right-aligned in its cell. */
 static void draw_usage_work(oldraw *d, const opj_view *u, const opj_doc *doc, const oldraw_rect *area, int row,
-                            int resource, int assign)
+                            int owner, int assign, int tasks)
 {
     int cl = opj_chart_left(u), y = opj_row_y(u, row), right = area->x + area->w, guard;
     owf_ptime t = opj_period_start(u->zoom, opj_view_time(u, area->x > cl ? area->x : cl));
@@ -695,7 +802,8 @@ static void draw_usage_work(oldraw *d, const opj_view *u, const opj_doc *doc, co
         int over = 0;
         if (x0 >= right || x0 >= u->width) break;
         fill(d, (int)x1 - 1, y, 1, u->row_height, OPJ_COLOUR_GRID);
-        opj_usage_text(doc, resource, assign, t, next, text, sizeof text, &over);
+        if (tasks) opj_task_usage_text(doc, owner, assign, t, next, text, sizeof text);
+        else opj_usage_text(doc, owner, assign, t, next, text, sizeof text, &over);
         cell.x = (int)x0 + 2;
         cell.y = y;
         cell.w = (int)(x1 - x0) - 5;
@@ -708,11 +816,11 @@ static void draw_usage_work(oldraw *d, const opj_view *u, const opj_doc *doc, co
     fill(d, cl, y + u->row_height - 1, u->width - cl, 1, OPJ_COLOUR_GRID);
 }
 
-void opj_usage_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area)
+static void usage_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area, int tasks)
 {
     opj_view u;
     oldraw_rect all;
-    int row, last, cl, rh;
+    int row, last, cl, rh, rows;
     if (!d || !v || !doc) return;
     opj_usage_view(v, &u);
     cl = opj_chart_left(&u);
@@ -725,13 +833,15 @@ void opj_usage_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldr
     }
     oldraw_clip(d, area);
     last = u.first_row + opj_rows_shown(&u);
-    if (last > opj_usage_rows(doc)) last = opj_usage_rows(doc);
+    rows = tasks ? opj_task_usage_rows(doc) : opj_usage_rows(doc);
+    if (last > rows) last = rows;
     if (crosses(area, cl, 0, u.width - cl, u.height)) {
         fill(d, cl, 2 * rh, u.width - cl, u.height - 2 * rh, OLDRAW_PEN(OLDRAW_PEN_BACKGROUND));
         for (row = u.first_row; row < last; row++) {
             int r, a;
-            if (crosses(area, cl, opj_row_y(&u, row), u.width - cl, rh) && opj_usage_row(doc, row, &r, &a))
-                draw_usage_work(d, &u, doc, area, row, r, a);
+            if (crosses(area, cl, opj_row_y(&u, row), u.width - cl, rh) &&
+                (tasks ? opj_task_usage_row(doc, row, &r, &a) : opj_usage_row(doc, row, &r, &a)))
+                draw_usage_work(d, &u, doc, area, row, r, a, tasks);
         }
         draw_timescale(d, &u, area);
     }
@@ -748,10 +858,190 @@ void opj_usage_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldr
         fill(d, 0, 2 * rh, USAGE_SHEET, u.height - 2 * rh, OLDRAW_PEN(OLDRAW_PEN_BACKGROUND));
         for (row = u.first_row; row < last; row++) {
             int r, a;
-            if (crosses(area, 0, opj_row_y(&u, row), USAGE_SHEET, rh) && opj_usage_row(doc, row, &r, &a))
-                draw_usage_row(d, &u, doc, row, r, a);
+            if (crosses(area, 0, opj_row_y(&u, row), USAGE_SHEET, rh) &&
+                (tasks ? opj_task_usage_row(doc, row, &r, &a) : opj_usage_row(doc, row, &r, &a)))
+                draw_usage_row(d, &u, doc, row, r, a, tasks);
         }
-        draw_usage_titles(d, &u);
+        draw_usage_titles(d, &u, tasks);
+    }
+    oldraw_clip(d, NULL);
+}
+
+void opj_usage_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area)
+{
+    usage_draw(d, v, doc, area, 0);
+}
+
+void opj_task_usage_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area)
+{
+    usage_draw(d, v, doc, area, 1);
+}
+
+/* ---- The Resource Graph ---- */
+
+static long max_units_of(const opj_doc *doc, int resource)
+{
+    return doc && resource >= 0 && resource < doc->plan->nresources ? doc->plan->resources[resource].max_units : 0;
+}
+
+/* The highest percent in the periods the view shows; 0 when none. */
+static long graph_peak(const opj_view *u, const opj_doc *doc, int resource)
+{
+    owf_ptime t = opj_period_start(u->zoom, opj_view_time(u, opj_chart_left(u)));
+    long peak = 0;
+    int guard;
+    for (guard = 0; guard < 4000 && opj_view_x(u, t) < u->width; guard++) {
+        owf_ptime next = opj_period_next(u->zoom, t);
+        long pc = opj_graph_percent(doc, resource, t, next);
+        if (pc > peak) peak = pc;
+        t = next;
+    }
+    return peak;
+}
+
+long opj_graph_scale(const opj_view *v, const opj_doc *doc, int resource)
+{
+    opj_view u;
+    long top;
+    if (!v || !doc) return 100;
+    opj_usage_view(v, &u);
+    top = graph_peak(&u, doc, resource);
+    if (max_units_of(doc, resource) > top) top = max_units_of(doc, resource);
+    if (top < 100) top = 100;
+    if (top > 100000) top = 100000;
+    return (top + 49) / 50 * 50;
+}
+
+/* The plot's top (scale percent) and bottom (0%) y. */
+static void plot_span(const opj_view *u, int *top, int *bottom)
+{
+    *top = 3 * u->row_height;
+    *bottom = u->height - u->row_height;
+    if (*bottom < *top + 1) *bottom = *top + 1;
+}
+
+static int percent_y(const opj_view *u, long pc, long scale)
+{
+    int top, bottom;
+    plot_span(u, &top, &bottom);
+    if (pc > scale) pc = scale;
+    return bottom - (int)((long)(bottom - top) * pc / (scale > 0 ? scale : 100));
+}
+
+int opj_graph_bar(const opj_view *v, const opj_doc *doc, int resource, owf_ptime period, long scale,
+                  oldraw_rect *within, oldraw_rect *over)
+{
+    opj_view u;
+    owf_ptime start, next;
+    long pc, mu, x0, x1;
+    int bottom, top, ymax;
+    if (!v || !doc || !within || !over) return 0;
+    opj_usage_view(v, &u);
+    start = opj_period_start(u.zoom, period);
+    next = opj_period_next(u.zoom, start);
+    if ((pc = opj_graph_percent(doc, resource, start, next)) <= 0) return 0;
+    mu = max_units_of(doc, resource);
+    x0 = opj_view_x(&u, start);
+    x1 = opj_view_x(&u, next);
+    plot_span(&u, &top, &bottom);
+    within->x = over->x = (int)x0 + (x1 - x0 > 4 ? 1 : 0);
+    within->w = over->w = (int)(x1 - x0) - (x1 - x0 > 4 ? 2 : 0);
+    ymax = percent_y(&u, pc < mu ? pc : mu, scale);
+    within->y = ymax;
+    within->h = bottom - ymax;
+    over->y = percent_y(&u, pc, scale);
+    over->h = pc > mu ? ymax - over->y : 0;
+    if (over->h <= 0) over->h = 0;
+    return 1;
+}
+
+void opj_graph_draw(oldraw *d, const opj_view *v, const opj_doc *doc, int resource, const oldraw_rect *area)
+{
+    opj_view u;
+    oldraw_rect all, r;
+    char text[300], pc[24];
+    long scale, mu;
+    int cl, rh, top, bottom, guard;
+    if (!d || !v || !doc) return;
+    opj_usage_view(v, &u);
+    cl = opj_chart_left(&u);
+    rh = u.row_height;
+    if (!area) {
+        all.x = all.y = 0;
+        all.w = u.width;
+        all.h = u.height;
+        area = &all;
+    }
+    oldraw_clip(d, area);
+    scale = opj_graph_scale(v, doc, resource);
+    mu = max_units_of(doc, resource);
+    plot_span(&u, &top, &bottom);
+    if (crosses(area, cl, 0, u.width - cl, u.height)) {
+        owf_ptime t = opj_period_start(u.zoom, opj_view_time(&u, area->x > cl ? area->x : cl));
+        fill(d, cl, 2 * rh, u.width - cl, u.height - 2 * rh, OLDRAW_PEN(OLDRAW_PEN_BACKGROUND));
+        for (guard = 0; guard < 4000; guard++) {
+            oldraw_rect in, ov;
+            owf_ptime next = opj_period_next(u.zoom, t);
+            long x0 = opj_view_x(&u, t), x1 = opj_view_x(&u, next);
+            if (x0 >= area->x + area->w || x0 >= u.width) break;
+            fill(d, (int)x1 - 1, 2 * rh, 1, u.height - 2 * rh, OPJ_COLOUR_GRID);
+            if (opj_graph_bar(v, doc, resource, t, scale, &in, &ov)) {
+                if (in.h) oldraw_fill(d, &in, OPJ_COLOUR_BAR);
+                if (ov.h) oldraw_fill(d, &ov, OPJ_COLOUR_CRITICAL);
+                if (x1 - x0 >= 24) {                     /* its percent above it, where there is room */
+                    r.x = (int)x0 + 1;
+                    r.w = (int)(x1 - x0) - 2;
+                    r.h = rh;
+                    r.y = (ov.h ? ov.y : in.y) - rh;
+                    if (r.y < 2 * rh) r.y = 2 * rh;
+                    snprintf(pc, sizeof pc, "%ld%%", opj_graph_percent(doc, resource, t, next));
+                    oldraw_text_box(d, &r, pc, (size_t)-1, &u.font, OLDRAW_PEN(OLDRAW_PEN_TEXT), 0, OLDRAW_CENTRE);
+                }
+            }
+            t = next;
+        }
+        if (mu > 0 && mu <= scale) fill(d, cl, percent_y(&u, mu, scale), u.width - cl, 1, OPJ_COLOUR_SUMMARY);
+        fill(d, cl, bottom, u.width - cl, 1, OPJ_COLOUR_SUMMARY);
+        draw_timescale(d, &u, area);
+    }
+    if (crosses(area, USAGE_SHEET, 0, SPLIT, u.height)) {
+        r.x = USAGE_SHEET;
+        r.y = 0;
+        r.w = SPLIT;
+        r.h = u.height;
+        fill(d, r.x, r.y, r.w, r.h, OLDRAW_PEN(OLDRAW_PEN_BACKGROUND));
+        oldraw_frame(d, &r, 0);
+    }
+    if (crosses(area, 0, 0, USAGE_SHEET, u.height)) {
+        int i;
+        fill(d, 0, 0, USAGE_SHEET, u.height, OLDRAW_PEN(OLDRAW_PEN_BACKGROUND));
+        for (i = 0; i < 5; i++) {
+            text[0] = 0;
+            if (resource < 0 || resource >= doc->plan->nresources) {
+                if (i == 2) snprintf(text, sizeof text, "No resource: Resources... adds them");
+            } else if (i == 2) {
+                snprintf(text, sizeof text, "%s", doc->plan->resources[resource].name ? doc->plan->resources[resource].name : "");
+            } else if (i == 3) {
+                snprintf(text, sizeof text, "Peak: %ld%%", graph_peak(&u, doc, resource));
+            } else if (i == 4) {
+                snprintf(text, sizeof text, "Max Units: %ld%%", mu);
+            }
+            if (!text[0]) continue;
+            r.x = 6;
+            r.y = i * rh;
+            r.w = USAGE_SHEET - 12;
+            r.h = rh;
+            oldraw_text_box(d, &r, text, (size_t)-1, &u.font, OLDRAW_PEN(OLDRAW_PEN_TEXT), i == 2 ? OLDRAW_BOLD : 0,
+                            OLDRAW_LEFT);
+        }
+        r.x = 6;
+        r.y = top - rh / 2;
+        r.w = USAGE_SHEET - 12;
+        r.h = rh;
+        snprintf(text, sizeof text, "%ld%%", scale);
+        oldraw_text_box(d, &r, text, (size_t)-1, &u.font, OLDRAW_PEN(OLDRAW_PEN_TEXT), 0, OLDRAW_RIGHT);
+        r.y = bottom - rh / 2;
+        oldraw_text_box(d, &r, "0%", (size_t)-1, &u.font, OLDRAW_PEN(OLDRAW_PEN_TEXT), 0, OLDRAW_RIGHT);
     }
     oldraw_clip(d, NULL);
 }

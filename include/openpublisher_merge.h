@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define OPP_MERGE_VERSION "0.1.0"
+#define OPP_MERGE_VERSION "0.2.0"
 
 /* A merge field for column put at the end of paragraph para of an object's
  * text (para -1: the last; a paragraph is added when there is none). It
@@ -23,6 +23,18 @@ extern "C" {
  * OWF_OK, OWF_ERR_FORMAT (no object, no column, no such paragraph) or
  * OWF_ERR_MEMORY. */
 int opp_merge_insert_field(owf_obj *obj, int para, const char *column, const owf_charfmt *fmt);
+
+/* A merge field for column put at a place in an object's text: paragraph para,
+ * offset bytes into it as GFOpenPresentation's editor counts them (opr_pos:
+ * text bytes, a tab or a line break 1, a field 0). The field takes the look
+ * of the text before it and goes after any field already there. OWF_OK,
+ * OWF_ERR_FORMAT (no object, no column, no such place) or OWF_ERR_MEMORY. */
+int opp_merge_insert_field_at(owf_obj *obj, int para, size_t offset, const char *column);
+
+/* A data source read from a CSV file (at most OW_MERGE_MAX_BYTES). OWF_OK
+ * with *table set; OWF_ERR_IO (not read), OWF_ERR_UNSUPPORTED (too big),
+ * OWF_ERR_FORMAT (no columns: its first line names them) or OWF_ERR_MEMORY. */
+int opp_merge_load_file(const char *path, ow_merge_table **table);
 
 /* How many merge fields the pages and masters have; *missing (when not
  * NULL): how many of them name a column the table does not have (a NULL
@@ -46,6 +58,28 @@ int opp_merge_show(owf_deck *deck, const ow_merge_table *t, int record, int *set
  * table does not have; OWF_ERR_MEMORY: the deck is as it was. */
 int opp_merge_pages(owf_deck *deck, const ow_merge_table *t, int first, int last);
 
+/* A catalog merge's area on its page: the first item's box (twips from the
+ * page's top left), repeated across and down the page, one record each.
+ * The box takes in the space between items. */
+#define OPP_CATALOG_MAX 64
+typedef struct {
+    int x, y, width, height;
+    int across, down;                                /* 1..OPP_CATALOG_MAX */
+} opp_catalog;
+/* Catalog merge, in place: page (from 0) becomes as many pages as records
+ * first..last need (first -1: the first, last -1: the last), each holding
+ * across x down items left to right, then down. The item is the page's
+ * objects whose boxes lie wholly inside the area's first box; each record's
+ * copy moves by whole boxes, and a page's last items may stay empty. The
+ * page's other objects come on each page with the page's first record.
+ * Merge fields become plain text, every frame of a text flow keeps to its
+ * own copy, and the deck's other pages and masters are left as they are.
+ * *made (when not NULL): the pages made. OWF_OK; OWF_ERR_UNSUPPORTED: no
+ * table or records, no such page, an area or range that cannot be;
+ * OWF_ERR_FORMAT: no object inside the area's first box; OWF_ERR_MEMORY:
+ * the deck is as it was. */
+int opp_merge_catalog(owf_deck *deck, const ow_merge_table *t, int page, const opp_catalog *cat,
+                      int first, int last, int *made);
 #ifdef __cplusplus
 }
 #endif

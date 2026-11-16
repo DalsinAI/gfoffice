@@ -9,6 +9,7 @@
 #include "openpresentation_core.h"
 #include "ow_spell_dict.h"
 
+#include <stdio.h>
 #include <string.h>
 
 static const owf_obj *spell_object(const owf_deck *deck, int slide, int obj)
@@ -133,4 +134,143 @@ int opr_spell_marks(const owf_deck *deck, ow_spell *spell, int slide, int obj, c
         owf_free(text);
     }
     return n;
+}
+
+/* ---- ARexx SPELL (opr_spell_rexx) ---- */
+
+typedef int (*spell_word_fn)(void *user, int slide, int obj, const char *word, size_t length);
+
+/* Every misspelt word of the deck in order, slides' objects then notes; how many, -1 no memory. */
+static int spell_walk(const owf_deck *deck, ow_spell *spell, spell_word_fn fn, void *user)
+{
+    int n = 0, slide, k;
+    for (slide = 0; slide < deck->nslides; ++slide) {
+        const owf_slide *s = &deck->slides[slide];
+        for (k = 0; k <= s->nobjs; ++k) {
+            int obj = k < s->nobjs ? k : OPR_NOTES, para;
+            const owf_obj *o = spell_object(deck, slide, obj);
+            if (!o || (o->flags & OWF_OBJ_EMPTY) || !opr_obj_editable(deck, slide, obj)) continue;
+            for (para = 0; para < o->text.nparas; ++para) {
+                size_t len, from = 0, a, b;
+                char *text = opr_para_text(&o->text.paras[para], &len);
+                if (!text) return -1;
+                while (from < len && ow_spell_scan(spell, text, from, len, &a, &b)) {
+                    if (fn) fn(user, slide, obj, text + a, b - a);
+                    n++;
+                    from = b;
+                }
+                owf_free(text);
+            }
+        }
+    }
+    return n;
+}
+
+typedef struct {
+    char *out;
+    size_t size, used;
+    int full;
+} spell_list;
+
+static int spell_list_word(void *user, int slide, int obj, const char *word, size_t length)
+{
+    spell_list *l = (spell_list *)user;
+    char where[32];
+    size_t need;
+    if (l->full) return 0;
+    if (obj == OPR_NOTES) snprintf(where, sizeof where, "%d NOTES ", slide + 1);
+    else snprintf(where, sizeof where, "%d %d ", slide + 1, obj + 1);
+    need = (l->used ? 1 : 0) + strlen(where) + length;
+    if (l->used + need + 1 > l->size) {
+        l->full = 1;
+        return 0;
+    }
+    if (l->used) l->out[l->used++] = '\n';
+    memcpy(l->out + l->used, where, strlen(where));
+    l->used += strlen(where);
+    memcpy(l->out + l->used, word, length);
+    l->used += length;
+    l->out[l->used] = 0;
+    return 0;
+}
+
+static int rx_spell_word(const char *s, const char *word, const char **rest)
+{
+    size_t n = strlen(word), i;
+    for (i = 0; i < n; i++) {
+        char c = s[i];
+        if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+        if (c != word[i]) return 0;
+    }
+    if (s[n] && s[n] != ' ' && s[n] != '\t') return 0;
+    s += n;
+    while (*s == ' ' || *s == '\t') s++;
+    *rest = s;
+    return 1;
+}
+
+/* The word after a sub-command: "in quotes" or up to the next space. */
+static void rx_spell_arg(const char *s, char *out, size_t size)
+{
+    size_t k = 0;
+    if (*s == '"' || *s == '\'') {
+        char q = *s++;
+        for (; *s && *s != q; s++) if (k + 1 < size) out[k++] = *s;
+    } else {
+        for (; *s && *s != ' ' && *s != '\t'; s++) if (k + 1 < size) out[k++] = *s;
+    }
+    out[k] = 0;
+}
+
+int opr_spell_rexx(const owf_deck *deck, ow_spell *spell, const char *args, char *out, size_t size)
+{
+    const char *rest = "";
+    char word[96];
+    if (!out || size < 2) return 10;
+    out[0] = 0;
+    if (!spell) { snprintf(out, size, "No dictionary"); return 5; }
+    if (!args) args = "";
+    while (*args == ' ' || *args == '\t') args++;
+    if (!*args || rx_spell_word(args, "COUNT", &rest) || rx_spell_word(args, "LIST", &rest)) {
+        int list = *args && rx_spell_word(args, "LIST", &rest), n;
+        spell_list l;
+        if (!deck) { snprintf(out, size, "No document"); return 10; }
+        l.out = out; l.size = size; l.used = 0; l.full = 0;
+        n = spell_walk(deck, spell, list ? spell_list_word : NULL, &l);
+        if (n < 0) { snprintf(out, size, "Not enough memory"); return 20; }
+        if (!list) snprintf(out, size, "%d", n);
+        return 0;
+    }
+    {
+        static const char *const verbs[] = { "CHECK", "SUGGEST", "ADD", "IGNORE" };
+        int v;
+        for (v = 0; v < 4 && !rx_spell_word(args, verbs[v], &rest); v++) ;
+        if (v == 4) {
+            snprintf(out, size, "SPELL takes COUNT, LIST, CHECK, SUGGEST, ADD or IGNORE");
+            return 10;
+        }
+        rx_spell_arg(rest, word, sizeof word);
+        if (!word[0]) { snprintf(out, size, "SPELL %s needs a word", verbs[v]); return 10; }
+        if (v == 0) {
+            snprintf(out, size, "%d", ow_spell_word_ok(spell, word, strlen(word)));
+        } else if (v == 1) {
+            char sugg[8][48];
+            int n = ow_spell_suggest(spell, word, sugg, 8), i;
+            size_t used = 0;
+            for (i = 0; i < n; i++) {
+                size_t m = strlen(sugg[i]);
+                if (used + m + 2 > size) break;
+                if (used) out[used++] = ' ';
+                memcpy(out + used, sugg[i], m);
+                used += m;
+                out[used] = 0;
+            }
+        } else if (v == 2) {
+            if (!ow_spell_add(spell, word)) { snprintf(out, size, "The word could not be saved"); return 10; }
+        } else if (!ow_spell_ignore(spell, word)) {
+            snprintf(out, size, "Not enough memory");
+            return 20;
+        }
+        return 0;
+    }
 }

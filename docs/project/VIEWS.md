@@ -40,6 +40,14 @@ the next PR and only wires windows, menus and requesters to these calls.
   between the halves, a task's bar (its middle, its right end for stretching, its done part) or the
   chart.
 
+- **Dragging on the Gantt chart** (`opj_drag.c`), as MS Project's mouse does it. The middle of a task's
+  bar moves the task by whole days: it gets Start No Earlier Than the first working time of the day dropped
+  on. The right end stretches it: its duration becomes the working time to the end of the day dropped on
+  (elapsed time for an elapsed duration). The done part, or the first 3 pixels of the bar, sets % Complete
+  to where it is dropped. A bar dropped on another task's bar links the two, finish to start (refused when
+  they are linked already or it would make a loop). The status line says what the drop will do while the
+  mouse moves; a drop off the bar's row does nothing. Summaries and milestones only link. Each drop is one
+  edit and one Undo step. Resource Usage refuses drags, as it refuses other edits.
 - **Task Information** (Edit > Task Information..., T, or a double-click on a bar): the task's Name,
   Duration, % Complete, Predecessors, Resource Names, Constraint (a cycle of the eight types, as MS
   Project names them), its Date and Notes in one window. OK types only the fields changed, the
@@ -82,6 +90,38 @@ the next PR and only wires windows, menus and requesters to these calls.
   height and font (`opj_usage_view` gives its places). `opj_usage_rows`, `opj_usage_row` and
   `opj_usage_cell_text` give its rows and cells. The app's View menu switches between Gantt Chart
   and Resource Usage (ARexx `VIEW`); the usage view is read only, and Resources... edits.
+- **The Tracking Gantt** (`opj_view.tracking`), MS Project's: the Gantt chart with each task's bar in
+  the upper half of its row and its baseline bar (grey) as high in the lower half, so a slip shows at a
+  glance; the done part is solid, and each bar has its % Complete beside it in place of the resource
+  names (`opj_label_text`). Baselines show whatever Show Baseline says. View > Tracking Gantt (J, or
+  ARexx `VIEW TRACKING`) shows it; everything else is the Gantt chart's, edits included.
+- **The Task Usage view** (`opj_task_usage_draw`), MS Project's: Resource Usage turned round. A row
+  for each task (indented by its outline level, a summary's name bold, its ID and its work), then a row
+  for each of its assignments (the resource's name, indented, and the assignment's work). The chart
+  holds each row's work in every period of the timescale's lower tier; a task's row adds up its own
+  assignments' and its subtasks' work and is shaded. Its table (ID, Task Name, Work) is as wide as
+  Resource Usage's and it shares the same view fields. View > Task Usage (K, or ARexx `VIEW TASKUSAGE`)
+  shows it; it is read only, as Resource Usage is (`opj_edit_refused` with `OPJ_VIEW_TASK_USAGE`).
+- **The Resource Graph** (`opj_graph_draw`), MS Project's: one work resource's allocation in each
+  period of the timescale's lower tier, as a bar of percent (its work there over its calendar's working
+  time there, `opj_graph_percent`): blue up to its max units, red above, with its percent over the bar
+  where the period is wide enough. A dark line marks its max units; the scale runs from 0 to
+  `opj_graph_scale` (its peak in the periods shown or its max units, at least 100%, rounded up to 50).
+  The table's place holds the resource's name, its peak and its max units, with the scale's ends beside
+  the chart. View > Resource Graph (H, or ARexx `VIEW GRAPH`) shows it; up and down choose the resource.
+  It is read only.
+- **The Network Diagram** (`src/project/opj_network.c`), MS Project's: a box for every task that isn't
+  a summary, 160 pixels wide and four rows high, holding its name (bold), its ID and duration, its start
+  and its finish. A box stands in the column one past its furthest predecessor's (tasks with none in
+  the first), and down its column in the sheet's order (`opj_network_layout`). Each link is a line with
+  an arrow from the predecessor's box's right side to the successor's left side, turning in the gap
+  before the successor's column; it is red when both tasks are critical. A critical task's box is edged
+  in red; a milestone's edge is doubled; a task under way is struck through once and a finished one
+  crossed. View > Network Diagram (D, or ARexx `VIEW NETWORK`) shows it in place of the Gantt chart:
+  it keeps the same selected task, a click on a box selects it, a double-click opens Task Information,
+  up and down move through the tasks (scrolled to show the box), and left and right (with Shift, a
+  page) scroll. Every edit works on the selected task as in the Gantt chart, and the boxes are laid out
+  again at each redraw.
 
 ## Baseline
 
