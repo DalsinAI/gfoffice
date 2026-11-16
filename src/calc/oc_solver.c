@@ -186,6 +186,258 @@ static void probe_name(const solver *s, unsigned i, char *out)
     oc_cell_name(s->probe[i].row, s->probe[i].col, out);
 }
 
+/* ---- the Nonlinear engine: Nelder and Mead's simplex search, the constraints as penalties ---- */
+
+#define NL_TRIALS 4000u
+
+typedef struct {
+    solver *s;
+    const oc_solver_model *model;
+    double *p;                  /* the probes at the point last worked out */
+    double weight;              /* the penalty's weight now */
+    unsigned trials, limit;
+    int stopped;                /* the limit reached */
+    int failed;                 /* OWF_ERR_... from the engine, 0 none */
+} nl_run;
+
+/* x kept to the variables' limits (>= 0 when the model says so). */
+static void nl_keep(const nl_run *r, double *x)
+{
+    unsigned j;
+    if (r->model->nonnegative)
+        for (j = 0; j < r->s->nvar; j++)
+            if (x[j] < 0.0)
+                x[j] = 0.0;
+}
+
+/* How far the probes p break the constraints (and a value goal): the sum of the squares. */
+static double nl_breach(const nl_run *r, const double *p)
+{
+    const solver *s = r->s;
+    const oc_solver_model *m = r->model;
+    double sum = 0.0;
+    unsigned k, i;
+    for (k = 0; k < m->nconstraints; k++) {
+        int rel = m->constraints[k].rel;
+        if (rel > OC_SOLVER_GE)
+            continue;
+        for (i = 0; i < s->con[k].count; i++) {
+            double l = p[s->con[k].lhs + i];
+            double rv = s->con[k].rhs_cells ? p[s->con[k].rhs + (s->con[k].rhs_one ? 0u : i)] : s->con[k].rhs_value;
+            double d = rel == OC_SOLVER_LE ? (l > rv ? l - rv : 0.0) : rel == OC_SOLVER_GE ? (l < rv ? rv - l : 0.0) : l - rv;
+            sum += d * d;
+        }
+    }
+    if (m->goal == OC_SOLVER_VALUE)
+        sum += (p[0] - m->value) * (p[0] - m->value);
+    return sum;
+}
+
+/* The search's measure at x: the target (made smaller), plus the weighted breach. HUGE_VAL where a cell the
+ * model reads is not a number. */
+static double nl_value(nl_run *r, double *x)
+{
+    unsigned bad;
+    double t;
+    nl_keep(r, x);
+    if (r->trials >= r->limit) {
+        r->stopped = 1;
+        return HUGE_VAL;
+    }
+    r->trials++;
+    if (set_vars(r->s, x) != OWF_OK) {
+        r->failed = OWF_ERR_MEMORY;
+        return HUGE_VAL;
+    }
+    if (!read_probes(r->s, r->p, &bad))
+        return HUGE_VAL;
+    t = r->model->goal == OC_SOLVER_MAX ? -r->p[0] : r->model->goal == OC_SOLVER_MIN ? r->p[0] : 0.0;
+    return t + r->weight * nl_breach(r, r->p);
+}
+
+/* One Nelder-Mead search from x (its answer back in x, its measure returned); v holds n + 1 points of n. */
+static double nl_search(nl_run *r, double *x, double *v, double *f, double *c, double *t1, double *t2)
+{
+    unsigned n = r->s->nvar, i, j, it;
+    for (i = 0; i <= n; i++) {
+        double *pt = &v[(size_t)i * n];
+        memcpy(pt, x, n * sizeof *pt);
+        if (i) {
+            double step = fabs(x[i - 1]) > 1e-9 ? 0.1 * fabs(x[i - 1]) : 0.5;
+            pt[i - 1] += step;
+            if (r->model->nonnegative && pt[i - 1] < 0.0)
+                pt[i - 1] = x[i - 1] + step;
+        }
+        f[i] = nl_value(r, pt);
+    }
+    for (it = 0; !r->stopped && !r->failed; it++) {
+        unsigned best = 0, worst = 0, next;
+        double size = 0.0, scale = 0.0, fr, fe, fc;
+        for (i = 1; i <= n; i++) {
+            if (f[i] < f[best]) best = i;
+            if (f[i] > f[worst]) worst = i;
+        }
+        next = worst == best ? (best + 1) % (n + 1) : best;
+        for (i = 0; i <= n; i++)
+            if (i != worst && f[i] > f[next]) next = i;
+        /* stop when the points have come together and agree */
+        for (i = 0; i <= n; i++)
+            for (j = 0; j < n; j++) {
+                double d = fabs(v[(size_t)i * n + j] - v[(size_t)best * n + j]);
+                if (d > size) size = d;
+                if (fabs(v[(size_t)best * n + j]) > scale) scale = fabs(v[(size_t)best * n + j]);
+            }
+        if (f[best] < HUGE_VAL && size <= 1e-10 * (1.0 + scale) && fabs(f[worst] - f[best]) <= 1e-12 * (1.0 + fabs(f[best])))
+            break;
+        if (size <= 1e-14 * (1.0 + scale))
+            break;
+        /* the centre of the others, and the worst point reflected through it */
+        for (j = 0; j < n; j++) {
+            double sum = 0.0;
+            for (i = 0; i <= n; i++)
+                if (i != worst) sum += v[(size_t)i * n + j];
+            c[j] = sum / (double)n;
+            t1[j] = c[j] + (c[j] - v[(size_t)worst * n + j]);
+        }
+        fr = nl_value(r, t1);
+        if (fr < f[best]) {
+            for (j = 0; j < n; j++)
+                t2[j] = c[j] + 2.0 * (c[j] - v[(size_t)worst * n + j]);
+            fe = nl_value(r, t2);
+            if (fe < fr) { memcpy(&v[(size_t)worst * n], t2, n * sizeof *t2); f[worst] = fe; }
+            else { memcpy(&v[(size_t)worst * n], t1, n * sizeof *t1); f[worst] = fr; }
+            continue;
+        }
+        if (fr < f[next]) {
+            memcpy(&v[(size_t)worst * n], t1, n * sizeof *t1);
+            f[worst] = fr;
+            continue;
+        }
+        /* contract, outside or inside */
+        for (j = 0; j < n; j++)
+            t2[j] = fr < f[worst] ? c[j] + 0.5 * (t1[j] - c[j]) : c[j] + 0.5 * (v[(size_t)worst * n + j] - c[j]);
+        fc = nl_value(r, t2);
+        if (fc < (fr < f[worst] ? fr : f[worst])) {
+            memcpy(&v[(size_t)worst * n], t2, n * sizeof *t2);
+            f[worst] = fc;
+            continue;
+        }
+        /* shrink towards the best */
+        for (i = 0; i <= n; i++) {
+            if (i == best) continue;
+            for (j = 0; j < n; j++)
+                v[(size_t)i * n + j] = v[(size_t)best * n + j] + 0.5 * (v[(size_t)i * n + j] - v[(size_t)best * n + j]);
+            f[i] = nl_value(r, &v[(size_t)i * n]);
+        }
+    }
+    {
+        unsigned best = 0;
+        for (i = 1; i <= n; i++)
+            if (f[i] < f[best]) best = i;
+        memcpy(x, &v[(size_t)best * n], n * sizeof *x);
+        return f[best];
+    }
+}
+
+/* Solves s's model with the Nonlinear engine: res filled as oc_core_solve's. */
+static int solve_nonlinear(solver *s, const oc_solver_model *model, oc_solver_result *res)
+{
+    nl_run r;
+    unsigned n = s->nvar, j, k, bad = 0, round;
+    double *x = NULL, *v = NULL, *f = NULL, *c = NULL, *t1 = NULL, *t2 = NULL, *last = NULL;
+    double breach, measure, tol;
+    char ref[16];
+    int rc = OWF_ERR_MEMORY;
+    for (k = 0; k < model->nconstraints; k++)
+        if (model->constraints[k].rel == OC_SOLVER_INT || model->constraints[k].rel == OC_SOLVER_BIN) {
+            why(res, "The Nonlinear engine takes no whole or binary variables: use Simplex LP for %s.",
+                model->constraints[k].lhs);
+            return OWF_ERR_FORMAT;
+        }
+    memset(&r, 0, sizeof r);
+    r.s = s;
+    r.model = model;
+    r.limit = model->max_trials ? model->max_trials : NL_TRIALS;
+    r.p = malloc(s->nprobe * sizeof *r.p);
+    x = malloc(n * sizeof *x);
+    last = malloc(n * sizeof *last);
+    v = malloc((size_t)(n + 1) * n * sizeof *v);
+    f = malloc((n + 1) * sizeof *f);
+    c = malloc(n * sizeof *c);
+    t1 = malloc(n * sizeof *t1);
+    t2 = malloc(n * sizeof *t2);
+    if (!r.p || !x || !last || !v || !f || !c || !t1 || !t2)
+        goto done;
+    memcpy(x, s->x0, n * sizeof *x);
+    nl_keep(&r, x);
+    /* the penalty grows each round, the search starting again from the last answer */
+    r.weight = 10.0;
+    for (round = 0; round < 12 && !r.stopped && !r.failed; round++) {
+        memcpy(last, x, n * sizeof *x);
+        measure = nl_search(&r, x, v, f, c, t1, t2);
+        if (measure >= HUGE_VAL)
+            break;
+        if (set_vars(s, x) != OWF_OK || !read_probes(s, r.p, &bad))
+            break;
+        breach = nl_breach(&r, r.p);
+        if (fabs(r.p[0]) > 1e30) {
+            res->status = OC_SOLVER_UNBOUNDED;
+            why(res, "The target has no limit: add constraints that bound it.", NULL);
+            rc = OWF_OK;
+            goto done;
+        }
+        if (breach <= 1e-18 && round > 0) {
+            double moved = 0.0;
+            for (j = 0; j < n; j++)
+                if (fabs(x[j] - last[j]) > moved) moved = fabs(x[j] - last[j]);
+            if (moved <= 1e-9)
+                break;
+        }
+        r.weight *= 100.0;
+    }
+    if (r.failed) {
+        rc = r.failed;
+        goto done;
+    }
+    res->nodes = r.trials;
+    /* the answer, tidied, and worked out once more on the sheet */
+    for (j = 0; j < n; j++) {
+        double w = floor(x[j] + 0.5);
+        if (fabs(x[j] - w) <= 1e-9 * (1.0 + fabs(x[j])))
+            x[j] = w;
+        if (x[j] == 0.0)
+            x[j] = 0.0;
+        res->sheet[j] = s->var[j].sheet;
+        res->row[j] = s->var[j].row;
+        res->col[j] = s->var[j].col;
+        res->value[j] = x[j];
+    }
+    res->nvariables = n;
+    rc = OWF_ERR_MEMORY;
+    if (set_vars(s, x) != OWF_OK)
+        goto done;
+    rc = OWF_OK;
+    if (!read_probes(s, r.p, &bad)) {
+        oc_cell_name(s->probe[bad].row, s->probe[bad].col, ref);
+        why(res, "%s is not a number near the answer, so Solver cannot use it.", ref);
+        res->status = OC_SOLVER_NO_ANSWER;
+        goto done;
+    }
+    res->objective = r.p[0];
+    breach = nl_breach(&r, r.p);
+    tol = 1e-6 * (1.0 + fabs(r.p[0]));
+    if (breach > tol * tol) {
+        res->status = r.stopped ? OC_SOLVER_NO_ANSWER : OC_SOLVER_INFEASIBLE;
+        why(res, r.stopped ? "Solver stopped at its limit before it found values that meet every constraint."
+                           : "Solver found no values that meet every constraint near the variables' values.", NULL);
+        goto done;
+    }
+    res->status = r.stopped ? OC_SOLVED_LIMIT : OC_SOLVED;
+done:
+    free(r.p); free(x); free(last); free(v); free(f); free(c); free(t1); free(t2);
+    return rc;
+}
+
 int oc_core_solve(const oc_core *core, const oc_solver_model *model, oc_solver_result *res)
 {
     solver *s = NULL;
@@ -206,6 +458,7 @@ int oc_core_solve(const oc_core *core, const oc_solver_model *model, oc_solver_r
     if (!core || !model)
         return OWF_ERR_FORMAT;
     if (model->goal < OC_SOLVER_MAX || model->goal > OC_SOLVER_VALUE ||
+        (model->engine != OC_SOLVER_SIMPLEX && model->engine != OC_SOLVER_NONLINEAR) ||
         (model->goal == OC_SOLVER_VALUE && !fin(model->value)) || model->nconstraints > OC_SOLVER_CONSTRAINTS) {
         why(res, "The model's goal is not one Solver knows.", NULL);
         return OWF_ERR_FORMAT;
@@ -299,6 +552,11 @@ int oc_core_solve(const oc_core *core, const oc_solver_model *model, oc_solver_r
         }
     }
 
+    if (model->engine == OC_SOLVER_NONLINEAR) {
+        rc = solve_nonlinear(s, model, res);
+        goto done;
+    }
+
     /* the model as linear functions of the variables */
     rc = OWF_ERR_MEMORY;
     p0 = malloc(s->nprobe * sizeof *p0);
@@ -342,7 +600,7 @@ int oc_core_solve(const oc_core *core, const oc_solver_model *model, oc_solver_r
             if (fabs(want - pt[i]) > 1e-7 * scale) {
                 probe_name(s, i, ref);
                 why(res, "The model is not linear: %s does not change in proportion to the variables. "
-                         "Solver solves linear models only.", ref);
+                         "Choose the Nonlinear engine for it.", ref);
                 res->status = OC_SOLVER_NOT_LINEAR;
                 rc = OWF_OK;
                 goto done;
@@ -597,6 +855,10 @@ int oc_core_solver_model(const oc_core *core, oc_solver_model *model)
         copy_ref(model->variables, sizeof model->variables, n->formula);
     if (name_number(core->book, sheet, "solver_neg", &v))
         model->nonnegative = v == 1.0;
+    if (name_number(core->book, sheet, "solver_eng", &v))
+        model->engine = v == 2.0 ? OC_SOLVER_SIMPLEX : OC_SOLVER_NONLINEAR;   /* 1 GRG Nonlinear, 3 Evolutionary */
+    else if (name_number(core->book, sheet, "solver_lin", &v))
+        model->engine = v == 1.0 ? OC_SOLVER_SIMPLEX : OC_SOLVER_NONLINEAR;   /* Excel 2007: assume linear */
     count = name_number(core->book, sheet, "solver_num", &v) && v > 0.0 ? (unsigned)v : 0u;
     if (count > OC_SOLVER_CONSTRAINTS)
         count = OC_SOLVER_CONSTRAINTS;
@@ -761,7 +1023,7 @@ static int save_model(owf_book *book, int sheet, const oc_solver_model *model, c
     }
     drop_constraints(book, sheet, model->nconstraints);
     PUT("solver_neg", model->nonnegative ? "1" : "2");
-    PUT("solver_eng", "2");                      /* Excel's simplex engine: the model is linear */
+    PUT("solver_eng", model->engine == OC_SOLVER_NONLINEAR ? "1" : "2");   /* Excel's GRG Nonlinear, Simplex LP */
     PUT("solver_ver", "3");
 #undef PUT
     return OWF_OK;

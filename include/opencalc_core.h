@@ -414,10 +414,11 @@ int oc_core_scenario_cells_text(const oc_core *core, const owf_scenario *sc, cha
 int oc_core_scenario_active(const oc_core *core);
 
 /* Data > Solver: make a target cell as large or as small as it can be, or
- * equal to a value, by changing variable cells, under constraints. Models
- * must be linear (the target and constraints change in proportion to the
- * variables); whole-number and binary variables are solved by branch and
- * bound. Cells are written as one types them ("B10", "'Plan'!$B$2:$C$4"),
+ * equal to a value, by changing variable cells, under constraints. With the
+ * Simplex LP engine models must be linear (the target and constraints change
+ * in proportion to the variables); whole-number and binary variables are
+ * solved by branch and bound. The Nonlinear engine takes smooth models
+ * (OC_SOLVER_NONLINEAR below). Cells are written as one types them ("B10", "'Plan'!$B$2:$C$4"),
  * on the active sheet unless they name another. The model is kept in the
  * active sheet's hidden names as Excel keeps its own (solver_opt ...). */
 #define OC_SOLVER_CONSTRAINTS 32
@@ -440,7 +441,14 @@ typedef struct {
     oc_solver_constraint constraints[OC_SOLVER_CONSTRAINTS];
     int nonnegative;              /* variables with no lower limit are kept >= 0 */
     unsigned max_nodes;           /* branch and bound's limit; 0: 5000 */
+    int engine;                   /* OC_SOLVER_SIMPLEX (linear models) or OC_SOLVER_NONLINEAR */
+    unsigned max_trials;          /* the nonlinear engine's limit on points worked out; 0: 4000 */
 } oc_solver_model;
+/* Engines, as Excel's Solving Method: Simplex LP for linear models; Nonlinear for smooth ones, by Nelder and
+ * Mead's simplex search from the variables' values, the constraints as growing penalties (a local answer:
+ * other starting values may find a better one; no whole or binary variables). Excel's solver_eng 1 (GRG
+ * Nonlinear) and 3 (Evolutionary) read as Nonlinear, 2 as Simplex LP. */
+enum { OC_SOLVER_SIMPLEX = 0, OC_SOLVER_NONLINEAR = 1 };
 enum { OC_SOLVED,                 /* the best values */
        OC_SOLVED_LIMIT,           /* the best found before the limit: maybe not the best there is */
        OC_SOLVER_INFEASIBLE, OC_SOLVER_UNBOUNDED, OC_SOLVER_NOT_LINEAR,

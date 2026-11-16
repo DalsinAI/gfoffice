@@ -7754,6 +7754,113 @@ static void test_solver(void)
     remove(ods);
 }
 
+/* The Nonlinear engine on known problems: a bowl, Rosenbrock's valley, constrained ones, a value goal, an
+ * infeasible model, and the model's engine kept in files. */
+static void test_solver_nonlinear(void)
+{
+    static const char *const xlsx = "build/host/calc-core-solver-nl.xlsx";
+    static const char *const ods = "build/host/calc-core-solver-nl.ods";
+    oc_core *core = fresh();
+    oc_solver_model m, back;
+    oc_solver_result r;
+    char bad[64];
+    if (!core)
+        return;
+    /* min (x - 3)^2 + (y + 1)^2 + 2: (3, -1), 2 */
+    enter_at(core, "B1", "0");
+    enter_at(core, "B2", "0");
+    enter_at(core, "B3", "=(B1-3)^2+(B2+1)^2+2");
+    oc_solver_model_init(&m);
+    snprintf(m.target, sizeof m.target, "B3");
+    snprintf(m.variables, sizeof m.variables, "B1:B2");
+    m.goal = OC_SOLVER_MIN;
+    m.nonnegative = 0;
+    /* the Simplex LP engine refuses it and points at the Nonlinear one */
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVER_NOT_LINEAR &&
+          strstr(r.why, "Nonlinear engine") != NULL);
+    m.engine = OC_SOLVER_NONLINEAR;
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED && r.nvariables == 2);
+    CHECK(fabs(r.value[0] - 3) < 1e-5 && fabs(r.value[1] + 1) < 1e-5 && fabs(r.objective - 2) < 1e-9);
+    CHECK(r.nodes > 0 && num(core, "B1") == 0);              /* the book is not changed */
+    /* kept >= 0: y stops at 0, so (3, 0) and 3 */
+    m.nonnegative = 1;
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED);
+    CHECK(fabs(r.value[0] - 3) < 1e-5 && r.value[1] == 0 && fabs(r.objective - 3) < 1e-9);
+    /* Rosenbrock from (-1.2, 1): 100(y - x^2)^2 + (1 - x)^2, least at (1, 1) */
+    m.nonnegative = 0;
+    enter_at(core, "B1", "-1.2");
+    enter_at(core, "B2", "1");
+    enter_at(core, "B3", "=100*(B2-B1^2)^2+(1-B1)^2");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED);
+    CHECK(fabs(r.value[0] - 1) < 1e-3 && fabs(r.value[1] - 1) < 1e-3 && r.objective < 1e-6);
+    /* min x^2 + y^2 with x + y >= 2: (1, 1), 2 */
+    enter_at(core, "B1", "0");
+    enter_at(core, "B2", "0");
+    enter_at(core, "B3", "=B1^2+B2^2");
+    enter_at(core, "B4", "=B1+B2");
+    solver_constraint(&m, "B4", OC_SOLVER_GE, "2");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED);
+    CHECK(fabs(r.value[0] - 1) < 1e-4 && fabs(r.value[1] - 1) < 1e-4 && fabs(r.objective - 2) < 1e-4);
+    /* max x * y with x + y <= 10, kept >= 0: (5, 5), 25 */
+    enter_at(core, "B1", "1");
+    enter_at(core, "B2", "1");
+    enter_at(core, "B3", "=B1*B2");
+    m.goal = OC_SOLVER_MAX;
+    m.nonnegative = 1;
+    m.constraints[0].rel = OC_SOLVER_LE;
+    snprintf(m.constraints[0].rhs, sizeof m.constraints[0].rhs, "10");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED);
+    CHECK(fabs(r.value[0] - 5) < 1e-3 && fabs(r.value[1] - 5) < 1e-3 && fabs(r.objective - 25) < 1e-4);
+    CHECK(r.value[0] + r.value[1] <= 10 + 1e-5);
+    /* a value goal: x^3 = 27 from 1 */
+    enter_at(core, "C1", "1");
+    enter_at(core, "C2", "=C1^3");
+    oc_solver_model_init(&m);
+    m.engine = OC_SOLVER_NONLINEAR;
+    snprintf(m.target, sizeof m.target, "C2");
+    snprintf(m.variables, sizeof m.variables, "C1");
+    m.goal = OC_SOLVER_VALUE;
+    m.value = 27;
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED);
+    CHECK(fabs(r.value[0] - 3) < 1e-5 && fabs(r.objective - 27) < 1e-4);
+    /* infeasible: C1^2 <= -1 */
+    m.goal = OC_SOLVER_MIN;
+    solver_constraint(&m, "C2", OC_SOLVER_LE, "-1");
+    enter_at(core, "C2", "=C1^2");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVER_INFEASIBLE && r.why[0]);
+    /* a small limit: stopped before it is done */
+    m.nconstraints = 0;
+    m.max_trials = 5;
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && (r.status == OC_SOLVED_LIMIT || r.status == OC_SOLVER_NO_ANSWER) &&
+          r.nodes == 5);
+    m.max_trials = 0;
+    /* no whole or binary variables, and engines it does not know */
+    solver_constraint(&m, "C1", OC_SOLVER_INT, "");
+    CHECK(oc_core_solve(core, &m, &r) == OWF_ERR_FORMAT && strstr(r.why, "Simplex LP") != NULL);
+    m.nconstraints = 0;
+    m.engine = 7;
+    CHECK(oc_core_solve(core, &m, &r) == OWF_ERR_FORMAT);
+    m.engine = OC_SOLVER_NONLINEAR;
+
+    /* the engine in the sheet's names and in files */
+    CHECK(oc_core_solve(core, &m, &r) == OWF_OK && r.status == OC_SOLVED);
+    CHECK(oc_core_solver_apply(core, &m, &r, bad, sizeof bad) == OWF_OK);
+    CHECK(fabs(num(core, "C1")) < 1e-5);
+    CHECK(oc_core_solver_model(core, &back) && back.engine == OC_SOLVER_NONLINEAR);
+    CHECK(oc_core_save(core, xlsx, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, xlsx, NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_solver_model(core, &back) && back.engine == OC_SOLVER_NONLINEAR && back.goal == OC_SOLVER_MIN);
+    CHECK(oc_core_save(core, ods, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, ods, NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_solver_model(core, &back) && back.engine == OC_SOLVER_NONLINEAR);
+    back.engine = OC_SOLVER_SIMPLEX;
+    CHECK(oc_core_solver_apply(core, &back, NULL, bad, sizeof bad) == OWF_OK);
+    CHECK(oc_core_solver_model(core, &back) && back.engine == OC_SOLVER_SIMPLEX);
+    oc_core_free(core);
+    remove(xlsx);
+    remove(ods);
+}
+
 /* Consolidate's sources as defined names of ranges, and the names the window offers. */
 static void test_consolidate_names(void)
 {
@@ -8293,6 +8400,7 @@ int main(void)
     test_pivot_definition_text();
     test_solver_lp();
     test_solver();
+    test_solver_nonlinear();
     test_scenarios();
     test_consolidate_refresh();
     test_scenario_frame();
