@@ -318,6 +318,9 @@ int ow_editor_table_apply_style(ow_editor *editor, ow_table_scope scope,
                                 unsigned long shading, int borders,
                                 unsigned long border_colour);
 int ow_editor_table_move(ow_editor *editor, int delta);
+/* 2.0.38: recording, a row put in is an insertion and a row deleted is marked deleted (the author's own
+ * inserted row goes), accepted and rejected as one change; columns are not recorded, so inserting or
+ * deleting one while recording is OWF_ERR_UNSUPPORTED. */
 int ow_editor_table_insert_row(ow_editor *editor);
 int ow_editor_table_delete_row(ow_editor *editor);
 int ow_editor_table_insert_column(ow_editor *editor);
@@ -446,6 +449,12 @@ int ow_editor_delete_note(ow_editor *editor);
  * undoable; DEFAULT or the kind's own format, and a start of 0 or 1, are the usual numbering. */
 int ow_editor_note_numbering(const ow_editor *editor, int endnote, int *format, int *start);
 int ow_editor_set_note_numbering(ow_editor *editor, int endnote, int format, int start);
+/* libowf 1.12.3 (2.0.42): where a kind's numbers start again: an owf_note_restart (endnotes never on each page:
+ * OWF_ERR_FORMAT). Setting it is undoable. The layout numbers footnotes on each page; ow_editor_note_info's and
+ * ow_editor_current_note's marks, which know no pages, run on through the document, and so do the formats that
+ * list notes (RTF, HTML, plain text). */
+int ow_editor_note_restart(const ow_editor *editor, int endnote);
+int ow_editor_set_note_restart(ow_editor *editor, int endnote, int restart);
 
 /* ---- Fields with a value (core 1.4) ----
  * The document's title, author and subject, the file's name, its words, the chapter (the level-1 heading a
@@ -471,6 +480,13 @@ int ow_editor_set_user_field(ow_editor *editor, const char *name, const char *va
 /* A reference to body paragraph paragraph at the caret: its text, or (page 1) its page; the paragraph gets a
  * bookmark ("_Ref1" ...) when it has none */
 int ow_editor_insert_cross_reference(ow_editor *editor, int paragraph, int page);
+/* libowf 1.12.4 (2.0.44): references to figures and tables. A caption is a body paragraph (not a heading) with a
+ * number range (OWF_FIELD_SEQ). Its reference shows its label and number ("Figure 1"): a bookmark over the text
+ * before its first SEQ field and the field (one already there, or a new _Ref), and a REF field to it, which
+ * shows the bookmark's place (a reference to any bookmark with a place shows just that). page: its page, as a
+ * heading's. OWF_ERR_FORMAT: not a caption. */
+int ow_editor_is_caption(const ow_editor *editor, int paragraph);
+int ow_editor_insert_caption_reference(ow_editor *editor, int paragraph, int page);
 
 /* ---- Mail merge (core 1.6) ----
  * A data source is a CSV file (comma, semicolon or tab separated; quoted cells; UTF-8 or Latin-1) whose first

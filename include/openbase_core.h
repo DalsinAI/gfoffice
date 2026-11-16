@@ -623,6 +623,33 @@ int ob_query_save(ob_project *p, const ob_query *q);
 int ob_query_rename(ob_project *p, const char *old_name, const char *new_name);
 int ob_query_delete(ob_project *p, const char *name);
 
+/* ---- A query's rows as CSV, a query as a view (core 0.13.1) ----
+ * CSV: a header of the result's headings, then every row the query gives,
+ * as ob_csv_export_with writes a table's (o: separator and charset; NULL is
+ * a comma and ISO-8859-1). Datatype object columns are left out. The answers
+ * (params) are checked before the file is made. Rows written, -1 on error.
+ *
+ * A view: the query's SELECT kept in the project as an SQL VIEW, so other
+ * SQLite programs (and typed SQL) can read it. Its name is a table's kind of
+ * name and no table or saved query has it; saving a name that is there
+ * replaces that view. A query that asks [questions] can't be a view.
+ * Renaming a table rewrites the views that name it (SQLite does), also when
+ * a design change renames it; a design change or a delete that would leave a
+ * view unable to read is refused.
+ * Saving or deleting a view is not on the Undo list.
+ *
+ * Renaming a table (ob_table_rename, or a design change that renames it) also
+ * renames it in saved queries made in the grid: their tables, their columns'
+ * tables, and "Orders". in an expression (as the designer writes a field).
+ * SQL typed as SQL is kept as it was typed. */
+ob_int ob_query_csv_export(ob_project *p, const ob_query *q, const char *const *params, const char *path,
+                           const ob_csv_opts *o);
+int ob_query_save_view(ob_project *p, const ob_query *q, const char *name);
+/* The project's views, in name order; a name is good until the next call. */
+int ob_sqlview_count(ob_project *p);
+const char *ob_sqlview_name(ob_project *p, int i);
+int ob_sqlview_drop(ob_project *p, const char *name);
+
 /* ---- Designed forms (core 0.7, design 6.2) ----
  * A form places items on a grid counted in the font's character width and
  * line height, not pixels, so it survives a change of font: x 0 to

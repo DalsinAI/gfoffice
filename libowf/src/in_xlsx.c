@@ -2179,7 +2179,10 @@ static int read_pivot(xlsx *x, int sheet, const char *table_part)
         unsigned k;
         for (k = 0; k < def.nrow + def.ncol; k++) {
             unsigned f = k < def.nrow ? def.row[k] : def.col[k - def.nrow];
-            const char *sort = attr(nth_child(main_child(table, "pivotFields"), (long)f), "sortType");
+            const owf_xml_node *pf = nth_child(main_child(table, "pivotFields"), (long)f);
+            const char *sort = attr(pf, "sortType");
+            if (pf && xbool(attr(pf, "defaultSubtotal"), 1))    /* Excel's default: a subtotal per item */
+                owf_pivot_set_subtotal(&def, f, 1);
             if (sort && !strcmp(sort, "ascending"))
                 owf_pivot_set_sort(&def, f, OWF_PIVOT_SORT_ASCENDING);
             else if (sort && !strcmp(sort, "descending"))
@@ -2733,6 +2736,42 @@ static void read_names(xlsx *x, const owf_xml_node *names)
     }
 }
 
+
+/* Excel's workbookProtection: lockStructure, and its password as the legacy 16-bit hash or a digest kept as
+   it was. lockWindows is not kept (GFOpenCalc's window has no fixed place). */
+static void read_book_protection(xlsx *x, const owf_xml_node *wp)
+{
+    static const char *const keep[4] = { "workbookAlgorithmName", "workbookHashValue", "workbookSaltValue",
+                                         "workbookSpinCount" };
+    const char *pw;
+    size_t k;
+    if (!wp || !xbool(attr(wp, "lockStructure"), 0))
+        return;
+    x->book->protect_structure = 1;
+    pw = attr(wp, "workbookPassword");
+    if (pw && strlen(pw) == 4) {
+        x->book->protect_hash = copy(x, pw, 4);
+        return;
+    }
+    if (attr(wp, "workbookAlgorithmName")) {
+        owf_buf b;
+        owf_buf_init(&b);
+        owf_buf_puts(&b, "xlsx:");
+        for (k = 0; k < 4; k++) {
+            const char *v = attr(wp, keep[k]);
+            if (!v)
+                continue;
+            owf_buf_printf(&b, " %s=\"", keep[k]);
+            owf_buf_puts(&b, v);
+            owf_buf_putc(&b, '"');
+        }
+        owf_buf_putc(&b, 0);
+        if (b.failed || !(x->book->protect_kept = copy(x, (const char *)b.data, strlen((const char *)b.data))))
+            x->failed = 1;
+        owf_buf_free(&b);
+    }
+}
+
 static int read_workbook(xlsx *x)
 {
     owf_xml *xml;
@@ -2753,6 +2792,7 @@ static int read_workbook(xlsx *x)
     if (!strcmp(root->ns, NS_MAIN_STRICT))
         owf_report_add(x->report, OWF_NOTE_INFO, "This workbook is in Office Open XML's strict form");
     x->book->date1904 = xbool(attr(main_child(root, "workbookPr"), "date1904"), 0);
+    read_book_protection(x, main_child(root, "workbookProtection"));
     active = (int)xlong(attr(main_child(main_child(root, "bookViews"), "workbookView"), "activeTab"), 0, 0, 0xFFFF);
 
     memcpy(x->theme, office_theme, sizeof x->theme);

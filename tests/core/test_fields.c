@@ -12,6 +12,7 @@
 #include <string.h>
 #include "openwrite_core.h"
 #include "owf_internal.h"
+#include "owf_zip.h"
 
 static int checks, failures;
 
@@ -28,7 +29,7 @@ static int checks, failures;
 static const char *dump(const owf_doc *doc)
 {
     static const char *const names[] = { "PAGE", "PAGES", "DATE", "TIME", "TITLE", "AUTHOR", "SUBJECT", "FILENAME",
-                                         "WORDS", "CHAPTER", "USER", "REF", "REFPAGE" };
+                                         "WORDS", "CHAPTER", "USER", "REF", "REFPAGE", "MERGE", "INDEX", "SEQ" };
     static char out[2048];
     size_t used = 0;
     int i, j;
@@ -328,6 +329,287 @@ static void test_odf_form(void)
     owf_doc_free(doc);
 }
 
+/* libowf 1.12.6: number ranges (SEQ): numbered by name in order, renumbered on an edit, undone, through DOCX
+ * and ODT (its text:sequence-decls), and Word's SEQ with its switches */
+static void test_seq(void)
+{
+    owf_doc *doc = doc_of(), *back = NULL;
+    ow_editor *ed = doc ? ow_editor_new(doc) : NULL;
+    static const char *const want =
+        "Getting started|Plug it in and wait.{SEQ:Figure=1}|Using it{SEQ:Table=1}|Press the button.{SEQ:Figure=2}";
+    static const char *const fmts[] = { "docx", "odt" };
+    int k;
+    CHECK(ed != NULL, "editor");
+    if (!ed) { owf_doc_free(doc); return; }
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, NULL) == OWF_ERR_FORMAT, "a number range needs a name");
+    /* Word's rule for the name (Budgie on #292): a letter, then letters, digits and _, 40 at most */
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "My Figure") == OWF_ERR_FORMAT, "no spaces");
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "2nd") == OWF_ERR_FORMAT, "a letter first");
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "Fig-1") == OWF_ERR_FORMAT, "no dashes");
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "A2345678901234567890123456789012345678901") == OWF_ERR_FORMAT,
+          "41 is too long");
+    CHECK(!strcmp(dump(doc), "Getting started|Plug it in and wait.|Using it|Press the button."), "nothing inserted");
+    caret_end(ed, 1);
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "Figure") == OWF_OK, "Figure");
+    caret_end(ed, 2);
+    ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "Table");
+    caret_end(ed, 3);
+    ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "Figure");
+    ow_editor_update_fields(ed);
+    CHECK(!strcmp(dump(doc), want), dump(doc));
+    /* one before them: they move on */
+    caret_end(ed, 0);
+    ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "Figure");
+    ow_editor_update_fields(ed);
+    CHECK(!strcmp(dump(doc), "Getting started{SEQ:Figure=1}|Plug it in and wait.{SEQ:Figure=2}|Using it{SEQ:Table=1}|"
+                             "Press the button.{SEQ:Figure=3}"), dump(doc));
+    ow_editor_undo(ed);
+    ow_editor_update_fields(ed);
+    CHECK(!strcmp(dump(doc), want), dump(doc));
+    for (k = 0; k < 2; ++k) {
+        const owf_format *f = owf_format_named(fmts[k]);
+        unsigned char *data = NULL;
+        size_t length = 0;
+        CHECK(f && f->export(doc, &data, &length, NULL) == OWF_OK && data, fmts[k]);
+        if (!data) continue;
+        {   /* the file's own form */
+            owf_unzip zip;
+            unsigned char *xml = NULL;
+            size_t n = 0;
+            const char *part = k ? "content.xml" : "word/document.xml";
+            CHECK(owf_unzip_open(&zip, data, length) && owf_unzip_read(&zip, part, &xml, &n) == OWF_OK, part);
+            if (xml) {
+                if (!k) CHECK(strstr((char *)xml, "SEQ Figure \\* ARABIC") != NULL, "SEQ Figure");
+                else {
+                    const char *d = strstr((char *)xml, "<text:sequence-decls>");
+                    CHECK(d && strstr(d, "text:name=\"Figure\"") && strstr(d, "text:name=\"Table\"") &&
+                          strstr(d, "</text:sequence-decls>") && !strstr(strstr(d, "text:name=\"Figure\"") + 1,
+                          "<text:sequence-decl text:display-outline-level=\"0\" text:name=\"Figure\""), "each name once");
+                    CHECK(strstr((char *)xml, "<text:sequence text:name=\"Table\" text:formula=\"ooow:Table+1\" "
+                                              "style:num-format=\"1\">1</text:sequence>") != NULL, "text:sequence");
+                }
+                owf_free(xml);
+            }
+        }
+        CHECK(owf_import_memory(data, length, NULL, &back, NULL, NULL) == OWF_OK && back, fmts[k]);
+        if (back) {
+            CHECK(!strcmp(dump(back), want), dump(back));
+            owf_doc_free(back);
+            back = NULL;
+        }
+        free(data);
+    }
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+
+    /* a name with a space from elsewhere (a file): DOCX quotes it, ODT's formula has _ for it; both read back */
+    doc = doc_of();
+    if (doc) {
+        owf_para *p = &doc->body.paras[1];
+        owf_run *runs = (owf_run *)realloc(p->runs, (size_t)(p->nruns + 1) * sizeof(*runs));
+        if (runs) {
+            p->runs = runs;
+            p->capruns = p->nruns + 1;
+            memset(&p->runs[p->nruns], 0, sizeof(owf_run));
+            p->runs[p->nruns].kind = OWF_RUN_FIELD;
+            p->runs[p->nruns].field = OWF_FIELD_SEQ;
+            owf_charfmt_init(&p->runs[p->nruns].fmt);
+            p->runs[p->nruns].href = (char *)malloc(10);
+            p->runs[p->nruns].text = (char *)malloc(2);
+            if (p->runs[p->nruns].href) memcpy(p->runs[p->nruns].href, "My Figure", 10);
+            if (p->runs[p->nruns].text) memcpy(p->runs[p->nruns].text, "1", 2);
+            ++p->nruns;
+        }
+        for (k = 0; k < 2; ++k) {
+            const owf_format *f = owf_format_named(fmts[k]);
+            unsigned char *data = NULL;
+            size_t length = 0;
+            CHECK(f && f->export(doc, &data, &length, NULL) == OWF_OK && data, fmts[k]);
+            if (!data) continue;
+            if (k) {
+                owf_unzip zip;
+                unsigned char *xml = NULL;
+                size_t n = 0;
+                if (owf_unzip_open(&zip, data, length) && owf_unzip_read(&zip, "content.xml", &xml, &n) == OWF_OK) {
+                    CHECK(strstr((char *)xml, "text:name=\"My Figure\" text:formula=\"ooow:My_Figure+1\"") != NULL,
+                          "ODT's formula without the space");
+                    owf_free(xml);
+                }
+            }
+            CHECK(owf_import_memory(data, length, NULL, &back, NULL, NULL) == OWF_OK && back, fmts[k]);
+            if (back) {
+                CHECK(!strcmp(dump(back), "Getting started|Plug it in and wait.{SEQ:My Figure=1}|Using it|Press the button."),
+                      dump(back));
+                owf_doc_free(back);
+                back = NULL;
+            }
+            free(data);
+        }
+        owf_doc_free(doc);
+    }
+
+    /* the document's order: a text box's numbers between the body's around its anchor (Budgie's nit) */
+    doc = doc_of();
+    ed = doc ? ow_editor_new(doc) : NULL;
+    if (ed) {
+        owf_frame fr;
+        owf_parafmt pf;
+        owf_charfmt cf;
+        int idx;
+        memset(&fr, 0, sizeof fr);
+        fr.image = -1;
+        fr.width = fr.height = 2880;
+        owf_parafmt_init(&pf);
+        owf_charfmt_init(&cf);
+        owf_para_add_text(owf_story_add(&fr.story, &pf), &cf, "Box", 3);
+        idx = owf_doc_add_frame(doc, &fr);
+        CHECK(idx == 0 && owf_para_add_frame(&doc->body.paras[1], &cf, idx) == 0, "a text box in paragraph 2");
+        caret_end(ed, 0);
+        ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "Figure");
+        caret_end(ed, 3);
+        ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "Figure");
+        {   /* one in the box, put there by hand (the editor types in the body) */
+            owf_para *bp = &doc->frames[0].story.paras[0];
+            owf_run *runs = (owf_run *)realloc(bp->runs, (size_t)(bp->nruns + 1) * sizeof(*runs));
+            if (runs) {
+                bp->runs = runs;
+                bp->capruns = bp->nruns + 1;
+                memset(&bp->runs[bp->nruns], 0, sizeof(owf_run));
+                bp->runs[bp->nruns].kind = OWF_RUN_FIELD;
+                bp->runs[bp->nruns].field = OWF_FIELD_SEQ;
+                owf_charfmt_init(&bp->runs[bp->nruns].fmt);
+                bp->runs[bp->nruns].href = (char *)malloc(7);
+                if (bp->runs[bp->nruns].href) memcpy(bp->runs[bp->nruns].href, "Figure", 7);
+                ++bp->nruns;
+            }
+        }
+        ow_editor_update_fields(ed);
+        {
+            const owf_run *last = NULL, *box = &doc->frames[0].story.paras[0].runs[doc->frames[0].story.paras[0].nruns - 1];
+            int j;
+            for (j = 0; j < doc->body.paras[3].nruns; ++j)
+                if (doc->body.paras[3].runs[j].kind == OWF_RUN_FIELD) last = &doc->body.paras[3].runs[j];
+            CHECK(box->text && !strcmp(box->text, "2"), box->text ? box->text : "(none)");
+            CHECK(last && last->text && !strcmp(last->text, "3"), last && last->text ? last->text : "(none)");
+        }
+        ow_editor_free(ed);
+    }
+    owf_doc_free(doc);
+
+    /* Word's: SEQ with its switches and the number it showed, numbered again by the editor */
+    {
+        static const char *const names[] = { "[Content_Types].xml", "_rels/.rels", "word/document.xml" };
+        static const char *const parts[] = {
+            "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+            "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+            "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+            "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>"
+            "</Types>",
+            "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+            "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>"
+            "</Relationships>",
+            "<?xml version=\"1.0\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>"
+            "<w:p><w:r><w:t xml:space=\"preserve\">Table </w:t></w:r><w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>"
+            "<w:r><w:instrText xml:space=\"preserve\"> SEQ Table \\* ARABIC \\s 1 </w:instrText></w:r>"
+            "<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>7</w:t></w:r>"
+            "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p>"
+            "<w:p><w:r><w:t xml:space=\"preserve\">Table </w:t></w:r>"
+            "<w:fldSimple w:instr=\" SEQ Table \\* ARABIC \"><w:r><w:t>8</w:t></w:r></w:fldSimple></w:p>"
+            "</w:body></w:document>" };
+        owf_buf zipped;
+        owf_zip *z;
+        owf_doc *word = NULL;
+        int i;
+        owf_buf_init(&zipped);
+        z = owf_zip_new(&zipped);
+        for (i = 0; z && i < 3; ++i) owf_zip_add(z, names[i], parts[i], strlen(parts[i]), 1);
+        if (z) owf_zip_finish(z);
+        CHECK(owf_import_memory(zipped.data, zipped.length, NULL, &word, NULL, NULL) == OWF_OK && word, "Word's SEQ");
+        owf_buf_free(&zipped);
+        if (word) {
+            CHECK(!strcmp(dump(word), "Table {SEQ:Table=7}|Table {SEQ:Table=8}"), dump(word));
+            ed = ow_editor_new(word);
+            if (ed) {
+                ow_editor_update_fields(ed);
+                CHECK(!strcmp(dump(word), "Table {SEQ:Table=1}|Table {SEQ:Table=2}"), dump(word));
+                ow_editor_free(ed);
+            }
+            owf_doc_free(word);
+        }
+    }
+}
+
+/* libowf 1.12.4: references to figures and tables: a caption's reference shows "Figure 1", renumbered as the
+ * figures move; a bookmark with a place shows its place; one with a place in its name is found (2.0.21) */
+static void test_caption_refs(void)
+{
+    owf_doc *doc = doc_of(), *back = NULL;
+    ow_editor *ed = doc ? ow_editor_new(doc) : NULL;
+    static const char *const fmts[] = { "docx", "odt" };
+    int k;
+    CHECK(ed != NULL, "editor");
+    if (!ed) { owf_doc_free(doc); return; }
+    /* paragraph 2 ("Plug it in and wait.") a caption: "Figure " + SEQ + ": the plug" */
+    {
+        ow_selection sel;
+        memset(&sel, 0, sizeof sel);
+        sel.anchor.paragraph = 1;
+        sel.focus = sel.anchor;
+        ow_editor_set_selection(ed, &sel);
+        ow_editor_insert_text_block(ed, "Figure ", 7);
+        ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "Figure");
+        ow_editor_insert_text_block(ed, ": ", 2);
+    }
+    CHECK(!ow_editor_is_caption(ed, 0) && ow_editor_is_caption(ed, 1) && !ow_editor_is_caption(ed, 2), "the caption");
+    CHECK(ow_editor_insert_caption_reference(ed, 0, 0) == OWF_ERR_FORMAT, "a heading is no caption");
+    caret_end(ed, 3);
+    CHECK(ow_editor_insert_caption_reference(ed, 1, 0) == OWF_OK, "a reference to it");
+    caret_end(ed, 3);
+    CHECK(ow_editor_insert_caption_reference(ed, 1, 1) == OWF_OK, "and to its page");
+    ow_editor_update_fields(ed);
+    CHECK(strstr(dump(doc), "Press the button.{REF:_Ref1=Figure 1}{REFPAGE:_Ref") != NULL, dump(doc));
+    CHECK(doc->body.paras[1].bookmarks && strstr(doc->body.paras[1].bookmarks, "_Ref1@0-7"), "its bookmark's place");
+    /* a figure before it: Figure 2, and the reference says so */
+    {
+        ow_selection sel;
+        memset(&sel, 0, sizeof sel);
+        sel.anchor.paragraph = 0;
+        sel.focus = sel.anchor;
+        ow_editor_set_selection(ed, &sel);
+        ow_editor_insert_field_arg(ed, OWF_FIELD_SEQ, "Figure");
+    }
+    ow_editor_update_fields(ed);
+    CHECK(strstr(dump(doc), "{REF:_Ref1=Figure 2}") != NULL, dump(doc));
+    /* a second reference uses the same bookmark */
+    caret_end(ed, 2);
+    ow_editor_insert_caption_reference(ed, 1, 0);
+    ow_editor_update_fields(ed);
+    CHECK(strstr(dump(doc), "Using it{REF:_Ref1=Figure 2}") != NULL && !strstr(doc->body.paras[1].bookmarks, "_Ref3"),
+          dump(doc));
+    /* through DOCX and ODT, and worked out again */
+    for (k = 0; k < 2; ++k) {
+        const owf_format *f = owf_format_named(fmts[k]);
+        unsigned char *data = NULL;
+        size_t length = 0;
+        CHECK(f && f->export(doc, &data, &length, NULL) == OWF_OK && data, fmts[k]);
+        if (!data) continue;
+        CHECK(owf_import_memory(data, length, NULL, &back, NULL, NULL) == OWF_OK && back, fmts[k]);
+        if (back) {
+            ow_editor *e2 = ow_editor_new(back);
+            if (e2) {
+                ow_editor_update_fields(e2);
+                CHECK(strstr(dump(back), "Using it{REF:_Ref1=Figure 2}") != NULL, dump(back));
+                ow_editor_free(e2);
+            }
+            owf_doc_free(back);
+            back = NULL;
+        }
+        free(data);
+    }
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+}
+
 int main(void)
 {
     test_editing();
@@ -337,6 +619,8 @@ int main(void)
                              "Press the button.Using itGetting started1");
     test_word_form();
     test_odf_form();
+    test_seq();
+    test_caption_refs();
     printf("fields: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }
