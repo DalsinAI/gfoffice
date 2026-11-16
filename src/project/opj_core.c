@@ -1140,6 +1140,13 @@ int opj_clear_leveling(opj_doc *doc)
 
 /* ---- Sort ---- */
 
+static char *cell_dup(const opj_doc *doc, int resources, int row, int column);
+
+char *opj_cell_text_dup(const opj_doc *doc, int row, int column)
+{
+    return cell_dup(doc, 0, row, column);
+}
+
 /* A cell's whole text however long (a Name or Notes can be any length), as the sheet shows it; owf_malloc'd,
  * NULL for memory. */
 static char *cell_dup(const opj_doc *doc, int resources, int row, int column)
@@ -1156,11 +1163,11 @@ static char *cell_dup(const opj_doc *doc, int resources, int row, int column)
     }
 }
 
-/* A cell's value to sort by: 1 with *v for a date, duration, number or money; 0 for text; *na set for NA. */
-static int sort_value(const opj_doc *doc, int row, int column, long *v, int *na)
+int opj_cell_value(const opj_doc *doc, int row, int column, long *v, int *na)
 {
     const owf_ptask *t = &doc->plan->tasks[row];
     *na = 0;
+    *v = 0;
     switch (column) {
     case OPJ_COL_ID: *v = row; return 1;
     case OPJ_COL_DURATION: *v = t->duration; return 1;
@@ -1195,7 +1202,7 @@ static int lower(int c)
     return c >= 'A' && c <= 'Z' ? c + 32 : c;
 }
 
-static int text_cmp_ci(const char *a, const char *b)
+int opj_text_cmp(const char *a, const char *b)
 {
     for (; *a && lower((unsigned char)*a) == lower((unsigned char)*b); a++, b++)
         ;
@@ -1215,7 +1222,7 @@ static int make_sort_rows(const opj_doc *doc, const opj_sort_key *k, int nk, sor
     int r, i;
     for (r = 0; r < nt; r++)
         for (i = 0; i < nk; i++)
-            if (!sort_value(doc, r, k[i].column, &rows[r].v[i], &rows[r].na[i]) &&
+            if (!opj_cell_value(doc, r, k[i].column, &rows[r].v[i], &rows[r].na[i]) &&
                 !(rows[r].text[i] = cell_dup(doc, 0, r, k[i].column)))
                 return 0;
     return 1;
@@ -1241,7 +1248,7 @@ static int sort_cmp(const sort_row *rows, const opj_sort_key *k, int nk, int a, 
             if (ra->na[i] != rb->na[i]) return ra->na[i] ? 1 : -1;   /* NA last, either way */
             d = ra->na[i] || ra->v[i] == rb->v[i] ? 0 : ra->v[i] < rb->v[i] ? -1 : 1;
         } else {
-            d = text_cmp_ci(ra->text[i] ? ra->text[i] : "", rb->text[i] ? rb->text[i] : "");
+            d = opj_text_cmp(ra->text[i] ? ra->text[i] : "", rb->text[i] ? rb->text[i] : "");
             d = d < 0 ? -1 : d > 0 ? 1 : 0;
         }
         if (d) return k[i].descending ? -d : d;
@@ -1346,10 +1353,10 @@ static const char *find_ci(const char *hay, const char *needle)
     return NULL;
 }
 
-static int text_matches(const char *cell, const char *text, int how)
+int opj_text_matches(const char *cell, const char *text, int how)
 {
     switch (how) {
-    case OPJ_FIND_EQUALS: return text_cmp_ci(cell, text) == 0;
+    case OPJ_FIND_EQUALS: return opj_text_cmp(cell, text) == 0;
     case OPJ_FIND_BEGINS: return find_ci(cell, text) == cell;
     default: return find_ci(cell, text) != NULL;
     }
@@ -1368,7 +1375,7 @@ static int find_row(const opj_doc *doc, int resources, int column, const char *t
         if (backward) row = from < 0 ? n - k : ((from - k) % n + n) % n;
         else row = from < 0 ? k - 1 : (from + k) % n;
         char *cell = cell_dup(doc, resources, row, column);
-        int match = cell && text_matches(cell, text, how);
+        int match = cell && opj_text_matches(cell, text, how);
         owf_free(cell);
         if (match) return row;
     }

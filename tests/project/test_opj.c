@@ -896,6 +896,258 @@ static void test_sort(void)
     }
 }
 
+/* A plan with two summaries: A over Plan (done) and Build (half), B over Ship (a milestone); then Docs. */
+static opj_doc *phases(void)
+{
+    opj_doc *doc = opj_doc_new(NULL, AT(16, 8, 0));
+    static const char *const names[] = { "A", "Plan", "Build", "B", "Ship", "Docs" };
+    int i;
+    for (i = 0; i < 6; i++) CHECK_N(opj_insert_task(doc, i, names[i]), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_DURATION, "2d"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 2, OPJ_COL_DURATION, "3d"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 2, OPJ_COL_PREDECESSORS, "2"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 4, OPJ_COL_DURATION, "0d"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 4, OPJ_COL_PREDECESSORS, "3"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 5, OPJ_COL_DURATION, "2d"), OWF_OK);
+    CHECK_N(opj_indent(doc, 1, 2, 1), OWF_OK);
+    CHECK_N(opj_indent(doc, 4, 1, 1), OWF_OK);
+    CHECK_N(opj_set_percent(doc, 1, 100), OWF_OK);
+    CHECK_N(opj_set_percent(doc, 2, 50), OWF_OK);
+    return doc;
+}
+
+/* The lines as "1,2,[3],4": task rows, a heading as its group's first task's row in brackets. */
+static const char *lines_text(const opj_lines *l)
+{
+    static char out[200];
+    size_t k = 0;
+    int i;
+    out[0] = 0;
+    for (i = 0; i < l->n && k < sizeof out - 20; i++)
+        k += (size_t)snprintf(out + k, sizeof out - k, l->task[i] >= 0 ? "%s%d" : "%s[%d]", i ? "," : "",
+                              l->task[i] >= 0 ? l->task[i] : l->heading[i]);
+    return out;
+}
+
+static const char *filtered(opj_lines *l, const opj_doc *doc, int kind, int summaries)
+{
+    memset(&l->filter, 0, sizeof l->filter);
+    l->filter.kind = kind;
+    l->filter.summaries = summaries;
+    CHECK_N(opj_lines_update(l, doc), OWF_OK);
+    return lines_text(l);
+}
+
+/* Project > Filtered For, the AutoFilter and Group By, as the lines a view shows. */
+static void test_filter_group(void)
+{
+    opj_doc *doc = phases();
+    opj_lines l;
+    char text[80];
+    opj_lines_init(&l);
+    CHECK(!opj_lines_active(&l));
+    CHECK_S(filtered(&l, doc, OPJ_FILTER_ALL, 0), "0,1,2,3,4,5");
+    CHECK_S(filtered(&l, doc, OPJ_FILTER_MILESTONES, 0), "4");
+    CHECK_S(filtered(&l, doc, OPJ_FILTER_MILESTONES, 1), "3,4");           /* with B above it */
+    CHECK(opj_lines_active(&l));
+    CHECK_S(filtered(&l, doc, OPJ_FILTER_COMPLETED, 0), "1");
+    CHECK_S(filtered(&l, doc, OPJ_FILTER_COMPLETED, 1), "0,1");
+    CHECK_S(filtered(&l, doc, OPJ_FILTER_INCOMPLETE, 0), "0,2,3,4,5");
+    CHECK_S(filtered(&l, doc, OPJ_FILTER_UNSTARTED, 0), "3,4,5");
+    CHECK_S(filtered(&l, doc, OPJ_FILTER_SUMMARY, 0), "0,3");
+    CHECK_S(filtered(&l, doc, OPJ_FILTER_CRITICAL, 0), "0,1,2,3,4");        /* Docs has slack */
+    CHECK_N(l.line_of[5], -1);
+    CHECK_N(l.line_of[4], 4);
+    /* the AutoFilter: a column's cell, contains, equals or begins; empty text keeps every task */
+    l.filter.kind = OPJ_FILTER_CELL;
+    l.filter.column = OPJ_COL_NAME;
+    strcpy(l.filter.text, "I");
+    l.filter.how = OPJ_FIND_CONTAINS;
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+    CHECK_S(lines_text(&l), "2,4");
+    l.filter.summaries = 1;
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+    CHECK_S(lines_text(&l), "0,2,3,4");
+    l.filter.summaries = 0;
+    l.filter.how = OPJ_FIND_BEGINS;
+    strcpy(l.filter.text, "b");
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+    CHECK_S(lines_text(&l), "2,3");
+    l.filter.how = OPJ_FIND_EQUALS;
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+    CHECK_S(lines_text(&l), "3");
+    l.filter.column = OPJ_COL_DURATION;
+    strcpy(l.filter.text, cell_of(doc, 1, OPJ_COL_DURATION));
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+    CHECK_S(lines_text(&l), "1,5");
+    l.filter.text[0] = 0;
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+    CHECK_S(lines_text(&l), "0,1,2,3,4,5");
+    l.filter.column = OPJ_NCOLS;
+    CHECK_N(opj_lines_update(&l, doc), OWF_ERR_FORMAT);
+    CHECK_S(lines_text(&l), "0,1,2,3,4,5");                               /* as they were */
+    l.filter.kind = OPJ_NFILTERS;
+    CHECK_N(opj_lines_update(&l, doc), OWF_ERR_FORMAT);
+    CHECK_N(opj_lines_update(NULL, doc), OWF_ERR_FORMAT);
+    CHECK_N(opj_lines_update(&l, NULL), OWF_ERR_FORMAT);
+
+    /* Group By Duration: no summaries; 0 days, 2 days (Plan, Docs), 3 days; then down */
+    memset(&l.filter, 0, sizeof l.filter);
+    l.group = OPJ_COL_DURATION;
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+    CHECK_S(lines_text(&l), "[4],4,[1],1,5,[2],2");
+    snprintf(text, sizeof text, "Duration: %s", cell_of(doc, 1, OPJ_COL_DURATION));
+    opj_lines_heading_text(&l, doc, 2, text + 40, 40);
+    CHECK_S(text + 40, text);
+    CHECK_N(l.line_of[5], 4);
+    CHECK_N(l.line_of[0], -1);
+    opj_lines_heading_text(&l, doc, 1, text, sizeof text);               /* a task's line: none */
+    CHECK_S(text, "");
+    l.group_descending = 1;
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+    CHECK_S(lines_text(&l), "[2],2,[1],1,5,[4],4");
+    l.filter.kind = OPJ_FILTER_INCOMPLETE;                                 /* grouped and filtered */
+    l.group_descending = 0;
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+    CHECK_S(lines_text(&l), "[4],4,[5],5,[2],2");
+    l.filter.kind = OPJ_FILTER_ALL;
+    l.group = OPJ_COL_NAME;                                                /* by text */
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+    CHECK_S(lines_text(&l), "[2],2,[5],5,[1],1,[4],4");
+    l.group = OPJ_NCOLS;
+    CHECK_N(opj_lines_update(&l, doc), OWF_ERR_FORMAT);
+
+    /* the AutoFilter reads a cell whole: a match past a long note's 400th byte */
+    {
+        char note[1001];
+        memset(note, 'x', 1000);
+        memcpy(note + 900, "omega", 5);
+        note[1000] = 0;
+        CHECK_N(opj_set_notes(doc, 5, note), OWF_OK);
+        l.group = -1;
+        memset(&l.filter, 0, sizeof l.filter);
+        l.filter.kind = OPJ_FILTER_CELL;
+        l.filter.column = OPJ_COL_NOTES;
+        strcpy(l.filter.text, "omega");
+        CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+        CHECK_S(lines_text(&l), "5");
+        memset(&l.filter, 0, sizeof l.filter);
+    }
+
+    /* the names */
+    CHECK_S(opj_filter_name(OPJ_FILTER_CRITICAL), "Critical");
+    CHECK_S(opj_filter_name(OPJ_NFILTERS), "");
+    CHECK_N(opj_filter_parse("critical"), OPJ_FILTER_CRITICAL);
+    CHECK_N(opj_filter_parse("Incomplete Tasks"), OPJ_FILTER_INCOMPLETE);
+    CHECK_N(opj_filter_parse("autofilter"), OPJ_FILTER_CELL);
+    CHECK_N(opj_filter_parse("nope"), -1);
+    CHECK(opj_filter_passes(doc, NULL, 0));
+    CHECK(!opj_filter_passes(doc, NULL, 6));
+    /* column names, and Sort's keys as typed */
+    CHECK_N(opj_column_parse("Duration", 0), OPJ_COL_DURATION);
+    CHECK_N(opj_column_parse("% complete", 0), OPJ_COL_PERCENT);
+    CHECK_N(opj_column_parse("Resource Names", 0), OPJ_COL_RESOURCES);
+    CHECK_N(opj_column_parse("resources", 0), OPJ_COL_RESOURCES);
+    CHECK_N(opj_column_parse("Max. Units", 1), OPJ_RCOL_MAX);
+    CHECK_N(opj_column_parse("colour", 0), -1);
+    {
+        opj_sort_key k[3];
+        int n = -1;
+        CHECK_N(opj_sort_parse("Start, Duration desc,name UP", k, &n), OWF_OK);
+        CHECK_N(n, 3);
+        CHECK(k[0].column == OPJ_COL_START && !k[0].descending);
+        CHECK(k[1].column == OPJ_COL_DURATION && k[1].descending);
+        CHECK(k[2].column == OPJ_COL_NAME && !k[2].descending);
+        CHECK_N(opj_sort_parse("Finish Descending,", k, &n), OWF_OK);
+        CHECK(n == 1 && k[0].column == OPJ_COL_FINISH && k[0].descending);
+        CHECK_N(opj_sort_parse("Constraint Type", k, &n), OWF_OK);          /* a title with a space */
+        CHECK(n == 1 && k[0].column == OPJ_COL_CONSTRAINT_TYPE);
+        CHECK_N(opj_sort_parse("Start, Finish, Name, ID", k, &n), OWF_ERR_FORMAT);
+        CHECK_N(opj_sort_parse("Colour", k, &n), OWF_ERR_FORMAT);
+        CHECK_N(opj_sort_parse("", k, &n), OWF_ERR_FORMAT);
+        CHECK_N(n, 0);
+        CHECK_N(opj_sort_parse(NULL, k, &n), OWF_ERR_FORMAT);
+    }
+    opj_lines_free(&l);
+    opj_doc_free(doc);
+}
+
+/* A view with lines: hidden tasks have no bars or links, rows go by line, headings are drawn and hit. */
+static void test_view_lines(void)
+{
+    opj_doc *doc = phases();
+    opj_lines l;
+    opj_view v;
+    opj_bar b;
+    opj_path path;
+    opj_hit hit;
+    oldraw *d;
+    opj_print pr;
+    opj_lines_init(&l);
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    CHECK_N(opj_view_lines(&v, doc), 6);                                   /* no lines: a task each */
+    CHECK_N(opj_view_line_task(&v, doc, 5), 5);
+    CHECK_N(opj_view_task_line(&v, doc, 5), 5);
+    v.lines = &l;                                                          /* not worked out: the same */
+    CHECK_N(opj_view_lines(&v, doc), 6);
+    l.filter.kind = OPJ_FILTER_MILESTONES;
+    l.filter.summaries = 1;
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);                            /* B, Ship */
+    CHECK_N(opj_view_lines(&v, doc), 2);
+    CHECK_N(opj_view_line_task(&v, doc, 1), 4);
+    CHECK_N(opj_view_line_task(&v, doc, 2), -1);
+    CHECK_N(opj_view_task_line(&v, doc, 4), 1);
+    CHECK_N(opj_view_task_line(&v, doc, 2), -1);
+    CHECK_N(opj_row_y(&v, 4), 48);
+    CHECK(opj_row_y(&v, 2) < -1000);
+    CHECK(!opj_bar_of(&v, doc, 2, &b));                                    /* Build: hidden */
+    CHECK(opj_bar_of(&v, doc, 4, &b) && b.kind == OPJ_BAR_MILESTONE);
+    CHECK(!opj_link_path(&v, doc, 4, 0, &path));                           /* from Build: hidden */
+    opj_hit_test(&v, doc, 10, 50, &hit);
+    CHECK(hit.what == OPJ_HIT_CELL && hit.row == 4 && hit.line == 1);
+    opj_hit_test(&v, doc, 10, 70, &hit);                                   /* below the lines */
+    CHECK(hit.what == OPJ_HIT_NONE && hit.row == -1 && hit.line == -1);
+
+    /* grouped: the heading's line is hit as a heading and drawn shaded, with its text */
+    memset(&l.filter, 0, sizeof l.filter);
+    l.group = OPJ_COL_DURATION;
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);                            /* [4],4,[1],1,5,[2],2 */
+    opj_hit_test(&v, doc, 10, 40, &hit);
+    CHECK(hit.what == OPJ_HIT_HEADING && hit.row == -1 && hit.line == 0);
+    opj_hit_test(&v, doc, W - 5, 40 + 16 * 4, &hit);                        /* past Docs's bar */
+    CHECK(hit.what == OPJ_HIT_CHART && hit.row == 5 && hit.line == 4);
+    CHECK_N(opj_row_y(&v, 5), 32 + 16 * 4);
+    CHECK(opj_link_path(&v, doc, 2, 0, &path));                            /* Plan to Build: both shown */
+    CHECK_N(path.y[0], 32 + 16 * 3 + 8);
+    d = cur = oldraw_new(&ops, NULL, W, H, NULL);
+    CHECK(d != NULL);
+    memset(px, 0, sizeof px);
+    ntexts = 0;
+    v.selected = 5;
+    opj_draw(d, &v, doc, NULL);
+    CHECK_X(px[40][100], 0xFFF2CC);                                        /* the heading, in the table */
+    CHECK_X(px[40][opj_chart_left(&v) + 20], 0xFFF2CC);                   /* and across the chart */
+    CHECK_X(px[32 + 16 * 4 + 6][100], oldraw_resolve(d, OLDRAW_PEN(OLDRAW_PEN_FILL)) & 0xFFFFFFUL);  /* Docs */
+    CHECK(drew("Docs") && !drew("A"));
+    {
+        char want[80];
+        snprintf(want, sizeof want, "Duration: %s", cell_of(doc, 1, OPJ_COL_DURATION));
+        CHECK(drew(want));
+    }
+    oldraw_free(d);
+    /* printing goes by the lines too */
+    CHECK(opj_print_layout(&pr, &v, doc, 600, 32 + 16 * 4 + 16) > 0);   /* 4 lines a page: 7 lines, 2 down */
+    CHECK_N(pr.down, 2);
+    /* the usage views keep their own rows */
+    {
+        opj_view u;
+        opj_usage_view(&v, &u);
+        CHECK(u.lines == NULL);
+    }
+    opj_lines_free(&l);
+    opj_doc_free(doc);
+}
+
 /* Edit > Find and Replace on the task sheet, Find on the resource sheet. */
 static void test_find_replace(void)
 {
@@ -2057,6 +2309,8 @@ int main(void)
     test_level_cells();
     test_sort();
     test_find_replace();
+    test_filter_group();
+    test_view_lines();
     test_assign_dialog();
     test_print();
     test_pdf();
