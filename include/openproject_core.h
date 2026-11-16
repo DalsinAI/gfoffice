@@ -150,11 +150,15 @@ enum {
     OPJ_COL_SV,                          /* NA without a status date */
     OPJ_COL_CV,
     OPJ_COL_LEVELING_DELAY,              /* "0d"; a summary's is blank; typed: a duration, "3ed" elapsed */
-    OPJ_COL_WORK,                        /* its assignments' work (a summary: its subtasks'), "40h"; worked out */
+    OPJ_COL_WORK,                        /* its assignments' work (a summary: its subtasks'), "40h"; typed: as
+                                          * the task's type takes it (owf_project_set_work) */
     OPJ_COL_ACTUAL_WORK,                 /* work times % complete (a summary: its subtasks'), worked out */
     OPJ_COL_REMAINING_WORK,              /* work less actual work, worked out */
     OPJ_COL_COST,                        /* its assignments' cost, money; worked out */
     OPJ_COL_ACTUAL_COST,                 /* cost times % complete (ACWP's), worked out */
+    OPJ_COL_TYPE,                        /* "Fixed Units", "Fixed Duration" or "Fixed Work" (typed: those, or
+                                          * units, duration, work); a summary's is blank */
+    OPJ_COL_EFFORT_DRIVEN,               /* "Yes" or "No"; Fixed Work is always Yes; a summary's is blank */
     OPJ_NCOLS
 };
 
