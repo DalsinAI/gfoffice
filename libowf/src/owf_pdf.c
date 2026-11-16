@@ -16,6 +16,7 @@
 typedef struct {
     owf_buf content;
     int width, height;           /* twips */
+    unsigned char alphas[101];   /* 1: the page uses /GA<n> (n percent opaque) */
 } pdf_page;
 
 typedef struct {
@@ -38,6 +39,7 @@ struct owf_pdf {
     pdf_pic *pics;
     int npics, cappics;
     int dash;
+    int alpha;                   /* percent opaque, 1 to 100; 0 (as made): 100 */
     int failed;
     int mf_skipped;              /* records of WMF and EMF pictures played as nothing (owf_metafile.h) */
 };
@@ -128,10 +130,22 @@ static void put_colour(owf_buf *out, unsigned long rgb, int stroke)
                    b / 255, (b % 255) * 1000 / 255, stroke ? "RG" : "rg");
 }
 
+/* What is painted next lets what is behind show through (owf_pdf_alpha): the page's /GA<n> graphics
+ * state, n percent opaque, set inside the q ... Q round each drawing */
+static void see_through(owf_pdf *pdf, owf_buf *out)
+{
+    pdf_page *p = pdf->npages ? &pdf->pages[pdf->npages - 1] : NULL;
+    if (!p || !pdf->alpha || pdf->alpha >= 100)
+        return;
+    p->alphas[pdf->alpha] = 1;
+    owf_buf_printf(out, "/GA%d gs\n", pdf->alpha);
+}
+
 /* Fill and line colours, the line's width, and the operator that paints. */
 static const char *paint(owf_pdf *pdf, owf_buf *out, unsigned long fill, unsigned long line, int line_width)
 {
     int f = OWF_SHADE_SET(fill), l = OWF_SHADE_SET(line);
+    see_through(pdf, out);
     if (f)
         put_colour(out, OWF_SHADE_RGB(fill), 0);
     if (l) {
@@ -154,6 +168,12 @@ void owf_pdf_dash(owf_pdf *pdf, int dash)
 {
     if (pdf)
         pdf->dash = dash;
+}
+
+void owf_pdf_alpha(owf_pdf *pdf, int opaque)
+{
+    if (pdf)
+        pdf->alpha = opaque <= 0 ? 1 : opaque > 100 ? 100 : opaque;
 }
 
 int owf_pdf_rect(owf_pdf *pdf, int x, int y, int w, int h, unsigned long fill, unsigned long line, int line_width)
@@ -798,6 +818,16 @@ int owf_pdf_finish(owf_pdf *pdf, const char *title, unsigned char **data, size_t
                     owf_buf_puts(&out, " /XObject <<");
                 any = 1;
                 owf_buf_printf(&out, " /Im%d %d 0 R", j + 1, pdf->pics[j].object);
+            }
+        if (any)
+            owf_buf_puts(&out, " >>");
+        any = 0;
+        for (j = 1; j < 100; j++)
+            if (p->alphas[j]) {
+                if (!any)
+                    owf_buf_puts(&out, " /ExtGState <<");
+                any = 1;
+                owf_buf_printf(&out, " /GA%d << /ca %d.%02d /CA %d.%02d >>", j, j / 100, j % 100, j / 100, j % 100);
             }
         if (any)
             owf_buf_puts(&out, " >>");

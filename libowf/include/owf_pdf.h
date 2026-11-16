@@ -55,6 +55,9 @@ int owf_pdf_gradient(owf_pdf *pdf, const int *xy, int npoints, int x, int y, int
                      unsigned long from, unsigned long to);
 /* Lines are dashed from now on (dash 1) or solid again (0). */
 void owf_pdf_dash(owf_pdf *pdf, int dash);
+/* What is drawn from now on is opaque percent opaque (1 to 100), so what is behind it shows through:
+ * fills, lines and gradients (PDF 1.4's constant alpha). 100 again for solid. */
+void owf_pdf_alpha(owf_pdf *pdf, int opaque);
 /* A picture in the box x, y, w, h; with clip, only what is inside it shows
  * (a cropped picture). 0, or -1 when memory runs out; a picture the PDF
  * can't hold (only JPEG, PNG and WMF) is left out and reported at the end. */
