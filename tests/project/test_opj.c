@@ -865,6 +865,75 @@ static void test_columns(void)
     CHECK_N(opj_view_near_column(NULL, 0), -1);
 }
 
+/* Task Information's fields: Constraint Type, Constraint Date and Notes as cells, and several cells typed
+ * as one edit (one Undo step, nothing changed when one is refused). Build is Wed 18 to Fri 20 Nov. */
+static void test_task_info(void)
+{
+    opj_doc *doc = three();
+    static const int cols[3] = { OPJ_COL_CONSTRAINT_TYPE, OPJ_COL_CONSTRAINT_DATE, OPJ_COL_NOTES };
+    static const char *const ok[3] = { "Start No Earlier Than", "23/11/26", "Two crews" };
+    static const int cols2[2] = { OPJ_COL_DURATION, OPJ_COL_CONSTRAINT_TYPE };
+    static const char *const bad2[2] = { "5d", "Sideways" };
+    int bad = 9;
+    long changes;
+    CHECK_S(opj_column_title(OPJ_COL_CONSTRAINT_TYPE), "Constraint Type");
+    CHECK_S(opj_column_title(OPJ_COL_NOTES), "Notes");
+    CHECK_S(opj_constraint_name(OWF_CON_FNLT), "Finish No Later Than");
+    CHECK_S(opj_constraint_name(99), "");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_TYPE), "As Soon As Possible");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_DATE), "NA");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_NOTES), "");
+    /* OK: all three at once, one step, scheduled once */
+    changes = doc->changes;
+    CHECK_N(opj_set_cells(doc, 1, cols, ok, 3, &bad), OWF_OK);
+    CHECK_N(bad, -1);
+    CHECK_N(doc->changes, changes + 1);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_TYPE), "Start No Earlier Than");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_DATE), "Mon 23/11/26");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_NOTES), "Two crews");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_START), "Mon 23/11/26");
+    CHECK_S(cell_of(doc, 2, OPJ_COL_FINISH), "Wed 25/11/26");
+    CHECK_N(opj_undo(doc), OWF_OK);                                       /* one step takes it all back */
+    CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_TYPE), "As Soon As Possible");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_NOTES), "");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_START), "Wed 18/11/26");
+    CHECK_N(opj_redo(doc), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_NOTES), "Two crews");
+    /* one refused: nothing changes, and bad says which */
+    changes = doc->changes;
+    CHECK_N(opj_set_cells(doc, 1, cols2, bad2, 2, &bad), OWF_ERR_FORMAT);
+    CHECK_N(bad, 1);
+    CHECK_N(doc->changes, changes);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "3d");
+    CHECK_N(opj_set_cells(doc, 1, cols, ok, 0, &bad), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cells(doc, 1, NULL, ok, 1, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cells(doc, 7, cols, ok, 1, &bad), OWF_ERR_FORMAT);
+    /* a type with a date and none yet: where the task is now; short names, any case */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, "mso"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_CONSTRAINT_TYPE), "Must Start On");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_CONSTRAINT_DATE), "Mon 16/11/26");
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, "Must  finish on"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_CONSTRAINT_DATE), "Mon 16/11/26");   /* the date it had stays */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_DATE, "NA"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_CONSTRAINT_TYPE), "As Soon As Possible");
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, "alap"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_CONSTRAINT_DATE), "NA");
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_DATE, "17/11/26"), OWF_OK);   /* a date: SNET */
+    CHECK_S(cell_of(doc, 0, OPJ_COL_CONSTRAINT_TYPE), "Start No Earlier Than");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_START), "Tue 17/11/26");
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_DATE, "the 30th"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, ""), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_NOTES, ""), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_BASELINE_START, "16/11/26"), OWF_ERR_FORMAT);
+    /* a summary takes only As Soon As Possible, Start No Earlier Than and Finish No Later Than */
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_PREDECESSORS, ""), OWF_OK);     /* a link to its summary is a loop */
+    CHECK_N(opj_indent(doc, 1, 1, 1), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, "Must Start On"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, "FNLT"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, "ASAP"), OWF_OK);
+    opj_doc_free(doc);
+}
+
 static void test_pdf(void)
 {
     opj_doc *doc = three(), *empty;
@@ -921,6 +990,7 @@ int main(void)
     test_usage();
     test_usage_edits();
     test_columns();
+    test_task_info();
     if (fails) {
         printf("project view tests: %d of %d checks failed\n", fails, checks);
         return 1;
