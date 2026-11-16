@@ -65,6 +65,37 @@ int main(int argc, char **argv)
         put_string(book->protect_kept ? book->protect_kept : "");
         putchar('\n');
     }
+    for (i = 0; i < book->nextbooks; i++) {
+        const owf_extbook *eb = &book->extbooks[i];
+        printf("extbook ");
+        put_string(eb->name);
+        printf(" target=");
+        put_string(eb->target ? eb->target : "");
+        putchar('\n');
+        for (k = 0; k < eb->nsheets; k++) {
+            int c;
+            printf("extsheet ");
+            put_string(eb->name);
+            putchar(' ');
+            put_string(eb->sheets[k].name);
+            putchar('\n');
+            for (c = 0; c < eb->sheets[k].ncells; c++) {
+                const owf_cell *cell = &eb->sheets[k].cells[c];
+                char num[32];
+                printf("extcell ");
+                put_string(eb->sheets[k].name);
+                printf(" %u,%u ", cell->row, cell->col);
+                switch (cell->type) {
+                case OWF_VALUE_EMPTY: printf("empty"); break;
+                case OWF_VALUE_NUMBER: owf_number_text(cell->number, num); printf("number %s", num); break;
+                case OWF_VALUE_BOOL: printf("bool %d", (int)cell->number); break;
+                case OWF_VALUE_ERROR: printf("error %s", owf_error_name(cell->error) ? owf_error_name(cell->error) : "?"); break;
+                case OWF_VALUE_TEXT: printf("text "); put_string(cell->text); break;
+                }
+                putchar('\n');
+            }
+        }
+    }
     for (i = 0; i < book->nfonts; i++) {
         printf("font %d ", i);
         put_string(book->fonts[i].name);

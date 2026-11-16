@@ -91,6 +91,40 @@ static void *dup_array(const void *p, size_t n)
     return q;
 }
 
+/* Other books' last values, copied with the calls owfcalc.library has: zeroed arrays, counted as soon as they
+ * are made, so that owf_book_free frees a half-made copy. 0 when memory ran out. */
+static int copy_extbooks(owf_book *c, const owf_book *b)
+{
+    int i, k, j;
+    if (!b->nextbooks)
+        return 1;
+    if (!(c->extbooks = owf_calloc((size_t)b->nextbooks, sizeof *c->extbooks)))
+        return 0;
+    c->nextbooks = c->capextbooks = b->nextbooks;
+    for (i = 0; i < b->nextbooks; i++) {
+        const owf_extbook *s = &b->extbooks[i];
+        owf_extbook *d = &c->extbooks[i];
+        if (!(d->name = oc_strdup(s->name)) || (s->target && !(d->target = oc_strdup(s->target))))
+            return 0;
+        if (s->nsheets && !(d->sheets = owf_calloc((size_t)s->nsheets, sizeof *d->sheets)))
+            return 0;
+        d->nsheets = d->capsheets = s->nsheets;
+        for (k = 0; k < s->nsheets; k++) {
+            const owf_sheet *from = &s->sheets[k];
+            owf_sheet *to = &d->sheets[k];
+            if (!(to->name = oc_strdup(from->name)))
+                return 0;
+            if (from->ncells && !(to->cells = owf_calloc((size_t)from->ncells, sizeof *to->cells)))
+                return 0;
+            to->ncells = to->capcells = from->ncells;
+            for (j = 0; j < from->ncells; j++)
+                if (!oc_copy_cell(&to->cells[j], &from->cells[j]))
+                    return 0;
+        }
+    }
+    return 1;
+}
+
 owf_book *oc_book_copy(const owf_book *b)
 {
     owf_book *c = owf_calloc(1, sizeof *c);
@@ -103,7 +137,7 @@ owf_book *oc_book_copy(const owf_book *b)
     if ((b->protect_hash && !(c->protect_hash = oc_strdup(b->protect_hash))) ||
         (b->protect_kept && !(c->protect_kept = oc_strdup(b->protect_kept))))
         goto fail;
-    if (owf_book_copy_parts(c, b) < 0)                   /* kept drawings, charts... */
+    if (owf_book_copy_parts(c, b) < 0 || !copy_extbooks(c, b))   /* kept drawings, charts...; other books */
         goto fail;
     if (b->nstyles && !(c->styles = dup_array(b->styles, (size_t)b->nstyles * sizeof *b->styles)))
         goto fail;

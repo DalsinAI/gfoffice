@@ -2649,12 +2649,77 @@ static void read_worksheet(xlsx *x, xsheet *xs)
 
 /* ---- The workbook ---- */
 
-/* Another book's file name, from an externalLink part: the last part of
- * its path. NULL for a link that is not to a book (DDE, OLE). */
+/* A node's text, joined; "" when it has none. Owned by b. */
+static const char *node_text(const owf_xml_node *n, owf_buf *b)
+{
+    const owf_xml_node *t;
+    b->length = 0;
+    for (t = n ? n->first : NULL; t; t = t->next)
+        if (t->type == OWF_XML_TEXT)
+            owf_buf_put(b, t->name, t->length);
+    owf_buf_put(b, "", 1);
+    return b->failed ? "" : (const char *)b->data;
+}
+
+/* An externalLink cell's cached value (t="n" by default, "str", "b", "e"). */
+static void external_cell(xlsx *x, owf_sheet *sheet, const owf_xml_node *cell, owf_buf *b)
+{
+    const char *ref = attr(cell, "r"), *t = attr(cell, "t");
+    const owf_xml_node *vn = main_child(cell, "v");
+    unsigned long row, col;
+    owf_cell *c;
+    const char *v;
+    double d;
+    if (!ref || !parse_cell(&ref, &row, &col) || *ref || !vn)
+        return;
+    v = node_text(vn, b);
+    if (!(c = owf_sheet_cell(sheet, (unsigned)row, (unsigned)col, 1))) {
+        x->failed = 1;
+        return;
+    }
+    if (t && !strcmp(t, "str")) {
+        set_text(x, c, v, unescape_xstring((char *)b->data, strlen(v)));
+    } else if (t && !strcmp(t, "b")) {
+        owf_cell_set_bool(c, xbool(v, 0));
+    } else if (t && !strcmp(t, "e")) {
+        int code = owf_xl_error_code(v, strlen(v));
+        owf_cell_set_error(c, code < 0 ? OWF_ERROR_NA : code);
+    } else if (owf_number_parse(v, strlen(v), &d)) {
+        owf_cell_set_number(c, d);
+    }
+}
+
+/* The name formulas give a book: the last part of its path, "%20" and the
+ * like decoded. */
+static char *external_name(xlsx *x, const char *target)
+{
+    const char *p, *start = target;
+    char *name;
+    size_t i, n = 0;
+    for (p = target; *p; p++)
+        if (*p == '/' || *p == '\\' || *p == ':')
+            start = p + 1;
+    if (!*start || !(name = copy(x, start, strlen(start))))
+        return NULL;
+    for (i = 0; name[i]; i++) {
+        if (name[i] == '%' && hex_digit(name[i + 1]) >= 0 && hex_digit(name[i + 2]) >= 0) {
+            name[n++] = (char)(hex_digit(name[i + 1]) * 16 + hex_digit(name[i + 2]));
+            i += 2;
+        } else {
+            name[n++] = name[i];
+        }
+    }
+    name[n] = 0;
+    return name;
+}
+
+/* Another book, from an externalLink part: its name as formulas give it
+ * (NULL for a link that is not to a book: DDE, OLE), and in the model its
+ * target, sheets and the values the file last saw. */
 static char *external_book(xlsx *x, const char *part)
 {
     owf_xml *xml = read_xml(x->zip, part, NULL);
-    const owf_xml_node *eb;
+    const owf_xml_node *eb, *n, *set;
     const rel *it;
     rels r;
     char *name = NULL;
@@ -2663,13 +2728,34 @@ static char *external_book(xlsx *x, const char *part)
     eb = main_child(owf_xml_root(xml), "externalBook");
     read_rels(x->zip, part, &r);
     it = eb ? rel_by_id(&r, rel_attr(eb, "id")) : NULL;
-    if (it) {
-        const char *p, *start = it->target;
-        for (p = it->target; *p; p++)
-            if (*p == '/' || *p == '\\' || *p == ':')
-                start = p + 1;
-        if (*start)
-            name = copy(x, start, strlen(start));
+    if (it && (name = external_name(x, it->target))) {
+        owf_extbook *book = owf_book_add_extbook(x->book, name, it->target);
+        owf_sheet **sheets = NULL;
+        int count = count_children(main_child(eb, "sheetNames"), "sheetName"), i = 0;
+        owf_buf b;
+        owf_buf_init(&b);
+        if (!book || (count && !(sheets = calloc((size_t)count, sizeof *sheets))))
+            x->failed = 1;
+        for (n = main_child(main_child(eb, "sheetNames"), "sheetName"); n && sheets && i < count;
+             n = main_next(n, "sheetName"), i++) {
+            const char *val = attr(n, "val");
+            if (val && *val && !(sheets[i] = owf_extbook_sheet(book, val, 1)))
+                x->failed = 1;
+        }
+        set = main_child(eb, "sheetDataSet");
+        for (n = main_child(set, "sheetData"); n && sheets && !x->failed; n = main_next(n, "sheetData")) {
+            long id = xlong(attr(n, "sheetId"), -1, 0, count - 1);
+            const owf_xml_node *row, *cell;
+            if (id < 0 || !sheets[id])
+                continue;
+            for (row = main_child(n, "row"); row && !x->failed; row = main_next(row, "row"))
+                for (cell = main_child(row, "cell"); cell && !x->failed; cell = main_next(cell, "cell"))
+                    external_cell(x, sheets[id], cell, &b);
+        }
+        if (b.failed)
+            x->failed = 1;
+        owf_buf_free(&b);
+        free(sheets);
     }
     free_rels(&r);
     owf_xml_free(xml);

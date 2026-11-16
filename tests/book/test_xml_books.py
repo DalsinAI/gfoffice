@@ -94,9 +94,9 @@ def canon(text, notes=False):
     return out
 
 
-def same_books(name, a, b, ignore=None):
-    """Two dumps hold the same, but for lines ignore() says differ."""
-    ca, cb = canon(a), canon(b)
+def same_books(name, a, b, ignore=None, drop=()):
+    """Two dumps hold the same, but for lines ignore() says differ and lines starting with drop."""
+    ca, cb = [l for l in canon(a) if not l.startswith(drop)], [l for l in canon(b) if not l.startswith(drop)]
     if ignore:
         ca, cb = [ignore(l) for l in ca], [ignore(l) for l in cb]
     if ca != cb:
@@ -116,6 +116,8 @@ def parse(text):
             book["line"] = line
         elif word == "bookprotect":
             book["protect"] = line
+        elif word in ("extbook", "extsheet", "extcell"):
+            book.setdefault("ext", []).append(line)
         elif word in ("font", "numfmt", "style"):
             book[word + "s"][int(line.split()[1])] = line
         elif word == "name":
@@ -301,7 +303,8 @@ def test_xls_to_xlsx(work):
         rc_a, a, _ = dump(src)
         rc_b, b, err = dump(dst)
         check("read back " + os.path.basename(dst), rc_a == 0 and rc_b == 0, err)
-        same_books("xls to xlsx: " + os.path.basename(src), a, b)
+        # XLS keeps no other book's values: the XLSX names each book it links (its "ext" lines)
+        same_books("xls to xlsx: " + os.path.basename(src), a, b, drop=("ext",))
         check_xlsx_package(dst)
         written.append(dst)
     # what Excel shows of other books: their numbers and parts
@@ -696,7 +699,8 @@ def test_xlsx_ods_xlsx(work, xlsx_paths):
                   "\n".join(l for l in (a + "\n---\n" + b).splitlines() if l.startswith(kind) or l == "---"))
         ranges = lambda text: [l.split(' "')[0] for l in text.splitlines() if l.startswith("autofilter ")]
         check("xlsx to ods to xlsx: AutoFilter ranges the same: " + stem, ranges(a) == ranges(b), (ranges(a), ranges(b)))
-        same_meaning("xlsx to ods to xlsx: " + stem, a, b, extra, drop=("autofilter ",))
+        # other books' values: ODS keeps them from its own change (table:table-source)
+        same_meaning("xlsx to ods to xlsx: " + stem, a, b, extra, drop=("autofilter ", "ext"))
 
 
 def test_ods_round_trips(work, ods_paths):
@@ -1056,6 +1060,64 @@ def test_damaged(paths, ext):
     print("%d damaged %s files read safely" % (runs, ext.upper()))
 
 
+def test_external_books(work):
+    """Other books' links: the full target and the values the file last saw (an externalLink's sheetDataSet),
+    read and written again; a name's "%20" decoded; sheets only the formulas name added after the cached ones."""
+    def hand(name, link=None, target=None):
+        src = os.path.join(work, name)
+        shutil.copytree(os.path.join(FIX, "xlsx-hand"), src)
+        for path, value in (("xl/externalLinks/externalLink1.xml", link),
+                            ("xl/externalLinks/_rels/externalLink1.xml.rels", target)):
+            if value:
+                full = os.path.join(src, *path.split("/"))
+                with open(full, encoding="utf-8") as f:
+                    text = f.read()
+                with open(full, "w", encoding="utf-8") as f:
+                    f.write(value(text))
+        return zip_dir(src, src + ".xlsx")
+
+    def part(path, name):
+        with zipfile.ZipFile(path) as z:
+            return z.read(name).decode("utf-8")
+
+    path = hand("ext")
+    rc, out, err = dump(path)
+    want = ['extbook "Other.xlsx" target="file:///C:/Books/Other.xlsx"', 'extsheet "Other.xlsx" "Rates"',
+            'extcell "Rates" 0,0 number 2', 'extcell "Rates" 0,1 text "Two & a\\x0d"', 'extcell "Rates" 2,2 bool 1',
+            'extcell "Rates" 2,3 error #REF!', 'extsheet "Other.xlsx" "Unused"']
+    check("external books: read", rc == 0 and parse(out).get("ext") == want, parse(out).get("ext"))
+    again = os.path.join(work, "ext-again.xlsx")
+    if convert(path, again):
+        link = part(again, "xl/externalLinks/externalLink1.xml")
+        check("external books: values written", '<sheetNames><sheetName val="Rates"/><sheetName val="Unused"/></sheetNames>'
+              '<definedNames><definedName name="Rate"/></definedNames><sheetDataSet><sheetData sheetId="0"><row r="1">'
+              '<cell r="A1"><v>2</v></cell><cell r="B1" t="str"><v xml:space="preserve">Two &amp; a_x000D_</v></cell></row>'
+              '<row r="3"><cell r="C3" t="b"><v>1</v></cell><cell r="D3" t="e"><v>#REF!</v></cell></row></sheetData>'
+              '</sheetDataSet>' in link, link)
+        rels = part(again, "xl/externalLinks/_rels/externalLink1.xml.rels")
+        check("external books: full target written", 'Target="file:///C:/Books/Other.xlsx" TargetMode="External"' in rels, rels)
+        check("external books: read again", parse(dump(again)[1]).get("ext") == want, parse(dump(again)[1]).get("ext"))
+    # a name with "%20": decoded for the formulas, the target kept as written
+    spaced = hand("ext-spaced", target=lambda t: t.replace("file:///C:/Books/Other.xlsx", "Books/My%20Rates.xlsx"))
+    rc, out, err = dump(spaced)
+    b = parse(out)
+    check("external books: %20 decoded", rc == 0 and (b.get("ext") or [""])[0] == 'extbook "My Rates.xlsx" target="Books/My%20Rates.xlsx"',
+          b.get("ext"))
+    cell_is(b, 0, "E4", 'number 2 formula "\'[My Rates.xlsx]Rates\'!$A$1+Rate"', "external books: ")
+    again = os.path.join(work, "ext-spaced-again.xlsx")
+    if convert(spaced, again):
+        rels = part(again, "xl/externalLinks/_rels/externalLink1.xml.rels")
+        check("external books: %20 target kept", 'Target="Books/My%20Rates.xlsx"' in rels, rels)
+    # the cache knows only "Unused": the formulas' "Rates" follows it, the values keep their sheetId
+    other = hand("ext-other", link=lambda t: t.replace('<sheetName val="Rates"/><sheetName val="Unused"/>',
+                                                       '<sheetName val="Unused"/>'))
+    again = os.path.join(work, "ext-other-again.xlsx")
+    if convert(other, again):
+        link = part(again, "xl/externalLinks/externalLink1.xml")
+        check("external books: formula sheets after the cached", '<sheetNames><sheetName val="Unused"/><sheetName val="Rates"/>'
+              '</sheetNames>' in link and '<sheetData sheetId="0"><row r="1"><cell r="A1"><v>2</v>' in link, link)
+
+
 def test_book_protection(work):
     """Workbook structure protection: XLSX workbookProtection lockStructure and ODS table:structure-protected,
     with Excel's 16-bit password hash or another program's digest kept as it was."""
@@ -1155,6 +1217,7 @@ def main():
         test_bombs(work)
         test_routing(work)
         test_book_protection(work)
+        test_external_books(work)
         test_damaged([hand, strict] + generated + written[:1], "xlsx")
         test_damaged([hand_ods, os.path.join(FIX, "book-lo.ods"), os.path.join(FIX, "book-odfpy.ods")]
                      + [p for p in ods_written if p.endswith(".ods")][:1], "ods")

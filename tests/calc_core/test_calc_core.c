@@ -5691,6 +5691,43 @@ static void test_protection(void)
 
 /* Workbook structure protection: no sheet added, duplicated, deleted, renamed, moved, hidden or shown; cells
    still change; kept in XLSX and ODS; Undo leaves it as it is. */
+/* Other books' last values: found ignoring case, a target replaced only when given, and copied with the book. */
+static void test_external_books(void)
+{
+    owf_book *b = owf_book_new(), *c = NULL;
+    owf_extbook *eb;
+    owf_sheet *sh;
+    owf_cell *cell;
+    if (!b) return;
+    CHECK(!owf_book_extbook(b, "Rates.xlsx") && !owf_book_add_extbook(b, "", NULL));
+    eb = owf_book_add_extbook(b, "Rates.xlsx", "file:///Work/Rates.xlsx");
+    CHECK(eb && !strcmp(eb->target, "file:///Work/Rates.xlsx"));
+    CHECK(owf_book_add_extbook(b, "RATES.XLSX", NULL) == eb && !strcmp(eb->target, "file:///Work/Rates.xlsx") &&
+          b->nextbooks == 1);
+    CHECK(!owf_extbook_sheet(eb, "Q1", 0));
+    sh = owf_extbook_sheet(eb, "Q1", 1);
+    CHECK(sh && owf_extbook_sheet(eb, "q1", 1) == sh && eb->nsheets == 1);
+    if (sh && (cell = owf_sheet_cell(sh, 1, 2, 1)) != NULL)
+        CHECK(owf_cell_set_text(cell, "Rate", 4) == 0);
+    if (sh && (cell = owf_sheet_cell(sh, 0, 0, 1)) != NULL)
+        owf_cell_set_number(cell, 2.5);
+    CHECK(owf_book_add_extbook(b, "Other.ods", NULL) && b->nextbooks == 2 && !b->extbooks[1].target);
+    c = oc_book_copy(b);
+    CHECK(c && c->nextbooks == 2);
+    if (c && c->nextbooks == 2) {
+        const owf_extbook *ce = owf_book_extbook(c, "rates.xlsx");
+        const owf_cell *got;
+        CHECK(ce && ce != &b->extbooks[0] && !strcmp(ce->target, "file:///Work/Rates.xlsx") && ce->nsheets == 1);
+        got = ce && ce->nsheets ? owf_sheet_find(&ce->sheets[0], 1, 2) : NULL;
+        CHECK(got && got->type == OWF_VALUE_TEXT && !strcmp(got->text, "Rate") && got->text != sh->cells[1].text);
+        got = ce && ce->nsheets ? owf_sheet_find(&ce->sheets[0], 0, 0) : NULL;
+        CHECK(got && got->type == OWF_VALUE_NUMBER && got->number == 2.5);
+        CHECK(!c->extbooks[1].target && !c->extbooks[1].nsheets);
+    }
+    owf_book_free(c);
+    owf_book_free(b);
+}
+
 static void test_book_protection(void)
 {
     static const char *const paths[] = { "build/host/calc-core-bookprotect.xlsx", "build/host/calc-core-bookprotect.ods" };
@@ -8239,6 +8276,7 @@ int main(void)
     test_remove_duplicates();
     test_protection();
     test_book_protection();
+    test_external_books();
     test_pivot_summary();
     test_pivot_layout();
     test_pivot_sort();
