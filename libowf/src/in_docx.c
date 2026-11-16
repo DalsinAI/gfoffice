@@ -308,6 +308,8 @@ static void read_rpr(docx *d, const owf_xml_node *rpr, owf_charprops *cp)
             set_flag(cp, OWF_CP_ITALIC, OWF_ITALIC, on_off(d, n));
         } else if (!strcmp(n->name, "strike") || !strcmp(n->name, "dstrike")) {
             set_flag(cp, OWF_CP_STRIKE, OWF_STRIKE, on_off(d, n));
+        } else if (!strcmp(n->name, "vanish")) {
+            set_flag(cp, OWF_CP_HIDDEN, OWF_HIDDEN, on_off(d, n));   /* 1.14: hidden text */
         } else if (!strcmp(n->name, "u")) {
             const char *v = wval(d, n);
             set_flag(cp, OWF_CP_UNDERLINE, OWF_UNDERLINE, !v || strcmp(v, "none") != 0);

@@ -79,7 +79,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenWrite 2.0.45 (16.11.2026)"
+#define VERSION_TEXT "GFOpenWrite 2.0.46 (16.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -112,6 +112,7 @@ enum {
     M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
     M_TRACK, M_CHANGE_NEXT, M_CHANGE_PREV, M_CHANGE_ACCEPT, M_CHANGE_REJECT, M_CHANGE_ACCEPT_ALL,
     M_CHANGE_REJECT_ALL, M_REVIEW_AUTHOR, M_SHOW_CHANGES,
+    M_HIDDEN, M_SHOW_HIDDEN,                         /* 2.0.46 */
     M_COMMENT, M_COMMENT_NEXT, M_COMMENT_PREV, M_COMMENT_REPLY, M_COMMENT_EDIT, M_COMMENT_DONE, M_COMMENT_DELETE,
     M_COMMENT_FILTER,                                /* 2.0.39 */
     M_FIELD_TITLE, M_FIELD_AUTHOR, M_FIELD_SUBJECT, M_FIELD_FILENAME, M_FIELD_WORDS, M_FIELD_CHAPTER, M_FIELD_USER,
@@ -164,6 +165,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Navigator", NULL, CHECKIT | CHECKED, 0, (APTR)M_NAV },
     { NM_ITEM, "Inspector", NULL, CHECKIT | CHECKED, 0, (APTR)M_INSPECTOR },
+    { NM_ITEM, "Hidden Text", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)M_SHOW_HIDDEN },   /* 2.0.46 */
     { NM_ITEM, "Zoom in", "+", 0, 0, (APTR)M_ZOOM_IN },
     { NM_ITEM, "Zoom out", "-", 0, 0, (APTR)M_ZOOM_OUT },
     { NM_ITEM, "Actual size (100%)", "0", 0, 0, (APTR)M_ZOOM_100 },
@@ -215,6 +217,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Bold", "B", 0, 0, (APTR)M_BOLD },
     { NM_ITEM, "Italic", "I", 0, 0, (APTR)M_ITALIC },
     { NM_ITEM, "Underline", "U", 0, 0, (APTR)M_UNDERLINE },
+    { NM_ITEM, "Hidden", NULL, 0, 0, (APTR)M_HIDDEN },   /* 2.0.46: Word's hidden text */
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Style", NULL, 0, 0, NULL },
     { NM_SUB, "Body Text", NULL, 0, 0, (APTR)M_STYLE_BODY },
@@ -478,9 +481,11 @@ static void pages_changed(void);
 /* 2.0.37: Tools > Track Changes > Show Changes off: the final view (deletions hidden, no change colours); the
  * window's, kept across documents, not saved in them */
 static int show_changes = 1;
+/* 2.0.46: View > Hidden Text: hidden text shown (underlined); the window's, kept across documents, not saved */
+static int show_hidden = 0;
 static unsigned layout_view(void)
 {
-    return show_changes ? 0u : OW_LAYOUT_FINAL;
+    return (show_changes ? 0u : OW_LAYOUT_FINAL) | (show_hidden ? OW_LAYOUT_SHOW_HIDDEN : 0u);
 }
 static void pages_free(void);
 static void fields_update(void);
@@ -889,6 +894,7 @@ static void set_document(owf_doc *newdoc, const char *path, const char *fmt)
     doc = newdoc;
     editor = doc ? ow_editor_new(doc) : NULL;
     if (editor) ow_editor_set_final_view(editor, !show_changes);   /* 2.0.37 */
+    if (editor) ow_editor_set_show_hidden(editor, show_hidden);    /* 2.0.46 */
     if (editor) {
         review_author_init();
         ow_editor_set_review_author(editor, review_author);
@@ -5434,6 +5440,10 @@ static void menu_action(ULONG id)
     case M_BOLD: editor_result(ow_editor_toggle_char_flags(editor, OWF_BOLD), "Bold."); break;
     case M_ITALIC: editor_result(ow_editor_toggle_char_flags(editor, OWF_ITALIC), "Italic."); break;
     case M_UNDERLINE: editor_result(ow_editor_toggle_char_flags(editor, OWF_UNDERLINE), "Underline."); break;
+    case M_HIDDEN:                               /* 2.0.46 */
+        editor_result(ow_editor_toggle_char_flags(editor, OWF_HIDDEN),
+                      show_hidden ? "Hidden text." : "Hidden text: View > Hidden Text shows it.");
+        break;
     case M_ALIGN_LEFT: set_paragraph_alignment(OWF_ALIGN_LEFT); break;
     case M_ALIGN_CENTRE: set_paragraph_alignment(OWF_ALIGN_CENTRE); break;
     case M_ALIGN_RIGHT: set_paragraph_alignment(OWF_ALIGN_RIGHT); break;
@@ -5517,6 +5527,13 @@ static void menu_action(ULONG id)
         pages_free();                            /* laid out again in the new view */
         pages_changed();
         editor_repaint(show_changes ? "Changes shown." : "Changes hidden: the document as it is with them accepted.");
+        break;
+    case M_SHOW_HIDDEN:                          /* 2.0.46 */
+        show_hidden = !show_hidden;
+        if (editor) ow_editor_set_show_hidden(editor, show_hidden);
+        pages_free();
+        pages_changed();
+        editor_repaint(show_hidden ? "Hidden text shown." : "Hidden text not shown.");
         break;
     case M_TRACK: if (editor) { ow_editor_set_track_changes(editor, !ow_editor_track_changes(editor)); sync_track_menu(); editor_repaint(ow_editor_track_changes(editor) ? "Recording changes." : "Changes no longer recorded."); } break;
     case M_CHANGE_NEXT: do_next_change(0); break;
@@ -5753,7 +5770,7 @@ static int rexx_do_command(const char *command, char **result_out)
     else if(starts_word_ci(command,"FIND",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"Missing search text");}else{int f=ow_editor_find(editor,arg,0,0,1);ok=f>0;if(ok)bring_focus_into_view();else{request_document_redraw();rc_fail=RX_WARN;}snprintf(result,sizeof result,"%s",ok?"Found":"Not found");}}
     else if(starts_word_ci(command,"GETTEXT",&arg)){dynamic=document_plain_text();if(!dynamic){ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Out of memory");}}
     else if(starts_word_ci(command,"COMMAND",&arg)){
-        if(!strcasecmp(arg,"BOLD"))menu_action(M_BOLD);else if(!strcasecmp(arg,"ITALIC"))menu_action(M_ITALIC);else if(!strcasecmp(arg,"UNDERLINE"))menu_action(M_UNDERLINE);else if(!strcasecmp(arg,"PAGEBREAK"))menu_action(M_PAGE_BREAK);else if(!strcasecmp(arg,"UNDO"))menu_action(M_UNDO);else if(!strcasecmp(arg,"REDO"))menu_action(M_REDO);else{ok=0;snprintf(result,sizeof result,"Unknown COMMAND");}
+        if(!strcasecmp(arg,"BOLD"))menu_action(M_BOLD);else if(!strcasecmp(arg,"ITALIC"))menu_action(M_ITALIC);else if(!strcasecmp(arg,"UNDERLINE"))menu_action(M_UNDERLINE);else if(!strcasecmp(arg,"HIDDEN"))menu_action(M_HIDDEN);else if(!strcasecmp(arg,"SHOWHIDDEN"))menu_action(M_SHOW_HIDDEN);else if(!strcasecmp(arg,"PAGEBREAK"))menu_action(M_PAGE_BREAK);else if(!strcasecmp(arg,"UNDO"))menu_action(M_UNDO);else if(!strcasecmp(arg,"REDO"))menu_action(M_REDO);else{ok=0;snprintf(result,sizeof result,"Unknown COMMAND");}
         if(ok&&!result[0])snprintf(result,sizeof result,"OK");
     }
     /* 2.0.27: tracked changes. TRACKCHANGES [ON|OFF] answers 1 or 0; CHANGES the count; NEXTCHANGE and PREVCHANGE

@@ -155,7 +155,7 @@ int owf_note_story_formatted(const owf_story *story)
         for (j = 0; j < story->paras[i].nruns; ++j) {
             const owf_run *r = &story->paras[i].runs[j];
             if (r->kind == OWF_RUN_FIELD || r->href || (r->fmt.flags & (OWF_BOLD | OWF_ITALIC | OWF_UNDERLINE |
-                                                                        OWF_STRIKE | OWF_SUPER | OWF_SUB)))
+                                                                        OWF_STRIKE | OWF_SUPER | OWF_SUB | OWF_HIDDEN)))
                 return 1;
             if (r->kind != OWF_RUN_TEXT || !r->text || !*r->text)
                 continue;
