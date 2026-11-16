@@ -6974,6 +6974,101 @@ static void test_pivot_subtotals(void)
     oc_core_free(core);
 }
 
+static void test_pivot_column_subtotals(void)
+{
+    static const char *const rows[][5] = {
+        { "Region", "City", "Product", "Sales", "Units" },
+        { "East", "Leeds", "A", "10", "1" }, { "East", "York", "B", "20", "2" },
+        { "East", "Leeds", "B", "5", "3" }, { "West", "Bath", "A", "15", "4" },
+        { "West", "Bath", "B", "25", "5" }, { "North", "Hull", "A", "30", "6" }
+    };
+    oc_core *core = fresh();
+    owf_range selected;
+    owf_pivotdef def, got;
+    int k;
+    if (!core)
+        return;
+    pivot_table_at(core, rows, 7);
+    CHECK(oc_parse_range("A1:E7", &selected));
+    oc_core_select_range(core, &selected);
+
+    /* Product down; Region and City across, a subtotal after each region:
+       B East/Leeds, C East/York, D East Total, E West/Bath, F West Total, G North/Hull,
+       H North Total, I Grand Total; rows 3 A, 4 B, 5 Grand Total */
+    owf_pivot_init(&def);
+    def.nrow = 1; def.row[0] = 2;
+    def.ncol = 2; def.col[0] = 0; def.col[1] = 1;
+    def.ndata = 1; def.data[0].field = 3; def.data[0].function = OC_SUBTOTAL_SUM;
+    CHECK(owf_pivot_set_subtotal(&def, 0, 1));
+    CHECK(oc_core_pivot_create(core, &def) == OWF_OK);
+    CHECK_STR(text(core, "B1"), "East");
+    CHECK_STR(text(core, "B2"), "Leeds");
+    CHECK_STR(text(core, "C2"), "York");
+    CHECK_STR(text(core, "D1"), "East Total");
+    CHECK(empty(core, "D2") && bold_at(core, "D1"));
+    CHECK_STR(text(core, "E1"), "West");
+    CHECK_STR(text(core, "F1"), "West Total");
+    CHECK_STR(text(core, "H1"), "North Total");
+    CHECK_STR(text(core, "I2"), "Grand Total");
+    CHECK(near(num(core, "D3"), 10.0) && near(num(core, "D4"), 25.0) && near(num(core, "F3"), 15.0) &&
+          near(num(core, "H3"), 30.0) && empty(core, "H4") && near(num(core, "I3"), 55.0));
+    CHECK(near(num(core, "D5"), 35.0) && near(num(core, "F5"), 40.0) && near(num(core, "I5"), 105.0) &&
+          empty(core, "J1") && empty(core, "J3"));
+    CHECK(oc_core_pivot_get(core, &got) && got.cols == 9);
+
+    /* shown as a share of each column: a subtotal column is its own column */
+    got.data[0].show = OWF_PIVOT_SHOW_COLUMN;
+    CHECK(oc_core_pivot_set_layout(core, &got) == OWF_OK);
+    CHECK(near(num(core, "D3"), 10.0 / 35.0) && near(num(core, "D4"), 25.0 / 35.0) && near(num(core, "D5"), 1.0) &&
+          near(num(core, "B3"), 10.0 / 15.0));
+    got.data[0].show = OWF_PIVOT_SHOW_NORMAL;
+
+    /* row and column subtotals together: Region and Product down (by region), City and Units
+       across (by city). C Leeds/1, D Leeds/3, E Leeds Total, F York/2, G York Total, H Bath/4,
+       I Bath/5, J Bath Total, K Hull/6, L Hull Total, M Grand Total; rows 3 East A, 4 East B,
+       5 East Total, 6 West A, 7 West B, 8 West Total, 9 North A, 10 North Total, 11 Grand Total */
+    got.nrow = 2; got.row[0] = 0; got.row[1] = 2;
+    got.ncol = 2; got.col[0] = 1; got.col[1] = 4;
+    got.nsubtotal = 0;
+    CHECK(owf_pivot_set_subtotal(&got, 0, 1) && owf_pivot_set_subtotal(&got, 1, 1));
+    CHECK(oc_core_pivot_set_layout(core, &got) == OWF_OK);
+    CHECK_STR(text(core, "C1"), "Leeds");
+    CHECK_STR(text(core, "C2"), "1");
+    CHECK_STR(text(core, "D2"), "3");
+    CHECK_STR(text(core, "E1"), "Leeds Total");
+    CHECK_STR(text(core, "L1"), "Hull Total");
+    CHECK_STR(text(core, "A5"), "East Total");
+    CHECK_STR(text(core, "A11"), "Grand Total");
+    CHECK(near(num(core, "E3"), 10.0) && near(num(core, "E4"), 5.0) && near(num(core, "E5"), 15.0) &&
+          near(num(core, "G5"), 20.0) && near(num(core, "M5"), 35.0) && near(num(core, "J8"), 40.0) &&
+          near(num(core, "L10"), 30.0) && empty(core, "L5"));
+    CHECK(near(num(core, "E11"), 15.0) && near(num(core, "J11"), 40.0) && near(num(core, "M11"), 105.0) &&
+          empty(core, "N1") && empty(core, "A12"));
+    CHECK(oc_core_pivot_get(core, &got) && got.rows == 11 && got.cols == 13);
+    {
+        static const char *const paths[] = { "/tmp/opencalc-pivot-colsub.xlsx", "/tmp/opencalc-pivot-colsub.ods" };
+        for (k = 0; k < 2; ++k) {
+            owf_book *round = NULL;
+            owf_pivotdef back;
+            CHECK(owf_export_book_file(oc_core_book(core), paths[k], NULL, NULL) == OWF_OK);
+            CHECK(owf_import_book_file(paths[k], NULL, &round, NULL, NULL) == OWF_OK && round);
+            CHECK(round && owf_pivot_get(round, 1, &back) && back.ncol == 2 && owf_pivot_subtotal_of(&back, 1) &&
+                  owf_pivot_subtotal_of(&back, 0) && !owf_pivot_subtotal_of(&back, 4) &&
+                  !owf_pivot_subtotal_of(&back, 2));
+            owf_book_free(round);
+            remove(paths[k]);
+        }
+    }
+
+    /* the city's subtotals off: the columns close up */
+    CHECK(owf_pivot_set_subtotal(&got, 1, 0));
+    CHECK(oc_core_pivot_set_layout(core, &got) == OWF_OK);
+    CHECK_STR(text(core, "E1"), "York");
+    CHECK_STR(text(core, "I2"), "Grand Total");
+    CHECK(near(num(core, "I11"), 105.0) && empty(core, "J1") && empty(core, "M11"));
+    oc_core_free(core);
+}
+
 static void test_pivot_definition_text(void)
 {
     owf_book *book = owf_book_new();
@@ -7921,6 +8016,7 @@ int main(void)
     test_pivot_show_as();
     test_pivot_group();
     test_pivot_subtotals();
+    test_pivot_column_subtotals();
     test_pivot_group_xlsx();
     test_pivot_named();
     test_pivot_definition_text();
