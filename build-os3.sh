@@ -174,11 +174,22 @@ OWFSRC_DECK="$OWFSRC_DOCS"
 for f in owf_deck.c in_odp.c out_odp.c in_pptx.c owf_pdf.c owf_pdffonts.c owf_chart.c owf_chartodf.c owf_booknum.c; do
     OWFSRC_DECK="$OWFSRC_DECK $HERE/libowf/src/$f"
 done
+# The chart editor (Chart Data..., OPR_CHART_EDITOR; Presentation gap 2) is GFOpenCalc's core on a data sheet:
+# src/calc, the formula engine (libowf/calc) and the workbook code they need, with libnix's maths (-lm). About
+# 1 MB more; GFOpenPublisher's build below leaves it out.
+OWFSRC_CHARTED=""
+for f in owf_book.c owf_cfb.c owf_xlfunc.c in_xls.c out_csv.c owf_chartbook.c owf_xlformula.c in_xlsx.c out_xlsx.c \
+    in_ods.c out_ods.c in_csv.c owf_kind.c; do
+    OWFSRC_CHARTED="$OWFSRC_CHARTED $HERE/libowf/src/$f"
+done
 # shellcheck disable=SC2086
-"$CC" $CFLAGS_COMMON -DOW_CLIPBOARD_OBJECTS -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
-    -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
-    $OWFSRC_DECK "$HERE"/src/deck/*.c "$HERE/src/core/ow_spell_dict.c" "$HERE/src/core/ow_layout.c" $OL_C \
-    "$HERE/app/openpresent.c" "$HERE/app/ow_stack.c" "$HERE/app/ow_clipboard.c" "$HERE"/third_party/opengadtools/*.c -lamiga \
+"$CC" $CFLAGS_COMMON -DOW_CLIPBOARD_OBJECTS -DOPR_CHART_EDITOR -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
+    -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/src/calc" -I"$HERE/libowf/calc" \
+    -I"$HERE/third_party/opengadtools" \
+    $OWFSRC_DECK $OWFSRC_CHARTED "$HERE"/libowf/calc/*.c "$HERE"/src/calc/*.c "$HERE"/src/deckchart/*.c \
+    "$HERE"/src/deck/*.c "$HERE/src/core/ow_spell_dict.c" "$HERE/src/core/ow_layout.c" $OL_C \
+    "$HERE/app/openpresent.c" "$HERE/app/opr_chartwin.c" "$HERE/app/ow_stack.c" "$HERE/app/ow_clipboard.c" \
+    "$HERE"/third_party/opengadtools/*.c -lamiga -lm \
     -o "$OUT/GFOpenPresentation"
 echo "$OUT/GFOpenPresentation ($(wc -c < "$OUT/GFOpenPresentation") bytes)"
 
