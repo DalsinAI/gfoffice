@@ -7093,6 +7093,75 @@ static void test_solver(void)
     remove(ods);
 }
 
+/* Consolidate's sources as defined names of ranges, and the names the window offers. */
+static void test_consolidate_names(void)
+{
+    oc_core *core = fresh();
+    oc_consolidate_spec spec;
+    int index[OC_CONSOLIDATE_NAMES], n, k;
+    if (!core)
+        return;
+    enter_at(core, "A1", "East");
+    enter_at(core, "B1", "10");
+    enter_at(core, "A2", "West");
+    enter_at(core, "B2", "1");
+    CHECK(oc_core_add_sheet(core, "Q2") == 1);
+    enter_at(core, "A1", "west");
+    enter_at(core, "B1", "5");
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    CHECK(oc_core_set_name(core, "Q1Sales", -1, "'Sheet1'!$A$1:$B$2") == OWF_OK);
+    CHECK(oc_core_set_name(core, "Q2Sales", -1, "'Q2'!$A$1:$B$1") == OWF_OK);
+    CHECK(oc_core_set_name(core, "Rate", -1, "0.2") == OWF_OK);                 /* not a range */
+    CHECK(oc_core_set_name(core, "Mine", 1, "'Q2'!$A$1:$B$1") == OWF_OK);       /* Q2's own: not seen here */
+    CHECK(oc_core_set_name(core, "Twice", -1, "'Sheet1'!$A$1") == OWF_OK);
+    CHECK(oc_core_set_name(core, "Twice", 0, "'Sheet1'!$B$1:$B$2") == OWF_OK);   /* this sheet's hides the book's */
+    /* the window's list: ranges only, in the book's order, the sheet's own "Twice" and not the book's */
+    n = oc_core_consolidate_names(core, index, OC_CONSOLIDATE_NAMES);
+    CHECK(n == 3);
+    for (k = 0; k < n; k++) {
+        const owf_defname *d = oc_core_name_at(core, index[k]);
+        CHECK(d && strcmp(d->name, "Rate") && strcmp(d->name, "Mine"));
+        if (d && !strcmp(d->name, "Twice"))
+            CHECK(d->sheet == 0);
+    }
+    CHECK(n >= 1 && !strcmp(oc_core_name_at(core, index[0])->name, "Q1Sales"));
+    CHECK(oc_core_consolidate_names(core, index, 1) == 1);
+    /* on Q2 its own name is offered, and the book's "Twice" */
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    n = oc_core_consolidate_names(core, index, OC_CONSOLIDATE_NAMES);
+    CHECK(n == 4);
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    /* names as sources (case aside), by row labels */
+    oc_consolidate_init(&spec);
+    spec.nsources = 2;
+    snprintf(spec.source[0], sizeof spec.source[0], "q1sales");
+    snprintf(spec.source[1], sizeof spec.source[1], " Q2Sales");
+    snprintf(spec.dest, sizeof spec.dest, "D1");
+    spec.row_labels = 1;
+    CHECK(oc_core_consolidate(core, &spec) == OWF_OK);
+    CHECK_STR(text(core, "D1"), "East");
+    CHECK_STR(text(core, "D2"), "West");
+    CHECK(num(core, "E1") == 10 && num(core, "E2") == 6);
+    /* the name kept in the settings, as typed */
+    {
+        oc_consolidate_spec back;
+        CHECK(oc_core_consolidate_settings(core, &back) == 1);
+        CHECK_STR(back.source[0], "q1sales");
+    }
+    /* a name that is not a range, or no such name */
+    snprintf(spec.source[1], sizeof spec.source[1], "Rate");
+    CHECK(oc_core_consolidate(core, &spec) == OWF_ERR_FORMAT);
+    snprintf(spec.source[1], sizeof spec.source[1], "Mine");
+    CHECK(oc_core_consolidate(core, &spec) == OWF_ERR_FORMAT);
+    /* the sheet's own "Twice" (B1:B2), by position */
+    spec.nsources = 1;
+    spec.row_labels = 0;
+    snprintf(spec.source[0], sizeof spec.source[0], "Twice");
+    snprintf(spec.dest, sizeof spec.dest, "G1");
+    CHECK(oc_core_consolidate(core, &spec) == OWF_OK && num(core, "G1") == 10 && num(core, "G2") == 1);
+    oc_core_free(core);
+}
+
 static void test_consolidate(void)
 {
     oc_core *core = fresh();
@@ -7283,6 +7352,85 @@ static void test_consolidate_refresh(void)
     oc_core_free(core);
 }
 
+/* The shown scenario's frame round each range and its name's tab, in the grid's draw list. */
+static int scenario_items(const oc_draw_list *l, int kind, int *first)
+{
+    int i, n = 0;
+    *first = -1;
+    for (i = 0; i < l->n; i++)
+        if (l->items[i].kind == kind && l->items[i].role == OC_ROLE_SCENARIO) {
+            if (*first < 0)
+                *first = i;
+            n++;
+        }
+    return n;
+}
+
+static void test_scenario_frame(void)
+{
+    oc_core *core = fresh();
+    oc_draw_list l;
+    int i, frame, tab, cursor;
+    if (!core)
+        return;
+    oc_draw_list_init(&l);
+    enter_at(core, "B2", "10");
+    enter_at(core, "C2", "20");
+    enter_at(core, "B3", "East");
+    enter_at(core, "E5", "5");
+    CHECK(oc_core_scenario_save(core, -1, "Low", "B2:C2,B3,E5", "") == OWF_OK);
+    CHECK(oc_core_scenario_save(core, -1, "Top", "A1:A2", "") == OWF_OK);
+    /* none shown yet: no frame */
+    CHECK(oc_core_scenario_active(core) == -1);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(scenario_items(&l, OC_DRAW_FRAME, &frame) == 0 && scenario_items(&l, OC_DRAW_FILL, &tab) == 0);
+    /* "Low" shown: a frame round each of its three ranges, a pixel outside the cells as the active cell's */
+    CHECK(oc_core_scenario_show(core, 0) == OWF_OK && oc_core_scenario_active(core) == 0);
+    go(core, "H12");
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(scenario_items(&l, OC_DRAW_FRAME, &frame) == 3);
+    {
+        const oc_draw_item *f = &l.items[frame];
+        CHECK(f->x == 40 + 64 - 1 && f->y == 18 + 17 - 1 && f->w == 2 * 64 + 1 && f->h == 18 && f->line == 1);
+        CHECK(f->row == 1 && f->col == 1 && f->clip_x == 40 && f->clip_y == 18);
+    }
+    /* its name in a tab above the first range's top left corner: 8 points (15 pixels with its margin),
+       the name's width and 4 pixels each side; the text white, after it */
+    CHECK(scenario_items(&l, OC_DRAW_FILL, &tab) == 1);
+    {
+        const oc_draw_item *t = &l.items[tab], *x = &l.items[tab + 1];
+        CHECK(t->x == 103 && t->y == 35 - 1 - 15 && t->w == 3 * 6 + 8 && t->h == 15);
+        CHECK(x->kind == OC_DRAW_TEXT && x->text && !strcmp(x->text, "Low") && x->rgb == 0xFFFFFFUL &&
+              x->text_x == 107 && x->size == 160 && x->clip_x == 103 && x->clip_w == 26);
+    }
+    /* under the active cell's frame */
+    for (i = 0, cursor = -1; i < l.n; i++)
+        if (l.items[i].kind == OC_DRAW_FRAME && l.items[i].role == OC_ROLE_CURSOR)
+            cursor = i;
+    CHECK(cursor > frame);
+    /* "Top" (row 1): no room above in the pane, so the tab sits inside the range; one frame */
+    CHECK(oc_core_scenario_show(core, 1) == OWF_OK && oc_core_scenario_active(core) == 1);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(scenario_items(&l, OC_DRAW_FRAME, &frame) == 1 && scenario_items(&l, OC_DRAW_FILL, &tab) == 1);
+    CHECK(l.items[frame].x == 39 && l.items[frame].y == 17 && l.items[frame].h == 2 * 17 + 1);
+    CHECK(l.items[tab].x == 40 && l.items[tab].y == 18 && l.items[tab + 1].text && !strcmp(l.items[tab + 1].text, "Top"));
+    /* scrolled so that its first row is above the view: the frame goes on past the top (no tab) */
+    oc_view_scroll_to(core, 1, 0);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(scenario_items(&l, OC_DRAW_FRAME, &frame) == 1 && scenario_items(&l, OC_DRAW_FILL, &tab) == 0);
+    CHECK(l.items[frame].y < 18 && l.items[frame].y + l.items[frame].h == 18 + 17);
+    oc_view_scroll_to(core, 0, 0);
+    /* Undo goes back to "Low" shown; deleting the shown one takes the frame away */
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_scenario_active(core) == 0);
+    CHECK(oc_core_scenario_delete(core, 0) == OWF_OK && oc_core_scenario_active(core) == -1);
+    CHECK(oc_view_draw(core, &l) == OWF_OK);
+    CHECK(scenario_items(&l, OC_DRAW_FRAME, &frame) == 0 && scenario_items(&l, OC_DRAW_FILL, &tab) == 0);
+    /* Undo brings it back, shown */
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_scenario_active(core) == 0);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+}
+
 static void test_scenarios(void)
 {
     static const char *const xlsx = "build/host/calc-core-scenarios.xlsx";
@@ -7454,7 +7602,9 @@ int main(void)
     test_solver();
     test_scenarios();
     test_consolidate_refresh();
+    test_scenario_frame();
     test_consolidate();
+    test_consolidate_names();
     test_pdf();
     test_book_reads();
     test_rexx_utf8();

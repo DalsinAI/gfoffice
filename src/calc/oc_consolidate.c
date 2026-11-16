@@ -10,7 +10,8 @@
  * the table's size and, in _GF_CONSOLIDATE_S1.. and _GF_CONSOLIDATE_D, its
  * sources and the table's cells as references, which follow rows and columns put
  * in or taken out as any name's do: Refresh runs it again over the sources
- * as they are now, so a table grows with them.
+ * as they are now, so a table grows with them. A source may be a defined
+ * name of one range, as Excel's Reference box takes.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "oc_internal.h"
@@ -307,6 +308,52 @@ static int followed(const oc_core *core, const char *name, int first, char *out,
     return n > 0 && (size_t)n < size;
 }
 
+/* A defined name the active sheet sees: its own first, else the workbook's (case aside); NULL when none. */
+static const owf_defname *seen_name(const oc_core *core, const char *name)
+{
+    int i, pass;
+    for (pass = 0; pass < 2; pass++)
+        for (i = 0; i < core->book->nnames; i++) {
+            const owf_defname *d = &core->book->names[i];
+            if (d->name && !d->hidden && d->sheet == (pass ? -1 : core->sheet) && same_label(d->name, name))
+                return d;
+        }
+    return NULL;
+}
+
+/* A name's one range: 1 with its sheet and range. */
+static int name_range(const oc_core *core, const owf_defname *d, int *sheet, owf_range *r)
+{
+    return d && d->formula && oc_sheet_range(core->book, d->formula, d->sheet >= 0 ? d->sheet : core->sheet, sheet, r);
+}
+
+/* A source as typed: a range ("B2:D9", "'Q1'!A1:C20") or a defined name of one range. */
+static int source_range(const oc_core *core, const char *text, int *sheet, owf_range *r)
+{
+    while (*text == ' ')
+        text++;
+    if (oc_sheet_range(core->book, text, core->sheet, sheet, r))
+        return 1;
+    return name_range(core, seen_name(core, text), sheet, r);
+}
+
+int oc_core_consolidate_names(const oc_core *core, int *index, int max)
+{
+    int i, n = 0, sheet;
+    owf_range r;
+    if (!core || !index)
+        return 0;
+    for (i = 0; i < core->book->nnames && n < max; i++) {
+        const owf_defname *d = &core->book->names[i];
+        if (!d->name || d->hidden || (d->sheet != -1 && d->sheet != core->sheet))
+            continue;
+        if (seen_name(core, d->name) != d || !name_range(core, d, &sheet, &r))
+            continue;                    /* a workbook name the sheet's own hides, or not one range */
+        index[n++] = i;
+    }
+    return n;
+}
+
 void oc_consolidate_init(oc_consolidate_spec *spec)
 {
     memset(spec, 0, sizeof *spec);
@@ -412,7 +459,7 @@ static int consolidate(oc_core *core, const oc_consolidate_spec *spec, unsigned 
     lc = spec->row_labels ? 1u : 0u;             /* their first column */
     for (k = 0; k < spec->nsources; k++) {
         unsigned h, w;
-        if (!oc_sheet_range(core->book, spec->source[k], core->sheet, &src[k].sheet, &src[k].r))
+        if (!source_range(core, spec->source[k], &src[k].sheet, &src[k].r))
             return OWF_ERR_FORMAT;
         h = src[k].r.last_row - src[k].r.first_row + 1u;
         w = src[k].r.last_col - src[k].r.first_col + 1u;
