@@ -1234,6 +1234,25 @@ void oc_core_pivot_heading(const oc_core *core, const owf_pivotdef *def, unsigne
  * "East" a text, "TRUE" a truth), else the text itself. */
 void oc_core_pivot_item(const oc_core *core, const owf_pivotdef *def, unsigned field, const char *utf8,
                         owf_pivot_page *page);
+/* A field of the pivot table's source by its heading (case aside), or by its
+ * number ("1" the source's first column): from 0, or -1. */
+int oc_core_pivot_field(const oc_core *core, const owf_pivotdef *def, const char *name);
+/* The active sheet's pivot table changed by one line of words, as ARexx's
+ * PIVOTSET takes it (a word with spaces in "double quotes"; fields as
+ * oc_core_pivot_field names them; an item as oc_core_pivot_item reads it,
+ * "(blank)" the empty one):
+ *   SORT field ASCENDING | DESCENDING | SOURCE
+ *   HIDE field item [item...]          SHOW field item [item...] | ALL
+ *   GROUP field YEARS | QUARTERS | MONTHS | NONE | start end step
+ *   NAME field group item [item...]    UNNAME field item [item...]
+ *   SHOWAS data NORMAL | ROW | COLUMN | TOTAL | INDEX
+ * (data: the data field's place, 1 the first, or its source field). The
+ * table is laid out again as one Undo step. OWF_OK; OWF_ERR_UNSUPPORTED: no
+ * pivot table here, no room (16 sorts, 32 hidden items, 8 groups, 8 groups
+ * by hand of 24 items), a field grouped one way and asked the other, or a
+ * table too large; OWF_ERR_FORMAT: words that are not one of these. out
+ * gets why, for the status line (may be NULL). */
+int oc_core_pivot_command(oc_core *core, const char *text, char *out, size_t size);
 
 /* The book as it is, written to path (a copy: the edit line, the sheet saved as
  * active and the dirty mark are left as they are; owf_export_book_file). */
