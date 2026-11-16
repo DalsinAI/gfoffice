@@ -69,7 +69,7 @@ static const char version[] __attribute__((used)) =
 /* ---- Menus ---- */
 
 enum {
-    M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_SVG, M_EXPORT_PDF, M_EXPORT_PNG, M_EXPORT_ILBM, M_EXPORT_EPS, M_ABOUT, M_QUIT,
+    M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_SVG, M_EXPORT_PDF, M_EXPORT_PNG, M_EXPORT_ILBM, M_EXPORT_EPS, M_EXPORT_MERMAID, M_EXPORT_DOT, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_LABEL, M_STYLE, M_DELETE, M_SELECT_ALL, M_SELECT_NONE,
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100, M_FIT, M_GRID, M_SNAP, M_PAGE_NEXT, M_PAGE_PREV, M_PAGE_ADD, M_LAYERS, M_MAP_NEW, M_MAP_IMPORT, M_MAP_EXPORT,
     M_TOOL = 100,                        /* M_TOOL + odg_tool */
@@ -92,6 +92,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Export EPS...", NULL, 0, 0, (APTR)M_EXPORT_EPS },
     { NM_ITEM, "Export PNG...", NULL, 0, 0, (APTR)M_EXPORT_PNG },
     { NM_ITEM, "Export IFF ILBM...", NULL, 0, 0, (APTR)M_EXPORT_ILBM },
+    { NM_ITEM, "Export Mermaid...", NULL, 0, 0, (APTR)M_EXPORT_MERMAID },
+    { NM_ITEM, "Export Graphviz DOT...", NULL, 0, 0, (APTR)M_EXPORT_DOT },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "About...", "?", 0, 0, (APTR)M_ABOUT },
     { NM_ITEM, "Quit", "Q", 0, 0, (APTR)M_QUIT },
@@ -1045,11 +1047,13 @@ static void menu_action(ULONG id, struct MenuItem *item)
     case M_EXPORT_SVG: export_as("SVG", "#?.svg"); return;
     case M_EXPORT_PDF: export_as("PDF", "#?.pdf"); return;
     case M_EXPORT_EPS: export_as("EPS", "#?.(eps|epsf|ps)"); return;
+    case M_EXPORT_MERMAID: export_as("MERMAID", "#?.(mmd|mermaid)"); return;
+    case M_EXPORT_DOT: export_as("DOT", "#?.(dot|gv)"); return;
     case M_EXPORT_PNG: export_as("PNG", "#?.png"); return;
     case M_EXPORT_ILBM: export_as("ILBM", "#?.(iff|ilbm)"); return;
     case M_ABOUT:
         tell(VERSION_TEXT "\nThe diagram editor of the GFOffice Suite.\n\n.drawio diagrams, as diagrams.net reads them;\n"
-             "SVG and PNG with the diagram inside open;\nSVG, PDF, EPS, PNG and IFF ILBM exports.\nMIT, Copyright (c) 2026 AmiCradle Team");
+             "SVG and PNG with the diagram inside open;\nSVG, PDF, EPS, PNG, IFF ILBM,\nMermaid and Graphviz DOT exports.\nMIT, Copyright (c) 2026 AmiCradle Team");
         break;
     case M_QUIT: if (may_drop()) quit_now = 1; break;
     case M_UNDO: undo_redo(0); return;
