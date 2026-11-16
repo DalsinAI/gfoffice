@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.12.1"
+#define OWF_VERSION "1.12.2"
 
 /* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
@@ -384,7 +384,21 @@ typedef struct owf_doc {
      * only grows, as the comments' and notes' do */
     int nformat_changes, capformat_changes;
     struct owf_format_change *format_changes;
+    /* 1.12.2: the notes' text with its formats: note_stories[i] is notes[i]'s paragraphs and their runs (bold,
+     * italic, underline, strike, size, font, colour, fields; the note's mark is not among them). notes[i] is
+     * plain, as its text has it, when i >= nnote_stories or that story has no paragraphs (OWF_DOC_NOTE_STORY);
+     * notes[i].text stays its plain copy either way. DOCX's notes come in and go out with their formats.
+     * The list is as long as the last note with formats needs, never longer than nnotes. */
+    int nnote_stories;
+    owf_story *note_stories;
 } owf_doc;
+
+/* 1.12.2: note index's formatted text (owf_doc.note_stories), NULL when it is plain. A macro, so that programs on
+ * the library have it too. */
+#define OWF_DOC_NOTE_STORY(doc, index)                                                                     \
+    ((index) >= 0 && (index) < (doc)->nnote_stories && (doc)->note_stories[(index)].nparas > 0             \
+         ? &(doc)->note_stories[(index)]                                                                   \
+         : (owf_story *)0)
 
 /* ---- Memory ----
  * Everything an owf_doc holds (stories, paragraphs, runs, their text,
