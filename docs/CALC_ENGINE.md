@@ -248,6 +248,13 @@ takes the values the file's sheet has now, as an Undo step, and the
 formulas are worked out again. A file that cannot be read changes
 nothing; a sheet the file no longer has keeps its last values.
 
+GFOpenCalc shows them in Data > Edit Links... (each link's name, target
+and sheets kept; Update All or Update One...), a target beside the book
+being looked for in the book's own folder. ARexx `LINKS` gives
+`name=target` for each, by commas, and `UPDATELINK n` or
+`UPDATELINK ALL` updates them (RC 10 when a file cannot be read, 5 for a
+link that is not there); tests/arexx/calc-links.rexx runs them.
+
 ## Sheet and cell protection
 
 owf.library 2.6 gives `owf_sheet` its protection (`protect`, the

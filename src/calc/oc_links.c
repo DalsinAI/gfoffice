@@ -53,6 +53,8 @@ static int put_decoded(char *out, size_t size, size_t *n, const char *s)
         char c = *s;
         if (c == '%' && hex(s[1]) >= 0 && hex(s[2]) >= 0) {
             c = (char)(hex(s[1]) * 16 + hex(s[2]));
+            if (!c)
+                return 0;                /* "%00" would cut the path short */
             s += 2;
         }
         if (*n + 1 >= size)
@@ -74,6 +76,8 @@ int oc_link_path(const char *target, const char *base, char *out, size_t size)
         p += 7;
         if (!strncmp(p, "localhost/", 10))
             p += 9;
+        if (*p != '/')
+            return 0;                    /* "file://server/share/x.xlsx": another computer's file */
         /* "file:///C:/Books/x.xlsx": a drive's path; "file:///home/x.ods": from the root */
         if (p[0] == '/' && ((p[1] >= 'A' && p[1] <= 'Z') || (p[1] >= 'a' && p[1] <= 'z')) && p[2] == ':')
             p++;
