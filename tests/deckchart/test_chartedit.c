@@ -222,8 +222,39 @@ static void test_keys(void)
     owf_chart_clear(&src);
 }
 
+/* A series' column cleared: the series goes (the ones before it kept, their look too). */
+static void test_remove(void)
+{
+    owf_chart src, out;
+    oc_core *core;
+    memset(&src, 0, sizeof src);
+    CHECK(owf_chart_from_part(chart_xml, strlen(chart_xml), &src) == OWF_OK, "the chart");
+    src.series[0].colour = OWF_SHADE(0x112233UL);
+    core = opr_chart_edit_open(&src);
+    CHECK(core != NULL, "opened");
+    if (!core) { owf_chart_clear(&src); return; }
+    enter(core, "C1", "");
+    enter(core, "C2", "");
+    enter(core, "C4", "");
+    memset(&out, 0, sizeof out);
+    CHECK(opr_chart_edit_take(core, &out) == OWF_OK && out.nseries == 1 && out.series[0].name &&
+          !strcmp(out.series[0].name, "North") && out.series[0].npoints == 3 &&
+          out.series[0].colour == OWF_SHADE(0x112233UL), "South's column cleared: one series left (%d)", out.nseries);
+    owf_chart_clear(&out);
+    enter(core, "B1", "");
+    enter(core, "B2", "");
+    enter(core, "B3", "");
+    enter(core, "B4", "");
+    memset(&out, 0, sizeof out);
+    CHECK(opr_chart_edit_take(core, &out) == OWF_OK && out.nseries == 0, "every series cleared (%d)", out.nseries);
+    owf_chart_clear(&out);
+    oc_core_free(core);
+    owf_chart_clear(&src);
+}
+
 int main(void)
 {
+    test_remove();
     test_open_take();
     test_scatter();
     test_choices();
