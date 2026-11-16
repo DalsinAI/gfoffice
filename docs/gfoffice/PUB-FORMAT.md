@@ -225,6 +225,17 @@ page height [V 24]. In halloween-flyer it holds one shape, which the
 thumbnail doesn't show. This is the scratch area, the space around the page
 [H].
 
+Masters needn't have 0x10 = 3 [V tdf100639 (2010); tdf67299, tdf69080 x2
+(2002/2003)]: their 0x10 is 1 (or 0), and only the pages naming them in
+0x0D show they are masters. In tdf100639 the page list starts with two
+pages named "A" (0x0E) whose 0x10 is 1 and 0, and the 13 pages' 0x0D name
+them in turn (the first page the 0x10 = 0 one). Those masters carry the
+0x03 field the pages lack, and no 0x0D. [H: the two halves of a master for
+facing pages, right and left.] The reader takes a page as a master when its
+0x10 is 3 or another page of the list names it in 0x0D. Each of tdf100639's
+two masters holds a right-aligned text box near the foot whose text is " #"
+in the dump [H: a page number field, not decoded yet].
+
 The rule the reader uses [V 24, on the page counts the samples show: Sample
 2, SampleBrochure 2, SampleNewsletter 4, the others 1]: a page is the
 document's when it is not a master, its field 0x06's first u32 is not 0,

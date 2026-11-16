@@ -1,0 +1,27 @@
+page-size 210.0 x 297.0 mm (emu 7560000 x 10692000, twips 11906 x 16838)
+masters 2
+master 1 "Master Page A" frames 1
+  frame 0 text box 20.0 270.0 170.0 12.0 mm (emu 720000 9720000 6840000 10152000) shape 202 text-id 1 story 0
+    look no-fill no-line margins 91440 45720 91440 45720
+    para "On every page of master A"
+      run 0 "On every page of master " 10.0pt font "Times New Roman"
+master 2 "Master Page B" frames 0
+pages 4
+page 1 master 1 frames 1
+  frame 0 text box 20.0 20.0 170.0 20.0 mm (emu 720000 720000 6840000 1440000) shape 202 text-id 2 story 1
+    look no-fill no-line margins 91440 45720 91440 45720
+    para "Page one"
+      run 0 "Page one" 10.0pt font "Times New Roman"
+page 2 master 2 frames 0
+page 3 master 1 frames 0
+page 4 master 2 frames 0
+stories 2
+story 0
+  para "On every page of master A"
+    run 0 "On every page of master " 10.0pt font "Times New Roman"
+story 1
+  para "Page one"
+    run 0 "Page one" 10.0pt font "Times New Roman"
+fonts 1
+font "Times New Roman"
+pictures 0
