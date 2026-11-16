@@ -448,9 +448,12 @@ static void move_selection(int rows, int cols)
         return;
     }
     if (network_mode) {                                 /* up and down the tasks; left and right scroll */
-        if (rows && n) {
-            int s = view.selected < 0 ? 0 : view.selected + rows;
-            view.selected = s < 0 ? 0 : s >= n ? n - 1 : s;
+        if (rows && n) {                                /* over summaries, which have no box */
+            int s = view.selected < 0 ? 0 : view.selected + rows, step = rows > 0 ? 1 : -1;
+            oldraw_rect b;
+            s = s < 0 ? 0 : s >= n ? n - 1 : s;
+            while (s >= 0 && s < n && !opj_network_box(&view, &net, s, &b)) s += step;
+            if (s >= 0 && s < n) view.selected = s;
             opj_network_reveal(&view, &net, view.selected);
         }
         if (cols) opj_network_scroll(&view, &net, cols * (OPJ_NET_BOX_W + OPJ_NET_GAP_X) / 2, 0);
