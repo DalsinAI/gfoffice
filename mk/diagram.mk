@@ -151,6 +151,31 @@ $(OUT)/test-odg-style-asan: $(ODG_STYLE_DEPS) $(OWF_SRC)
 		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_style.c \
 		tests/diag/test_odg_style.c -lz -o $@
 
+# The Arrange menu's Align and Distribute (src/diag/odg_align.c).
+ODG_ALIGN_DEPS = $(ODG_DEPS) src/diag/odg_align.c include/opendiag_align.h tests/diag/test_odg_align.c
+
+$(OUT)/test-odg-align: $(ODG_ALIGN_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		$(ODG_SRC) src/diag/odg_align.c tests/diag/test_odg_align.c -lz -o $@
+
+$(OUT)/test-odg-align-asan: $(ODG_ALIGN_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_align.c \
+		tests/diag/test_odg_align.c -lz -o $@
+
+diagram-align-test: $(OUT)/test-odg-align
+	$(OUT)/test-odg-align
+
+diagram-align-check: $(OUT)/test-odg-align-asan
+	$(OUT)/test-odg-align-asan
+
+test: diagram-align-test
+check: diagram-align-check
+
+.PHONY: diagram-align-test diagram-align-check
+
 # Step D5: the mind-map mode (src/diag/odg_mind.c).
 ODG_MIND_DEPS = $(ODG_DEPS) src/diag/odg_mind.c include/opendiag_mind.h tests/diag/test_odg_mind.c
 
