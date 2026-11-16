@@ -262,6 +262,105 @@ static void load_file(void)
     CHECK(opp_merge_load_file(path, NULL) == OWF_ERR_FORMAT);
 }
 
+/* A catalog: page 1 a cover, page 2 a heading with Name (outside the area) and an item of a group holding a
+ * Name frame and a Town frame with a flow of its own, page 3 a back page */
+static owf_deck *catalog(void)
+{
+    owf_deck *d = owf_deck_new_empty();
+    owf_slide *s;
+    owf_obj *o;
+    if (!d) return NULL;
+    if (!(s = owf_deck_add_slide(d, -1, -1)) || !(o = text_frame(s, "Cover"))) goto bad;
+    o->flow_story = 0;
+    if (!(s = owf_deck_add_slide(d, -1, -1))) goto bad;
+    if (!(o = text_frame(s, "From "))) goto bad;               /* 0: the heading */
+    o->x = 0; o->y = 0; o->width = 9000; o->height = 500;
+    if (opp_merge_insert_field(o, -1, "Name", NULL) != OWF_OK) goto bad;
+    if (!(o = owf_slide_add(s, OWF_OBJ_GROUP))) goto bad;      /* 1: the item's group */
+    o->x = 1000; o->y = 1000; o->width = 3000; o->height = 1000;
+    if (!(o = text_frame(s, NULL))) goto bad;                  /* 2 */
+    o->x = 1000; o->y = 1000; o->width = 3000; o->height = 400; o->parent = 1;
+    if (opp_merge_insert_field(o, 0, "Name", NULL) != OWF_OK) goto bad;
+    if (!(o = text_frame(s, "in "))) goto bad;                 /* 3 */
+    o->x = 1000; o->y = 1500; o->width = 3000; o->height = 400; o->parent = 1; o->flow_story = 1;
+    if (opp_merge_insert_field(o, 0, "Town", NULL) != OWF_OK) goto bad;
+    if (!(o = text_frame(s, "Wide"))) goto bad;                /* 4: crosses the box's edge, so not the item */
+    o->x = 3000; o->y = 1000; o->width = 3000; o->height = 400;
+    if (!(s = owf_deck_add_slide(d, -1, -1)) || !text_frame(s, "Back")) goto bad;
+    return d;
+bad:
+    owf_deck_free(d);
+    return NULL;
+}
+
+static void catalog_merge(void)
+{
+    ow_merge_table *t = table("Name,Town\nAnn,Ayr\nBob,Bath\nCy,Cork\nDi,Derby\nEd,Ely\n");
+    owf_deck *d = catalog();
+    opp_catalog c;
+    int made = -1, i, o, seen[64];
+    if (!d || !t) { owf_deck_free(d); ow_merge_table_free(t); CHECK(0); return; }
+    c.x = 1000; c.y = 1000; c.width = 4000; c.height = 1500; c.across = 2; c.down = 1;
+    CHECK(opp_merge_catalog(d, t, 1, &c, -1, -1, &made) == OWF_OK && made == 3);
+    CHECK(d->nslides == 5);                                    /* cover, 3 catalog pages, back */
+    CHECK(same(frame_text(&d->slides[0].objs[0]), "Cover") && same(frame_text(&d->slides[4].objs[0]), "Back"));
+    CHECK(field_runs(d) == 0);
+    /* page 1: Ann then Bob; the heading and the wide frame once, with the page's first record */
+    CHECK(d->slides[1].nobjs == 5 + 3);
+    CHECK(same(frame_text(&d->slides[1].objs[0]), "From Ann"));
+    CHECK(same(frame_text(&d->slides[1].objs[2]), "Ann") && same(frame_text(&d->slides[1].objs[3]), "in Ayr"));
+    CHECK(same(frame_text(&d->slides[1].objs[4]), "Wide") && d->slides[1].objs[4].x == 3000);
+    CHECK(d->slides[1].objs[5].kind == OWF_OBJ_GROUP && d->slides[1].objs[5].x == 5000 && d->slides[1].objs[5].y == 1000);
+    CHECK(same(frame_text(&d->slides[1].objs[6]), "Bob") && same(frame_text(&d->slides[1].objs[7]), "in Bath"));
+    CHECK(d->slides[1].objs[6].x == 5000 && d->slides[1].objs[7].y == 1500);
+    CHECK(d->slides[1].objs[6].parent == 5 && d->slides[1].objs[7].parent == 5 && d->slides[1].objs[2].parent == 1);
+    CHECK(same(frame_text(&d->slides[2].objs[0]), "From Cy") && same(frame_text(&d->slides[2].objs[6]), "Di"));
+    /* page 3: Ed alone, the second place empty */
+    CHECK(d->slides[3].nobjs == 5 && same(frame_text(&d->slides[3].objs[2]), "Ed"));
+    CHECK(same(frame_text(&d->slides[3].objs[3]), "in Ely"));
+    /* every item's flow is its own, and none is the cover's */
+    memset(seen, 0, sizeof seen);
+    for (i = 1; i <= 3; ++i)
+        for (o = 0; o < d->slides[i].nobjs; ++o) {
+            int f = d->slides[i].objs[o].flow_story;
+            if (f < 0) continue;
+            CHECK(f > 0 && f < 64);
+            if (f > 0 && f < 64) { CHECK(!seen[f]); seen[f] = 1; }
+        }
+    CHECK(d->slides[0].objs[0].flow_story == 0);
+    owf_deck_free(d);
+
+    d = catalog();                                             /* a range, two down */
+    c.across = 1; c.down = 2;
+    CHECK(d && opp_merge_catalog(d, t, 1, &c, 1, 2, &made) == OWF_OK && made == 1 && d->nslides == 3);
+    if (d && d->nslides == 3) {
+        CHECK(same(frame_text(&d->slides[1].objs[0]), "From Bob") && same(frame_text(&d->slides[1].objs[6]), "Cy"));
+        CHECK(d->slides[1].objs[6].x == 1000 && d->slides[1].objs[6].y == 2500);
+    }
+    owf_deck_free(d);
+
+    d = catalog();                                             /* what cannot be */
+    CHECK(d != NULL);
+    c.across = 2; c.down = 1;
+    CHECK(opp_merge_catalog(d, NULL, 1, &c, -1, -1, &made) == OWF_ERR_UNSUPPORTED && made == 0);
+    CHECK(opp_merge_catalog(d, t, 3, &c, -1, -1, NULL) == OWF_ERR_UNSUPPORTED);
+    CHECK(opp_merge_catalog(d, t, 1, NULL, -1, -1, NULL) == OWF_ERR_UNSUPPORTED);
+    CHECK(opp_merge_catalog(d, t, 1, &c, 3, 1, NULL) == OWF_ERR_UNSUPPORTED);
+    CHECK(opp_merge_catalog(d, t, 1, &c, 0, 5, NULL) == OWF_ERR_UNSUPPORTED);
+    c.across = 0;
+    CHECK(opp_merge_catalog(d, t, 1, &c, -1, -1, NULL) == OWF_ERR_UNSUPPORTED);
+    c.across = OPP_CATALOG_MAX + 1;
+    CHECK(opp_merge_catalog(d, t, 1, &c, -1, -1, NULL) == OWF_ERR_UNSUPPORTED);
+    c.across = 2; c.width = 0x40000000;
+    CHECK(opp_merge_catalog(d, t, 1, &c, -1, -1, NULL) == OWF_ERR_UNSUPPORTED);
+    c.x = 8000; c.width = 500;                                 /* nothing inside the box */
+    CHECK(opp_merge_catalog(d, t, 1, &c, -1, -1, NULL) == OWF_ERR_FORMAT);
+    CHECK(opp_merge_catalog(d, t, 2, &c, -1, -1, NULL) == OWF_ERR_FORMAT);
+    CHECK(d->nslides == 3 && field_runs(d) == 3);              /* the deck as it was */
+    owf_deck_free(d);
+    ow_merge_table_free(t);
+}
+
 int main(void)
 {
     insert_and_count();
@@ -270,6 +369,7 @@ int main(void)
     missing_column();
     insert_at();
     load_file();
+    catalog_merge();
     if (failed) { fprintf(stderr, "publisher merge: %d of %d checks failed\n", failed, checks); return 1; }
     printf("publisher merge tests passed (%d checks)\n", checks);
     return 0;

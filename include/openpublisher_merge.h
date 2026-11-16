@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define OPP_MERGE_VERSION "0.1.0"
+#define OPP_MERGE_VERSION "0.2.0"
 
 /* A merge field for column put at the end of paragraph para of an object's
  * text (para -1: the last; a paragraph is added when there is none). It
@@ -58,6 +58,28 @@ int opp_merge_show(owf_deck *deck, const ow_merge_table *t, int record, int *set
  * table does not have; OWF_ERR_MEMORY: the deck is as it was. */
 int opp_merge_pages(owf_deck *deck, const ow_merge_table *t, int first, int last);
 
+/* A catalog merge's area on its page: the first item's box (twips from the
+ * page's top left), repeated across and down the page, one record each.
+ * The box takes in the space between items. */
+#define OPP_CATALOG_MAX 64
+typedef struct {
+    int x, y, width, height;
+    int across, down;                                /* 1..OPP_CATALOG_MAX */
+} opp_catalog;
+/* Catalog merge, in place: page (from 0) becomes as many pages as records
+ * first..last need (first -1: the first, last -1: the last), each holding
+ * across x down items left to right, then down. The item is the page's
+ * objects whose boxes lie wholly inside the area's first box; each record's
+ * copy moves by whole boxes, and a page's last items may stay empty. The
+ * page's other objects come on each page with the page's first record.
+ * Merge fields become plain text, every frame of a text flow keeps to its
+ * own copy, and the deck's other pages and masters are left as they are.
+ * *made (when not NULL): the pages made. OWF_OK; OWF_ERR_UNSUPPORTED: no
+ * table or records, no such page, an area or range that cannot be;
+ * OWF_ERR_FORMAT: no object inside the area's first box; OWF_ERR_MEMORY:
+ * the deck is as it was. */
+int opp_merge_catalog(owf_deck *deck, const ow_merge_table *t, int page, const opp_catalog *cat,
+                      int first, int last, int *made);
 #ifdef __cplusplus
 }
 #endif
