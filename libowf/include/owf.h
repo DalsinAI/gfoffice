@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.11.0"
+#define OWF_VERSION "1.12.7"
 
 /* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
@@ -87,8 +87,11 @@ typedef enum { OWF_FIELD_PAGE, OWF_FIELD_PAGES, OWF_FIELD_DATE, OWF_FIELD_TIME,
                OWF_FIELD_MERGE,
                /* 1.10: an alphabetical index entry where it is (shows nothing): href is the entry, "Main:Sub" for
                 * a subentry (DOCX XE, ODF text:alphabetical-index-mark) */
-               OWF_FIELD_INDEX } owf_field;
-#define OWF_FIELD_LAST OWF_FIELD_INDEX
+               OWF_FIELD_INDEX,
+               /* 1.12.6: a number range: href is its name ("Figure", "Table"), text the number last shown, the
+                * count of its name's fields up to it (DOCX SEQ, ODF text:sequence) */
+               OWF_FIELD_SEQ } owf_field;
+#define OWF_FIELD_LAST OWF_FIELD_SEQ
 
 typedef struct {
     owf_run_kind kind;
@@ -99,7 +102,8 @@ typedef struct {
     int image;               /* index into doc->images for OWF_RUN_IMAGE, doc->frames for OWF_RUN_FRAME */
     int revision;            /* 1.5: a tracked change: 1 + its index in doc->revisions (OWF_REV_INSERT: this
                                 run was inserted, OWF_REV_DELETE: deleted but kept, shown struck through);
-                                0: none */
+                                0: none. 1.12: a picture in the line (OWF_RUN_IMAGE) or a frame's run (its
+                                frame put in or deleted; DOCX keeps it, ODT saves it accepted) may be one */
     int comment;             /* 1.6: a comment's place (OWF_RUN_TEXT runs with no text, kept apart from the text
                                 round them): 1 + its index in doc->comments where it is anchored (shown, and where
                                 a range ends); -(1 + its index) where its range starts. 0: none */
@@ -189,6 +193,10 @@ typedef struct {
      * in doc->revisions. Inserted: Return was typed there. Deleted: accepting the deletion joins the next
      * paragraph to this one. 0: none. */
     int mark_revision;
+    /* 1.12: a table cell's row is a tracked change (DOCX w:trPr/w:ins, w:del): 1 + its index in doc->revisions,
+     * the same on every cell of the row. Inserted: the row was put in; deleted: accepting it takes the row
+     * away. 0: none. */
+    int row_revision;
 } owf_para;
 
 typedef enum {
@@ -222,7 +230,25 @@ typedef struct {
     int start_page;
     owf_pagenum_style pagenum_style;
     int header_on_first, footer_on_first;
+    /* 1.12.1: how footnotes ([0]) and endnotes ([1]) are numbered (DOCX's w:footnotePr and w:endnotePr, ODF's
+     * text:notes-configuration): an owf_note_format (OWF_NOTE_FORMAT_DEFAULT: the kind's own, footnotes 1, 2,
+     * endnotes i, ii) and the first number (0 or 1: 1) */
+    int note_format[2], note_start[2];
+    /* 1.12.3: where each kind's numbers start again (DOCX's w:numRestart, ODF's text:start-numbering-at): an
+     * owf_note_restart. Endnotes can't start again on each page (Word's rule): they run on. */
+    int note_restart[2];
 } owf_page;
+
+/* 1.12.3: where a kind of note's numbering starts again: never (through the document), at each section's start
+ * (owf_para.section_columns), on each page (footnotes only) */
+typedef enum { OWF_NOTE_RESTART_CONTINUOUS, OWF_NOTE_RESTART_SECTION, OWF_NOTE_RESTART_PAGE, OWF_NOTE_RESTART_COUNT } owf_note_restart;
+
+/* 1.12.1: a kind of note's numbers. Symbols are Word's Chicago style: *, dagger, double dagger, section, then
+ * doubled (**), and so on. Letters run a to z, then aa to zz (as Word does). */
+typedef enum {
+    OWF_NOTE_FORMAT_DEFAULT, OWF_NOTE_FORMAT_ARABIC, OWF_NOTE_FORMAT_LOWER_ROMAN, OWF_NOTE_FORMAT_UPPER_ROMAN,
+    OWF_NOTE_FORMAT_LOWER_LETTER, OWF_NOTE_FORMAT_UPPER_LETTER, OWF_NOTE_FORMAT_SYMBOL, OWF_NOTE_FORMAT_COUNT
+} owf_note_format;
 
 /* A physical page number in the document's selected style: 1, iv, IV, d or
  * D. Shared by layout fields, generated references and front ends. */
@@ -303,7 +329,8 @@ typedef struct owf_format_change {
  * (owf_run.comment); one with a range has a run where the range starts too. A changed comment (its text, done)
  * is a new one that its runs name instead. ODT's office:annotation and DOCX's comments come in and go out as
  * these; other formats leave them out, but for "pdf-comments" (1.10.1), the PDF with a raised mark where each is
- * and the comments listed after the text. Its size never changes (owf_struct_size doesn't list it). (owf_comment
+ * and the comments listed after the text, and "pdf-comments-margin" (1.12.1), the same marks with each comment
+ * in a note beside its line. Its size never changes (owf_struct_size doesn't list it). (owf_comment
  * is a spreadsheet cell's.) */
 typedef struct owf_annotation {
     char *author;            /* UTF-8; NULL: unknown */
@@ -373,7 +400,21 @@ typedef struct owf_doc {
      * only grows, as the comments' and notes' do */
     int nformat_changes, capformat_changes;
     struct owf_format_change *format_changes;
+    /* 1.12.2: the notes' text with its formats: note_stories[i] is notes[i]'s paragraphs and their runs (bold,
+     * italic, underline, strike, size, font, colour, fields; the note's mark is not among them). notes[i] is
+     * plain, as its text has it, when i >= nnote_stories or that story has no paragraphs (OWF_DOC_NOTE_STORY);
+     * notes[i].text stays its plain copy either way. DOCX's notes come in and go out with their formats.
+     * The list is as long as the last note with formats needs, never longer than nnotes. */
+    int nnote_stories;
+    owf_story *note_stories;
 } owf_doc;
+
+/* 1.12.2: note index's formatted text (owf_doc.note_stories), NULL when it is plain. A macro, so that programs on
+ * the library have it too. */
+#define OWF_DOC_NOTE_STORY(doc, index)                                                                     \
+    ((index) >= 0 && (index) < (doc)->nnote_stories && (doc)->note_stories[(index)].nparas > 0             \
+         ? &(doc)->note_stories[(index)]                                                                   \
+         : (owf_story *)0)
 
 /* ---- Memory ----
  * Everything an owf_doc holds (stories, paragraphs, runs, their text,
@@ -676,6 +717,16 @@ typedef struct {
     size_t length;
 } owf_part;
 
+/* Another book the formulas refer to ("[Rates.xlsx]Sheet1!A1"), with the
+ * values its cells had when the file was last saved: Excel's externalLink
+ * parts. Its sheets hold cells only (values, no formulas or styles). */
+typedef struct {
+    char *name;                  /* as the formulas name it: "Rates.xlsx" */
+    char *target;                /* where it is, as the file wrote it: "Rates.xlsx", "file:///C:/Data/Rates.xlsx" */
+    int nsheets, capsheets;
+    owf_sheet *sheets;
+} owf_extbook;
+
 typedef struct owf_book {
     int nsheets, capsheets;
     owf_sheet *sheets;
@@ -691,6 +742,15 @@ typedef struct owf_book {
     int active;                  /* the sheet shown first */
     int nparts, capparts;        /* owf.library 2.1: parts kept as they were (a sheet's drawing...) */
     owf_part *parts;
+    /* owf.library 2.6: the workbook's structure protected (no sheet added, deleted, renamed, moved, hidden or
+       shown), as Excel's workbookProtection lockStructure and ODF's table:structure-protected */
+    int protect_structure;
+    char *protect_hash;          /* Excel's 16-bit password hash as 4 hex digits, or NULL: no password */
+    char *protect_kept;          /* a hash libowf cannot check, as its file wrote it: "xlsx:" and the workbook*
+                                    hash attributes, or "ods:" the digest algorithm's URI, a space and
+                                    table:protection-key; or NULL */
+    int nextbooks, capextbooks;  /* the other books the formulas refer to, and their values last seen */
+    owf_extbook *extbooks;
 } owf_book;
 
 owf_book *owf_book_new(void);
@@ -731,6 +791,13 @@ void owf_condfmt_free(owf_condfmt *cf);
 int owf_book_keep_part(owf_book *book, const char *name, const char *type, const void *data, size_t length);
 const owf_part *owf_book_part(const owf_book *book, const char *name);
 int owf_book_copy_parts(owf_book *dst, const owf_book *src);
+/* Another book, found by its name (ignoring case; NULL: none), or found or
+ * added, its target set when one is given (NULL when memory runs out). Its
+ * sheet by name, found or (with create) added: NULL when there is none or
+ * memory ran out. */
+owf_extbook *owf_book_extbook(const owf_book *book, const char *name);
+owf_extbook *owf_book_add_extbook(owf_book *book, const char *name, const char *target);
+owf_sheet *owf_extbook_sheet(owf_extbook *eb, const char *name, int create);
 /* A new validation at the end of the sheet's, all zero (as
  * owf_sheet_add_condfmt), and one freed; the first whose ranges hold a
  * cell, or NULL. */
@@ -810,7 +877,7 @@ typedef struct {
     unsigned long error_colour;  /* OWF_SHADE(rgb), or 0: the series' colour */
     int axis;                    /* OWF_AXIS_PRIMARY or OWF_AXIS_SECONDARY value axis */
 } owf_chart_series;
-typedef struct {
+typedef struct owf_chart {       /* named: owf_deck.h's owf_obj points to one */
     int kind, grouping;          /* OWF_CHART_... */
     char *title;                 /* or NULL */
     int legend;                  /* where: 'r', 'l', 't', 'b'; 0 none */
@@ -846,6 +913,13 @@ typedef struct {
  * or OWF_ERR_MEMORY. */
 int owf_sheet_charts(const owf_book *book, int sheet, owf_chart **charts, int *count);
 void owf_charts_free(owf_chart *charts, int count);
+/* 1.12.7: a chart on its own (a slide's), with no book: read from its chart part (DrawingML c:chartSpace), every field
+ * set, its points the values the part's caches (or literals) hold. OWF_OK, OWF_ERR_FORMAT when it holds no
+ * chart, or OWF_ERR_MEMORY; on an error the chart holds nothing. owf_chart_clear frees what it holds. */
+int owf_chart_from_part(const char *xml, size_t length, owf_chart *chart);
+/* A deep copy into to (which holds nothing yet): OWF_OK or OWF_ERR_MEMORY (to then holds nothing). */
+int owf_chart_copy(owf_chart *to, const owf_chart *from);
+void owf_chart_clear(owf_chart *chart);      /* frees what it holds and zeroes it; NULL: nothing */
 /* Keeps charts on a sheet as independent drawing/chart package parts. The
  * sheet must not already have a drawing. Used by sheet duplication and chart
  * authoring; OWF_OK or an OWF_ERR_*. */

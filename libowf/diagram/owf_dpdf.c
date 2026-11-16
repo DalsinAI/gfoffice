@@ -144,9 +144,10 @@ static void note(pen *p, int r)
 /* A closed or open path in diagram units. */
 static void path(pen *p, const owf_dpoint *pts, int n, int closed, unsigned long fill, unsigned long line, int width)
 {
-    int xy[2 * 32], i;
-    if (n > 32)
-        n = 32;
+    static int xy[2 * OWF_DSHAPE_POINTS];   /* off the Amiga's small stack; one writer runs at a time */
+    int i;
+    if (n > OWF_DSHAPE_POINTS)
+        n = OWF_DSHAPE_POINTS;
     for (i = 0; i < n; i++) {
         xy[2 * i] = tx(p, pts[i].x);
         xy[2 * i + 1] = ty(p, pts[i].y);
@@ -253,6 +254,7 @@ static owf_dnum style_num(const char *style, const char *key, owf_dnum def)
 
 static void vertex(pen *p, const owf_dpage *page, const owf_dcell *c)
 {
+    static owf_dshape sh;                /* 1.5 KB: off the Amiga's small stack */
     owf_dnum box[4], header = 0;
     const char *style = c->style;
     unsigned long fill = shade(style, "fillColor", 0xffffff), line = shade(style, "strokeColor", 0x000000);
@@ -264,7 +266,14 @@ static void vertex(pen *p, const owf_dpage *page, const owf_dcell *c)
     d_dash(p, dashed);
     if (owf_dstyle_is(style, "text") || owf_dstyle_is(style, "edgeLabel"))
         ;
-    else if (owf_dstyle_is(style, "ellipse"))
+    else if (owf_dshape_outline(style, box, &sh)) {
+        int k;
+        for (k = 0; k < sh.nparts; k++) {
+            const owf_dshape_part *pt = &sh.parts[k];
+            path(p, sh.points + pt->first, pt->n, (pt->flags & OWF_DSHAPE_CLOSED) != 0,
+                 (pt->flags & OWF_DSHAPE_FILL) ? fill : 0, (pt->flags & OWF_DSHAPE_LINE) ? line : 0, w);
+        }
+    } else if (owf_dstyle_is(style, "ellipse"))
         note(p, d_ellipse(p, tx(p, box[0]), ty(p, box[1]), tw(box[2]), tw(box[3]), fill, line, w));
     else if (owf_dstyle_is(style, "triangle") || owf_dstyle_is(style, "parallelogram") ||
              owf_dstyle_is(style, "hexagon")) {

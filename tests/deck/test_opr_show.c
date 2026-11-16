@@ -260,9 +260,60 @@ static void transitions(void)
           opr_transition_tile_count(0, 50) < 0, "bad dissolve tiles are refused");
 }
 
+/* Where a show goes, and its own screen (design 7.1) */
+static void places(void)
+{
+    int w, h;
+    CHECK(opr_show_place(OPR_SHOW_AUTO, 8, 1280, 1024) == OPR_SHOW_OWN_SCREEN, "AGA (8 bits): its own screen");
+    CHECK(opr_show_place(OPR_SHOW_AUTO, 4, 640, 256) == OPR_SHOW_OWN_SCREEN, "16 colours: its own screen");
+    CHECK(opr_show_place(OPR_SHOW_AUTO, 16, 800, 600) == OPR_SHOW_WORKBENCH, "RTG 16 bits: the Workbench screen");
+    CHECK(opr_show_place(OPR_SHOW_AUTO, 24, 1920, 1080) == OPR_SHOW_WORKBENCH, "RTG 24 bits: the Workbench screen");
+    CHECK(opr_show_place(OPR_SHOW_AUTO, 32, 640, 480) == OPR_SHOW_WORKBENCH, "640 x 480 is big enough");
+    CHECK(opr_show_place(OPR_SHOW_AUTO, 16, 639, 480) == OPR_SHOW_OWN_SCREEN
+          && opr_show_place(OPR_SHOW_AUTO, 16, 640, 479) == OPR_SHOW_OWN_SCREEN, "smaller than 640 x 480: its own screen");
+    CHECK(opr_show_place(OPR_SHOW_AUTO, 15, 1024, 768) == OPR_SHOW_OWN_SCREEN, "15 bits is less than 16");
+    CHECK(opr_show_place(OPR_SHOW_OWN_SCREEN, 24, 1920, 1080) == OPR_SHOW_OWN_SCREEN, "Prefs: its own screen on RTG");
+    CHECK(opr_show_place(OPR_SHOW_WORKBENCH, 2, 640, 200) == OPR_SHOW_WORKBENCH, "Prefs: Workbench on a small one");
+    CHECK(opr_show_place(7, 8, 640, 480) == OPR_SHOW_OWN_SCREEN, "a choice it doesn't know is automatic");
+
+    CHECK(!strcmp(opr_show_place_word(OPR_SHOW_AUTO), "auto") && !strcmp(opr_show_place_word(OPR_SHOW_OWN_SCREEN), "own")
+          && !strcmp(opr_show_place_word(OPR_SHOW_WORKBENCH), "workbench") && !strcmp(opr_show_place_word(9), "auto"),
+          "the words kept");
+    CHECK(opr_show_place_from("own") == OPR_SHOW_OWN_SCREEN && opr_show_place_from("Workbench\n") == OPR_SHOW_WORKBENCH
+          && opr_show_place_from("  OWN") == OPR_SHOW_OWN_SCREEN && opr_show_place_from("auto") == OPR_SHOW_AUTO,
+          "read back, any case, a line end left on");
+    CHECK(opr_show_place_from(NULL) == OPR_SHOW_AUTO && opr_show_place_from("") == OPR_SHOW_AUTO
+          && opr_show_place_from("owner") == OPR_SHOW_AUTO && opr_show_place_from("work") == OPR_SHOW_AUTO,
+          "anything else is automatic");
+
+    opr_show_screen_size(OWF_DECK_16_9_WIDTH, OWF_DECK_16_9_HEIGHT, &w, &h);
+    CHECK(w == 853 && h == 480, "16:9: 853 x 480: %d x %d", w, h);
+    opr_show_screen_size(4, 3, &w, &h);
+    CHECK(w == 640 && h == 480, "4:3: 640 x 480: %d x %d", w, h);
+    opr_show_screen_size(16, 10, &w, &h);
+    CHECK(w == 768 && h == 480, "16:10: 768 x 480: %d x %d", w, h);
+    opr_show_screen_size(3, 4, &w, &h);
+    CHECK(w == 640 && h == 853, "portrait 3:4: 640 x 853: %d x %d", w, h);
+    opr_show_screen_size(1, 1, &w, &h);
+    CHECK(w == 640 && h == 640, "square: 640 x 640: %d x %d", w, h);
+    opr_show_screen_size(0, 5, &w, &h);
+    CHECK(w == 640 && h == 480, "no shape: 640 x 480");
+    opr_show_screen_size(1000000, 1, &w, &h);
+    CHECK(w == 4096 && h == 480, "a strip: kept to 4096 wide: %d", w);
+    opr_show_screen_size(1, 1000000, &w, &h);
+    CHECK(w == 640 && h == 4096, "a tall strip: 4096 high: %d", h);
+    opr_show_screen_size(4, 3, NULL, NULL);
+
+    CHECK(opr_show_screen_depth(0, 8) == 8 && opr_show_screen_depth(0, 24) == 8, "planar: 8 bits");
+    CHECK(opr_show_screen_depth(1, 16) == 16 && opr_show_screen_depth(1, 8) == 16 && opr_show_screen_depth(1, 15) == 16,
+          "RTG: 16 bits");
+    CHECK(opr_show_screen_depth(1, 24) == 24 && opr_show_screen_depth(1, 32) == 24, "RTG of 24 or 32: 24 bits");
+}
+
 int main(void)
 {
     navigation();
+    places();
     timings();
     transitions();
     printf("test_opr_show: %d checks, %d failed\n", checks, failures);

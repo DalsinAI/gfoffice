@@ -215,6 +215,12 @@ char *owf_xl_formula_move(const char *text, long drow, long dcol);
 /* From an XLSX file: "_xlfn." (and "_xlws.", "_xlpm.") off, and another
  * book's number ("[1]Rates!A1") as its file's name, books[0] for [1]. */
 char *owf_xl_formula_from_file(const char *text, char *const *books, int nbooks);
+/* The name formulas give another book: the last part of its path or URL, "%20" and the like decoded (NULL:
+ * none, or memory ran out). */
+char *owf_link_name(const char *target, size_t length);
+/* The book's last sheet made another book's (target) sheet: its values kept (no formulas or styles), the sheet
+ * taken out of the book. -1 when memory runs out (the sheet stays). */
+int owf_book_link_last_sheet(owf_book *book, const char *target, const char *sheet);
 /* For an XLSX file: "_xlfn." on where Excel wants it, and with links, each
  * other book by its number, the books, their sheets and names collected in
  * links for the file's externalLink parts. */
@@ -326,10 +332,13 @@ int owf_ooxml_kind(const unsigned char *data, size_t length);
  * "xl/worksheets/sheet1.xml". 0 when it does not fit. */
 int owf_opc_part_name(char *out, size_t size, const char *dir, const char *target);
 
-/* A chart as an .xlsx's chart part (DrawingML's c:chartSpace), and a drawing part (xdr:wsDr) anchoring n
- * charts, the k-th through its relationship "rId<k>" (owf_chart.c): what owf_sheet_charts reads back. */
+/* A chart as an .xlsx's chart part (DrawingML's c:chartSpace; owf_chart.c), and a drawing part (xdr:wsDr)
+ * anchoring n charts, the k-th through its relationship "rId<k>" (owf_chartbook.c): what owf_sheet_charts reads
+ * back. */
 int owf_chart_part_xml(const owf_chart *c, owf_buf *b);
 int owf_chart_drawing_xml(const owf_chart *charts, int n, owf_buf *b);
+/* A chart part's root (c:chartSpace) read into c, which holds nothing yet (owf_chart.c, for owf_chartbook.c). */
+void owf_chart_read_space(owf_chart *c, const owf_xml_node *space, int *failed);
 /* And a sheet's charts kept so, as an .xlsx's drawing is kept: its drawing, relationships and charts parts. */
 int owf_sheet_keep_charts(owf_book *book, int sheet, const owf_chart *charts, int n);
 
@@ -489,8 +498,8 @@ extern const unsigned short owf_pdf_widths[8][224];
 
 /* The formats. */
 extern const owf_format owf_format_fodt, owf_format_wordworth, owf_format_finalwriter;
-extern const owf_format owf_format_text, owf_format_amiga_text, owf_format_ftxt,
-    owf_format_ansi, owf_format_prowrite, owf_format_html, owf_format_pdf, owf_format_pdf_comments, owf_format_odt, owf_format_docx,
+extern const owf_format owf_format_markdown, owf_format_text, owf_format_amiga_text, owf_format_ftxt,
+    owf_format_ansi, owf_format_prowrite, owf_format_html, owf_format_pdf, owf_format_pdf_comments, owf_format_pdf_comments_margin, owf_format_odt, owf_format_docx,
     owf_format_rtf;
 
 #endif
