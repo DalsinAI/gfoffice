@@ -182,6 +182,31 @@ check: diagram-core-check
 
 .PHONY: diagram-core-test diagram-core-check
 
+# The Arrange menu's Align and Distribute (src/diag/odg_align.c).
+ODG_ALIGN_DEPS = $(ODG_DEPS) src/diag/odg_align.c include/opendiag_align.h tests/diag/test_odg_align.c
+
+$(OUT)/test-odg-align: $(ODG_ALIGN_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		$(ODG_SRC) src/diag/odg_align.c tests/diag/test_odg_align.c -lz -o $@
+
+$(OUT)/test-odg-align-asan: $(ODG_ALIGN_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_align.c \
+		tests/diag/test_odg_align.c -lz -o $@
+
+diagram-align-test: $(OUT)/test-odg-align
+	$(OUT)/test-odg-align
+
+diagram-align-check: $(OUT)/test-odg-align-asan
+	$(OUT)/test-odg-align-asan
+
+test: diagram-align-test
+check: diagram-align-check
+
+.PHONY: diagram-align-test diagram-align-check
+
 # Step D4: the canvas (src/diag/odg_view.c), drawn through GFOpenLayout's drawing calls, so it is tested when
 # GFOpenLayout is there (OPENLAYOUT_SRC) with the lines, polygons and ellipses it draws with.
 ODG_OLDRAW = $(wildcard $(OPENLAYOUT_SRC)/draw/oldraw.c)
