@@ -172,15 +172,20 @@ int owf_dpage_bounds(const owf_dpage *p, owf_dnum box[4]);
  * The outlines of the shapes beyond the first flowchart set (owf_dshape.c), for the canvas and every writer to draw
  * the same way: cylinder, cloud, document and multi-document, actor, note, card, cube, step, trapezoid, tape,
  * internal storage, callout, stored data, manual input, delay, display, off-page reference, cross, summing junction
- * and or, loop limit, sort, collate, single and double arrows, and a triangle turned by direction or flipped. A
+ * and or, loop limit, sort, collate, single and double arrows, and a triangle turned by direction or flipped; UML's
+ * lifeline, boundary, entity, control, destroy, component, package (folder), frame, required and provided
+ * interfaces, lollipop and end state; and the network set (server, PC, monitor, laptop, router, switch, hub,
+ * firewall, printer, mobile, tablet, modem, storage, mainframe, rack, patch panel, user), drawn flat. A
  * shape is named in its style as draw.io names it ("shape=cylinder3;", "shape=mxgraph.flowchart.delay;"), and
  * turned with direction=south, west or north and flipped with flipH=1 and flipV=1. */
 
 #define OWF_DSHAPE_POINTS 160
-#define OWF_DSHAPE_PARTS 8
+#define OWF_DSHAPE_PARTS 12
 #define OWF_DSHAPE_CLOSED 0x01u          /* the part's last point joins its first */
 #define OWF_DSHAPE_FILL   0x02u          /* filled with the fill colour */
 #define OWF_DSHAPE_LINE   0x04u          /* drawn round with the line colour */
+#define OWF_DSHAPE_INK    0x08u          /* filled with the line colour (a dot, a light, a socket) */
+#define OWF_DSHAPE_DASHED 0x10u          /* its line dashed whatever the style says (a lifeline) */
 
 typedef struct {
     int first, n;                        /* its points: points[first .. first + n - 1] */
