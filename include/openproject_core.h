@@ -150,6 +150,11 @@ enum {
     OPJ_COL_SV,                          /* NA without a status date */
     OPJ_COL_CV,
     OPJ_COL_LEVELING_DELAY,              /* "0d"; a summary's is blank; typed: a duration, "3ed" elapsed */
+    OPJ_COL_WORK,                        /* its assignments' work (a summary: its subtasks'), "40h"; worked out */
+    OPJ_COL_ACTUAL_WORK,                 /* work times % complete (a summary: its subtasks'), worked out */
+    OPJ_COL_REMAINING_WORK,              /* work less actual work, worked out */
+    OPJ_COL_COST,                        /* its assignments' cost, money; worked out */
+    OPJ_COL_ACTUAL_COST,                 /* cost times % complete (ACWP's), worked out */
     OPJ_NCOLS
 };
 
@@ -192,6 +197,17 @@ int opj_date_parse(const char *s, int default_minute, owf_ptime *t);
  * how many tasks it delayed in *delayed (when not NULL). Clear Leveling: every delay back to 0. */
 int opj_level(opj_doc *doc, int within_slack, int *delayed);
 int opj_clear_leveling(opj_doc *doc);
+
+/* ---- Update Tasks (MS Project's Tools > Tracking > Update Tasks...) ---- */
+
+/* Row's progress in one edit, each as typed in its cell, NULL or "" left as it is: the actual start, then
+ * the actual and remaining durations, then % Complete, then the actual finish. An actual duration sets %
+ * Complete against the duration (a longer one than planned stretches the task to it; below the whole
+ * never rounds to 100%); a remaining one makes the duration the actual plus it. The actual dates follow
+ * % Complete as the cells do. A summary takes only % Complete. OWF_ERR_FORMAT for text a cell wouldn't
+ * take or a row out of range, with nothing changed. */
+int opj_update_task(opj_doc *doc, int row, const char *percent, const char *actual, const char *remaining,
+                    const char *actual_start, const char *actual_finish);
 
 /* ---- Sort, Find and Replace (Project > Sort, Edit > Find..., Edit > Replace...) ---- */
 
@@ -384,6 +400,7 @@ typedef struct {
                                           * baseline as high in the lower half, the done part solid, and
                                           * the % Complete beside each bar in place of the resource names */
     int scroll_x, scroll_y;              /* the Network Diagram's scroll, in pixels */
+    int progress_lines;                  /* View > Progress Lines: a line down the chart at the status date */
     oldraw_font font;
     const opj_lines *lines;              /* the Gantt view's filter and groups (worked out for doc); NULL: every
                                           * task, a line each. first_row is then the top line shown; selected
@@ -395,7 +412,8 @@ typedef struct {
 void opj_view_init(opj_view *v, const opj_doc *doc, int width, int height, int row_height, int zoom);
 /* The column chooser (View > Columns, ARexx COLUMN). A column's width when shown: 32 ID, 180 Task Name, 56
  * Duration, 96 Start and Finish, 84 Predecessors, 64 % Complete, 48 WBS, 140 Resource Names, 96 the baseline
- * dates, 72 the variances, 140 Constraint Type, 96 Constraint Date, 160 Notes; 0 out of range. */
+ * dates, 72 the variances, 140 Constraint Type, 96 Constraint Date, 160 Notes, 64 Work, 80 Actual Work, 96
+ * Remaining Work, 80 Cost and Actual Cost; 0 out of range. */
 int opj_column_width(int column);
 /* 1 when v's table shows column. */
 int opj_view_column_shown(const opj_view *v, int column);
@@ -450,6 +468,16 @@ typedef struct {
 } opj_path;
 /* The line from link (of row's links) to row. 0 when there is none. */
 int opj_link_path(const opj_view *v, const opj_doc *doc, int row, int link, opj_path *path);
+
+/* Progress lines (MS Project's, at the status date Update Project sets): a line down the chart at the
+ * status date that jags, on the row of each task that has started or should have by then, to the point on
+ * its bar its % Complete reaches, then back; left of the line, a task is behind, right of it ahead. It
+ * runs straight past a summary, a heading, a task done by the status date and one not due to start yet.
+ * The status date's x in *x; 0 with progress_lines off or no status date. */
+int opj_status_x(const opj_view *v, const opj_doc *doc, long *x);
+/* Row's progress point: 1 with its x when the line jags to it, 0 when the line runs straight past. */
+int opj_progress_point(const opj_view *v, const opj_doc *doc, int row, long *x);
+#define OPJ_COLOUR_PROGRESS OLDRAW_RGB(0xE02020)
 
 /* Colours used. */
 #define OPJ_COLOUR_BAR OLDRAW_RGB(0x4A7BD0)
