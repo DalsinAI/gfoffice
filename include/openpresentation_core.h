@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.39.0"
+#define OPR_CORE_VERSION "0.40.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -668,6 +668,23 @@ int opr_show_next_hidden(opr_show *show);
  * timing expires. 0 means it is still showing; 1 means it advanced; -1 means
  * the show ended or the input/state was invalid. */
 int opr_show_tick(opr_show *show, unsigned long milliseconds);
+
+/* Where a show goes (design 7.1). Prefs choose OPR_SHOW_OWN_SCREEN or
+ * OPR_SHOW_WORKBENCH, or OPR_SHOW_AUTO: the Workbench screen when it is an
+ * RTG screen of 16 bits or more and at least 640 x 480, else a screen of
+ * the show's own (AGA, fewer than 256 colours, or too small). */
+enum { OPR_SHOW_AUTO, OPR_SHOW_OWN_SCREEN, OPR_SHOW_WORKBENCH };
+int opr_show_place(int choice, int wb_depth, int wb_width, int wb_height);
+/* The words Prefs keep a choice as ("auto", "own", "workbench"), and back
+ * (any case; anything else is OPR_SHOW_AUTO). */
+const char *opr_show_place_word(int choice);
+int opr_show_place_from(const char *word);
+/* The show's own screen for a slide of slide_w x slide_h (any units): its
+ * shape, at least 640 x 480 (480 high, wider for a wide slide; 640 wide,
+ * taller for a tall one); depth 8 on a planar (AGA) display, else 16, or
+ * 24 when the Workbench screen is 24 bits or more. */
+void opr_show_screen_size(long slide_w, long slide_h, int *width, int *height);
+int opr_show_screen_depth(int rtg, int wb_depth);
 
 /* Backend-independent transition geometry. A frame describes which rectangle
  * of the old and new full-screen bitmap to copy and where. Wipe has only a
