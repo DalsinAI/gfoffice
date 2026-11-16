@@ -11,12 +11,16 @@ page 1 master 0 frames 3
       run 1 "bold Arial" bold 12.0pt font "Arial"
   frame 1 table box 20.0 60.0 100.0 40.0 mm (emu 720000 2160000 4320000 3600000) shape 10 text-id 2 story 1 table 2x2
     para "One"
+      cell row 0 column 0 of 2
       run 0 "One" 10.0pt font "Times New Roman"
     para "Two"
+      cell row 0 column 1 of 2
       run 0 "Two" 10.0pt font "Times New Roman"
     para "Three"
+      cell row 1 column 0 of 2
       run 0 "Three" 10.0pt font "Times New Roman"
     para "Four"
+      cell row 1 column 1 of 2
       run 0 "Four" 10.0pt font "Times New Roman"
   frame 2 shape box 140.0 60.0 40.0 40.0 mm (emu 5040000 2160000 6480000 3600000) shape 5
 stories 2
