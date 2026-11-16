@@ -183,6 +183,18 @@ typedef struct {
 } opr_spell_range;
 int opr_spell_words(struct ow_spell *spell, const char *text, size_t length,
                     opr_spell_range *ranges, int max_ranges);
+/* The misspelt words of one object's text (obj OPR_NOTES: the slide's
+ * notes), for the wavy underline as you type. With caret not NULL the word
+ * the caret is in, or just after, is left out: it is still being typed. A
+ * placeholder showing its prompt, a line or a hidden object has none. Up to
+ * max_marks written; the return is how many there are in all, -1 for bad
+ * input or no memory. */
+typedef struct {
+    int para;
+    size_t start, end;
+} opr_spell_mark;
+int opr_spell_marks(const owf_deck *deck, struct ow_spell *spell, int slide, int obj, const opr_pos *caret,
+                    opr_spell_mark *marks, int max_marks);
 /* Delete exactly the selected characters and paragraph separators. Both ends
  * collapse to the start. The caller owns the Undo snapshot, as for typing. */
 int opr_text_delete_selection(owf_deck *deck, int slide, int obj,
