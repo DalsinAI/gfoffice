@@ -17,9 +17,11 @@
  * level's look (the master's title, outline level, notes or other text), so
  * that a master's look stays the master's.
  *
- * What the model doesn't edit (other shapes, embedded charts and objects,
- * animations, rare transitions) is kept as the file's XML, with the styles,
- * drawing definitions and package members it refers to, and written back.
+ * An embedded chart is read with its own data (owf_chartodf.c) and written
+ * back from it. What the model doesn't edit (other shapes, other embedded
+ * objects, animations, rare transitions) is kept as the file's XML, with
+ * the styles, drawing definitions and package members it refers to, and
+ * written back.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_deck_int.h"
@@ -908,6 +910,33 @@ static void keep_refs(odp *o, const owf_xml_node *n, int where, int depth)
             keep_refs(o, c, where, depth + 1);
 }
 
+/* An embedded chart object's chart (draw:object xlink:href="./Object 1", its content.xml an office:chart), read
+ * with its own data (Presentation gap 2): malloc'd, or NULL when it is not one (or memory ran out). */
+static owf_chart *read_chart_object(odp *o, const owf_xml_node *ob)
+{
+    const char *href = attr(ob, NS_XLINK, "href");
+    char path[256];
+    unsigned char *data = NULL;
+    size_t length = 0;
+    owf_chart *chart;
+    if (!o->zip || !href)
+        return NULL;
+    if (!strncmp(href, "./", 2))
+        href += 2;
+    if (!*href || strlen(href) + sizeof "/content.xml" > sizeof path)
+        return NULL;
+    snprintf(path, sizeof path, "%s/content.xml", href);
+    if (owf_unzip_read(o->zip, path, &data, &length) != OWF_OK)
+        return NULL;
+    chart = malloc(sizeof *chart);
+    if (chart && owf_chart_from_odf((const char *)data, length, chart) != OWF_OK) {
+        free(chart);
+        chart = NULL;
+    }
+    free(data);
+    return chart;
+}
+
 /* An object kept whole, with what it refers to. */
 static int keep_object(odp *o, const owf_xml_node *n, int where)
 {
@@ -1787,7 +1816,12 @@ static int read_object(odp *o, objctx *c, const owf_xml_node *n, int parent, int
         if (!ob)
             ob = owf_xml_child(n, NS_DRAW, "floating-frame");
         read_look(o, obj, st, 0);
-        if (ob) {
+        if (ob && is(ob, NS_DRAW, "object") && (obj->chart = read_chart_object(o, ob)) != NULL) {
+            obj->kind = OWF_OBJ_CHART;          /* written back from its chart (out_odp.c), not kept */
+            owf_report_add(o->report, OWF_NOTE_APPROX, "Charts are shown as their box; their data is kept");
+            if (img)
+                obj->image = load_picture(o, img, obj->width, obj->height, obj->alt);
+        } else if (ob) {
             obj->kind = OWF_OBJ_OTHER;
             what = is(ob, NS_DRAW, "plugin") ? "Sound and video" : "Embedded charts and objects";
             if (img)       /* its replacement picture, to show */

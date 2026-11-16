@@ -69,7 +69,7 @@ esac
 OWFSRC_DOCS=""
 for f in $OWFSRC; do
     case "$f" in
-    */owf_book.c | */owf_cfb.c | */owf_xlfunc.c | */in_xls.c | */out_csv.c | */owf_chart.c | */owf_chartbook.c) ;;
+    */owf_book.c | */owf_cfb.c | */owf_xlfunc.c | */in_xls.c | */out_csv.c | */owf_chart.c | */owf_chartbook.c | */owf_chartodf.c) ;;
     */owf_booknum.c | */owf_xlformula.c | */in_xlsx.c | */out_xlsx.c | */in_ods.c | */out_ods.c | */in_csv.c) ;;
     */owf_deck.c | */in_odp.c | */out_odp.c | */in_pptx.c | */owf_pdf.c | */owf_pdffonts.c) ;;
     */in_pub.c) ;;   # GFOpenPublisher's .pub reader: it needs owf_cfb.c
@@ -171,7 +171,7 @@ else
 OWFSRC_DECK="$OWFSRC_DOCS"
 # owf_chart.c: a slide's charts are read and written as chart parts (Presentation gap 2); owf_booknum.c reads
 # and writes their numbers
-for f in owf_deck.c in_odp.c out_odp.c in_pptx.c owf_pdf.c owf_pdffonts.c owf_chart.c owf_booknum.c; do
+for f in owf_deck.c in_odp.c out_odp.c in_pptx.c owf_pdf.c owf_pdffonts.c owf_chart.c owf_chartodf.c owf_booknum.c; do
     OWFSRC_DECK="$OWFSRC_DECK $HERE/libowf/src/$f"
 done
 # shellcheck disable=SC2086
