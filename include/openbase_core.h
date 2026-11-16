@@ -270,6 +270,12 @@ int ob_rows_at(ob_project *p, const char *table, ob_int first, int max, ob_row_f
 int ob_rexx_rows(ob_project *p, const char *table, ob_int current, const char *command,
                  char *out, size_t size, ob_int *row);
 
+/* 1 when command must be refused while a form window is open (core 0.14.3):
+ * OPEN, QUIT, TABLE t, ROW n, FIRSTROW NEXTROW PREVROW LASTROW, ADDROW,
+ * CHANGEROW and DELETEROW. TABLE and ROW on their own, COUNTROWS, GETROW,
+ * GETFIELDS and the rest only read, so they still answer. */
+int ob_rexx_form_refuses(const char *command);
+
 /* ---- Views: a datasheet sorted and filtered (design 5.4) ----
  * sort: a field to sort by ("" keeps key order), desc for Z to A; ties keep
  * key order. Text fields sort and compare without case.

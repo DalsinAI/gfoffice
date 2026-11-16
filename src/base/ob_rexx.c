@@ -250,3 +250,18 @@ done:
     free(t);
     return rc;
 }
+
+/* While a form is open, the ARexx commands that would change the table or
+ * row it shows, or the rows themselves, are refused (core 0.14.3). */
+int ob_rexx_form_refuses(const char *command)
+{
+    static const char *const moves[] = { "OPEN", "QUIT", "FIRSTROW", "NEXTROW", "PREVROW", "LASTROW",
+                                         "ADDROW", "CHANGEROW", "DELETEROW" };
+    const char *rest = "";
+    size_t i;
+    if (!command) return 0;
+    command = rx_skip(command);
+    for (i = 0; i < sizeof moves / sizeof moves[0]; i++)
+        if (rx_word(command, moves[i], NULL)) return 1;
+    return (rx_word(command, "TABLE", &rest) || rx_word(command, "ROW", &rest)) && *rest;
+}

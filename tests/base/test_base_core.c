@@ -1809,6 +1809,25 @@ static void test_rexx_rows(void)
     ob_close(p);
 }
 
+/* While a form is open the port refuses what would move it or change rows (core 0.14.3). */
+static void test_rexx_form_guard(void)
+{
+    static const char *const refused[] = {
+        "OPEN DH0:Shop.oadb", "QUIT", "TABLE Orders", "row 3", "  ROW 3", "FIRSTROW", "nextrow", "PREVROW", "LASTROW",
+        "ADDROW Name=Zoe", "addrow", "CHANGEROW KEY 2 Town=Hull", "DELETEROW", "DELETEROW KEY 2",
+    };
+    static const char *const answered[] = {
+        "TABLE", "ROW", "ROW   ", "TABLES", "COUNTROWS", "GETROW", "GETROW KEY 2 FIELD Name", "GETFIELDS", "FORMS",
+        "VERSION", "HELP", "LASTERROR", "ISDIRTY", "GETFILE", "ROWS", "ADDROWS", "OPENED", "",
+    };
+    unsigned i;
+    for (i = 0; i < sizeof refused / sizeof refused[0]; i++)
+        CHECK(ob_rexx_form_refuses(refused[i]), "refused while a form is open: %s", refused[i]);
+    for (i = 0; i < sizeof answered / sizeof answered[0]; i++)
+        CHECK(!ob_rexx_form_refuses(answered[i]), "still answers: %s", answered[i]);
+    CHECK(!ob_rexx_form_refuses(NULL), "no command");
+}
+
 static void test_csv_options(void)
 {
     ob_project *p = fresh("csvopt.oadb");
@@ -2911,6 +2930,7 @@ int main(int argc, char **argv)
     test_relation_draw();
     test_dbf();
     test_rexx_rows();
+    test_rexx_form_guard();
     test_queries();
     test_designed_forms();
     test_form_editing();

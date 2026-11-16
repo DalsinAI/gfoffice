@@ -5291,10 +5291,9 @@ static int rexx_do_command(const char *command, char **result_out)
     int rc = RX_OK, r;
     result_text[0] = 0;
     command = skip_space(command);
-    if (form_up && (starts_word_ci(command, "OPEN", NULL) || starts_word_ci(command, "QUIT", NULL)
-                    || ((starts_word_ci(command, "TABLE", &arg) || starts_word_ci(command, "ROW", &arg)) && *arg))) {
+    if (form_up && ob_rexx_form_refuses(command)) {
         rc = RX_NOW;
-        put_text(result_text, sizeof result_text, "A form is open: close it first (TABLE and ROW on their own still answer)");
+        put_text(result_text, sizeof result_text, "A form is open: close it first (TABLE, ROW, COUNTROWS, GETROW and GETFIELDS still answer)");
     } else if (starts_word_ci(command, "VERSION", &arg)) put_text(result_text, sizeof result_text, VERSION_TEXT);
     else if (starts_word_ci(command, "LASTERROR", &arg)) put_text(result_text, sizeof result_text, rexx_lasterror);
     else if (starts_word_ci(command, "HELP", &arg))
