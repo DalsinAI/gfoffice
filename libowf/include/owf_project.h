@@ -119,6 +119,11 @@ typedef struct {
      * finish there */
     int has_actual_start, has_actual_finish;
     owf_ptime actual_start, actual_finish;
+    /* levelling (owf_project_level): the scheduler starts the task this much later than its links and
+     * constraint allow; working minutes on its calendar, or every minute with level_delay_elapsed (MSPDI's
+     * "edays"). Not for a task that must start or finish on a date, or an ALAP one. */
+    long level_delay;
+    int level_delay_elapsed;
 } owf_ptask;
 
 /* ---- Resources and assignments (owf_presource.c) ---- */
@@ -225,6 +230,19 @@ void owf_project_set_baseline_n(owf_project *p, int n, int first, int count);
 void owf_project_clear_baseline_n(owf_project *p, int n, int first, int count);
 /* Baseline n of a task into *out; 1 when it is saved, else 0 (and *out zeroed). */
 int owf_ptask_baseline(const owf_ptask *t, int n, owf_pbaseline *out);
+/* ---- Levelling (owf_presource.c) ---- */
+
+/* MS Project's Level Resources: clears every task's leveling delay, then delays tasks until no work
+ * resource has more assigned at once than its max units, where moving a task can mend it. These keep
+ * their place: summaries, milestones, tasks with an actual start, tasks that must start or finish on a
+ * date, ALAP tasks. At a clash the tasks that start earlier, then have less total slack, then come first
+ * in the plan keep theirs; the next is moved to where one of them finishes, until it fits. within_slack:
+ * a task is only moved within the total slack it had (MS Project's "Level only within available slack").
+ * Schedules p. How many tasks it delayed; -1 when the plan won't schedule (a loop) or for memory. */
+int owf_project_level(owf_project *p, int within_slack);
+/* Every task's leveling delay back to 0, and schedules p; OWF_OK or what owf_project_schedule gave. */
+int owf_project_clear_leveling(owf_project *p);
+
 /* A task's variance from its baseline, now less then; 0 with no baseline. Start and finish in working
  * minutes on the task's calendar (later is above 0), duration and work in minutes, cost in hundredths. */
 enum { OWF_VAR_START, OWF_VAR_FINISH, OWF_VAR_DURATION, OWF_VAR_WORK, OWF_VAR_COST };

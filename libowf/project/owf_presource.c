@@ -419,3 +419,160 @@ long owf_ptask_earned(const owf_project *p, int task, owf_ptime status, int whic
     default: return sum[which];
     }
 }
+
+/* ---- Levelling ---- */
+
+#define LEVEL_DELAY_MAX (1000L * 365 * 1440)   /* a thousand years of minutes, the most a delay grows to */
+
+/* 1 when levelling may move task i. */
+static int level_movable(const owf_project *p, int i)
+{
+    const owf_ptask *t = &p->tasks[i];
+    return !t->summary && t->duration > 0 && !t->milestone && !t->has_actual_start && t->constraint != OWF_CON_MSO &&
+           t->constraint != OWF_CON_MFO && t->constraint != OWF_CON_ALAP;
+}
+
+/* 1 when task i takes up time at at. */
+static int level_covers(const owf_ptask *t, owf_ptime at)
+{
+    return t->early_finish > t->early_start && t->early_start <= at && at < t->early_finish;
+}
+
+typedef struct {
+    int task;
+    long units;
+    int movable;
+} level_entry;
+
+/* Who keeps their place: those that can't move, then the earlier start, less slack, the first in the plan. */
+static int level_before(const owf_project *p, const level_entry *a, const level_entry *b)
+{
+    const owf_ptask *ta = &p->tasks[a->task], *tb = &p->tasks[b->task];
+    if (a->movable != b->movable) return a->movable < b->movable;
+    if (ta->early_start != tb->early_start) return ta->early_start < tb->early_start;
+    if (ta->total_slack != tb->total_slack) return ta->total_slack < tb->total_slack;
+    return a->task < b->task;
+}
+
+/* An insertion sort (a clash has few tasks, and qsort would need the plan in a global). */
+static void level_sort(const owf_project *p, level_entry *e, int n)
+{
+    int i, j;
+    for (i = 1; i < n; i++) {
+        level_entry x = e[i];
+        for (j = i; j > 0 && level_before(p, &x, &e[j - 1]); j--) e[j] = e[j - 1];
+        e[j] = x;
+    }
+}
+
+/* The earliest clash after from[r] on any work resource: its resource in *res and time in *at; 0 with none. */
+static int level_find(const owf_project *p, const owf_ptime *from, int *res, owf_ptime *at)
+{
+    int i, j, found = 0;
+    for (i = 0; i < p->nassigns; i++) {
+        const owf_passign *a = &p->assigns[i];
+        const owf_presource *r;
+        owf_ptime t;
+        long load = 0;
+        if (a->task < 0 || a->task >= p->ntasks || a->resource < 0 || a->resource >= p->nresources || a->units <= 0)
+            continue;
+        r = &p->resources[a->resource];
+        t = p->tasks[a->task].early_start;
+        if (r->type != OWF_RES_WORK || !level_covers(&p->tasks[a->task], t) || t <= from[a->resource]) continue;
+        if (found && t >= *at) continue;
+        for (j = 0; j < p->nassigns; j++) {
+            const owf_passign *b = &p->assigns[j];
+            if (b->resource != a->resource || b->task < 0 || b->task >= p->ntasks || b->units <= 0) continue;
+            if (level_covers(&p->tasks[b->task], t)) load += b->units;
+            if (load > r->max_units) break;
+        }
+        if (load > r->max_units) {
+            found = 1;
+            *res = a->resource;
+            *at = t;
+        }
+    }
+    return found;
+}
+
+int owf_project_clear_leveling(owf_project *p)
+{
+    int i;
+    if (!p) return OWF_ERR_FORMAT;
+    for (i = 0; i < p->ntasks; i++) p->tasks[i].level_delay = 0, p->tasks[i].level_delay_elapsed = 0;
+    return owf_project_schedule(p);
+}
+
+int owf_project_level(owf_project *p, int within_slack)
+{
+    owf_ptime *from = NULL;
+    long *slack = NULL;
+    level_entry *e = NULL;
+    int i, n, rounds, delayed = 0, rc;
+    if (!p || owf_project_clear_leveling(p) != OWF_OK) return -1;
+    if (!p->nassigns || !p->nresources || !p->ntasks) return 0;
+    from = owf_malloc((size_t)p->nresources * sizeof *from);
+    slack = owf_malloc((size_t)p->ntasks * sizeof *slack);
+    e = owf_malloc((size_t)p->nassigns * sizeof *e);
+    if (!from || !slack || !e) {
+        owf_free(from), owf_free(slack), owf_free(e);
+        return -1;
+    }
+    for (i = 0; i < p->nresources; i++) from[i] = (owf_ptime)-0x7FFFFFFFL - 1;
+    for (i = 0; i < p->ntasks; i++) slack[i] = p->tasks[i].total_slack;
+    for (rounds = 64 * p->ntasks + 64; rounds > 0; rounds--) {
+        int r, k, moved = -1;
+        owf_ptime at, to = 0;
+        long load = 0, max;
+        if (!level_find(p, from, &r, &at)) break;
+        max = p->resources[r].max_units;
+        for (n = 0, i = 0; i < p->nassigns; i++) {
+            const owf_passign *a = &p->assigns[i];
+            if (a->resource != r || a->task < 0 || a->task >= p->ntasks || a->units <= 0) continue;
+            if (!level_covers(&p->tasks[a->task], at)) continue;
+            e[n].task = a->task;
+            e[n].units = a->units;
+            e[n++].movable = level_movable(p, a->task);
+        }
+        level_sort(p, e, n);
+        /* keep what fits, in that order; the first that doesn't and may move goes after the earliest
+           finish of those kept */
+        for (k = 0; k < n; k++) {
+            if (load + e[k].units <= max || !e[k].movable) {
+                load += e[k].units;
+                continue;
+            }
+            to = 0;
+            for (i = 0; i < k; i++) {
+                owf_ptime f = p->tasks[e[i].task].early_finish;
+                if (f > at && (!to || f < to)) to = f;
+            }
+            if (to) {
+                owf_ptask *t = &p->tasks[e[k].task];
+                const owf_pcal *c = task_cal(p, t);
+                long more = c ? owf_pcal_work(c, t->early_start, to) : to - t->early_start;
+                if (more <= 0) more = 1;
+                if (t->level_delay + more <= LEVEL_DELAY_MAX &&
+                    (!within_slack || t->level_delay + more <= slack[e[k].task])) {
+                    t->level_delay += more;
+                    t->level_delay_elapsed = 0;
+                    moved = e[k].task;
+                    break;
+                }
+            }
+            load += e[k].units;                  /* it stays: what comes after it sees it */
+        }
+        if (moved < 0) {
+            from[r] = at;                        /* nothing here can move: look past it */
+            continue;
+        }
+        if ((rc = owf_project_schedule(p)) != OWF_OK) {
+            owf_free(from), owf_free(slack), owf_free(e);
+            return -1;
+        }
+    }
+    for (i = 0; i < p->ntasks; i++)
+        if (p->tasks[i].level_delay > 0) delayed++;
+    owf_free(from), owf_free(slack), owf_free(e);
+    return delayed;
+}
