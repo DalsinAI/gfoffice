@@ -153,13 +153,44 @@ static const char pres_xml[] =
     "<p:presentation xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" "
     "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" "
     "xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\">"
+    "<p:sldMasterIdLst><p:sldMasterId id=\"2147483648\" r:id=\"rId1\"/></p:sldMasterIdLst>"
     "<p:sldIdLst><p:sldId id=\"256\" r:id=\"rId2\"/></p:sldIdLst>"
     "<p:sldSz cx=\"9144000\" cy=\"6858000\"/><p:notesSz cx=\"6858000\" cy=\"9144000\"/></p:presentation>";
 static const char pres_rels[] =
     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
     "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+    "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
+    "slideMaster\" Target=\"slideMasters/slideMaster1.xml\"/>"
     "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide\" "
     "Target=\"slides/slide1.xml\"/></Relationships>";
+/* the plainest master and layout PowerPoint reads: no placeholders, no theme */
+static const char master_xml[] =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+    "<p:sldMaster xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" "
+    "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" "
+    "xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\"><p:cSld><p:spTree>"
+    "<p:nvGrpSpPr><p:cNvPr id=\"1\" name=\"\"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld>"
+    "<p:clrMap bg1=\"lt1\" tx1=\"dk1\" bg2=\"lt2\" tx2=\"dk2\" accent1=\"accent1\" accent2=\"accent2\" "
+    "accent3=\"accent3\" accent4=\"accent4\" accent5=\"accent5\" accent6=\"accent6\" hlink=\"hlink\" "
+    "folHlink=\"folHlink\"/><p:sldLayoutIdLst><p:sldLayoutId id=\"2147483649\" r:id=\"rId1\"/></p:sldLayoutIdLst>"
+    "</p:sldMaster>";
+static const char master_rels[] =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+    "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+    "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
+    "slideLayout\" Target=\"../slideLayouts/slideLayout1.xml\"/></Relationships>";
+static const char layout_xml[] =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+    "<p:sldLayout xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" "
+    "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" "
+    "xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\" type=\"blank\"><p:cSld name=\"Blank\">"
+    "<p:spTree><p:nvGrpSpPr><p:cNvPr id=\"1\" name=\"\"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>"
+    "</p:spTree></p:cSld></p:sldLayout>";
+static const char layout_rels[] =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+    "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+    "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
+    "slideMaster\" Target=\"../slideMasters/slideMaster1.xml\"/></Relationships>";
 static const char slide_xml[] =
     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
     "<p:sld xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" "
@@ -174,6 +205,8 @@ static const char slide_xml[] =
 static const char slide_rels[] =
     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
     "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+    "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
+    "slideLayout\" Target=\"../slideLayouts/slideLayout1.xml\"/>"
     "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart\" "
     "Target=\"../charts/chart1.xml\"/></Relationships>";
 
@@ -188,6 +221,10 @@ static unsigned char *make_pptx(size_t *n)
     owf_zip_add(z, "_rels/.rels", root_rels, strlen(root_rels), 1);
     owf_zip_add(z, "ppt/presentation.xml", pres_xml, strlen(pres_xml), 1);
     owf_zip_add(z, "ppt/_rels/presentation.xml.rels", pres_rels, strlen(pres_rels), 1);
+    owf_zip_add(z, "ppt/slideMasters/slideMaster1.xml", master_xml, strlen(master_xml), 1);
+    owf_zip_add(z, "ppt/slideMasters/_rels/slideMaster1.xml.rels", master_rels, strlen(master_rels), 1);
+    owf_zip_add(z, "ppt/slideLayouts/slideLayout1.xml", layout_xml, strlen(layout_xml), 1);
+    owf_zip_add(z, "ppt/slideLayouts/_rels/slideLayout1.xml.rels", layout_rels, strlen(layout_rels), 1);
     owf_zip_add(z, "ppt/slides/slide1.xml", slide_xml, strlen(slide_xml), 1);
     owf_zip_add(z, "ppt/slides/_rels/slide1.xml.rels", slide_rels, strlen(slide_rels), 1);
     owf_zip_add(z, "ppt/charts/chart1.xml", chart_xml, strlen(chart_xml), 1);
