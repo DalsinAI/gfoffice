@@ -928,6 +928,7 @@ typedef struct snapshot {
     int *table_col_widths;
     /* and its rows' heights and merged cells */
     int table_nrows, table_nmerges;
+    unsigned table_design;
     int *table_row_heights;
     owf_table_merge *table_merges;
     /* SNAP_SLIDE owns saved when saved_present is set. The saved slide and
@@ -1152,6 +1153,7 @@ static int snap_take(snapshot *s, const owf_deck *deck, int slide, int obj)
         memcpy(s->table_row_heights, o->row_heights, (size_t)o->nrows * sizeof *s->table_row_heights);
     }
     s->table_nrows = o->nrows;
+    s->table_design = o->table_design;
     if (o->merges && o->nmerges > 0) {
         s->table_merges = owf_malloc((size_t)o->nmerges * sizeof *s->table_merges);
         if (!s->table_merges) {
@@ -1308,6 +1310,9 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
         ncols = o->nmerges;
         o->nmerges = s->table_nmerges;
         s->table_nmerges = ncols;
+        flags = o->table_design;
+        o->table_design = s->table_design;
+        s->table_design = flags;
         {
             owf_table_merge *m = o->merges;
             o->merges = s->table_merges;
@@ -2938,6 +2943,142 @@ int opr_table_delete_column(opr_undo *u, owf_deck *deck, int slide, int obj,
         o->text.paras[i].table_cols = o->ncols;
     }
     table_merges_shift(o, 0, column, -1);
+    structural_push(u, &before);
+    return 0;
+}
+
+/* The merge with row, col in it, or -1. */
+static int table_merge_index(const owf_obj *o, int row, int col)
+{
+    int i;
+    for (i = 0; i < o->nmerges; ++i) {
+        const owf_table_merge *m = &o->merges[i];
+        if (row >= m->row && row < m->row + m->rows && col >= m->col && col < m->col + m->cols)
+            return i;
+    }
+    return -1;
+}
+
+/* Adds a merge to a table's list. -1 when memory runs out. */
+static int table_merge_add(owf_obj *o, int row, int col, int rows, int cols)
+{
+    owf_table_merge *m = owf_realloc(o->merges, (size_t)(o->nmerges + 1) * sizeof *m);
+    if (!m)
+        return -1;
+    o->merges = m;
+    m[o->nmerges].row = row;
+    m[o->nmerges].col = col;
+    m[o->nmerges].rows = rows;
+    m[o->nmerges].cols = cols;
+    ++o->nmerges;
+    return 0;
+}
+
+/* Sets a row's least height (0: as its text needs), the list growing to
+ * hold it, new rows 0. -1 when memory runs out. */
+static int table_row_height(owf_obj *o, int row, int twips)
+{
+    if (row >= o->nrows) {
+        int *h = owf_realloc(o->row_heights, (size_t)(row + 1) * sizeof *h);
+        if (!h)
+            return -1;
+        memset(&h[o->nrows], 0, (size_t)(row + 1 - o->nrows) * sizeof *h);
+        o->row_heights = h;
+        o->nrows = row + 1;
+    }
+    o->row_heights[row] = twips;
+    return 0;
+}
+
+int opr_table_merge(opr_undo *u, owf_deck *deck, int slide, int obj,
+                    int row, int column, int rows, int columns)
+{
+    snapshot before;
+    owf_obj *o = object(deck, slide, obj);
+    int nrows, ncols, r, c, made;
+    if (!u || !deck || !o)
+        return -1;
+    if (table_dimensions(o, &nrows, &ncols) < 0 || row < 0 || column < 0 || rows < 1 || columns < 1 ||
+        rows * columns < 2 || row + rows > nrows || column + columns > ncols)
+        return -2;
+    for (r = row; r < row + rows; ++r)
+        for (c = column; c < column + columns; ++c)
+            if (table_merge_index(o, r, c) >= 0)
+                return -2;
+    if (snap_take(&before, deck, slide, obj) < 0)
+        return -1;
+    made = table_merge_add(o, row, column, rows, columns);
+    if (made < 0) {
+        snap_free(&before);
+        return -1;
+    }
+    structural_push(u, &before);
+    return 0;
+}
+
+int opr_table_split(opr_undo *u, owf_deck *deck, int slide, int obj,
+                    int row, int column)
+{
+    snapshot before;
+    owf_obj *o = object(deck, slide, obj);
+    int k;
+    if (!u || !deck || !o)
+        return -1;
+    if (o->kind != OWF_OBJ_TABLE || (k = table_merge_index(o, row, column)) < 0)
+        return -2;
+    if (snap_take(&before, deck, slide, obj) < 0)
+        return -1;
+    memmove(&o->merges[k], &o->merges[k + 1], (size_t)(o->nmerges - k - 1) * sizeof *o->merges);
+    if (!--o->nmerges) {
+        owf_free(o->merges);
+        o->merges = NULL;
+    }
+    structural_push(u, &before);
+    return 0;
+}
+
+int opr_table_set_row_height(opr_undo *u, owf_deck *deck, int slide, int obj,
+                             int row, int twips)
+{
+    snapshot before;
+    owf_obj *o = object(deck, slide, obj);
+    int nrows, set;
+    if (!u || !deck || !o)
+        return -1;
+    if (table_dimensions(o, &nrows, NULL) < 0 || row < 0 || row >= nrows || twips < 0 || twips > 31680)
+        return -2;   /* 31680 twips: 22 inches, past any slide */
+    if ((o->row_heights && row < o->nrows ? o->row_heights[row] : 0) == twips)
+        return 0;
+    if (snap_take(&before, deck, slide, obj) < 0)
+        return -1;
+    set = table_row_height(o, row, twips);
+    if (set >= 0 && o->nrows < nrows)
+        set = table_row_height(o, nrows - 1, 0);
+    if (set < 0) {
+        snap_swap(&before, deck, NULL);
+        snap_free(&before);
+        return -1;
+    }
+    structural_push(u, &before);
+    return 0;
+}
+
+int opr_table_set_design(opr_undo *u, owf_deck *deck, int slide, int obj,
+                         unsigned design)
+{
+    snapshot before;
+    owf_obj *o = object(deck, slide, obj);
+    const unsigned all = OWF_TABLE_FIRST_ROW | OWF_TABLE_LAST_ROW | OWF_TABLE_FIRST_COL |
+                         OWF_TABLE_LAST_COL | OWF_TABLE_BANDED_ROWS | OWF_TABLE_BANDED_COLS;
+    if (!u || !deck || !o)
+        return -1;
+    if (o->kind != OWF_OBJ_TABLE || (design & ~all))
+        return -2;
+    if (o->table_design == design)
+        return 0;
+    if (snap_take(&before, deck, slide, obj) < 0)
+        return -1;
+    o->table_design = design;
     structural_push(u, &before);
     return 0;
 }
