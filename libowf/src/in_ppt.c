@@ -315,24 +315,25 @@ static void say(ppt *x, unsigned what, owf_note_level level, const char *text)
     owf_report_add(x->report, level, "%s", text);
 }
 
-/* The persist object's record, by id. */
+/* The persist object's record, by id: a binary search of the sorted directory (sort_persist). */
 static int persist_rec(const ppt *x, unsigned long id, rec *r)
 {
-    size_t i;
+    size_t lo = 0, hi = x->npersist;
     if (!id)
         return 0;
-    for (i = 0; i < x->npersist; i++)
-        if (x->persist[i].id == id)
-            return rec_at(x->doc, x->persist[i].offset, r);
-    return 0;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (x->persist[mid].id < id)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo < x->npersist && x->persist[lo].id == id && rec_at(x->doc, x->persist[lo].offset, r);
 }
 
+/* An entry at the end; the newest edit's entries come first, as the edits are read newest first. */
 static int add_persist(ppt *x, unsigned long id, unsigned long offset, size_t *cap)
 {
-    size_t i;
-    for (i = 0; i < x->npersist; i++)
-        if (x->persist[i].id == id)
-            return 1;                /* a newer save's */
     if (x->npersist == *cap) {
         size_t n = *cap ? *cap * 2 : 64;
         persist_entry *p = realloc(x->persist, n * sizeof *p);
@@ -344,6 +345,44 @@ static int add_persist(ppt *x, unsigned long id, unsigned long offset, size_t *c
     x->persist[x->npersist].id = id;
     x->persist[x->npersist].offset = offset;
     x->npersist++;
+    return 1;
+}
+
+/* The directory sorted by id, keeping for each id its first entry (the newest edit's): a stable merge sort,
+ * n log n (the library's runtime has no qsort, and qsort is not stable). 0 when memory ran out. */
+static int sort_persist(ppt *x)
+{
+    size_t n = x->npersist, width, i, k;
+    persist_entry *a = x->persist, *b, *t;
+    if (n < 2)
+        return 1;
+    if (!(b = malloc(n * sizeof *b)))
+        return 0;
+    for (width = 1; width < n; width *= 2) {
+        for (i = 0; i < n; i += 2 * width) {
+            size_t mid = i + width < n ? i + width : n, end = i + 2 * width < n ? i + 2 * width : n;
+            size_t l = i, r = mid;
+            k = i;
+            while (l < mid && r < end)
+                b[k++] = a[r].id < a[l].id ? a[r++] : a[l++];
+            while (l < mid)
+                b[k++] = a[l++];
+            while (r < end)
+                b[k++] = a[r++];
+        }
+        t = a;
+        a = b;
+        b = t;
+    }
+    if (a != x->persist) {
+        memcpy(x->persist, a, n * sizeof *a);
+        b = a;
+    }
+    free(b);
+    for (i = 1, k = 1; i < n; i++)
+        if (x->persist[i].id != x->persist[k - 1].id)
+            x->persist[k++] = x->persist[i];
+    x->npersist = k;
     return 1;
 }
 
@@ -406,6 +445,8 @@ static int read_persist(ppt *x, span current, unsigned long *doc_ref)
             break;                   /* older edits come first in the stream */
         at = (long)prev;
     }
+    if (!sort_persist(x))
+        return OWF_ERR_MEMORY;
     return *doc_ref && x->npersist ? OWF_OK : OWF_ERR_CORRUPT;
 }
 

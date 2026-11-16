@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <zlib.h>
 
 static int checks, failures;
@@ -779,6 +780,76 @@ static void check_deck(const unsigned char *file, size_t length)
     owf_report_free(report);
 }
 
+/* A persist directory of 2 x 320000 entries (an older save's, then a newer one's over every id): read in well
+ * under the time limit (an n-squared directory took 42 s here, hours on a 68040), and the newer save's offsets win. */
+static void big_directory(void)
+{
+    enum { IDS = 320000, RUN = 4095 };
+    out d;
+    unsigned long doc, dir_old, edit_old, dir_new, edit_new;
+    unsigned char *file = NULL;
+    size_t length = 0;
+    owf_cfbw *w;
+    int pass;
+    memset(&d, 0, sizeof d);
+    owf_buf_init(&d.b);
+    doc = (unsigned long)d.b.length;
+    begin(&d, 15, 0, 0x03E8);
+    begin(&d, 1, 0, 0x03E9);
+    u32(&d, 5760); u32(&d, 4320); u32(&d, 4320); u32(&d, 5760);
+    u32(&d, 1); u32(&d, 2); u32(&d, 0); u32(&d, 0); u16(&d, 1); u16(&d, 0); u32(&d, 0);
+    end(&d);
+    end(&d);
+    dir_old = edit_old = dir_new = 0;
+    for (pass = 0; pass < 2; pass++) {
+        unsigned long id = 1, at;
+        at = (unsigned long)d.b.length;
+        begin(&d, 0, 0, 0x1772);
+        while (id <= IDS) {
+            unsigned long n = IDS - id + 1 < RUN ? IDS - id + 1 : RUN, j;
+            u32(&d, id | n << 20);
+            for (j = 0; j < n; j++)
+                u32(&d, pass ? doc : 0xFFFFFFUL);    /* the older save's offsets lead nowhere */
+            id += n;
+        }
+        end(&d);
+        if (pass)
+            dir_new = at;
+        else
+            dir_old = at;
+        at = (unsigned long)d.b.length;
+        begin(&d, 0, 0, 0x0FF5);
+        u32(&d, 256); u16(&d, 0); u8(&d, 0); u8(&d, 3);
+        u32(&d, pass ? edit_old : 0); u32(&d, pass ? dir_new : dir_old); u32(&d, 1); u32(&d, IDS + 1);
+        u16(&d, 1); u16(&d, 0);
+        end(&d);
+        if (pass)
+            edit_new = at;
+        else
+            edit_old = at;
+    }
+    (void)edit_new;
+    w = owf_cfbw_new();
+    if (w && !d.b.failed && owf_cfbw_add(w, "PowerPoint Document", d.b.data, d.b.length) == OWF_OK)
+        owf_cfbw_finish(w, &file, &length);
+    owf_cfbw_free(w);
+    owf_buf_free(&d.b);
+    CHECK(file != NULL, "big directory built");
+    if (file) {
+        owf_deck *deck = NULL;
+        owf_report *report = owf_report_new();
+        clock_t t0 = clock();
+        int rc = owf_import_deck_memory(file, length, "ppt", &deck, report, NULL);
+        double secs = (double)(clock() - t0) / CLOCKS_PER_SEC;
+        CHECK(rc == OWF_OK && deck && deck->width == 14400, "big directory read, the newer save's offsets: %d", rc);
+        CHECK(secs < 5.0, "big directory read in %.2f s (limit 5 s)", secs);
+        printf("big directory: %d entries in %.3f s\n", 2 * IDS, secs);
+        owf_deck_free(deck);
+        owf_report_free(report);
+        free(file);
+    }
+}
+
 int main(void)
 {
     built b = build(0), p = build(1), n = build(2);
@@ -796,6 +867,7 @@ int main(void)
     check_deck(b.file, b.length);
     /* no Current User stream: the last UserEditAtom in the stream */
     check_deck(n.file, n.length);
+    big_directory();
 
     report = owf_report_new();
     rc = owf_import_deck_memory(p.file, p.length, "ppt", &deck, report, NULL);
