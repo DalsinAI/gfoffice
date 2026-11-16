@@ -110,6 +110,16 @@ libc-test: $(OUT)/test-owf-libc
 
 .PHONY: libc-test
 
+# every C library call in libowf's archive is one the libraries' runtime gives (owf_runtime.c and friends), so
+# OWF=library ./build-os3.sh links: caught here before the 68k link (in_md.c's sprintf, out_md.c's strpbrk)
+library-libc-check:
+	sh scripts/check-library-libc.sh
+
+test: library-libc-check
+check: library-libc-check
+
+.PHONY: library-libc-check
+
 # libowf's own inflate (libowf/src/owf_inflate.c), which reads zip packages
 # without z.library. tests/inflate/test_inflate.c checks it against zlib's
 # deflate, hand-made streams and damaged ones (--bench ZIP... times it

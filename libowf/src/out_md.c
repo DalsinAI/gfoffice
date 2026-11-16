@@ -143,7 +143,7 @@ static void put_href_close(mw *w)
 {
     const char *h = w->href;
     owf_buf_puts(&w->out, "](");
-    if (strpbrk(h, " ()<>") || !*h) {
+    if (h[strcspn(h, " ()<>")] || !*h) {   /* (strcspn: the libraries' runtime has no strpbrk) */
         owf_buf_putc(&w->out, '<');
         for (; *h; h++) {
             if (*h == '<' || *h == '>' || *h == '\\') owf_buf_putc(&w->out, '\\');
