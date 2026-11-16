@@ -5,6 +5,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "ow_layout.h"
+#include "owf_track.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1608,6 +1609,52 @@ static void test_sample(const char *path)
     owf_doc_free(doc);
 }
 
+/* libowf 1.11: a tracked format change's text is drawn in its author's colour, not underlined or struck, as
+ * it looks now; authors take their colours in the order the changes and then the format changes name them */
+static void test_format_change_colour(void)
+{
+    owf_doc *doc = owf_doc_new();
+    ow_layout *l;
+    const ol_display_op *op = NULL;
+    int ins, gil, ann;
+    CHECK(para(doc, NULL, 0, "Typed", 240) && para(doc, NULL, 0, "Gilded", 240) && para(doc, NULL, 0, "Annotated", 240));
+    ins = owf_track_add(doc, OWF_REV_INSERT, "Ann", NULL);
+    gil = owf_track_format_add(doc, "Gil", NULL, &doc->body.paras[1].runs[0].fmt);
+    ann = owf_track_format_add(doc, "Ann", NULL, &doc->body.paras[2].runs[0].fmt);
+    CHECK(ins > 0 && gil > 0 && ann > 0);
+    doc->body.paras[0].runs[0].revision = ins;
+    doc->body.paras[1].runs[0].format_change = gil;
+    doc->body.paras[1].runs[0].fmt.flags |= OWF_BOLD;
+    doc->body.paras[2].runs[0].format_change = ann;
+    l = ow_layout_new(doc, measure, NULL);
+    CHECK(l != NULL);
+    if (l) {
+        const ol_document *od = ow_layout_body(l);
+        CHECK((op = text_on(od, 0, "Gilded", NULL)) != NULL && op->u.text.style.foreground == 0xFFB0306Au &&
+              !(op->u.text.style.text_flags & (OL_TEXT_UNDERLINE | OL_TEXT_STRIKE)) &&
+              (op->u.text.style.text_flags & OL_TEXT_BOLD));
+        CHECK((op = text_on(od, 0, "Annotated", NULL)) != NULL && op->u.text.style.foreground == 0xFF1F5FBFu &&
+              !(op->u.text.style.text_flags & OL_TEXT_UNDERLINE));
+        CHECK((op = text_on(od, 0, "Typed", NULL)) != NULL && op->u.text.style.foreground == 0xFF1F5FBFu &&
+              (op->u.text.style.text_flags & OL_TEXT_UNDERLINE));
+        ow_layout_free(l);
+    }
+    /* the final view (Show Changes off): no change colours, a format change's included; its new format stays */
+    l = ow_layout_new_view(doc, measure, NULL, 0, OW_LAYOUT_FINAL);
+    CHECK(l != NULL);
+    if (l) {
+        const ol_document *od = ow_layout_body(l);
+        CHECK((op = text_on(od, 0, "Gilded", NULL)) != NULL && op->u.text.style.foreground == 0xFF000000u &&
+              (op->u.text.style.text_flags & OL_TEXT_BOLD) &&
+              !(op->u.text.style.text_flags & (OL_TEXT_UNDERLINE | OL_TEXT_STRIKE)));
+        CHECK((op = text_on(od, 0, "Annotated", NULL)) != NULL && op->u.text.style.foreground == 0xFF000000u);
+        CHECK((op = text_on(od, 0, "Typed", NULL)) != NULL && op->u.text.style.foreground == 0xFF000000u &&
+              !(op->u.text.style.text_flags & OL_TEXT_UNDERLINE));
+        ow_layout_free(l);
+    }
+    owf_doc_free(doc);
+}
+
 /* Issue #9 (7 October 2026), what of it the layout decides: a heading's own colour reaches its text's op, a
  * table row's cells start on one line, small-text punctuation stays in the words a line draws, and a
  * list's items are spaced alike (no blank line after the first). The rest of #9 (bullets drawn through a Latin-1 font) is the
@@ -1698,6 +1745,177 @@ static void test_issue9(void)
     owf_doc_free(list);
 }
 
+/* 2.0.37: the final view (OW_LAYOUT_FINAL): a deletion takes no room and nothing has change colours; the
+ * caret in a hidden deletion is at its node's start */
+static void test_final_view(void)
+{
+    owf_doc *doc = owf_doc_new();
+    owf_para *p = para(doc, NULL, 0, "Keep ", 240);
+    owf_charfmt cf = p->runs[0].fmt;
+    ow_layout *shown, *final;
+    const ol_display_op *a, *b, *ins;
+    int del = owf_track_add(doc, OWF_REV_DELETE, "Ann", NULL), add = owf_track_add(doc, OWF_REV_INSERT, "Ann", NULL);
+    ow_position pos = { 0, 1, 2, 0 };
+    ol_text_position tp;
+    owf_charfmt bold = cf, italic = cf;
+    bold.flags |= OWF_BOLD;                          /* formats of their own, so the runs stay apart */
+    italic.flags |= OWF_ITALIC;
+    CHECK(del > 0 && add > 0 && owf_para_add_text(p, &bold, "gone", 4) == 0 && owf_para_add_text(p, &cf, " end", 4) == 0 &&
+          owf_para_add_text(p, &italic, " new", 4) == 0);
+    if (p->nruns < 4) {
+        /* runs join when alike; the revisions keep them apart once set, so set them on their own runs */
+        CHECK(0);
+        owf_doc_free(doc);
+        return;
+    }
+    p->runs[1].revision = del;
+    p->runs[3].revision = add;
+    shown = ow_layout_new(doc, measure, NULL);
+    final = ow_layout_new_view(doc, measure, NULL, 0, OW_LAYOUT_FINAL);
+    CHECK(shown);
+    CHECK(final);
+    if (shown && final) {
+        a = text_on(ow_layout_body(shown), 0, " end", NULL);
+        b = text_on(ow_layout_body(final), 0, " end", NULL);
+        CHECK(a && b && b->u.text.bounds.x < a->u.text.bounds.x);              /* "gone" takes no room */
+        CHECK(text_on(ow_layout_body(shown), 0, "gone", NULL) && !text_on(ow_layout_body(final), 0, "gone", NULL));
+        ins = text_on(ow_layout_body(final), 0, " new", NULL);
+        CHECK(ins && ins->u.text.style.foreground == 0xFF000000u && !(ins->u.text.style.text_flags & OL_TEXT_UNDERLINE));
+        ins = text_on(ow_layout_body(shown), 0, " new", NULL);
+        CHECK(ins && (ins->u.text.style.text_flags & OL_TEXT_UNDERLINE));
+        CHECK(ow_layout_to_text(final, pos, &tp) && tp.offset == 0);
+        CHECK(ow_layout_to_text(shown, pos, &tp) && tp.offset == 2);
+    }
+    ow_layout_free(shown);
+    ow_layout_free(final);
+    owf_doc_free(doc);
+}
+
+/* 2.0.38: a tracked picture in the line: the window frames it in its author's colour (crossed out when
+ * deleted); the final view shows an inserted one plain and leaves a deleted one out */
+static void test_picture_changes(void)
+{
+    static const unsigned char png[] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 1, 2, 3, 4 };
+    owf_doc *doc = owf_doc_new();
+    owf_para *p = para(doc, NULL, 0, "Text", 240);
+    owf_charfmt cf = p->runs[0].fmt;
+    int img = owf_doc_add_image(doc, "tiny.png", "image/png", png, sizeof png, 720, 720, "tiny");
+    int add = owf_track_add(doc, OWF_REV_INSERT, "Ann", NULL), del = owf_track_add(doc, OWF_REV_DELETE, "Bob", NULL);
+    ow_layout *shown, *final;
+    const ol_display_op *op;
+    unsigned long rgb[2] = { 0, 0 };
+    int kinds[2] = { 0, 0 }, n, count;
+    CHECK(img >= 0 && add > 0 && del > 0 && owf_para_add_image(p, &cf, img) == 0 && owf_para_add_text(p, &cf, " ", 1) == 0 &&
+          owf_para_add_image(p, &cf, img) == 0 && p->nruns == 4);
+    if (p->nruns != 4) { owf_doc_free(doc); return; }
+    p->runs[1].revision = add;
+    p->runs[3].revision = del;
+    shown = ow_layout_new(doc, measure, NULL);
+    final = ow_layout_new_view(doc, measure, NULL, 0, OW_LAYOUT_FINAL);
+    CHECK(shown);
+    CHECK(final);
+    if (shown && final) {
+        for (n = 0; n < 2 && (op = nth_op(ow_layout_body(shown), 0, OL_OP_IMAGE, n, NULL)) != NULL; ++n)
+            kinds[n] = ow_layout_picture_change(shown, op->u.image.node_id, &rgb[n]);
+        CHECK(kinds[0] == OW_PICTURE_INSERTED && kinds[1] == OW_PICTURE_DELETED);
+        CHECK(rgb[0] == 0x1F5FBFUL && rgb[1] == 0xB0306AUL);      /* Ann's blue, Bob's red, as their text */
+        op = nth_op(ow_layout_body(shown), 0, OL_OP_TEXT, 0, NULL);
+        CHECK(!op || !ow_layout_picture_change(shown, op->u.text.node_id, NULL));   /* text is no picture */
+        for (count = 0; nth_op(ow_layout_body(final), 0, OL_OP_IMAGE, count, NULL); ++count) {}
+        CHECK(count == 1);                                       /* the deleted one takes no room */
+        op = nth_op(ow_layout_body(final), 0, OL_OP_IMAGE, 0, NULL);
+        CHECK(op && !ow_layout_picture_change(final, op->u.image.node_id, NULL));   /* and is no change there */
+    }
+    ow_layout_free(shown);
+    ow_layout_free(final);
+    owf_doc_free(doc);
+}
+
+/* 2.0.38: a tracked frame: its edge in its author's colour; the final view shows an inserted one as it is
+ * and leaves a deleted one out */
+static int rules_of(const ol_document *od, uint32_t argb)
+{
+    const ol_display_op *op;
+    int n, count = 0;
+    for (n = 0; (op = nth_op(od, 0, OL_OP_RULE, n, NULL)) != NULL; ++n)
+        if (op->u.rule.argb == argb) ++count;
+    return count;
+}
+
+static void test_frame_changes(void)
+{
+    owf_doc *doc = owf_doc_new();
+    owf_para *p = para(doc, NULL, 0, "Body", 240);
+    owf_charfmt cf = p->runs[0].fmt;
+    owf_frame fr[2];
+    int add = owf_track_add(doc, OWF_REV_INSERT, "Ann", NULL), del = owf_track_add(doc, OWF_REV_DELETE, "Bob", NULL);
+    int k, idx[2];
+    ow_layout *shown, *final;
+    memset(fr, 0, sizeof fr);
+    for (k = 0; k < 2; ++k) {
+        owf_para *q;
+        fr[k].width = 2880;
+        fr[k].height = 1440;
+        fr[k].y = k * 2000;
+        fr[k].image = -1;
+        q = owf_story_add(&fr[k].story, NULL);
+        CHECK(q && owf_para_add_text(q, &cf, k ? "Gone" : "Added", k ? 4 : 5) == 0);
+        idx[k] = owf_doc_add_frame(doc, &fr[k]);
+        CHECK(idx[k] == k && owf_para_add_frame(p, &cf, idx[k]) == 0);
+    }
+    if (doc->nframes != 2 || p->nruns != 3) { owf_doc_free(doc); return; }
+    p->runs[1].revision = add;
+    p->runs[2].revision = del;
+    shown = ow_layout_new(doc, measure, NULL);
+    final = ow_layout_new_view(doc, measure, NULL, 0, OW_LAYOUT_FINAL);
+    CHECK(shown);
+    CHECK(final);
+    if (shown && final) {
+        CHECK(rules_of(ow_layout_body(shown), 0xFF1F5FBFu) >= 4);    /* Ann's blue all round the first */
+        CHECK(rules_of(ow_layout_body(shown), 0xFFB0306Au) >= 4);    /* Bob's red round the deleted one */
+        CHECK(!rules_of(ow_layout_body(final), 0xFF1F5FBFu) && !rules_of(ow_layout_body(final), 0xFFB0306Au));
+        CHECK(text_on(ow_layout_body(shown), 0, "Gone", NULL) && !text_on(ow_layout_body(final), 0, "Gone", NULL));
+        CHECK(text_on(ow_layout_body(final), 0, "Added", NULL) != NULL);
+    }
+    ow_layout_free(shown);
+    ow_layout_free(final);
+    owf_doc_free(doc);
+}
+
+/* 2.0.38: a tracked table row: its cells edged in its author's colour; the final view leaves a deleted row
+ * out */
+static void test_row_changes(void)
+{
+    owf_doc *doc = owf_doc_new();
+    int add = owf_track_add(doc, OWF_REV_INSERT, "Ann", NULL), del = owf_track_add(doc, OWF_REV_DELETE, "Bob", NULL);
+    static const char *const cells[] = { "keep", "new", "gone" };
+    ow_layout *shown, *final;
+    int i;
+    for (i = 0; i < 3; ++i) {
+        owf_para *p = para(doc, NULL, 0, cells[i], 240);
+        p->table_id = 0;
+        p->table_row = i;
+        p->table_col = 0;
+        p->table_cols = 1;
+        p->row_revision = i == 1 ? add : i == 2 ? del : 0;
+    }
+    shown = ow_layout_new(doc, measure, NULL);
+    final = ow_layout_new_view(doc, measure, NULL, 0, OW_LAYOUT_FINAL);
+    CHECK(add > 0 && del > 0);
+    CHECK(shown);
+    CHECK(final);
+    if (shown && final) {
+        CHECK(rules_of(ow_layout_body(shown), 0xFF1F5FBFu) >= 4);    /* Ann's new row */
+        CHECK(rules_of(ow_layout_body(shown), 0xFFB0306Au) >= 4);    /* Bob's deleted one */
+        CHECK(!rules_of(ow_layout_body(final), 0xFF1F5FBFu) && !rules_of(ow_layout_body(final), 0xFFB0306Au));
+        CHECK(text_on(ow_layout_body(shown), 0, "gone", NULL) && !text_on(ow_layout_body(final), 0, "gone", NULL));
+        CHECK(text_on(ow_layout_body(final), 0, "new", NULL) && text_on(ow_layout_body(final), 0, "keep", NULL));
+    }
+    ow_layout_free(shown);
+    ow_layout_free(final);
+    owf_doc_free(doc);
+}
+
 int main(int argc, char **argv)
 {
     int i;
@@ -1705,6 +1923,11 @@ int main(int argc, char **argv)
     test_built();
     test_columns();
     test_generated_toc();
+    test_final_view();
+    test_picture_changes();
+    test_frame_changes();
+    test_row_changes();
+    test_format_change_colour();
     test_issue9();
     for (i = 1; i < argc; ++i) test_sample(argv[i]);
     for (i = 1; i < argc; ++i)

@@ -2,7 +2,9 @@
  * GFOpenCalc's portable core: sheet and cell protection, as Excel's. A
  * protected sheet's locked cells (every cell, unless its style says
  * unlocked) cannot change; what else users may do there is the sheet's
- * protect_allow. The password is Excel's 16-bit hash, kept in XLSX and ODS.
+ * protect_allow. A protected workbook structure keeps its sheets as they
+ * are: none added, deleted, renamed, moved, hidden or shown. The password is
+ * Excel's 16-bit hash, kept in XLSX and ODS.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "oc_internal.h"
@@ -85,6 +87,32 @@ int oc_formula_hidden(const oc_core *core, int sheet, unsigned row, unsigned col
     return style_at(core, sheet, row, col)->formula_hidden;
 }
 
+/* 1 when password is the one hash (4 hex digits, or NULL: none) was made from. */
+static int password_fits(const char *hash, const char *password)
+{
+    char hex[8];
+    size_t i;
+    if (!hash)
+        return 1;
+    if (!password || !*password)
+        return 0;
+    snprintf(hex, sizeof hex, "%04X", oc_password_hash(password));
+    for (i = 0; i < 4; i++)
+        if (toupper((unsigned char)hash[i]) != hex[i])
+            return 0;
+    return 1;
+}
+
+static int new_hash(const char *password, char **hash)
+{
+    char hex[8];
+    *hash = NULL;
+    if (!password || !*password)
+        return OWF_OK;
+    snprintf(hex, sizeof hex, "%04X", oc_password_hash(password));
+    return (*hash = oc_strdup(hex)) ? OWF_OK : OWF_ERR_MEMORY;
+}
+
 int oc_core_protect_sheet(oc_core *core, const char *password, unsigned allow)
 {
     owf_sheet *s;
@@ -96,12 +124,8 @@ int oc_core_protect_sheet(oc_core *core, const char *password, unsigned allow)
     s = oc_sheet(core);
     if (s->protect)
         return OWF_ERR_UNSUPPORTED;
-    if (password && *password) {
-        char hex[8];
-        snprintf(hex, sizeof hex, "%04X", oc_password_hash(password));
-        if (!(hash = oc_strdup(hex)))
-            return OWF_ERR_MEMORY;
-    }
+    if (new_hash(password, &hash) != OWF_OK)
+        return OWF_ERR_MEMORY;
     owf_free(s->protect_hash);
     owf_free(s->protect_kept);
     s->protect_hash = hash;
@@ -122,14 +146,8 @@ int oc_core_unprotect_sheet(oc_core *core, const char *password)
     s = oc_sheet(core);
     if (!s->protect)
         return OWF_ERR_UNSUPPORTED;
-    if (s->protect_hash) {
-        char hex[8];
-        size_t i;
-        snprintf(hex, sizeof hex, "%04X", oc_password_hash(password));
-        for (i = 0; i < 4; i++)
-            if (toupper((unsigned char)s->protect_hash[i]) != hex[i] || !password || !*password)
-                return OC_WRONG_PASSWORD;
-    }
+    if (!password_fits(s->protect_hash, password))
+        return OC_WRONG_PASSWORD;
     /* a hash from another program (SHA-512, SHA-1...) is not checked: GFOpenCalc keeps it, it cannot work it out */
     owf_free(s->protect_hash);
     owf_free(s->protect_kept);
@@ -147,4 +165,60 @@ int oc_core_sheet_protection(const oc_core *core, unsigned *allow, int *has_pass
     if (has_password)
         *has_password = s->protect_hash != NULL || s->protect_kept != NULL;
     return s->protect;
+}
+
+int oc_book_locked(const oc_core *core)
+{
+    return core && core->book->protect_structure;
+}
+
+int oc_core_protect_book(oc_core *core, const char *password)
+{
+    owf_book *book;
+    char *hash;
+    if (!core)
+        return OWF_ERR_FORMAT;
+    if (core->edit_mode)
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    book = core->book;
+    if (book->protect_structure)
+        return OWF_ERR_UNSUPPORTED;
+    if (new_hash(password, &hash) != OWF_OK)
+        return OWF_ERR_MEMORY;
+    owf_free(book->protect_hash);
+    owf_free(book->protect_kept);
+    book->protect_hash = hash;
+    book->protect_kept = NULL;
+    book->protect_structure = 1;
+    oc_undo_clear(core);                     /* as Excel: no Undo past it brings back a sheet it keeps out */
+    oc_changed(core);
+    return OWF_OK;
+}
+
+int oc_core_unprotect_book(oc_core *core, const char *password)
+{
+    owf_book *book;
+    if (!core)
+        return OWF_ERR_FORMAT;
+    if (core->edit_mode)
+        oc_edit_commit_anyway(core, OC_MOVE_NONE);
+    book = core->book;
+    if (!book->protect_structure)
+        return OWF_ERR_UNSUPPORTED;
+    if (!password_fits(book->protect_hash, password))
+        return OC_WRONG_PASSWORD;
+    /* as a sheet's, a hash another program made with another digest is kept, not checked */
+    owf_free(book->protect_hash);
+    owf_free(book->protect_kept);
+    book->protect_hash = book->protect_kept = NULL;
+    book->protect_structure = 0;
+    oc_changed(core);
+    return OWF_OK;
+}
+
+int oc_core_book_protection(const oc_core *core, int *has_password)
+{
+    if (has_password)
+        *has_password = core && (core->book->protect_hash != NULL || core->book->protect_kept != NULL);
+    return oc_book_locked(core);
 }

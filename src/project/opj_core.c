@@ -411,10 +411,52 @@ int opj_date_parse(const char *s, int default_minute, owf_ptime *t)
 
 /* ---- The task sheet ---- */
 
+/* s in upper case without spaces, into out (cut to size). */
+static void squeeze(const char *s, char *out, size_t size)
+{
+    size_t k = 0;
+    for (; s && *s && k + 1 < size; s++)
+        if (*s != ' ' && *s != '\t') out[k++] = (char)(*s >= 'a' && *s <= 'z' ? *s - 32 : *s);
+    out[k] = 0;
+}
+
 static const char *const column_titles[OPJ_NCOLS] = {
     "ID", "Task Name", "Duration", "Start", "Finish", "Predecessors", "% Complete", "WBS", "Resource Names",
-    "Baseline Start", "Baseline Finish", "Start Var.", "Finish Var.",
+    "Baseline Start", "Baseline Finish", "Start Var.", "Finish Var.", "Constraint Type", "Constraint Date", "Notes",
 };
+
+static const char *const constraint_names[] = {   /* OWF_CON_ order */
+    "As Soon As Possible", "As Late As Possible", "Must Start On", "Must Finish On",
+    "Start No Earlier Than", "Start No Later Than", "Finish No Earlier Than", "Finish No Later Than",
+};
+#define NCONSTRAINTS ((int)(sizeof constraint_names / sizeof *constraint_names))
+
+const char *opj_constraint_name(int constraint)
+{
+    return constraint >= 0 && constraint < NCONSTRAINTS ? constraint_names[constraint] : "";
+}
+
+/* A typed constraint type: its name or short name, spaces and case ignored; -1 when it is neither. */
+static int constraint_parse(const char *text)
+{
+    static const char *const shorts[] = { "ASAP", "ALAP", "MSO", "MFO", "SNET", "SNLT", "FNET", "FNLT" };
+    char want[40], have[40];
+    int i;
+    squeeze(text, want, sizeof want);
+    if (!want[0]) return -1;
+    for (i = 0; i < NCONSTRAINTS; i++) {
+        squeeze(constraint_names[i], have, sizeof have);
+        if (!strcmp(want, have)) return i;
+        squeeze(shorts[i], have, sizeof have);
+        if (!strcmp(want, have)) return i;
+    }
+    return -1;
+}
+
+static int dated(int constraint)
+{
+    return constraint != OWF_CON_ASAP && constraint != OWF_CON_ALAP;
+}
 
 const char *opj_column_title(int column)
 {
@@ -481,6 +523,12 @@ void opj_cell_text(const opj_doc *doc, int row, int column, char *out, size_t si
         owf_pduration_text(doc->plan, var < 0 ? -var : var, 0, 0, text + (var < 0));
         break;
     }
+    case OPJ_COL_CONSTRAINT_TYPE: s = opj_constraint_name(t->constraint); break;
+    case OPJ_COL_CONSTRAINT_DATE:
+        if (!dated(t->constraint)) strcpy(text, "NA");
+        else opj_date_text(t->constraint_date, 0, text);
+        break;
+    case OPJ_COL_NOTES: s = t->notes ? t->notes : ""; break;
     default: return;
     }
     n = strlen(s);
@@ -497,54 +545,91 @@ static int day_edge(const owf_project *p, int end)
     return end ? h->to[h->nspans - 1] : h->from[0];
 }
 
-int opj_set_cell(opj_doc *doc, int row, int column, const char *text)
+/* One typed cell on the working copy: OWF_OK, or the code that refuses it (work is left to the caller). */
+static int set_field(owf_project *work, int row, int column, const char *text)
 {
-    owf_project *work;
-    owf_ptask *t;
+    owf_ptask *t = &work->tasks[row];
     owf_ptime when;
     long v;
-    int rc, el, es;
-    if (!(work = begin(doc, row, &rc))) return rc;
+    int rc, el, es, c;
     if (!text) text = "";
-    t = &work->tasks[row];
     switch (column) {
     case OPJ_COL_NAME:
-        if ((rc = replace_text(&t->name, text)) != OWF_OK) return fail(work, rc);
-        if (!t->name && !(t->name = dup_text(""))) return fail(work, OWF_ERR_MEMORY);
-        break;
+        if ((rc = replace_text(&t->name, text)) != OWF_OK) return rc;
+        if (!t->name && !(t->name = dup_text(""))) return OWF_ERR_MEMORY;
+        return OWF_OK;
     case OPJ_COL_DURATION:
-        if (t->summary || owf_pduration_parse(work, text, &v, &el, &es) != OWF_OK || v < 0)
-            return fail(work, OWF_ERR_FORMAT);
+        if (t->summary || owf_pduration_parse(work, text, &v, &el, &es) != OWF_OK || v < 0) return OWF_ERR_FORMAT;
         t->duration = v;
         t->elapsed = el;
         t->estimated = es;
         t->milestone = v == 0;
-        break;
+        return OWF_OK;
     case OPJ_COL_START:
     case OPJ_COL_FINISH:
-        if (t->summary || !opj_date_parse(text, day_edge(work, column == OPJ_COL_FINISH), &when))
-            return fail(work, OWF_ERR_FORMAT);
+        if (t->summary || !opj_date_parse(text, day_edge(work, column == OPJ_COL_FINISH), &when)) return OWF_ERR_FORMAT;
         t->constraint = column == OPJ_COL_START ? OWF_CON_SNET : OWF_CON_FNET;
         t->constraint_date = when;
-        break;
+        return OWF_OK;
     case OPJ_COL_PREDECESSORS:
-        if ((rc = owf_ppredecessors_parse(work, row, text)) != OWF_OK) return fail(work, rc);
-        break;
+        return owf_ppredecessors_parse(work, row, text);
     case OPJ_COL_PERCENT: {
         const char *s = text;
         while (*s == ' ') s++;
-        if (!take_int(&s, &v, NULL)) return fail(work, OWF_ERR_FORMAT);
+        if (!take_int(&s, &v, NULL)) return OWF_ERR_FORMAT;
         while (*s == ' ' || *s == '%') s++;
-        if (*s || v > 100) return fail(work, OWF_ERR_FORMAT);
+        if (*s || v > 100) return OWF_ERR_FORMAT;
         t->percent = (int)v;
-        break;
+        return OWF_OK;
     }
     case OPJ_COL_RESOURCES:
-        if ((rc = owf_presource_names_parse(work, row, text, 1)) != OWF_OK) return fail(work, rc);
-        break;
-    default:
-        return fail(work, OWF_ERR_FORMAT);
+        return owf_presource_names_parse(work, row, text, 1);
+    case OPJ_COL_CONSTRAINT_TYPE:
+        if ((c = constraint_parse(text)) < 0 || (t->summary && c != OWF_CON_ASAP && c != OWF_CON_SNET && c != OWF_CON_FNLT))
+            return OWF_ERR_FORMAT;               /* a summary takes only these three, as MS Project */
+        if (dated(c) && !dated(t->constraint))   /* a date of its own: where the task is now */
+            t->constraint_date = c == OWF_CON_MFO || c == OWF_CON_FNET || c == OWF_CON_FNLT ? t->early_finish : t->early_start;
+        t->constraint = c;
+        return OWF_OK;
+    case OPJ_COL_CONSTRAINT_DATE: {
+        char word[8];
+        squeeze(text, word, sizeof word);
+        if (!strcmp(word, "NA") || !word[0]) {
+            t->constraint = OWF_CON_ASAP;
+            return OWF_OK;
+        }
+        c = dated(t->constraint) ? t->constraint : OWF_CON_SNET;
+        if (t->summary && c != OWF_CON_SNET && c != OWF_CON_FNLT) return OWF_ERR_FORMAT;
+        if (!opj_date_parse(text, day_edge(work, c == OWF_CON_MFO || c == OWF_CON_FNET || c == OWF_CON_FNLT), &when))
+            return OWF_ERR_FORMAT;
+        t->constraint = c;
+        t->constraint_date = when;
+        return OWF_OK;
     }
+    case OPJ_COL_NOTES:
+        return replace_text(&t->notes, text);
+    default:
+        return OWF_ERR_FORMAT;
+    }
+}
+
+int opj_set_cell(opj_doc *doc, int row, int column, const char *text)
+{
+    return opj_set_cells(doc, row, &column, &text, 1, NULL);
+}
+
+int opj_set_cells(opj_doc *doc, int row, const int *columns, const char *const *texts, int n, int *bad)
+{
+    owf_project *work;
+    int rc, i;
+    if (bad) *bad = -1;
+    if (!columns || !texts || n < 1) return OWF_ERR_FORMAT;
+    if (!(work = begin(doc, row, &rc))) return rc;
+    for (i = 0; i < n; i++)
+        if ((rc = set_field(work, row, columns[i], texts[i])) != OWF_OK) {
+            if (bad) *bad = i;
+            return fail(work, rc);
+        }
     return commit(doc, work);
 }
 
@@ -848,6 +933,33 @@ owf_ptime opj_period_next(int zoom, owf_ptime start)
         return owf_ptime_make(y, mo, 1, 0, 0);
     default: return start + DAY;
     }
+}
+
+void opj_task_usage_text(const opj_doc *doc, int task, int assign, owf_ptime from, owf_ptime to, char *out,
+                         size_t size)
+{
+    const owf_project *p;
+    char text[24];
+    long work = 0;
+    int i, last;
+    if (!out || !size) return;
+    out[0] = 0;
+    if (!doc || task < 0 || task >= doc->plan->ntasks || to <= from) return;
+    p = doc->plan;
+    if (assign >= 0) {
+        if (assign >= p->nassigns || p->assigns[assign].task != task) return;
+        work = owf_passign_work(p, assign, from, to);
+    } else {
+        for (last = task + 1; last < p->ntasks && p->tasks[last].level > p->tasks[task].level; last++) {}
+        for (i = 0; i < p->nassigns; i++)            /* its own and its subtasks' (a summary's) */
+            if (p->assigns[i].task >= task && p->assigns[i].task < last) {
+                work += owf_passign_work(p, i, from, to);
+                if (work > 2000000000L) work = 2000000000L;
+            }
+    }
+    if (!work) return;
+    opj_work_text(work, text);
+    copy_out(text, out, size);
 }
 
 void opj_usage_text(const opj_doc *doc, int resource, int assign, owf_ptime from, owf_ptime to, char *out,
