@@ -174,6 +174,17 @@ typedef struct {
 /* A view of doc, width by height pixels, rows row_height high, at a zoom, starting at the Monday on or
  * before the plan's start. Shows ID, Name, Duration, Start, Finish and Predecessors. */
 void opj_view_init(opj_view *v, const opj_doc *doc, int width, int height, int row_height, int zoom);
+/* The column chooser (View > Columns, ARexx COLUMN). A column's width when shown: 32 ID, 180 Task Name, 56
+ * Duration, 96 Start and Finish, 84 Predecessors, 64 % Complete, 48 WBS, 140 Resource Names, 96 the baseline
+ * dates, 72 the variances; 0 out of range. */
+int opj_column_width(int column);
+/* 1 when v's table shows column. */
+int opj_view_column_shown(const opj_view *v, int column);
+/* Shows column at its width (a shown column keeps its own) or hides it; the columns stay in the sheet's
+ * order. 1 done (nothing to do counts), 0 out of range or when it would hide the last column shown. */
+int opj_view_show_column(opj_view *v, int column, int show);
+/* column when shown, else the next shown column after it, else the last one before it; -1 when none is. */
+int opj_view_near_column(const opj_view *v, int column);
 /* Pixels a day takes at a zoom: 24, 6, 2, 1. */
 int opj_zoom_day_width(int zoom);
 /* The chart's left edge (where origin is). */
@@ -317,8 +328,9 @@ typedef struct {
     char file[256];                      /* the plan's file, "" when it has none */
     char lasterror[256];
     unsigned long docs;                  /* bumped each time NEW or OPEN replaces doc: a new plan, even at the old address */
-    const opj_view *view;                /* the window's view, whose columns and zoom EXPORT FORMAT PDF prints;
-                                          * NULL: a fresh one at days zoom */
+    opj_view *view;                      /* the window's view: EXPORT FORMAT PDF prints its columns and zoom,
+                                          * COLUMN shows and hides its columns; NULL: a fresh one at days zoom
+                                          * for EXPORT, and COLUMN is not possible (5) */
 } opj_rexx;
 
 /* A command, its answer into result (cut to size, "" when it has none). */

@@ -25,7 +25,7 @@ enum {
     C_HELP, C_LASTERROR, C_ISDIRTY, C_GETFILE, C_NEW, C_OPEN, C_SAVE, C_SAVEAS, C_EXPORT, C_TASKS, C_ADDTASK,
     C_DELETETASK, C_GETCELL, C_SETCELL, C_INDENT, C_OUTDENT, C_LINK, C_UNLINK, C_UNDO, C_REDO, C_BASELINE,
     C_RESOURCES, C_ADDRESOURCE, C_DELETERESOURCE, C_GETRESOURCE, C_SETRESOURCE, C_ASSIGN, C_USAGE, C_FINISH,
-    C_CRITICAL, NCOMMANDS
+    C_CRITICAL, C_COLUMN, NCOMMANDS
 };
 
 static const command commands[NCOMMANDS] = {
@@ -59,6 +59,7 @@ static const command commands[NCOMMANDS] = {
     { "USAGE", "RESOURCE/A,FROM/A,TO/A" },
     { "FINISH", "" },
     { "CRITICAL", "" },
+    { "COLUMN", "COLUMN/A,SHOW/S,HIDE/S" },
 };
 
 /* ---- Words ---- */
@@ -623,6 +624,25 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         put(result, size, text);
         return OPJ_RX_OK;
     }
+    case C_COLUMN:
+        if ((col = find_column(a->value[0], 0)) < 0) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "COLUMN: no column %s", a->value[0]);
+            return OPJ_RX_ERROR;
+        }
+        if (!rx->view) {
+            put(rx->lasterror, sizeof rx->lasterror, "COLUMN: there is no window to show columns in");
+            return OPJ_RX_NOW;
+        }
+        if (a->value[1] && a->value[2]) {
+            put(rx->lasterror, sizeof rx->lasterror, "COLUMN: SHOW or HIDE, not both");
+            return OPJ_RX_ERROR;
+        }
+        if ((a->value[1] || a->value[2]) && !opj_view_show_column(rx->view, col, a->value[1] != NULL)) {
+            put(rx->lasterror, sizeof rx->lasterror, "COLUMN: the table keeps one column");
+            return OPJ_RX_NOW;
+        }
+        put(result, size, opj_view_column_shown(rx->view, col) ? "1" : "0");
+        return OPJ_RX_OK;
     case C_CRITICAL: {
         size_t at = 0;
         int i;

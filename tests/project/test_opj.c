@@ -825,6 +825,46 @@ static void test_usage_edits(void)
     CHECK(opj_edit_refused(1, OPJ_NEDITS) == NULL);
 }
 
+/* The column chooser: widths, showing and hiding in the sheet's order, the table keeping one column, a
+ * selection moved off a hidden column, and the chart's edge following the table. */
+static void test_columns(void)
+{
+    opj_view v;
+    int c, left;
+    opj_view_init(&v, NULL, 800, 400, 16, OPJ_ZOOM_DAYS);
+    for (c = 0; c < OPJ_NCOLS; c++)
+        CHECK_N(opj_view_column_shown(&v, c), c <= OPJ_COL_PREDECESSORS);
+    CHECK_N(opj_column_width(OPJ_COL_RESOURCES), 140);
+    CHECK_N(opj_column_width(OPJ_COL_PERCENT), 64);
+    CHECK_N(opj_column_width(-1), 0);
+    CHECK_N(opj_column_width(OPJ_NCOLS), 0);
+    left = opj_chart_left(&v);
+    CHECK(opj_view_show_column(&v, OPJ_COL_RESOURCES, 1));
+    CHECK_N(v.columns[OPJ_COL_RESOURCES], 140);
+    CHECK_N(opj_chart_left(&v), left + 140);
+    v.columns[OPJ_COL_NAME] = 250;                                        /* a width of its own stays */
+    CHECK(opj_view_show_column(&v, OPJ_COL_NAME, 1));
+    CHECK_N(v.columns[OPJ_COL_NAME], 250);
+    CHECK(opj_view_show_column(&v, OPJ_COL_DURATION, 0));
+    CHECK_N(opj_view_column_shown(&v, OPJ_COL_DURATION), 0);
+    CHECK(opj_view_show_column(&v, OPJ_COL_DURATION, 0));                 /* already hidden */
+    CHECK_N(opj_view_near_column(&v, OPJ_COL_DURATION), OPJ_COL_START);
+    CHECK_N(opj_view_near_column(&v, OPJ_COL_NAME), OPJ_COL_NAME);
+    CHECK_N(opj_view_near_column(&v, OPJ_COL_WBS), OPJ_COL_RESOURCES);
+    CHECK_N(opj_view_near_column(&v, OPJ_COL_FINISH_VARIANCE), OPJ_COL_RESOURCES);
+    CHECK(!opj_view_show_column(&v, -1, 1) && !opj_view_show_column(&v, OPJ_NCOLS, 0));
+    CHECK(!opj_view_show_column(NULL, OPJ_COL_NAME, 1));
+    CHECK(opj_view_show_column(&v, OPJ_COL_WBS, 1));
+    for (c = 0; c < OPJ_NCOLS; c++)
+        if (c != OPJ_COL_WBS) CHECK(opj_view_show_column(&v, c, 0));
+    CHECK(!opj_view_show_column(&v, OPJ_COL_WBS, 0));                     /* the table keeps one column */
+    CHECK_N(v.columns[OPJ_COL_WBS], 48);
+    CHECK_N(opj_view_near_column(&v, OPJ_COL_ID), OPJ_COL_WBS);
+    v.columns[OPJ_COL_WBS] = 0;
+    CHECK_N(opj_view_near_column(&v, OPJ_COL_ID), -1);
+    CHECK_N(opj_view_near_column(NULL, 0), -1);
+}
+
 static void test_pdf(void)
 {
     opj_doc *doc = three(), *empty;
@@ -880,6 +920,7 @@ int main(void)
     test_pdf();
     test_usage();
     test_usage_edits();
+    test_columns();
     if (fails) {
         printf("project view tests: %d of %d checks failed\n", fails, checks);
         return 1;
