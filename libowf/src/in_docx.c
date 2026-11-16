@@ -82,6 +82,7 @@ typedef struct {
     int break_next;          /* a page break waits for the next paragraph */
     owf_buf notes, scratch;
     int nnotes, failed;
+    int in_note;             /* 1.12.2: reading a note's own text: a reference in it is no note of its own */
     const char *current_href;
     int next_table_id;
     const rels *rels_now;    /* the relationships of the part being read (a header's own); NULL: the document's */
@@ -690,6 +691,7 @@ static int special_field(const char *instr, owf_field *field, char *arg, size_t 
     else if (!strcmp(word, "PAGEREF") && *arg) *field = OWF_FIELD_REF_PAGE;
     else if (!strcmp(word, "MERGEFIELD") && *arg) *field = OWF_FIELD_MERGE;      /* 1.9 */
     else if (!strcmp(word, "XE") && *arg) *field = OWF_FIELD_INDEX;               /* 1.10 */
+    else if (!strcmp(word, "SEQ") && *arg) *field = OWF_FIELD_SEQ;                /* 1.12.6: its switches go */
     else return 0;
     if (*field <= OWF_FIELD_TIME || *field == OWF_FIELD_CHAPTER) arg[0] = 0;
     return 1;
@@ -779,19 +781,25 @@ static void note_text(docx *d, const owf_xml_node *n, owf_buf *out)
     }
 }
 
-/* 1.8: a footnote's or endnote's reference: the note from its part, and its mark here */
+static void text_box_story(docx *d, const owf_xml_node *content, owf_story *into);
+
+/* 1.8: a footnote's or endnote's reference: the note from its part, and its mark here. 1.12.2: its text with
+ * its formats too (owf_doc.note_stories), read as a text box's is, when it has any */
 static void note(docx *d, const owf_xml_node *ref, owf_xml *part, const char *element, const owf_charfmt *fmt)
 {
     const char *id = owf_xml_attr(ref, d->w, "id");
-    const owf_xml_node *n;
+    const owf_xml_node *n, *found = NULL;
     int index;
 
+    if (d->in_note)
+        return;
     d->notes.length = 0;
     if (part && id)
         for (n = owf_xml_root(part)->first; n; n = n->next) {
             const char *nid = owf_xml_attr(n, d->w, "id");
             if (is_w(d, n, element) && nid && !strcmp(nid, id)) {
                 note_text(d, n, &d->notes);
+                found = n;
                 break;
             }
         }
@@ -810,6 +818,15 @@ static void note(docx *d, const owf_xml_node *ref, owf_xml *part, const char *el
     if (index < 0) {
         d->failed = 1;
         return;
+    }
+    if (found) {
+        owf_story st;
+        memset(&st, 0, sizeof st);
+        d->in_note = 1;
+        text_box_story(d, found, &st);
+        d->in_note = 0;
+        if (owf_note_set_story(d->doc, index, &st) < 0)
+            d->failed = 1;
     }
     d->nnotes++;
     set_fmt(d, fmt);
@@ -1378,19 +1395,17 @@ static void run(docx *d, const owf_xml_node *r, const owf_charfmt *para_char)
             const owf_xml_node *ostyle = wchild(d, old, "rStyle");
             owf_charfmt before = *para_char;
             owf_format_span span;
-            int number;
             if (ostyle)
                 owf_styles_resolve(d->tables, 1, wval(d, ostyle), OWF_FAMILY_TEXT, NULL, &before);
             memset(&cp, 0, sizeof cp);
             read_rpr(d, old, &cp);
             owf_charprops_apply(&before, &cp);
             before = relative(d, before);            /* as the runs' formats are kept (set_fmt) */
-            number = owf_track_format_add(d->doc, owf_xml_attr(chg, d->w, "author"), owf_xml_attr(chg, d->w, "date"),
-                                          &before);
-            if (!number) d->failed = 1;
             owf_format_begin(&span, d->b);
             run_children(d, r, &f);
-            owf_format_end(&span, d->b, number);
+            if (owf_format_end(&span, d->b, owf_xml_attr(chg, d->w, "author"), owf_xml_attr(chg, d->w, "date"),
+                               &before) < 0)
+                d->failed = 1;
             return;
         }
     }
@@ -1948,8 +1963,16 @@ static void table(docx *d, const owf_xml_node *t)
                 table(d, wchild(d, row, "sdtContent") ? wchild(d, row, "sdtContent") : row);
             continue;
         }
+        int row_rev = 0;
         for (cell=row->first;cell;cell=cell->next) if(is_w(d,cell,"tc")) ++cols;
         if(!cols)continue;
+        {   /* 1.12: the row put in or deleted as a tracked change (w:trPr/w:ins, w:del) */
+            const owf_xml_node *trpr = wchild(d, row, "trPr"), *ins = wchild(d, trpr, "ins"), *del = wchild(d, trpr, "del");
+            const owf_xml_node *chg = del ? del : ins;
+            if (chg && !(row_rev = owf_track_add(d->doc, del ? OWF_REV_DELETE : OWF_REV_INSERT,
+                                                 owf_xml_attr(chg, d->w, "author"), owf_xml_attr(chg, d->w, "date"))))
+                d->failed = 1;
+        }
         for (cell = row->first; cell; cell = cell->next) {
             int first = 1, before;
             owf_para *p;
@@ -1970,7 +1993,7 @@ static void table(docx *d, const owf_xml_node *t)
                 para_names(d, ps ? wval(d, ps) : NULL);
             }
             p=&d->b->story->paras[d->b->story->nparas-1];
-            p->table_id=table_id;p->table_row=row_index;p->table_col=col;p->table_cols=cols;
+            p->table_id=table_id;p->table_row=row_index;p->table_col=col;p->table_cols=cols;p->row_revision=row_rev;
             { const owf_xml_node *shd = wchild(d, wchild(d, cell, "tcPr"), "shd");
               p->cell_shading = shd ? docx_fill(d, shd) : cell_style_shading(d); }
             ++col;
@@ -2062,6 +2085,33 @@ static void section(docx *d, const owf_xml_node *sect)
         case OWF_NUMBER_UPPER_LETTER: pg->pagenum_style = OWF_PAGENUM_LETTER_UPPER; break;
         case OWF_NUMBER_LOWER_LETTER: pg->pagenum_style = OWF_PAGENUM_LETTER_LOWER; break;
         default: pg->pagenum_style = OWF_PAGENUM_ARABIC; break;
+        }
+    }
+    {   /* 1.12.1: how footnotes and endnotes are numbered: w:numFmt and w:numStart; 1.12.3: w:numRestart */
+        static const char *const pr[2] = { "footnotePr", "endnotePr" };
+        int k;
+        for (k = 0; k < 2; ++k) {
+            const owf_xml_node *np = wchild(d, sect, pr[k]), *f;
+            const char *fmt;
+            if (!np) continue;
+            if ((f = wchild(d, np, "numFmt")) && (fmt = wval(d, f)) != NULL) {
+                if (!strcmp(fmt, "decimal")) pg->note_format[k] = OWF_NOTE_FORMAT_ARABIC;
+                else if (!strcmp(fmt, "lowerRoman")) pg->note_format[k] = OWF_NOTE_FORMAT_LOWER_ROMAN;
+                else if (!strcmp(fmt, "upperRoman")) pg->note_format[k] = OWF_NOTE_FORMAT_UPPER_ROMAN;
+                else if (!strcmp(fmt, "lowerLetter")) pg->note_format[k] = OWF_NOTE_FORMAT_LOWER_LETTER;
+                else if (!strcmp(fmt, "upperLetter")) pg->note_format[k] = OWF_NOTE_FORMAT_UPPER_LETTER;
+                else if (!strcmp(fmt, "chicago")) pg->note_format[k] = OWF_NOTE_FORMAT_SYMBOL;
+                else owf_report_add(d->report, OWF_NOTE_APPROX, "A note numbering (%s) was read as the usual one", fmt);
+                if (pg->note_format[k] == (k ? OWF_NOTE_FORMAT_LOWER_ROMAN : OWF_NOTE_FORMAT_ARABIC))
+                    pg->note_format[k] = OWF_NOTE_FORMAT_DEFAULT;   /* the kind's own */
+            }
+            if ((f = wchild(d, np, "numStart")) && wint(d, f, "val", &v) && v >= 1)
+                pg->note_start[k] = v;
+            if ((f = wchild(d, np, "numRestart")) && (fmt = wval(d, f)) != NULL) {   /* 1.12.3 */
+                if (!strcmp(fmt, "eachSect")) pg->note_restart[k] = OWF_NOTE_RESTART_SECTION;
+                else if (!strcmp(fmt, "eachPage") && !k) pg->note_restart[k] = OWF_NOTE_RESTART_PAGE;
+                else pg->note_restart[k] = OWF_NOTE_RESTART_CONTINUOUS;
+            }
         }
     }
     if ((n = wchild(d, sect, "titlePg")))

@@ -1,7 +1,7 @@
 /* tests/arexx/project.rexx: GFOpenProject's ARexx port on the Amiga, against amicradle-teams ARexx-RULE.md
    (return codes 0/5/10/20, no requester holds up a command): the app's own commands (VERSION, FAULT,
-   QUIT without FORCE), then a plan made, scheduled, baselined, saved, opened again and exported, the same
-   steps tests/project/test_opj_rexx.c runs on the PC.
+   QUIT without FORCE), then a plan made, scheduled, baselined, saved, opened again and exported (MSPDI,
+   CSV, PDF), the same steps tests/project/test_opj_rexx.c runs on the PC; then VIEW USAGE, VIEW NETWORK, VIEW TASKUSAGE and VIEW GANTT, and COLUMN.
    rx tests/arexx/project.rexx [DIR]   (GFOpenProject running; DIR for the files, RAM: when not given;
    prints PASS/FAIL lines, then ALL PASS or n FAILED) */
 OPTIONS RESULTS
@@ -74,10 +74,35 @@ CALL want 'GETCELL 1 "Baseline Start"', 0
 CALL same 'GETCELL 1 Baseline Start', res, 'Mon 16/11/26'
 CALL want 'EXPORT "'dir'lab-plan.xml"', 0
 CALL want 'EXPORT "'dir'lab-plan.csv" FORMAT CSV', 0
+CALL want 'EXPORT "'dir'lab-plan.pdf"', 0
+CALL want 'EXPORT "'dir'lab-gantt.out" FORMAT PDF', 0
 CALL want 'OPEN "'dir'lab-plan.xml"', 0
 CALL want 'FINISH', 0
 CALL same 'FINISH from MSPDI', res, 'Fri 20/11/26 17:00'
 CALL want 'OPEN "'dir'no such plan.gfproj"', 10
+
+/* The Resource Usage view in the window, and back to the Gantt chart. */
+CALL want 'VIEW', 0
+CALL same 'VIEW', res, 'GANTT'
+CALL want 'VIEW USAGE', 0
+CALL want 'VIEW', 0
+CALL same 'VIEW after VIEW USAGE', res, 'USAGE'
+CALL want 'VIEW SIDEWAYS', 10
+CALL want 'VIEW NETWORK', 0
+CALL want 'VIEW', 0
+CALL same 'VIEW after VIEW NETWORK', res, 'NETWORK'
+CALL want 'VIEW TASKUSAGE', 0
+CALL want 'VIEW', 0
+CALL same 'VIEW after VIEW TASKUSAGE', res, 'TASKUSAGE'
+CALL want 'VIEW GANTT', 0
+CALL want 'VIEW', 0
+CALL same 'VIEW after VIEW GANTT', res, 'GANTT'
+CALL want 'COLUMN Resources SHOW', 0
+CALL same 'COLUMN Resources SHOW', res, '1'
+CALL want 'COLUMN Duration HIDE', 0
+CALL same 'COLUMN Duration HIDE', res, '0'
+CALL want 'COLUMN Duration SHOW', 0
+CALL want 'COLUMN Colour', 10
 
 IF fails = 0 THEN SAY 'ALL PASS'
 ELSE SAY fails 'FAILED'

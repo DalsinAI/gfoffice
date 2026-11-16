@@ -363,6 +363,8 @@ static int rounded_box(const oldraw_rect *r, long rad, oldraw_point *pts)
 
 static void draw_vertex(oldraw *d, const odg_view *v, const owf_dpage *p, const owf_dcell *c)
 {
+    static owf_dshape shape;             /* 1.5 KB and more: off the Amiga's small stack; one view draws at a time */
+    static oldraw_point shape_px[OWF_DSHAPE_POINTS];
     owf_dnum box[4];
     oldraw_rect r;
     oldraw_point pts[28];
@@ -377,7 +379,21 @@ static void draw_vertex(oldraw *d, const odg_view *v, const owf_dpage *p, const 
     odg_view_rect(v, box, &r);
     if (owf_dstyle_is(style, "text") || owf_dstyle_is(style, "edgeLabel"))
         ;
-    else if (owf_dstyle_is(style, "ellipse")) {
+    else if (owf_dshape_outline(style, box, &shape)) {
+        /* the shapes' outlines (owf_dshape.c), as the writers draw them: each part filled, then drawn round */
+        int k, i;
+        for (k = 0; k < shape.nparts; k++) {
+            const owf_dshape_part *pt = &shape.parts[k];
+            for (i = 0; i < pt->n; i++) {
+                shape_px[i].x = (int32_t)odg_view_x(v, shape.points[pt->first + i].x);
+                shape_px[i].y = (int32_t)odg_view_y(v, shape.points[pt->first + i].y);
+            }
+            if ((pt->flags & OWF_DSHAPE_FILL) && pt->n >= 3)
+                oldraw_polygon(d, shape_px, pt->n, fill);
+            if (pt->flags & OWF_DSHAPE_LINE)
+                stroke_path(d, shape_px, pt->n, (pt->flags & OWF_DSHAPE_CLOSED) != 0, w, dashed, stroke);
+        }
+    } else if (owf_dstyle_is(style, "ellipse")) {
         oldraw_ellipse(d, &r, fill);
         if (stroke != OLDRAW_NONE)
             oldraw_ellipse_frame(d, &r, w, stroke);
