@@ -148,6 +148,18 @@ int owf_cfb_children(const owf_cfb *cfb, unsigned long storage,
 long owf_cfb_find_path(const owf_cfb *cfb, const char *path);
 int owf_cfb_read_entry(owf_cfb *cfb, unsigned long entry, unsigned char **data, size_t *length);
 
+/* Writing a compound file (owf_cfbw.c): streams by path ("Quill/QuillSub/
+ * CONTENTS", storages made on the way; names up to 31 characters, Latin-1,
+ * so "\005SummaryInformation"), each added once; then finish gives the
+ * whole file from malloc. OWF_OK, OWF_ERR_FORMAT (a bad or repeated path),
+ * OWF_ERR_MEMORY or OWF_ERR_UNSUPPORTED (over 2 GB). */
+typedef struct owf_cfbw owf_cfbw;
+owf_cfbw *owf_cfbw_new(void);
+int owf_cfbw_add(owf_cfbw *w, const char *path, const unsigned char *data, size_t length);
+int owf_cfbw_set_clsid(owf_cfbw *w, const char *storage, const unsigned char clsid[16]);
+int owf_cfbw_finish(owf_cfbw *w, unsigned char **out, size_t *length);
+void owf_cfbw_free(owf_cfbw *w);
+
 /* ---- Workbook formats ---- */
 
 extern const owf_book_format owf_book_format_xls;
@@ -203,6 +215,12 @@ char *owf_xl_formula_move(const char *text, long drow, long dcol);
 /* From an XLSX file: "_xlfn." (and "_xlws.", "_xlpm.") off, and another
  * book's number ("[1]Rates!A1") as its file's name, books[0] for [1]. */
 char *owf_xl_formula_from_file(const char *text, char *const *books, int nbooks);
+/* The name formulas give another book: the last part of its path or URL, "%20" and the like decoded (NULL:
+ * none, or memory ran out). */
+char *owf_link_name(const char *target, size_t length);
+/* The book's last sheet made another book's (target) sheet: its values kept (no formulas or styles), the sheet
+ * taken out of the book. -1 when memory runs out (the sheet stays). */
+int owf_book_link_last_sheet(owf_book *book, const char *target, const char *sheet);
 /* For an XLSX file: "_xlfn." on where Excel wants it, and with links, each
  * other book by its number, the books, their sheets and names collected in
  * links for the file's externalLink parts. */
@@ -477,8 +495,8 @@ extern const unsigned short owf_pdf_widths[8][224];
 
 /* The formats. */
 extern const owf_format owf_format_fodt, owf_format_wordworth, owf_format_finalwriter;
-extern const owf_format owf_format_text, owf_format_amiga_text, owf_format_ftxt,
-    owf_format_ansi, owf_format_prowrite, owf_format_html, owf_format_pdf, owf_format_pdf_comments, owf_format_odt, owf_format_docx,
+extern const owf_format owf_format_markdown, owf_format_text, owf_format_amiga_text, owf_format_ftxt,
+    owf_format_ansi, owf_format_prowrite, owf_format_html, owf_format_pdf, owf_format_pdf_comments, owf_format_pdf_comments_margin, owf_format_odt, owf_format_docx,
     owf_format_rtf;
 
 #endif

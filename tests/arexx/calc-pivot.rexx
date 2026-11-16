@@ -44,6 +44,16 @@ CALL want 'SHEET 1', 0
 CALL want 'PIVOT A1:E7 ROWS B DATA D:sum PAGE A=West', 0
 CALL cell 'B1', 'West'
 CALL cell 'B6', '45'
+CALL want 'PIVOTSET SORT Product DESCENDING', 0   /* PIVOTSET: the choices the layout window offers */
+CALL want 'PIVOTSET HIDE Product A', 0
+CALL want 'PIVOTSET SHOW Product ALL', 0
+CALL want 'PIVOTSET SORT 2 SOURCE', 0
+CALL cell 'B6', '45'
+CALL want 'PIVOTSET SHOWAS 1 TOTAL', 0
+CALL want 'PIVOTSET SHOWAS Sales NORMAL', 0
+CALL want 'PIVOTSET GROUP Product 1 2', 10
+CALL want 'PIVOTSET SORT Nowhere ASCENDING', 10
+CALL cell 'B6', '45'
 CALL want 'PIVOT A1:E7 ROWS Q DATA D:sum', 10
 CALL want 'PIVOT A1:E7 ROWS A DATA D:median', 10
 CALL want 'PIVOT A1:E7 ROWS A', 10            /* no data field */

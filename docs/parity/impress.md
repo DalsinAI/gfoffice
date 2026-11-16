@@ -19,8 +19,29 @@ docs/gfoffice/Impress-Parity.md.
 | 12 Nov 2026 | 0.6.30 | 81% | P7: the Master view and Slide Design |
 | 12 Nov 2026 | 0.6.31 | 83% | P8: slides on the clipboard, Insert Slides from File |
 | 12 Nov 2026 | 0.6.32 | 84% | P9: Export as Pictures (PNG, IFF ILBM); Phase 2 done |
+| 16 Nov 2026 | 0.6.32 | 85% | WMF and EMF pictures drawn on the slide and in the PDF (#232, #267, #278, #279): charts' and objects' replacement pictures and clip art from PPTX and ODP show as drawn, not left out |
 
 Phase 1 target: 76% after P1 to P5. Phase 2 (P6 to P9) aims at 84%.
+
+Re-scored 16 Nov 2026 against main 72b77cb, counting only what is merged.
+The program is still 0.6.32; the step comes from libowf, which Presentation
+shares with Publisher. A WMF or EMF picture (lines, shapes, text, arcs,
+chords, pies and ArcTo) is drawn on screen through `owf_metafile_render`
+and as vectors in the PDF. PowerPoint and Impress often keep a chart's or
+an embedded object's look as such a picture, so those now show as drawn.
+
+**Waiting to merge, not scored:** #291 (clipping in WMF and EMF pictures),
+#248 > #253 > #262 (gradient fills from ODP and PPTX, in the PDF, on screen,
+and gradient slide backgrounds; #248 waits for gfopenlayout #66), #281
+(the show on a screen of its own).
+
+**Largest gaps, workflow-weighted:**
+1. Fills: gradient, hatching, bitmap and transparency on objects and
+   backgrounds, and shadows (gradients are in the chain above).
+2. Charts and embedded objects: kept and drawn as their picture, not
+   edited.
+3. Spelling: Presentation has no spell check yet; tables also lack merged
+   cells, row heights and designs.
 
 ## Phase 1 deliverables
 
@@ -40,6 +61,7 @@ Phase 1 target: 76% after P1 to P5. Phase 2 (P6 to P9) aims at 84%.
 | P7 Master view | Done in 0.6.30 | View > Master Slides shows each master as a slide: its art, its title, outline, date, footer and number boxes, and its background, edited with every slide command (move, resize, type, pictures, shapes, delete, Undo); New, Duplicate, Rename, Delete and Move make, name, remove and order masters. Leaving the view (or saving, printing, the show) writes the masters back as one Undo step; a master's slides follow it, and a deleted master's go to the first (`opr_master.c`, `opr_masters_set` in `opr_edit.c`). Slide > Slide Design... puts this slide, or the slides picked in the sorter, on a master. ARexx VIEW MASTER, MASTERS, MASTER [n], SETMASTER n. Host test tests/deck/test_opr_master.c; lab: tests/arexx/presentation.rexx |
 | P8 Slide clipboard, Insert Slide from file | Done in 0.6.31 | In the Slide Sorter, Cut, Copy and Paste work on the picked slides: the copies keep their pictures, fonts, master, layout, notes, transition and effects, and paste after the focused slide in this deck or another one opened later, as one Undo step. Slide > Insert Slides from File... puts every slide of another ODP or PPTX after this one the same way. A master or layout of the same name is reused, otherwise it comes along; names already taken get " (2)". Charts and embedded objects kept only as file XML are left out and counted (`opr_clip.c`, `opr_slide_insert_owned` in `opr_edit.c`). ARexx COPYSLIDES, CUTSLIDES, PASTESLIDES, INSERTFILE path. Host test tests/deck/test_opr_clip.c; lab: tests/arexx/presentation.rexx |
 | P9 Export slides as pictures | Done in 0.6.32 | File > Export as Pictures... writes this slide, or every slide in the show (hidden ones left out, named Name-01.png and on), painted as the show paints it, 1024 pixels wide. PNG, or IFF ILBM (24 planes, ByteRun1) when the name ends in .iff or .ilbm. PNG is deflated through z.library when it is there and written stored otherwise (`opr_picture.c`). Needs a graphics card screen (cybergraphics.library). ARexx EXPORTPICTURES path [ALL] [WIDTH n]. Host test tests/deck/test_opr_picture.c; lab: tests/arexx/presentation.rexx |
+| P10 The show on its own screen | Done in 0.6.33 | The show opens a screen of its own, the slide's shape and at least 640 x 480 (BestModeID; 8 bits on AGA, 16 or 24 on RTG), when the Workbench screen has fewer than 65,536 colours or is smaller than 640 x 480, and a backdrop window on the Workbench screen otherwise. Show > Show On (Automatic, Its Own Screen, The Workbench Screen) chooses it and is kept in ENV: and ENVARC:. On its own screen the right button gives the show's menu: Next, Previous, Go to Slide (the first 40), Black Screen, White Screen and End Show. If no mode or screen can be had, the show goes on the Workbench screen (`opr_show_place`, `opr_show_screen_size`, `opr_show_screen_depth` in `opr_show.c`) |
 
 ## What Export as Pictures does not do yet
 
