@@ -1,7 +1,7 @@
 /*
  * test_deck_table: a slide's table (Presentation gap 3, docs/parity/impress.md). Its rows' heights, its merged
  * cells and its design (header row, banded rows, the style's name) read from PPTX and from ODP into the model;
- * copied with its object and freed with it.
+ * copied with its object and freed with it; saved as ODP and read back the same (part 3).
  *
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
@@ -194,6 +194,24 @@ static void check_table(const owf_obj *o, const char *what, int last_height)
           "%s: nothing else on but what the file says (%#x)", what, o->table_design);
 }
 
+/* Saved as ODP and read back: the heights, the merges, the design and its name the same. */
+static void saved_as_odp(const owf_deck *deck, const char *what, int last_height, unsigned design, const char *style)
+{
+    owf_deck *back = NULL;
+    const owf_obj *o;
+    char path[64], label[64];
+    snprintf(path, sizeof path, "build/test-deck-table-%s.odp", what);
+    snprintf(label, sizeof label, "%s saved as ODP", what);
+    CHECK(owf_export_deck_file(deck, path, "odp", NULL) == 0, "%s", label);
+    CHECK(owf_import_deck_file(path, "odp", &back, NULL, NULL) == OWF_OK && back, "%s: read back", label);
+    o = table_obj(back);
+    check_table(o, label, last_height);
+    CHECK(o && o->table_design == design, "%s: the design %#x (%#x)", label, o ? o->table_design : 0u, design);
+    CHECK(o && o->table_style && !strcmp(o->table_style, style), "%s: the design's name", label);
+    owf_deck_free(back);
+    remove(path);
+}
+
 static void test_pptx(void)
 {
     size_t n = 0;
@@ -216,6 +234,7 @@ static void test_pptx(void)
               "the copy has its own");
         owf_obj_clear(&copy);
         CHECK(!copy.row_heights && !copy.merges && !copy.table_style && !copy.nmerges && !copy.nrows, "cleared");
+        saved_as_odp(deck, "pptx", 576, o->table_design, o->table_style ? o->table_style : "");
     }
     owf_deck_free(deck);
 }
@@ -230,6 +249,8 @@ static void test_odp(void)
     check_table(o, "ODP", 0);         /* the third row has no style: as its text needs */
     CHECK(o && (o->table_design & OWF_TABLE_LAST_COL), "ODP: the last column");
     CHECK(o && o->table_style && !strcmp(o->table_style, "blue"), "ODP: the template's name");
+    if (o)
+        saved_as_odp(deck, "odp", 0, o->table_design, "blue");
     owf_deck_free(deck);
 }
 
