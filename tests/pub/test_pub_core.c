@@ -281,9 +281,15 @@ int main(void)
         CHECK(count_look(deck, OWF_SHADE(0xFFFFFF), 0, 0) == 1);
         CHECK(count_look(deck, OWF_SHADE(0x996633), OWF_SHADE(0x993300), 10) == 1);
         CHECK(deck->slides[0].objs[0].inset[0] == 144);
+        /* P1b text colour (0x244, a place in PL): red as 0x00BBGGRR, the scheme's place 2, and one not known */
+        CHECK(deck_run(deck, "headline") && deck_run(deck, "headline")->colour == 0xFF0000);
+        CHECK(deck_run(deck, " over") && deck_run(deck, " over")->colour == 0x000099);
+        CHECK(deck_run(deck, " a bar") && deck_run(deck, " a bar")->colour == OWF_COLOUR_AUTO);
+        CHECK(deck_run(deck, "A ") && deck_run(deck, "A ")->colour == OWF_COLOUR_AUTO);
         CHECK(format->export(deck, &odp, &odp_length, report) == OWF_OK);
         CHECK(owf_import_deck_memory(odp, odp_length, "odp", &roundtrip, report, &used) == OWF_OK && roundtrip);
         CHECK(count_look(roundtrip, OWF_SHADE(0xCCCCEB), OWF_SHADE(0x000000), 20) == 1);
+        CHECK(deck_run(roundtrip, "headline") && deck_run(roundtrip, "headline")->colour == 0xFF0000);
         free(odp); odp = NULL; odp_length = 0;
         owf_deck_free(roundtrip); roundtrip = NULL;
     }
