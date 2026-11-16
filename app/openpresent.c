@@ -157,7 +157,7 @@ enum {
     M_VIEW_NORMAL, M_VIEW_SORTER, M_VIEW_NOTES, M_VIEW_OUTLINE,
     M_VIEW_MASTER, M_SLIDE_DESIGN, M_INSERT_FILE, M_PICTURES,
     M_SPELL_AS_YOU_TYPE, M_SPELLING,
-    M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_PAGES
+    M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_PAGES, M_MERGE_CATALOG
 };
 
 static struct NewMenu menus[] = {
@@ -342,6 +342,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Show Field Names", NULL, 0, 0, (APTR)M_MERGE_NAMES },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Merge to New Publication", NULL, 0, 0, (APTR)M_MERGE_PAGES },
+    { NM_ITEM, "Catalog Merge...", NULL, 0, 0, (APTR)M_MERGE_CATALOG },
 
 #endif
     { NM_TITLE, "Help", NULL, 0, 0, NULL },
@@ -7567,8 +7568,7 @@ static const char *merge_error(int rc)
            rc == OWF_ERR_UNSUPPORTED ? "The data source is too big (4 MB at most)." : owf_error_text(rc);
 }
 
-/* The merge fields show record at (-1: their names): 1, or 0 with the user told */
-/* Shows record at (-1: the field names) with no requester: OWF_OK or the error */
+/* The merge fields show record at (-1: their names) with no requester: OWF_OK or the error */
 static int merge_show_rc(int at)
 {
     int rc = opp_merge_show(deck, merge_table, at, NULL);
@@ -7578,6 +7578,7 @@ static int merge_show_rc(int at)
     return OWF_OK;
 }
 
+/* The same: 1, or 0 with the user told */
 static int merge_show(int at)
 {
     int rc = merge_show_rc(at);
@@ -7618,6 +7619,26 @@ static int merge_pages_now(void)
     update_window_title();
     relayout();
     snprintf(msg, sizeof msg, "%d records merged: %d %s.", n, deck->nslides, deck->nslides == 1 ? UNIT_LOWER : UNITS_LOWER);
+    set_status(msg);
+    return OWF_OK;
+}
+
+/* Catalog merge of the page shown: OWF_OK or the error; *made the pages made */
+static int merge_catalog_now(const opp_catalog *cat, int *made)
+{
+    char msg[120];
+    int rc, n = merge_table ? merge_table->nrows : 0, page = current;
+    stop_typing();
+    if ((rc = opp_merge_catalog(deck, merge_table, page, cat, -1, -1, made)) != OWF_OK) return rc;
+    if (undo) opr_undo_clear(undo);
+    laid_clear();
+    clear_object_selection();
+    current_path[0] = 0;
+    dirty = 1;
+    update_window_title();
+    show_slide(page);
+    relayout();
+    snprintf(msg, sizeof msg, "%d records in a catalog: %d %s.", n, *made, *made == 1 ? UNIT_LOWER : UNITS_LOWER);
     set_status(msg);
     return OWF_OK;
 }
@@ -7681,6 +7702,32 @@ static void do_merge(int what)
         if (ask("Merge to New Publication", msg, "Merge|Cancel") != 1) return;
         if ((rc = merge_pages_now()) != OWF_OK) { tell("Mail Merge", owf_error_text(rc)); return; }
         break;
+    case M_MERGE_CATALOG: {                          /* the selected object is the item; it repeats to fill the page */
+        opp_catalog cat;
+        const owf_obj *o;
+        int made = 0;
+        n = merge_table ? merge_table->nrows : 0;
+        if (!n) { tell("Mail Merge", "The data source has no records, or there is none."); return; }
+        if (selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
+            tell("Catalog Merge", "Select the first item (a group or a frame with merge fields), then merge.");
+            return;
+        }
+        o = &deck->slides[current].objs[selected_obj];
+        if (o->width <= 0 || o->height <= 0) { tell("Catalog Merge", "The item has no size."); return; }
+        cat.x = o->x; cat.y = o->y; cat.width = o->width; cat.height = o->height;
+        cat.across = o->x + o->width <= deck->width ? (deck->width - o->x) / o->width : 1;
+        cat.down = o->y + o->height <= deck->height ? (deck->height - o->y) / o->height : 1;
+        if (cat.across > OPP_CATALOG_MAX) cat.across = OPP_CATALOG_MAX;
+        if (cat.down > OPP_CATALOG_MAX) cat.down = OPP_CATALOG_MAX;
+        snprintf(msg, sizeof msg, "The selected item repeats %d across and %d down this page, one record each: "
+                 "%d records make %d %s, as a new untitled publication.\n\n%s", cat.across, cat.down, n,
+                 (n + cat.across * cat.down - 1) / (cat.across * cat.down), UNITS_LOWER,
+                 dirty ? "The changes to this publication that are not saved are lost." :
+                         "The publication's own file is left as it is.");
+        if (ask("Catalog Merge", msg, "Merge|Cancel") != 1) return;
+        if ((rc = merge_catalog_now(&cat, &made)) != OWF_OK) { tell("Catalog Merge", owf_error_text(rc)); return; }
+        break;
+    }
     }
     draw_status();
 }
@@ -8232,7 +8279,7 @@ static void menu_action(ULONG id)
     case M_LINK_TEXT_NEXT: link_selected_text_frame(); break;
 #ifdef OPENPUBLISHER
     case M_MERGE_SOURCE: case M_MERGE_FIELD: case M_MERGE_NEXT: case M_MERGE_PREV: case M_MERGE_NAMES:
-    case M_MERGE_PAGES: do_merge((int)id); break;
+    case M_MERGE_PAGES: case M_MERGE_CATALOG: do_merge((int)id); break;
 #endif
     case M_UNLINK_TEXT: unlink_selected_text_frame(); break;
 #endif
@@ -8570,7 +8617,7 @@ static int rexx_do_command(const char *command, char **result_out)
                   "SHOWPICKED OBJECTS PICKOBJECTS PICKEDOBJECTS OBJECTBOX MOVEOBJECTS ALIGN DISTRIBUTE GROUP UNGROUP DELETEOBJECTS GETTEXT "
                   "SETTEXT SPELL UNDO REDO QUIT"
 #ifdef OPENPUBLISHER
-                  " MERGESOURCE MERGEFIELD MERGEFIELDS MERGERECORD MERGEPAGES"
+                  " MERGESOURCE MERGEFIELD MERGEFIELDS MERGERECORD MERGEPAGES MERGECATALOG"
 #endif
                   );
     else if (starts_word_ci(command, "FAULT", &arg)) {
@@ -9147,6 +9194,19 @@ static int rexx_do_command(const char *command, char **result_out)
         else if (dirty && strcasecmp(arg, "FORCE")) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Unsaved changes"); }
         else if ((rc = merge_pages_now()) != OWF_OK) { ok = 0; rexx_copy(result_text, sizeof result_text, owf_error_text(rc)); }
         else { draw_status(); snprintf(result_text, sizeof result_text, "%d", deck->nslides); }
+    } else if (starts_word_ci(command, "MERGECATALOG", &arg)) {  /* MERGECATALOG x y width height across down [FORCE] */
+        opp_catalog cat;
+        char force[8] = "";
+        int rc, made = 0, got = sscanf(arg, "%d %d %d %d %d %d %7s", &cat.x, &cat.y, &cat.width, &cat.height,
+                                       &cat.across, &cat.down, force);
+        if (got < 6) { ok = 0; rexx_copy(result_text, sizeof result_text, "MERGECATALOG needs x y width height across down"); }
+        else if (!merge_table || !merge_table->nrows) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No records"); }
+        else if (dirty && strcasecmp(force, "FORCE")) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Unsaved changes"); }
+        else if ((rc = merge_catalog_now(&cat, &made)) != OWF_OK) {
+            ok = 0;
+            if (rc == OWF_ERR_FORMAT) rc_fail = RX_NOW;  /* nothing inside the box */
+            rexx_copy(result_text, sizeof result_text, rc == OWF_ERR_FORMAT ? "No item in the area" : owf_error_text(rc));
+        } else { draw_status(); snprintf(result_text, sizeof result_text, "%d %d", made, deck->nslides); }
 #endif
     } else if (starts_word_ci(command, "UNDO", &arg) || starts_word_ci(command, "REDO", &arg)) {
         int redo = toupper((unsigned char)command[0]) == 'R';
