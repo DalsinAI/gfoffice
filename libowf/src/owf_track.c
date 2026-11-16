@@ -120,27 +120,36 @@ void owf_format_begin(owf_format_span *t, owf_builder *b)
     }
 }
 
-void owf_format_end(owf_format_span *t, owf_builder *b, int number)
+static int format_run(const owf_run *r)
+{
+    return r->kind != OWF_RUN_FRAME && r->kind != OWF_RUN_IMAGE && !r->comment && !r->note;
+}
+
+int owf_format_end(owf_format_span *t, owf_builder *b, const char *author, const char *date, const owf_charfmt *before)
 {
     owf_story *s = t->story;
-    int i, j, end_para, end_run;
+    int i, j, end_para, end_run, pass, number = 0;
     owf_builder_flush(b);
     if (s != b->story)
-        return;                                      /* owf_track_finish opens the seal */
+        return 0;                                    /* owf_track_finish opens the seal */
     builder_place(b, &end_para, &end_run);
     if (t->sealed && t->para < s->nparas && t->from <= s->paras[t->para].nruns)
         s->paras[t->para].runs[t->from - 1].format_change = 0;
-    if (number <= 0)
-        return;
-    for (i = t->para; i < s->nparas && i <= end_para; ++i) {
-        owf_para *p = &s->paras[i];
-        int from = i == t->para ? t->from : 0;
-        int to = i == end_para ? end_run : p->nruns;
-        for (j = from; j < to && j < p->nruns; ++j)
-            if (p->runs[j].kind != OWF_RUN_FRAME && p->runs[j].kind != OWF_RUN_IMAGE && !p->runs[j].comment &&
-                !p->runs[j].note)
-                p->runs[j].format_change = number;
-    }
+    for (pass = 0; pass < 2; ++pass)                 /* is there a run for it, then name it */
+        for (i = t->para; i < s->nparas && i <= end_para; ++i) {
+            owf_para *p = &s->paras[i];
+            int from = i == t->para ? t->from : 0;
+            int to = i == end_para ? end_run : p->nruns;
+            for (j = from; j < to && j < p->nruns; ++j) {
+                if (!format_run(&p->runs[j]))
+                    continue;
+                if (!number && !(number = owf_track_format_add(b->doc, author, date, before)))
+                    return -1;
+                if (pass)
+                    p->runs[j].format_change = number;
+            }
+        }
+    return number;
 }
 
 void owf_track_begin(owf_track_span *t, owf_builder *b)
@@ -169,9 +178,9 @@ void owf_track_switch(owf_track_span *t, owf_builder *b, int rev, int marks)
                 int from = i == t->para ? t->run : 0;
                 int to = i == end_para ? end_run : p->nruns;
                 for (j = from; j < to && j < p->nruns; ++j)
-                    if (p->runs[j].kind != OWF_RUN_FRAME && p->runs[j].kind != OWF_RUN_IMAGE && !p->runs[j].comment)
-                        p->runs[j].revision = t->rev;   /* text, tabs, breaks and fields: a frame or a comment's
-                                                           place is no change */
+                    if (p->runs[j].kind != OWF_RUN_FRAME && !p->runs[j].comment)
+                        p->runs[j].revision = t->rev;   /* text, tabs, breaks, fields and (1.12) pictures in the
+                                                           line: a frame or a comment's place is no change */
                 if (t->marks && i < end_para)
                     p->mark_revision = t->rev;
             }

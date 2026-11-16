@@ -220,3 +220,25 @@ completion-check: $(OUT)/test-completion-asan
 
 test: completion-test
 check: completion-check
+
+# Gap 4.2: own label sizes, envelopes with a return address and the feed, records to merge (tests/core/test_mailout.c)
+MAILOUT_SRC = $(OWF_SRC) $(CORE_SRC) tests/core/test_mailout.c include/openwrite_core.h
+
+$(OUT)/test-mailout: $(MAILOUT_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) \
+		tests/core/test_mailout.c -lz -o $@
+
+$(OUT)/test-mailout-asan: $(MAILOUT_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) tests/core/test_mailout.c -lz -o $@
+
+mailout-test: $(OUT)/test-mailout
+	$(OUT)/test-mailout
+
+mailout-check: $(OUT)/test-mailout-asan
+	$(OUT)/test-mailout-asan
+
+test: mailout-test
+check: mailout-check
