@@ -373,6 +373,20 @@ int opr_table_apply_style(opr_undo *u, owf_deck *deck, int slide, int obj,
                           int row, int column, opr_table_scope scope,
                           unsigned long shading, int borders,
                           unsigned long border_colour);
+/* Presentation tables part 4: merge rows x cols cells from row, col into one
+ * (-2: one cell, past the table, or over a cell another merge has); split
+ * the merge that has row, col in it (-2: none); set a row's least height in
+ * twips (0: as its text needs); turn the design's parts on and off
+ * (OWF_TABLE_...). The text of the cells a merge covers is kept, not shown,
+ * and comes back on a split. Each is one Undo step. */
+int opr_table_merge(opr_undo *u, owf_deck *deck, int slide, int obj,
+                    int row, int column, int rows, int columns);
+int opr_table_split(opr_undo *u, owf_deck *deck, int slide, int obj,
+                    int row, int column);
+int opr_table_set_row_height(opr_undo *u, owf_deck *deck, int slide, int obj,
+                             int row, int twips);
+int opr_table_set_design(opr_undo *u, owf_deck *deck, int slide, int obj,
+                         unsigned design);
 /* A new embedded picture. The resource bytes and metadata are copied into
  * deck->res; coordinates are slide twips and crop is thousandths cut from
  * left, top, right and bottom. */

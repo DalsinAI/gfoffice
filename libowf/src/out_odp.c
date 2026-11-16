@@ -1077,8 +1077,10 @@ static void put_table(odpw *w, owf_buf *out, const owf_obj *o)
             }
             owf_buf_puts(out, "<table:table-cell office:value-type=\"string\"");
             if ((m = table_merge_at(o, row, col, 0)) != NULL) {
-                if (m->cols > 1)
-                    owf_buf_printf(out, " table:number-columns-spanned=\"%d\"", m->cols);
+                /* no wider than the columns written (the 64-column cap) */
+                int span = m->cols < ncols - col ? m->cols : ncols - col;
+                if (span > 1)
+                    owf_buf_printf(out, " table:number-columns-spanned=\"%d\"", span);
                 if (m->rows > 1)
                     owf_buf_printf(out, " table:number-rows-spanned=\"%d\"", m->rows);
             }

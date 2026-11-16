@@ -184,10 +184,45 @@ static void round_trip(const char *style, int keep_style)
     owf_deck_free(d);
 }
 
+/* a block merge: two rows by two columns at (1,1), gridSpan with rowSpan */
+static void block_merge(void)
+{
+    int obj = -1;
+    owf_deck *d = table_deck(&obj, STYLE), *back = NULL;
+    unsigned char *data = NULL;
+    size_t n = 0;
+    const owf_obj *o;
+    char got[32];
+    owf_report *report = owf_report_new();
+
+    CHECK(d && obj >= 0, "a deck with a table (block)");
+    if (d && obj >= 0) {
+        owf_obj *w = &d->slides[0].objs[obj];
+        w->nmerges = 0;
+        owf_table_add_merge(w, 1, 1, 2, 2);
+    }
+    CHECK(d && opr_export_pptx(d, &data, &n, report) == OWF_OK && data, "saved as PPTX (block)");
+    CHECK(owf_import_deck_memory(data, n, "pptx", &back, NULL, NULL) == OWF_OK && back, "read back (block)");
+    o = table_of(back);
+    if (o) {
+        CHECK(o->nmerges == 1 && has_merge(o, 1, 1, 2, 2), "the 2 x 2 merge (%d)", o->nmerges);
+        cell_text(o, 1, 1, got, sizeof got);
+        CHECK(!strcmp(got, "1,1"), "the block's head text: \"%s\"", got);
+        cell_text(o, 1, 0, got, sizeof got);
+        CHECK(!strcmp(got, "1,0"), "the cell beside the block: \"%s\"", got);
+    } else
+        CHECK(0, "a table read back (block)");
+    owf_report_free(report);
+    free(data);
+    owf_deck_free(back);
+    owf_deck_free(d);
+}
+
 int main(void)
 {
     round_trip(STYLE, 1);
     round_trip("blue", 0);
+    block_merge();
     printf("test_opr_table_pptx: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }
