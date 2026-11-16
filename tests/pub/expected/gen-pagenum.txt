@@ -17,6 +17,15 @@ page 1 master 1 frames 1
       run 1 field page bold 10.0pt font "Calibri"
     para "Turn to # for more."
       run 0 "Turn to # for more." 10.0pt font "Calibri"
+    para "Two side by side: {page}{page}"
+      run 0 "Two side by side: " 10.0pt font "Calibri"
+      run 1 field page 10.0pt font "Calibri"
+      run 2 field page 10.0pt font "Calibri"
+    para "One run over a mark: {page}"
+      run 0 "One run over a mark: " 10.0pt font "Calibri"
+      run 1 field page 10.0pt font "Calibri"
+    para "{page}"
+      run 0 field page 10.0pt font "Calibri"
 page 2 master 1 frames 1
   frame 0 text box 20.0 20.0 100.0 30.0 mm (emu 720000 720000 4320000 1800000) shape 202 text-id 3 story 2
     para "Page two, numbered by its master"

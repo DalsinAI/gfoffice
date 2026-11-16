@@ -1079,7 +1079,7 @@ static void write_quill(writer *w, owf_buf *out)
                     f16(&wr->props, 0x200, 0x10, 5, 1);
                     f32(&wr->props, 0x222, 0x20, 0xFFFFFFFFUL, 1);
                 }
-                if (had && cr.n > 1 && same_props(&cr.r[cr.n - 2].props, &wr->props)) {
+                if (had && r->kind != OWF_RUN_FIELD && cr.n > 1 && same_props(&cr.r[cr.n - 2].props, &wr->props)) {
                     cr.r[cr.n - 2].end = units;  /* written the same (a colour PL had no room for): one run, as read back */
                     owf_buf_free(&wr->props);
                     cr.n--;
