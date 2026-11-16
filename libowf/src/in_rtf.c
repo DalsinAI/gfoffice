@@ -362,6 +362,7 @@ static void control(rtf *r, const char *s, size_t n, int have, long value)
     else if (word(s, n, "ul")) set_flag(r, OWF_UNDERLINE, on);
     else if (word(s, n, "ulnone")) set_flag(r, OWF_UNDERLINE, 0);
     else if (word(s, n, "strike")) set_flag(r, OWF_STRIKE, on);
+    else if (word(s, n, "v")) set_flag(r, OWF_HIDDEN, on);                /* 1.14: hidden text */
     else if (word(s, n, "super")) { r->state.chr.flags &= ~OWF_SUB; set_flag(r, OWF_SUPER, 1); }
     else if (word(s, n, "sub")) { r->state.chr.flags &= ~OWF_SUPER; set_flag(r, OWF_SUB, 1); }
     else if (word(s, n, "nosupersub")) { r->state.chr.flags &= ~(OWF_SUPER | OWF_SUB); apply_char(r); }

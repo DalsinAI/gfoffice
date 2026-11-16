@@ -243,6 +243,8 @@ static void put_runs(mw *w, const owf_para *p, int from, int depth)
     for (j = from; j < p->nruns; j++) {
         const owf_run *r = &p->runs[j];
         unsigned flags = r->fmt.flags & MW_EMPH & ~(unsigned)w->mask;
+        if ((r->fmt.flags & OWF_HIDDEN) && r->note <= 0 && !r->comment)
+            continue;                                /* 1.14: hidden text is left out */
         if (r->kind == OWF_RUN_TEXT || r->kind == OWF_RUN_FIELD)
             note_look(w, r);
         switch (r->kind) {
@@ -407,7 +409,7 @@ static int put_code(mw *w, const owf_story *st, int i)
             const owf_run *r = &st->paras[k].runs[j];
             if (r->kind == OWF_RUN_TAB) owf_buf_putc(&w->out, '\t');
             else if (r->kind == OWF_RUN_LINEBREAK) owf_buf_putc(&w->out, '\n');
-            else if (r->kind == OWF_RUN_TEXT && r->text) owf_buf_puts(&w->out, r->text);
+            else if (r->kind == OWF_RUN_TEXT && r->text && !(r->fmt.flags & OWF_HIDDEN)) owf_buf_puts(&w->out, r->text);
         }
         owf_buf_putc(&w->out, '\n');
     }
