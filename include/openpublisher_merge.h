@@ -24,6 +24,18 @@ extern "C" {
  * OWF_ERR_MEMORY. */
 int opp_merge_insert_field(owf_obj *obj, int para, const char *column, const owf_charfmt *fmt);
 
+/* A merge field for column put at a place in an object's text: paragraph para,
+ * offset bytes into it as GFOpenPresentation's editor counts them (opr_pos:
+ * text bytes, a tab or a line break 1, a field 0). The field takes the look
+ * of the text before it and goes after any field already there. OWF_OK,
+ * OWF_ERR_FORMAT (no object, no column, no such place) or OWF_ERR_MEMORY. */
+int opp_merge_insert_field_at(owf_obj *obj, int para, size_t offset, const char *column);
+
+/* A data source read from a CSV file (at most OW_MERGE_MAX_BYTES). OWF_OK
+ * with *table set; OWF_ERR_IO (not read), OWF_ERR_UNSUPPORTED (too big),
+ * OWF_ERR_FORMAT (no columns: its first line names them) or OWF_ERR_MEMORY. */
+int opp_merge_load_file(const char *path, ow_merge_table **table);
+
 /* How many merge fields the pages and masters have; *missing (when not
  * NULL): how many of them name a column the table does not have (a NULL
  * table has none). */

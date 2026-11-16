@@ -211,12 +211,65 @@ static void missing_column(void)
     owf_deck_free(d);
 }
 
+static void insert_at(void)
+{
+    owf_deck *d = owf_deck_new_empty();
+    owf_slide *s = d ? owf_deck_add_slide(d, -1, -1) : NULL;
+    owf_obj *o = s ? text_frame(s, "Dear friend") : NULL;
+    owf_obj *empty = s ? owf_slide_add(s, OWF_OBJ_TEXT) : NULL;
+    CHECK(o != NULL && empty != NULL);
+    if (!o || !empty) { owf_deck_free(d); return; }
+    o = &d->slides[0].objs[0];
+    empty = &d->slides[0].objs[1];
+    o->text.paras[0].runs[0].fmt.flags = OWF_BOLD;
+    CHECK(opp_merge_insert_field_at(o, 0, 5, "Name") == OWF_OK);          /* inside the text: split */
+    CHECK(same(frame_text(o), "Dear {\xC2\xABName\xC2\xBB}friend"));
+    CHECK(o->text.paras[0].nruns == 3 && o->text.paras[0].runs[1].fmt.flags == OWF_BOLD);
+    CHECK(o->text.paras[0].runs[2].fmt.flags == OWF_BOLD && same(o->text.paras[0].runs[2].text, "friend"));
+    CHECK(opp_merge_insert_field_at(o, 0, 5, "Town") == OWF_OK);          /* the same place: after that field */
+    CHECK(same(frame_text(o), "Dear {\xC2\xABName\xC2\xBB}{\xC2\xABTown\xC2\xBB}friend"));
+    CHECK(opp_merge_insert_field_at(o, 0, 0, "A") == OWF_OK);             /* the start */
+    CHECK(same(frame_text(o), "{\xC2\xAB" "A\xC2\xBB}Dear {\xC2\xABName\xC2\xBB}{\xC2\xABTown\xC2\xBB}friend"));
+    CHECK(opp_merge_insert_field_at(o, 0, 11, "Z") == OWF_OK);            /* the end */
+    CHECK(same(frame_text(o), "{\xC2\xAB" "A\xC2\xBB}Dear {\xC2\xABName\xC2\xBB}{\xC2\xABTown\xC2\xBB}friend{\xC2\xABZ\xC2\xBB}"));
+    CHECK(opp_merge_insert_field_at(o, 0, 12, "Z") == OWF_ERR_FORMAT);    /* past the end */
+    CHECK(opp_merge_insert_field_at(o, 1, 0, "Z") == OWF_ERR_FORMAT);
+    CHECK(opp_merge_insert_field_at(o, 0, 0, "") == OWF_ERR_FORMAT);
+    CHECK(opp_merge_insert_field_at(empty, 0, 0, "Name") == OWF_OK);      /* a box with no text yet */
+    CHECK(same(frame_text(empty), "{\xC2\xABName\xC2\xBB}"));
+    CHECK(opp_merge_fields(d, NULL, NULL) == 5);
+    owf_deck_free(d);
+}
+
+static void load_file(void)
+{
+    const char *path = "build/host/test-pub-merge.csv";
+    ow_merge_table *t = (ow_merge_table *)1;
+    FILE *f = fopen(path, "wb");
+    CHECK(f != NULL);
+    if (!f) return;
+    fputs("Name;Town\r\nJo;Leeds\r\n", f);
+    fclose(f);
+    CHECK(opp_merge_load_file(path, &t) == OWF_OK && t && t->ncols == 2 && t->nrows == 1);
+    if (t) CHECK(same(ow_merge_value(t, 0, "Town"), "Leeds"));
+    ow_merge_table_free(t);
+    f = fopen(path, "wb");
+    if (f) fclose(f);                                                    /* empty: no columns */
+    CHECK(opp_merge_load_file(path, &t) == OWF_ERR_FORMAT && t == NULL);
+    remove(path);
+    CHECK(opp_merge_load_file(path, &t) == OWF_ERR_IO && t == NULL);
+    CHECK(opp_merge_load_file(NULL, &t) == OWF_ERR_IO);
+    CHECK(opp_merge_load_file(path, NULL) == OWF_ERR_FORMAT);
+}
+
 int main(void)
 {
     insert_and_count();
     show();
     pages();
     missing_column();
+    insert_at();
+    load_file();
     if (failed) { fprintf(stderr, "publisher merge: %d of %d checks failed\n", failed, checks); return 1; }
     printf("publisher merge tests passed (%d checks)\n", checks);
     return 0;
