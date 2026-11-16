@@ -7004,6 +7004,32 @@ static void test_pivot_details(void)
     enter_at(core, "A4", "West");
     CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
     CHECK(oc_core_pivot_details(core, 3, 2) == OC_PIVOT_STALE);
+
+    /* a group made by hand: Coast (East and West) gives the rows of both, in the source's order
+       (the source now: East 11, East 20, West 6, West 15, West 25, North 30) */
+    CHECK(oc_core_pivot_get(core, &def));
+    def.npage = 0;
+    def.nrow = 1; def.row[0] = 0;
+    def.ncol = 0;
+    def.nsubtotal = 0;
+    def.nhide = 0;
+    {
+        owf_pivot_page east, west;
+        memset(&east, 0, sizeof east);
+        east.field = 0; east.kind = OWF_PIVOT_TEXT;
+        west = east;
+        snprintf(east.text, sizeof east.text, "East");
+        snprintf(west.text, sizeof west.text, "West");
+        CHECK(owf_pivot_set_named(&def, &east, "Coast") && owf_pivot_set_named(&def, &west, "Coast"));
+    }
+    CHECK(oc_core_pivot_set_layout(core, &def) == OWF_OK);
+    CHECK_STR(text(core, "A2"), "Coast");
+    CHECK(near(num(core, "B2"), 77.0));
+    CHECK(oc_core_pivot_details(core, 1, 1) == OWF_OK);
+    CHECK_STR(text(core, "A2"), "East");
+    CHECK_STR(text(core, "A4"), "West");
+    CHECK(near(num(core, "D2"), 11.0) && near(num(core, "D3"), 20.0) && near(num(core, "D4"), 6.0) &&
+          near(num(core, "D5"), 15.0) && near(num(core, "D6"), 25.0) && empty(core, "A7"));
     oc_core_free(core);
 }
 
