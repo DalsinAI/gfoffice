@@ -57,9 +57,9 @@ static void progress(const owf_project *p, int row, int *done, int *started)
 
 int opj_filter_passes(const opj_doc *doc, const opj_filter *filter, int row)
 {
-    int done, started;
+    int done, started, match;
     const owf_ptask *t;
-    char cell[400];
+    char *cell;
     if (!doc || !doc->plan || row < 0 || row >= doc->plan->ntasks) return 0;
     if (!filter) return 1;
     t = &doc->plan->tasks[row];
@@ -74,8 +74,10 @@ int opj_filter_passes(const opj_doc *doc, const opj_filter *filter, int row)
     case OPJ_FILTER_CELL:
         if (filter->column < 0 || filter->column >= OPJ_NCOLS) return 0;
         if (!filter->text[0]) return 1;                  /* the AutoFilter's "(All)" */
-        opj_cell_text(doc, row, filter->column, cell, sizeof cell);
-        return opj_text_matches(cell, filter->text, filter->how);
+        if (!(cell = opj_cell_text_dup(doc, row, filter->column))) return 0;
+        match = opj_text_matches(cell, filter->text, filter->how);
+        owf_free(cell);
+        return match;
     default: return 0;
     }
 }
@@ -105,19 +107,24 @@ int opj_lines_active(const opj_lines *lines)
 }
 
 /* Group heads a and b (task rows) in the group column's order: below 0 when a's group goes first. */
-static int group_cmp(const opj_doc *doc, int column, int a, int b)
+static int group_cmp(const opj_doc *doc, int column, char *const *text, int a, int b)
 {
     long va, vb;
     int naa, nab;
-    char ta[400], tb[400];
     if (opj_cell_value(doc, a, column, &va, &naa)) {
         opj_cell_value(doc, b, column, &vb, &nab);
         if (naa != nab) return naa ? 1 : -1;
         if (!naa && va != vb) return va < vb ? -1 : 1;
     }
-    opj_cell_text(doc, a, column, ta, sizeof ta);
-    opj_cell_text(doc, b, column, tb, sizeof tb);
-    return opj_text_cmp(ta, tb);
+    return opj_text_cmp(text[a], text[b]);
+}
+
+static void free_texts(char **text, int n)
+{
+    int i;
+    if (!text) return;
+    for (i = 0; i < n; i++) owf_free(text[i]);
+    free(text);
 }
 
 int opj_lines_update(opj_lines *lines, const opj_doc *doc)
@@ -125,7 +132,7 @@ int opj_lines_update(opj_lines *lines, const opj_doc *doc)
     const owf_project *p;
     int nt, i, j, n = 0, ng = 0;
     int *task, *heading, *line_of, *keep, *head = NULL, *group_of = NULL;
-    char a[400], b[400];
+    char **text = NULL;                  /* grouped: each kept task's cell in the group's column, whole */
     if (!lines || !doc || !doc->plan) return OWF_ERR_FORMAT;
     if (lines->filter.kind < 0 || lines->filter.kind >= OPJ_NFILTERS || lines->group >= OPJ_NCOLS ||
         (lines->filter.kind == OPJ_FILTER_CELL && (lines->filter.column < 0 || lines->filter.column >= OPJ_NCOLS)))
@@ -139,9 +146,10 @@ int opj_lines_update(opj_lines *lines, const opj_doc *doc)
     if (lines->group >= 0) {
         head = malloc(((size_t)nt + 1) * sizeof *head);
         group_of = malloc(((size_t)nt + 1) * sizeof *group_of);
+        text = calloc((size_t)nt + 1, sizeof *text);
     }
-    if (!task || !heading || !line_of || !keep || (lines->group >= 0 && (!head || !group_of))) {
-        free(task), free(heading), free(line_of), free(keep), free(head), free(group_of);
+    if (!task || !heading || !line_of || !keep || (lines->group >= 0 && (!head || !group_of || !text))) {
+        free(task), free(heading), free(line_of), free(keep), free(head), free(group_of), free(text);
         return OWF_ERR_MEMORY;
     }
     for (i = 0; i < nt; i++) {
@@ -174,18 +182,20 @@ int opj_lines_update(opj_lines *lines, const opj_doc *doc)
                 group_of[i] = -1;
                 continue;
             }
-            opj_cell_text(doc, i, lines->group, a, sizeof a);
-            for (j = 0; j < ng; j++) {
-                opj_cell_text(doc, head[j], lines->group, b, sizeof b);
-                if (!opj_text_cmp(a, b)) break;
+            if (!(text[i] = opj_cell_text_dup(doc, i, lines->group))) {
+                free_texts(text, nt);
+                free(task), free(heading), free(line_of), free(keep), free(head), free(group_of);
+                return OWF_ERR_MEMORY;
             }
+            for (j = 0; j < ng && opj_text_cmp(text[i], text[head[j]]); j++)
+                ;
             if (j == ng) head[ng++] = i;
             group_of[i] = head[j];
         }
         for (i = 1; i < ng; i++) {                /* the heads in the column's order; ties keep theirs */
             int h = head[i], d;
             for (j = i; j > 0; j--) {
-                d = group_cmp(doc, lines->group, head[j - 1], h);
+                d = group_cmp(doc, lines->group, text, head[j - 1], h);
                 if (lines->group_descending ? d >= 0 : d <= 0) break;
                 head[j] = head[j - 1];
             }
@@ -205,6 +215,7 @@ int opj_lines_update(opj_lines *lines, const opj_doc *doc)
     free(keep);
     free(head);
     free(group_of);
+    free_texts(text, nt);
     free(lines->task);
     free(lines->heading);
     free(lines->line_of);

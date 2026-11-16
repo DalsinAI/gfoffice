@@ -225,6 +225,8 @@ int opj_replace_text(opj_doc *doc, int column, const char *find, const char *wit
 int opj_cell_value(const opj_doc *doc, int row, int column, long *v, int *na);
 /* Text against text with case ignored, as strcmp; and whether cell matches text by how (an OPJ_FIND_). */
 int opj_text_cmp(const char *a, const char *b);
+/* A cell's whole text as the sheet shows it, however long (a Name or Notes); owf_free it. NULL for memory. */
+char *opj_cell_text_dup(const opj_doc *doc, int row, int column);
 int opj_text_matches(const char *cell, const char *text, int how);
 
 /* ---- Filters and groups (Project > Filtered For, the AutoFilter row, Project > Group By) ----

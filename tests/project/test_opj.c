@@ -7,6 +7,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "openproject_core.h"
 
@@ -877,6 +878,22 @@ static void test_sort(void)
     CHECK_N(doc->plan->tasks[2].level, 2);
     CHECK(doc->plan->tasks[1].summary);
     opj_doc_free(doc);
+
+    /* names alike for their first 300 bytes sort by the rest */
+    {
+        char a[320], b[320];
+        memset(a, 'n', 300);
+        memcpy(b, a, 300);
+        strcpy(a + 300, "b");
+        strcpy(b + 300, "a");
+        doc = opj_doc_new(NULL, AT(16, 8, 0));
+        CHECK_N(opj_insert_task(doc, 0, a), OWF_OK);
+        CHECK_N(opj_insert_task(doc, 1, b), OWF_OK);
+        k[0].column = OPJ_COL_NAME, k[0].descending = 0;
+        CHECK_N(opj_sort_tasks(doc, k, 1), OWF_OK);
+        CHECK(strcmp(doc->plan->tasks[0].name, b) == 0);
+        opj_doc_free(doc);
+    }
 }
 
 /* A plan with two summaries: A over Plan (done) and Build (half), B over Ship (a milestone); then Docs. */
@@ -999,6 +1016,23 @@ static void test_filter_group(void)
     CHECK_S(lines_text(&l), "[2],2,[5],5,[1],1,[4],4");
     l.group = OPJ_NCOLS;
     CHECK_N(opj_lines_update(&l, doc), OWF_ERR_FORMAT);
+
+    /* the AutoFilter reads a cell whole: a match past a long note's 400th byte */
+    {
+        char note[1001];
+        memset(note, 'x', 1000);
+        memcpy(note + 900, "omega", 5);
+        note[1000] = 0;
+        CHECK_N(opj_set_notes(doc, 5, note), OWF_OK);
+        l.group = -1;
+        memset(&l.filter, 0, sizeof l.filter);
+        l.filter.kind = OPJ_FILTER_CELL;
+        l.filter.column = OPJ_COL_NOTES;
+        strcpy(l.filter.text, "omega");
+        CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+        CHECK_S(lines_text(&l), "5");
+        memset(&l.filter, 0, sizeof l.filter);
+    }
 
     /* the names */
     CHECK_S(opj_filter_name(OPJ_FILTER_CRITICAL), "Critical");
@@ -1147,6 +1181,30 @@ static void test_find_replace(void)
     CHECK_N(opj_replace_text(doc, OPJ_COL_NAME, "a", "b", 2, 5, NULL, NULL), OWF_ERR_FORMAT);
     CHECK_N(opj_undo(doc), OWF_OK);
     CHECK_S(names_of(doc), "Plaan,Maake,Ship");
+
+    /* a note far longer than any buffer: replaced whole, and found past its 400th byte */
+    {
+        char *note = malloc(1101), *want = malloc(1101);
+        CHECK(note && want);
+        if (note && want) {
+            memset(note, 'x', 1100);
+            memcpy(note, "alpha", 5);
+            memcpy(note + 1000, "omega", 5);
+            note[1100] = 0;
+            CHECK_N(opj_set_notes(doc, 0, note), OWF_OK);
+            CHECK_N(opj_find_task(doc, OPJ_COL_NOTES, "omega", OPJ_FIND_CONTAINS, -1, 0), 0);
+            CHECK_N(opj_replace_text(doc, OPJ_COL_NOTES, "alpha", "beta", 0, -1, &changed, NULL), OWF_OK);
+            CHECK_N(changed, 1);
+            strcpy(want, "beta");
+            strcat(want, note + 5);
+            CHECK_N((long)strlen(doc->plan->tasks[0].notes), 1099L);
+            CHECK(strcmp(doc->plan->tasks[0].notes, want) == 0);
+            CHECK_N(opj_replace_text(doc, OPJ_COL_NOTES, "x", "yy", 0, -1, &changed, NULL), OWF_OK);
+            CHECK_N((long)strlen(doc->plan->tasks[0].notes), 1099L + 1090L);   /* all 1,090 x doubled */
+        }
+        free(note);
+        free(want);
+    }
     opj_doc_free(doc);
 }
 
