@@ -173,6 +173,37 @@ static void test_errors(ob_project *p)
     CHECK(ob_preview_pages(NULL) == 0 && ob_preview_turn(NULL, 3, 1) == 0, "no preview, no pages");
 }
 
+/* UTF-8 to Latin-1 for the Amiga's fonts, a piece at a time: a piece never ends inside a character. */
+static void test_latin1(void)
+{
+    static char big[2000], out[600];
+    const char *s = "Caf\xc3\xa9 \xe2\x82\xac" "5";      /* "Café €5" */
+    size_t chars = 99, took, total = 0, all = 0;
+    int i, pieces = 0;
+    took = ob_preview_latin1(s, strlen(s), out, sizeof out, &chars);
+    CHECK(took == strlen(s) && chars == 7 && !strcmp(out, "Caf\xe9 ?5"), "latin1: %u %u [%s]", (unsigned)took,
+          (unsigned)chars, out);
+    /* a piece of 4 characters: "Caf" then the two bytes of the e-acute together */
+    took = ob_preview_latin1(s, strlen(s), out, 5, &chars);
+    CHECK(took == 5 && chars == 4 && !strcmp(out, "Caf\xe9"), "piece: %u %u", (unsigned)took, (unsigned)chars);
+    took = ob_preview_latin1(s, 4, out, sizeof out, &chars);
+    CHECK(took == 3 && chars == 3 && !strcmp(out, "Caf"), "a cut character is left for the next piece: %u",
+          (unsigned)took);
+    /* 1000 e-acutes, 2000 bytes, in pieces of 511: every one comes through */
+    for (i = 0; i < 1000; i++) { big[2 * i] = (char)0xc3; big[2 * i + 1] = (char)0xa9; }
+    while (total < 2000 && pieces < 20) {
+        took = ob_preview_latin1(big + total, 2000 - total, out, 512, &chars);
+        if (!took) break;
+        total += took;
+        all += chars;
+        pieces++;
+    }
+    CHECK(total == 2000 && all == 1000 && pieces == 2, "pieces: %u bytes %u chars %d pieces", (unsigned)total,
+          (unsigned)all, pieces);
+    CHECK(ob_preview_latin1("x", 1, out, 1, &chars) == 0 && chars == 0 && out[0] == 0, "no room");
+    CHECK(ob_preview_latin1(NULL, 0, out, sizeof out, &chars) == 0 && out[0] == 0, "nothing");
+}
+
 int main(int argc, char **argv)
 {
     ob_project *p;
@@ -188,6 +219,7 @@ int main(int argc, char **argv)
         test_pages_and_bands(p);
         test_long_report(p);
         test_errors(p);
+        test_latin1();
         ob_close(p);
     }
     printf("%s: %d checks, %d failed\n", fails ? "FAILED" : "base preview", checks, fails);
