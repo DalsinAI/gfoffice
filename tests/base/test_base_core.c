@@ -2663,12 +2663,19 @@ static void test_query_out(void)
     CHECK(ob_table_get(p, "Orders", &t) && ob_table_find_field(&t, "Weight") > 0 && ob_row_total(p, "Orders") == 5,
           "Orders as it was");
     strcpy(t.name, "Sales");
-    CHECK(!ob_table_change(p, "Orders", &t), "a rename in a design change, a view on it");
-    CHECK_ERR(p, "The view Weights uses Orders");
+    CHECK(ob_table_change(p, "Orders", &t), "a rename in a design change, a view on it: %s", ob_error(p));
+    CHECK(ob_table_count(p) == 2 && !strcmp(ob_table_name(p, 1), "Sales") && ob_row_total(p, "Sales") == 5,
+          "renamed with its rows");
+    CHECK(!strcmp(qrows(p, &back, NULL, 0, -1), "2"), "the view follows the design change's rename: %s",
+          qrows(p, &back, NULL, 0, -1));
+    {
+        static ob_table o;
+        CHECK(ob_table_get(p, "Orders", &o) == 0 && ob_table_get(p, "Sales", &o)
+              && !strcmp(o.fields[ob_table_find_field(&o, "Customer")].lookup, "Clients"), "Sales' design");
+    }
     CHECK(ob_sqlview_drop(p, "weights") && ob_sqlview_count(p) == 1, "drop the view: %s", ob_error(p));
     CHECK(!ob_sqlview_drop(p, "Weights"), "drop it twice");
     CHECK_ERR(p, "There is no view named Weights");
-    CHECK(ob_table_change(p, "Orders", &t), "rename in a design change: %s", ob_error(p));
     CHECK(ob_query_get(p, "Spend", &back) && !strcmp(back.tables[1], "Sales") && !strcmp(back.columns[1].table, "Sales"),
           "the grid query follows a design change's rename");
     CHECK(!strcmp(back.columns[2].expr, "\"Sales\".\"id\""), "and its expression: %s", back.columns[2].expr);
@@ -2701,6 +2708,41 @@ static void test_query_out(void)
     p = ob_open(path("qout.oadb"), OB_OPEN_READONLY, err, sizeof err);
     CHECK(p && ob_sqlview_count(p) == 1 && ob_query_get(p, "Town people", &q), "reopened: %s", p ? ob_error(p) : err);
     CHECK(p && !ob_query_save_view(p, &q, "Another"), "no views read only");
+    ob_close(p);
+}
+
+/* A design change that renames a table another table looks up (no views) */
+static void test_change_rename_looked_up(void)
+{
+    ob_project *p = fresh("rename-lookup.oadb");
+    static ob_table t, o;
+    if (!p) return;
+    five_customers(p);
+    shop_orders(p);
+    CHECK(ob_table_get(p, "Customers", &t), "Customers' design");
+    strcpy(t.name, "Clients");
+    CHECK(ob_table_change(p, "Customers", &t), "rename a looked-up table in a design change: %s", ob_error(p));
+    CHECK(ob_table_count(p) == 2 && !strcmp(ob_table_name(p, 0), "Clients") && ob_row_total(p, "Clients") == 5
+          && ob_row_total(p, "Orders") == 5, "rows kept");
+    CHECK(ob_table_get(p, "Orders", &o) && !strcmp(o.fields[ob_table_find_field(&o, "Customer")].lookup, "Clients"),
+          "the Lookup follows");
+    {
+        ob_relation r[4];
+        int n = ob_relations(p, r, 4);
+        CHECK(n == 1 && !strcmp(r[0].table, "Orders") && !strcmp(r[0].lookup, "Clients"), "the foreign key follows: %d", n);
+    }
+    {
+        const char *f[] = { "Customer", "Total" }, *v[] = { "2", "3.00" }, *bad[] = { "99", "1.00" };
+        CHECK(ob_row_add(p, "Orders", 2, f, v, NULL), "an order for a client: %s", ob_error(p));
+        CHECK(!ob_row_add(p, "Orders", 2, f, bad, NULL), "an order for nobody is refused");
+    }
+    /* and back, in a change that also adds a field */
+    CHECK(ob_table_get(p, "Clients", &t), "Clients' design");
+    strcpy(t.name, "Customers");
+    ob_table_add_field(&t, "Phone", OB_TEXT);
+    CHECK(ob_table_change(p, "Clients", &t), "rename back with a new field: %s", ob_error(p));
+    CHECK(ob_table_get(p, "Orders", &o) && !strcmp(o.fields[ob_table_find_field(&o, "Customer")].lookup, "Customers")
+          && ob_row_total(p, "Customers") == 5, "back as it was");
     ob_close(p);
 }
 
@@ -2743,6 +2785,7 @@ int main(int argc, char **argv)
     test_rexx_rows();
     test_queries();
     test_query_out();
+    test_change_rename_looked_up();
     test_query_joins();
     test_forms();
     test_not_projects();
