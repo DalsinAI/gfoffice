@@ -273,6 +273,22 @@ being looked for in the book's own folder. ARexx `LINKS` gives
 `UPDATELINK ALL` updates them (RC 10 when a file cannot be read, 5 for a
 link that is not there); tests/arexx/calc-links.rexx runs them.
 
+## Tracked changes: the window and ARexx
+
+Edit > Track Changes > Record Changes turns recording on and off (its tick
+follows the book). Turning it off with changes not yet accepted or rejected
+asks first: they are dropped and the sheet stays as it is. Manage Changes...
+lists each change as `oc_core_change_line` gives it ("Cell Sheet1.A1 changed
+from 5 to 7 (Dale, 2026-11-16 07:00)"); picking one shows its place
+(`oc_core_change_go`: its sheet active, its cell selected), and Accept,
+Reject, Accept All and Reject All are each one Undo step. Changes are made
+under ENV USER (or USERNAME) until Changes Author... names someone.
+
+ARexx: `TRACKCHANGES [ON|OFF [FORCE]]` ("1" or "0"; OFF with changes is
+RC 5 unless FORCE), `CHANGES` (how many), `CHANGE n` (its line),
+`SHOWCHANGE n`, `ACCEPTCHANGE n|ALL` and `REJECTCHANGE n|ALL` (how many are
+left), `CHANGEAUTHOR [name]`. Test script: tests/arexx/calc-track.rexx.
+
 ## Sheet and cell protection
 
 owf.library 2.6 gives `owf_sheet` its protection (`protect`, the

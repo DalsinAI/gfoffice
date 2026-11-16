@@ -61,7 +61,23 @@ typedef struct oc_undo {
     char *part_name;
     unsigned char *part_data;
     size_t part_length;
+    /* the book's tracked changes as they were (oc_track.c), and whether the step is still to be recorded as
+       changes when the command it is for has done (oc_changed) */
+    int nchanges;
+    owf_change *changes;
+    int track_pending;
 } oc_undo;
+
+/* What the command running is, for recording its changes (oc_track.c): none (the cells its step saved, or the
+ * whole book, compared), nothing to record, rows or columns inserted or deleted, a sheet added (or
+ * duplicated), a sheet renamed (from old_name). */
+enum { OC_HINT_NONE, OC_HINT_QUIET, OC_HINT_INSERT, OC_HINT_DELETE, OC_HINT_ADD_SHEET, OC_HINT_RENAME };
+typedef struct {
+    int kind;
+    int sheet, axis;
+    unsigned at, count;
+    char *old_name;                 /* owf_malloc'd */
+} oc_trackhint;
 
 /* The text a copy left, with its cells. */
 typedef struct {
@@ -158,6 +174,12 @@ struct oc_core {
     unsigned long used_stamp;
     int used_sheet, used_valid;
     unsigned used_rows, used_cols;
+
+    /* tracked changes (oc_track.c): who makes them, the clock that dates them, and what the command running is */
+    char *track_author;
+    oc_clock_fn track_clock;
+    void *track_clock_user;
+    oc_trackhint hint;
 };
 
 /* oc_core.c */
@@ -267,6 +289,24 @@ int oc_list_choices(oc_core *core, int sheet, const owf_validation *dv, char ***
 
 /* oc_undo.c: the last step taken back for good (no redo of it); OWF_ERR_UNSUPPORTED when there is none */
 int oc_undo_take_back(oc_core *core);
+
+/* oc_track.c: the command running's hint (old_name copied); the step's changes recorded when the command has
+ * done (from oc_changed); the book's changes copied into a new step (OWF_ERR_MEMORY), put back from one; a sheet
+ * moved; a sheet dropped (oc_core.c, no Undo step of its own); the core's tracking things freed. */
+void oc_track_hint(oc_core *core, int kind, int sheet, int axis, unsigned at, unsigned count, const char *old_name);
+void oc_track_changed(oc_core *core);
+int oc_track_save(oc_core *core, oc_undo *u);
+void oc_track_restore(oc_core *core, oc_undo *u);
+void oc_track_sheet_moved(oc_core *core, int from, int to);
+/* A book just read: a cell change's new content, when its file keeps only the old (ODS, XLSX), from the cell's
+ * next change or the cell as it is. */
+void oc_track_opened(oc_core *core);
+void oc_track_free_list(owf_change *changes, int n);
+void oc_track_free(oc_core *core);
+void oc_drop_sheet(oc_core *core, int sheet);
+/* oc_core.c: what a cell holds as one would type it, its formula shown even on a protected sheet (owf_malloc'd;
+ * NULL when it is empty or memory ran out: *lost then 1) */
+char *oc_cell_input_of(const oc_core *core, const owf_cell *cell, int *lost);
 
 /* oc_clip.c */
 void oc_clip_free(oc_clip *clip);

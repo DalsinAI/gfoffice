@@ -51,16 +51,18 @@
  * 3.9 to 3.12's owf_page, owf_doc and owf_para, so owf_obj is larger and a program's size check refuses 3.12
  * and before. No call changes.
  *
- * 3.15 (3.14 is #262's): owf_para.para_format_change and owf_doc.para_format_changes (owfwrite.library 3.22,
- * libowf 1.17), so owf_para and owf_doc are larger and a program's size check refuses 3.14 and before. No call
- * changes.
+ * 3.14: owf_pdf_gradient is a call, at the end, so OWConvert's deck PDF (opr_pdf.c's gradient fills) links
+ * against owfpresent.library again.
+ * 3.16 (3.14 is #382's, 3.15 #262's): owf_para.para_format_change and owf_doc.para_format_changes
+ * (owfwrite.library 3.22, libowf 1.17), so owf_para and owf_doc are larger and a program's size check refuses
+ * 3.15 and before. No call changes.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfpresent.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 15
-#define OWF_LIB_VERS "3.15"
+#define OWF_LIB_REVISION 16
+#define OWF_LIB_VERS "3.16"
 #define OWF_LIB_DATE "16.11.2026"
 #define OWF_LIB_CALLS_H "owfpresent_calls.h"
 #include "owf_libbase.h"

@@ -667,6 +667,150 @@ static void test_baseline(void)
     opj_doc_free(doc);
 }
 
+/* Assign Resources: units typed for each kind, the dialog's lines, Assign, Remove, Replace and Undo. */
+static void test_assign_dialog(void)
+{
+    opj_doc *doc = three();
+    opj_assign_info info;
+    long u = -1;
+    char text[80];
+    int uid;
+    CHECK_N(opj_add_resource(doc, "Dale", NULL), OWF_OK);                 /* 0 */
+    CHECK_N(opj_set_resource_cell(doc, 0, OPJ_RCOL_RATE, "20/h"), OWF_OK);
+    CHECK_N(opj_add_resource(doc, "Bob", NULL), OWF_OK);                  /* 1 */
+    CHECK_N(opj_add_resource(doc, "Steel", NULL), OWF_OK);                /* 2, a material at 5.00 */
+    CHECK_N(opj_set_resource_cell(doc, 2, OPJ_RCOL_TYPE, "m"), OWF_OK);
+    CHECK_N(opj_set_resource_cell(doc, 2, OPJ_RCOL_RATE, "5"), OWF_OK);
+    CHECK_N(opj_add_resource(doc, "Travel", NULL), OWF_OK);               /* 3, a cost */
+    CHECK_N(opj_set_resource_cell(doc, 3, OPJ_RCOL_TYPE, "c"), OWF_OK);
+
+    /* what the Units box takes */
+    CHECK_N(opj_units_parse(doc, 0, "50%", &u), OWF_OK);
+    CHECK_N(u, 50);
+    CHECK_N(opj_units_parse(doc, 0, " 150 ", &u), OWF_OK);
+    CHECK_N(u, 150);
+    CHECK_N(opj_units_parse(doc, 0, "50.5%", &u), OWF_ERR_FORMAT);
+    CHECK_N(opj_units_parse(doc, 0, "0%", &u), OWF_ERR_FORMAT);
+    CHECK_N(opj_units_parse(doc, 0, "", &u), OWF_ERR_FORMAT);
+    CHECK_N(opj_units_parse(doc, 0, "200000", &u), OWF_ERR_FORMAT);
+    CHECK_N(opj_units_parse(doc, 0, "half", &u), OWF_ERR_FORMAT);
+    CHECK_N(opj_units_parse(doc, 0, "50%%", &u), OWF_ERR_FORMAT);
+    CHECK_N(opj_units_parse(doc, 2, "2.5", &u), OWF_OK);
+    CHECK_N(u, 250);
+    CHECK_N(opj_units_parse(doc, 2, "2.5%", &u), OWF_ERR_FORMAT);
+    CHECK_N(opj_units_parse(doc, 3, "$120", &u), OWF_OK);
+    CHECK_N(u, 12000);
+    CHECK_N(opj_units_parse(doc, 3, "120.00", &u), OWF_OK);
+    CHECK_N(u, 12000);
+    CHECK_N(opj_units_parse(doc, 9, "1", &u), OWF_ERR_FORMAT);
+    CHECK_N(opj_units_parse(NULL, 0, "1", &u), OWF_ERR_FORMAT);
+    opj_units_text(doc, 0, 50, text, sizeof text);
+    CHECK_S(text, "50%");
+    opj_units_text(doc, 2, 250, text, sizeof text);
+    CHECK_S(text, "2.5");
+    opj_units_text(doc, 3, 12000, text, sizeof text);
+    CHECK_S(text, "120.00");
+    opj_units_text(doc, 9, 1, text, sizeof text);
+    CHECK_S(text, "");
+
+    /* Assign: 100% when no units are typed; Build is 3 days, 24h at 20.00 */
+    CHECK(opj_assign_get(doc, 1, 0, &info) && !info.assigned);
+    CHECK(!opj_assign_get(doc, 9, 0, &info) && !opj_assign_get(doc, 1, 9, &info));
+    opj_assign_line(doc, 1, 0, text, sizeof text);
+    CHECK_S(text, "  Dale                                    ");
+    CHECK_N(opj_assign_resource(doc, 1, 0, NULL), OWF_OK);
+    CHECK(opj_assign_get(doc, 1, 0, &info) && info.assigned);
+    CHECK_N(info.units, 100);
+    CHECK_N(info.work, 24 * 60);
+    CHECK_N(info.cost, 48000);
+    opj_assign_line(doc, 1, 0, text, sizeof text);
+    CHECK_S(text, "* Dale                     100%     480.00");
+    CHECK_N(opj_assign_resource(doc, 1, 0, "50%"), OWF_OK);
+    CHECK(opj_assign_get(doc, 1, 0, &info) && info.units == 50 && info.cost == 24000);
+    CHECK_N(opj_assign_resource(doc, 1, 0, ""), OWF_OK);                   /* its own units stay */
+    CHECK(opj_assign_get(doc, 1, 0, &info) && info.units == 50);
+    CHECK_N(opj_assign_resource(doc, 1, 0, "lots"), OWF_ERR_FORMAT);
+    CHECK_N(opj_assign_resource(doc, 1, 3, NULL), OWF_ERR_FORMAT);          /* a cost needs its amount */
+    CHECK_N(opj_assign_resource(doc, 1, 3, "120"), OWF_OK);
+    CHECK_N(opj_assign_resource(doc, 7, 0, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_assign_resource(doc, 1, 7, NULL), OWF_ERR_FORMAT);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Dale[50%],Travel[120.00]");
+
+    /* Replace: Bob takes Dale's place, units and uid */
+    uid = doc->plan->assigns[0].uid;
+    CHECK_N(opj_replace_resource(doc, 1, 0, 1, NULL), OWF_OK);
+    CHECK(opj_assign_get(doc, 1, 0, &info) && !info.assigned);
+    CHECK(opj_assign_get(doc, 1, 1, &info) && info.assigned && info.units == 50);
+    CHECK_N(doc->plan->assigns[0].uid, uid);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Bob[50%],Travel[120.00]");
+    CHECK_N(opj_replace_resource(doc, 1, 1, 2, NULL), OWF_OK);             /* another kind: one unit */
+    opj_assign_line(doc, 1, 2, text, sizeof text);
+    CHECK_S(text, "* Steel                       1       5.00");
+    CHECK_N(opj_replace_resource(doc, 1, 2, 0, "75%"), OWF_OK);
+    CHECK(opj_assign_get(doc, 1, 0, &info) && info.units == 75);
+    CHECK_N(opj_replace_resource(doc, 1, 1, 2, NULL), OWF_ERR_FORMAT);     /* Bob isn't assigned now */
+    CHECK_N(opj_replace_resource(doc, 1, 0, 3, NULL), OWF_ERR_FORMAT);     /* Travel already is */
+    CHECK_N(opj_replace_resource(doc, 1, 0, 0, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_replace_resource(doc, 1, 0, 9, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_replace_resource(doc, 1, 0, 1, "0"), OWF_ERR_FORMAT);
+    CHECK(opj_assign_get(doc, 1, 0, &info) && info.units == 75);
+
+    /* Remove, and Undo brings it back */
+    CHECK_N(opj_remove_resource(doc, 1, 3), OWF_OK);
+    CHECK_N(opj_remove_resource(doc, 1, 3), OWF_ERR_FORMAT);
+    CHECK_N(opj_remove_resource(doc, 1, 9), OWF_ERR_FORMAT);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Dale[75%]");
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Dale[75%],Travel[120.00]");
+    opj_doc_free(doc);
+}
+
+/* Baselines 1 to 10 in the core: set, clear, Undo, which are saved, and the names the window takes. */
+static void test_baseline_n(void)
+{
+    opj_doc *doc = three();
+    owf_pbaseline b;
+    char text[40];
+    CHECK_N(opj_baselines_saved(doc), 0);
+    opj_baselines_text(doc, text, sizeof text);
+    CHECK_S(text, "none");
+    CHECK_N(opj_set_baseline_n(doc, 11, 0, -1), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_baseline_n(doc, -1, 0, -1), OWF_ERR_FORMAT);
+    CHECK_N(opj_clear_baseline_n(doc, 11, 0, -1), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_baseline_n(doc, 2, 0, 9), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_baseline_n(doc, 2, 1, 1), OWF_OK);                    /* Build alone */
+    CHECK(owf_ptask_baseline(&doc->plan->tasks[1], 2, &b));
+    CHECK_N(b.start, AT(18, 8, 0));
+    CHECK(!owf_ptask_baseline(&doc->plan->tasks[0], 2, &b));
+    CHECK_S(cell_of(doc, 1, OPJ_COL_BASELINE_START), "NA");                /* Baseline (0) is another */
+    CHECK_N(opj_baselines_saved(doc), 1u << 2);
+    CHECK_N(opj_set_baseline(doc, 0, -1), OWF_OK);
+    CHECK_N(opj_set_baseline_n(doc, 10, 0, -1), OWF_OK);
+    opj_baselines_text(doc, text, sizeof text);
+    CHECK_S(text, "0 2 10");
+    opj_baselines_text(doc, text, 4);                                      /* cut short, still a string */
+    CHECK_S(text, "0 2");
+    CHECK_N(opj_clear_baseline_n(doc, 10, 0, -1), OWF_OK);
+    CHECK_N(opj_baselines_saved(doc), (1u << 0) | (1u << 2));
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK_N(opj_baselines_saved(doc), (1u << 0) | (1u << 2) | (1u << 10));
+    CHECK_N(opj_clear_baseline(doc, 0, -1), OWF_OK);                       /* 0 is the old call */
+    CHECK_N(opj_baselines_saved(doc), (1u << 2) | (1u << 10));
+    /* what Tools > Set Baseline... takes */
+    CHECK_N(opj_baseline_parse(""), 0);
+    CHECK_N(opj_baseline_parse("Baseline"), 0);
+    CHECK_N(opj_baseline_parse(" 3 "), 3);
+    CHECK_N(opj_baseline_parse("Baseline 10"), 10);
+    CHECK_N(opj_baseline_parse("baseline7"), 7);
+    CHECK_N(opj_baseline_parse("BASELINE 1"), 1);
+    CHECK_N(opj_baseline_parse("11"), -1);
+    CHECK_N(opj_baseline_parse("0010"), -1);
+    CHECK_N(opj_baseline_parse("two"), -1);
+    CHECK_N(opj_baseline_parse("Baseline 3x"), -1);
+    CHECK_N(opj_baseline_parse(NULL), 0);
+    opj_doc_free(doc);
+}
+
 /* Printing: pages down then across; the table only on the first pages across; a footer on each. */
 static void test_print(void)
 {
@@ -1693,6 +1837,8 @@ int main(void)
     test_hits();
     test_resources();
     test_baseline();
+    test_baseline_n();
+    test_assign_dialog();
     test_print();
     test_pdf();
     test_usage();

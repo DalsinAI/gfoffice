@@ -322,6 +322,23 @@ static void free_extbooks(owf_book *book)
     free(book->extbooks);
 }
 
+static void free_changes(owf_change *changes, int n)
+{
+    int i, j;
+    for (i = 0; i < n; i++) {
+        owf_change *c = &changes[i];
+        free(c->author);
+        free(c->date);
+        free(c->before);
+        free(c->after);
+        for (j = 0; j < c->ncells; j++)
+            free(c->cells[j].input);
+        free(c->cells);
+        free_changes(c->children, c->nchildren);
+    }
+    free(changes);
+}
+
 void owf_book_free(owf_book *book)
 {
     int i;
@@ -351,6 +368,7 @@ void owf_book_free(owf_book *book)
     free(book->protect_hash);
     free(book->protect_kept);
     free_extbooks(book);
+    free_changes(book->changes, book->nchanges);
     free(book);
 }
 

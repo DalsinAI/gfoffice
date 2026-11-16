@@ -66,7 +66,7 @@
  * 3.22: libowf 1.17 (numbered 3.18, libowf 1.13, until 3.19 to 3.21 merged first), tracked paragraph format
  * changes (owf_para.para_format_change, owf_doc.para_format_changes, owf_para_format_change): DOCX w:pPrChange
  * in and out; other formats the format as it is now (accepted). No new calls; owf_para and owf_doc grew, so the
- * three libraries go together again (owfpub.library 3.7, owfpresent.library 3.15).
+ * three libraries go together again (owfpub.library 3.7, owfpresent.library 3.16).
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */

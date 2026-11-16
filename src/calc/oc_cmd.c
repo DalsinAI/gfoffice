@@ -354,6 +354,7 @@ int oc_core_insert(oc_core *core, int axis)
         oc_undo_free(u);
         return rc;
     }
+    oc_track_hint(core, OC_HINT_INSERT, core->sheet, axis, at, count, NULL);
     oc_undo_push(core, u);
     oc_changed(core);
     return oc_recalc(core, 0);
@@ -379,6 +380,7 @@ int oc_core_delete(oc_core *core, int axis)
         oc_undo_free(u);
         return rc;
     }
+    oc_track_hint(core, OC_HINT_DELETE, core->sheet, axis, at, count, NULL);
     oc_undo_push(core, u);
     if (rc == OWF_ERR_MEMORY)
         oc_recalc(core, 1);
