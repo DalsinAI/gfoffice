@@ -82,6 +82,87 @@ int opj_filter_passes(const opj_doc *doc, const opj_filter *filter, int row)
     }
 }
 
+/* ---- Column names, and Sort's keys as typed ---- */
+
+static void squash(const char *s, char *out, size_t size)
+{
+    size_t k = 0;
+    for (; *s && k < size - 1; s++) {
+        int c = (unsigned char)*s;
+        if (c >= 'A' && c <= 'Z') c += 32;
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) out[k++] = (char)c;
+    }
+    out[k] = 0;
+}
+
+int opj_column_parse(const char *name, int resource_sheet)
+{
+    static const struct { const char *alias; int column; } tasks[] = {
+        { "name", OPJ_COL_NAME }, { "percent", OPJ_COL_PERCENT }, { "complete", OPJ_COL_PERCENT },
+        { "resources", OPJ_COL_RESOURCES }, { "startvariance", OPJ_COL_START_VARIANCE },
+        { "finishvariance", OPJ_COL_FINISH_VARIANCE },
+        { "constraint", OPJ_COL_CONSTRAINT_TYPE }, { "actualstart", OPJ_COL_ACTUAL_START },
+        { "actualfinish", OPJ_COL_ACTUAL_FINISH }, { "actualduration", OPJ_COL_ACTUAL_DURATION },
+        { "remaining", OPJ_COL_REMAINING_DURATION }, { "remainingduration", OPJ_COL_REMAINING_DURATION }, { "earned", OPJ_COL_BCWP }, { "planned", OPJ_COL_BCWS },
+        { "leveldelay", OPJ_COL_LEVELING_DELAY }, { "delay", OPJ_COL_LEVELING_DELAY },
+    }, res[] = {
+        { "maxunits", OPJ_RCOL_MAX }, { "max", OPJ_RCOL_MAX }, { "rate", OPJ_RCOL_RATE },
+        { "stdrate", OPJ_RCOL_RATE }, { "name", OPJ_RCOL_NAME },
+    };
+    char want[40], have[40];
+    int i, n = resource_sheet ? OPJ_NRCOLS : OPJ_NCOLS;
+    squash(name, want, sizeof want);
+    if (!want[0]) return -1;
+    for (i = 0; i < n; i++) {
+        squash(resource_sheet ? opj_resource_column_title(i) : opj_column_title(i), have, sizeof have);
+        if (strcmp(have, want) == 0) return i;
+    }
+    if (resource_sheet) {
+        for (i = 0; i < (int)(sizeof res / sizeof *res); i++)
+            if (strcmp(res[i].alias, want) == 0) return res[i].column;
+    } else
+        for (i = 0; i < (int)(sizeof tasks / sizeof *tasks); i++)
+            if (strcmp(tasks[i].alias, want) == 0) return tasks[i].column;
+    return -1;
+}
+
+int opj_sort_parse(const char *text, opj_sort_key *keys, int *nkeys)
+{
+    char item[80], *word;
+    const char *s = text, *comma;
+    int n = 0;
+    if (nkeys) *nkeys = 0;
+    if (!text || !keys || !nkeys) return OWF_ERR_FORMAT;
+    while (*s) {
+        size_t len, k;
+        int desc = 0;
+        comma = strchr(s, ',');
+        len = comma ? (size_t)(comma - s) : strlen(s);
+        if (len >= sizeof item) return OWF_ERR_FORMAT;
+        memcpy(item, s, len);
+        item[len] = 0;
+        s += len + (comma ? 1 : 0);
+        for (k = len; k > 0 && item[k - 1] == ' '; k--) item[k - 1] = 0;   /* a trailing direction word */
+        word = strrchr(item, ' ');
+        if (word && (!opj_text_cmp(word + 1, "desc") || !opj_text_cmp(word + 1, "descending") ||
+                     !opj_text_cmp(word + 1, "down"))) {
+            desc = 1;
+            *word = 0;
+        } else if (word && (!opj_text_cmp(word + 1, "asc") || !opj_text_cmp(word + 1, "ascending") ||
+                            !opj_text_cmp(word + 1, "up"))) {
+            *word = 0;
+        }
+        for (word = item; *word == ' '; word++)
+            ;
+        if (!*word && !comma && !*s && n) break;         /* a trailing comma */
+        if (n == 3 || (keys[n].column = opj_column_parse(word, 0)) < 0) return OWF_ERR_FORMAT;
+        keys[n++].descending = desc;
+    }
+    if (!n) return OWF_ERR_FORMAT;
+    *nkeys = n;
+    return OWF_OK;
+}
+
 /* ---- Lines ---- */
 
 void opj_lines_init(opj_lines *lines)

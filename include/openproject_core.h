@@ -255,6 +255,13 @@ typedef struct {
     char text[80];                       /* OPJ_FILTER_CELL: what to match, as the sheet shows it */
     int summaries;                       /* also the summaries above every task it keeps */
 } opj_filter;
+/* A column by its title or a short name, case, spaces and stops ignored ("Duration", "% Complete" or
+ * "percent", "Resource Names" or "resources"); an OPJ_COL_ (an OPJ_RCOL_ with resource_sheet), -1 none. */
+int opj_column_parse(const char *name, int resource_sheet);
+/* Sort's keys as typed, "Start, Duration desc, Name": up to 3 columns by opj_column_parse, each followed
+ * by desc (descending, down) or asc (ascending, up). OWF_OK with them in keys[0..*nkeys-1], or
+ * OWF_ERR_FORMAT for none, more than 3, or a column it doesn't know. */
+int opj_sort_parse(const char *text, opj_sort_key *keys, int *nkeys);
 /* A filter's name as the Filtered For menu has it ("Critical"), "" out of range; a name (case ignored, an
  * AutoFilter is "AutoFilter") back to its OPJ_FILTER_, -1 for none. */
 const char *opj_filter_name(int kind);

@@ -275,33 +275,7 @@ static void squash(const char *s, char *out, size_t size)
 
 static int find_column(const char *name, int resource_sheet)
 {
-    static const struct { const char *alias; int column; } tasks[] = {
-        { "name", OPJ_COL_NAME }, { "percent", OPJ_COL_PERCENT }, { "complete", OPJ_COL_PERCENT },
-        { "resources", OPJ_COL_RESOURCES }, { "startvariance", OPJ_COL_START_VARIANCE },
-        { "finishvariance", OPJ_COL_FINISH_VARIANCE },
-        { "constraint", OPJ_COL_CONSTRAINT_TYPE }, { "actualstart", OPJ_COL_ACTUAL_START },
-        { "actualfinish", OPJ_COL_ACTUAL_FINISH }, { "actualduration", OPJ_COL_ACTUAL_DURATION },
-        { "remaining", OPJ_COL_REMAINING_DURATION }, { "remainingduration", OPJ_COL_REMAINING_DURATION }, { "earned", OPJ_COL_BCWP }, { "planned", OPJ_COL_BCWS },
-        { "leveldelay", OPJ_COL_LEVELING_DELAY }, { "delay", OPJ_COL_LEVELING_DELAY },
-    }, res[] = {
-        { "maxunits", OPJ_RCOL_MAX }, { "max", OPJ_RCOL_MAX }, { "rate", OPJ_RCOL_RATE },
-        { "stdrate", OPJ_RCOL_RATE }, { "name", OPJ_RCOL_NAME },
-    };
-    char want[40], have[40];
-    int i, n = resource_sheet ? OPJ_NRCOLS : OPJ_NCOLS;
-    squash(name, want, sizeof want);
-    if (!want[0]) return -1;
-    for (i = 0; i < n; i++) {
-        squash(resource_sheet ? opj_resource_column_title(i) : opj_column_title(i), have, sizeof have);
-        if (strcmp(have, want) == 0) return i;
-    }
-    if (resource_sheet) {
-        for (i = 0; i < (int)(sizeof res / sizeof *res); i++)
-            if (strcmp(res[i].alias, want) == 0) return res[i].column;
-    } else
-        for (i = 0; i < (int)(sizeof tasks / sizeof *tasks); i++)
-            if (strcmp(tasks[i].alias, want) == 0) return tasks[i].column;
-    return -1;
+    return opj_column_parse(name, resource_sheet);
 }
 
 /* A resource by its number (from 1) or its name (case ignored); its index or -1. */

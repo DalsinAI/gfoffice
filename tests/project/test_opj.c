@@ -1043,6 +1043,31 @@ static void test_filter_group(void)
     CHECK_N(opj_filter_parse("nope"), -1);
     CHECK(opj_filter_passes(doc, NULL, 0));
     CHECK(!opj_filter_passes(doc, NULL, 6));
+    /* column names, and Sort's keys as typed */
+    CHECK_N(opj_column_parse("Duration", 0), OPJ_COL_DURATION);
+    CHECK_N(opj_column_parse("% complete", 0), OPJ_COL_PERCENT);
+    CHECK_N(opj_column_parse("Resource Names", 0), OPJ_COL_RESOURCES);
+    CHECK_N(opj_column_parse("resources", 0), OPJ_COL_RESOURCES);
+    CHECK_N(opj_column_parse("Max. Units", 1), OPJ_RCOL_MAX);
+    CHECK_N(opj_column_parse("colour", 0), -1);
+    {
+        opj_sort_key k[3];
+        int n = -1;
+        CHECK_N(opj_sort_parse("Start, Duration desc,name UP", k, &n), OWF_OK);
+        CHECK_N(n, 3);
+        CHECK(k[0].column == OPJ_COL_START && !k[0].descending);
+        CHECK(k[1].column == OPJ_COL_DURATION && k[1].descending);
+        CHECK(k[2].column == OPJ_COL_NAME && !k[2].descending);
+        CHECK_N(opj_sort_parse("Finish Descending,", k, &n), OWF_OK);
+        CHECK(n == 1 && k[0].column == OPJ_COL_FINISH && k[0].descending);
+        CHECK_N(opj_sort_parse("Constraint Type", k, &n), OWF_OK);          /* a title with a space */
+        CHECK(n == 1 && k[0].column == OPJ_COL_CONSTRAINT_TYPE);
+        CHECK_N(opj_sort_parse("Start, Finish, Name, ID", k, &n), OWF_ERR_FORMAT);
+        CHECK_N(opj_sort_parse("Colour", k, &n), OWF_ERR_FORMAT);
+        CHECK_N(opj_sort_parse("", k, &n), OWF_ERR_FORMAT);
+        CHECK_N(n, 0);
+        CHECK_N(opj_sort_parse(NULL, k, &n), OWF_ERR_FORMAT);
+    }
     opj_lines_free(&l);
     opj_doc_free(doc);
 }
