@@ -43,7 +43,7 @@
 extern "C" {
 #endif
 
-#define OB_REPORT_VERSION "0.2.0"
+#define OB_REPORT_VERSION "0.2.1"
 #define OB_REPORT_COLUMNS 16
 #define OB_REPORT_LEVELS 3        /* group levels: group, subgroup[0], subgroup[1] */
 #define OB_BAND_MAX 160            /* a band's text, with its 0 */
@@ -85,7 +85,19 @@ typedef struct ob_report {
     int new_page;                   /* each first-level group after the first starts a new page */
 } ob_report;
 
+/* The bands, for a designer (0.2.1). */
+typedef enum { OB_BAND_HEAD, OB_BAND_FOOT, OB_BAND_PAGE_HEAD, OB_BAND_PAGE_FOOT, OB_BAND_GROUP_HEAD,
+               OB_BAND_GROUP_FOOT, OB_BANDS } ob_band;
+
 void ob_report_init(ob_report *r, const char *name);
+/* Band b's text in r (a group band's at level, 0 to OB_REPORT_LEVELS - 1; the others take 0), and its size
+ * in *size (may be NULL): NULL for a band or level that isn't. */
+char *ob_report_band(ob_report *r, ob_band b, int level, size_t *size);
+/* b's name ("report header", "page footer"...), "" for one that isn't. */
+const char *ob_report_band_title(ob_band b);
+/* The [names] b may have, for a designer to show: "[Title] [Date] [Page] [Pages]"; "[a field]" is any field
+ * (a query's column) of the source. "" for a band that isn't. */
+const char *ob_report_band_names(ob_band b);
 /* Adds a column; NULL when there are OB_REPORT_COLUMNS already. */
 ob_rcolumn *ob_report_add_column(ob_report *r, const char *field, ob_total total);
 

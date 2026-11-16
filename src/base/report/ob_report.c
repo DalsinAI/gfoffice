@@ -48,8 +48,6 @@ typedef struct level {
     ob_int rows;            /* in this group */
 } level;
 
-/* The bands, for what they may name. */
-enum { B_HEAD, B_FOOT, B_PAGE_HEAD, B_PAGE_FOOT, B_GROUP_HEAD, B_GROUP_FOOT };
 
 typedef struct plan {
     ob_project *p;
@@ -164,14 +162,47 @@ static const char *source_name(const plan *pl)
 
 /* ---- The bands' text ---- */
 
+static const char *const band_titles[OB_BANDS] = { "report header", "report footer", "page header", "page footer",
+                                                   "group header", "group footer" };
+static const char *const band_names[OB_BANDS] = {
+    "[Title] [Date]", "[Title] [Date] [Count]", "[Title] [Date] [Page] [Pages]", "[Title] [Date] [Page] [Pages]",
+    "[Title] [Date] [Group] [Value] [a field]", "[Title] [Date] [Group] [Value] [Count] [a field]"
+};
+
+const char *ob_report_band_title(ob_band b)
+{
+    return (unsigned)b < OB_BANDS ? band_titles[b] : "";
+}
+
+const char *ob_report_band_names(ob_band b)
+{
+    return (unsigned)b < OB_BANDS ? band_names[b] : "";
+}
+
+char *ob_report_band(ob_report *r, ob_band b, int level, size_t *size)
+{
+    char *t = NULL;
+    int group = b == OB_BAND_GROUP_HEAD || b == OB_BAND_GROUP_FOOT;
+    if ((unsigned)b >= OB_BANDS || level < 0 || level >= (group ? OB_REPORT_LEVELS : 1)) return NULL;
+    switch (b) {
+    case OB_BAND_HEAD: t = r->head; break;
+    case OB_BAND_FOOT: t = r->foot; break;
+    case OB_BAND_PAGE_HEAD: t = r->page_head; break;
+    case OB_BAND_PAGE_FOOT: t = r->page_foot; break;
+    case OB_BAND_GROUP_HEAD: t = r->group_head[level]; break;
+    case OB_BAND_GROUP_FOOT: t = r->group_foot[level]; break;
+    default: break;
+    }
+    if (size) *size = OB_BAND_MAX;
+    return t;
+}
+
 static const char *band_name(int kind, int level, char *buf, size_t size)
 {
-    static const char *const names[] = { "report header", "report footer", "page header", "page footer",
-                                         "group header", "group footer" };
-    if ((kind == B_GROUP_HEAD || kind == B_GROUP_FOOT) && level > 0)
-        snprintf(buf, size, "%s %d", names[kind], level + 1);
+    if ((kind == OB_BAND_GROUP_HEAD || kind == OB_BAND_GROUP_FOOT) && level > 0)
+        snprintf(buf, size, "%s %d", band_titles[kind], level + 1);
     else
-        copy(buf, size, names[kind]);
+        copy(buf, size, band_titles[kind]);
     return buf;
 }
 
@@ -194,8 +225,8 @@ static int band_check(plan *pl, const char *t, int kind, int level, char *err, s
 {
     char name[OB_NAME_MAX], what[24], heading[OB_LABEL_MAX];
     const char *s = t, *start;
-    int page = kind == B_PAGE_HEAD || kind == B_PAGE_FOOT;
-    int group = kind == B_GROUP_HEAD || kind == B_GROUP_FOOT;
+    int page = kind == OB_BAND_PAGE_HEAD || kind == OB_BAND_PAGE_FOOT;
+    int group = kind == OB_BAND_GROUP_HEAD || kind == OB_BAND_GROUP_FOOT;
     int type;
     band_name(kind, level, what, sizeof what);
     while ((s = strchr(s, '['))) {
@@ -217,7 +248,7 @@ static int band_check(plan *pl, const char *t, int kind, int level, char *err, s
             return fail(err, errsize, "%s: %s: [%s]: only in a group's header or footer", pl->r->name, what, name);
         }
         if (same_name(name, "Count")) {
-            if (kind == B_FOOT || kind == B_GROUP_FOOT) continue;
+            if (kind == OB_BAND_FOOT || kind == OB_BAND_GROUP_FOOT) continue;
             return fail(err, errsize, "%s: %s: [Count]: only in a footer, after the rows", pl->r->name, what);
         }
         if (page) return fail(err, errsize, "%s: %s: [%s]: a page shows no row", pl->r->name, what, name);
@@ -338,19 +369,19 @@ static int plan_make(plan *pl, ob_project *p, const ob_report *r, char *err, siz
                 goto out;
             }
     }
-    if (band_check(pl, r->head, B_HEAD, 0, err, errsize) || band_check(pl, r->foot, B_FOOT, 0, err, errsize) ||
-        band_check(pl, r->page_head, B_PAGE_HEAD, 0, err, errsize) ||
-        band_check(pl, r->page_foot, B_PAGE_FOOT, 0, err, errsize))
+    if (band_check(pl, r->head, OB_BAND_HEAD, 0, err, errsize) || band_check(pl, r->foot, OB_BAND_FOOT, 0, err, errsize) ||
+        band_check(pl, r->page_head, OB_BAND_PAGE_HEAD, 0, err, errsize) ||
+        band_check(pl, r->page_foot, OB_BAND_PAGE_FOOT, 0, err, errsize))
         goto out;
     for (k = 0; k < OB_REPORT_LEVELS; k++) {
         if ((r->group_head[k][0] || r->group_foot[k][0]) && k >= pl->nlevels) {
             char what[24];
             fail(err, errsize, "%s: %s: there is no group %d", r->name,
-                 band_name(r->group_head[k][0] ? B_GROUP_HEAD : B_GROUP_FOOT, k, what, sizeof what), k + 1);
+                 band_name(r->group_head[k][0] ? OB_BAND_GROUP_HEAD : OB_BAND_GROUP_FOOT, k, what, sizeof what), k + 1);
             goto out;
         }
-        if (band_check(pl, r->group_head[k], B_GROUP_HEAD, k, err, errsize) ||
-            band_check(pl, r->group_foot[k], B_GROUP_FOOT, k, err, errsize))
+        if (band_check(pl, r->group_head[k], OB_BAND_GROUP_HEAD, k, err, errsize) ||
+            band_check(pl, r->group_foot[k], OB_BAND_GROUP_FOOT, k, err, errsize))
             goto out;
     }
     rc = 0;
