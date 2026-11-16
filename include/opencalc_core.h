@@ -354,6 +354,21 @@ int oc_core_protect_book(oc_core *core, const char *password);
 int oc_core_unprotect_book(oc_core *core, const char *password);
 /* 1 when the workbook's structure is protected; whether it has a password. */
 int oc_core_book_protection(const oc_core *core, int *has_password);
+
+/* Links to other workbooks (Edit Links): each other book the formulas use, kept with the values it last had,
+ * which the formulas work from. A link's name (as the formulas give it), its target (where it is, as the file
+ * wrote it) and how many of its sheets the book keeps. */
+int oc_core_link_count(const oc_core *core);
+int oc_core_link(const oc_core *core, int index, const char **name, const char **target, int *sheets);
+/* The file a link's target names, for a book in folder base (NULL or "": none): "file:///C:/x.xlsx" is
+ * "C:/x.xlsx", "file:///home/x.ods" "/home/x.ods", "Rates.xlsx" beside the book, "%20" decoded. 0 when it is
+ * not a file (http:) or does not fit. */
+int oc_link_path(const char *target, const char *base, char *out, size_t size);
+/* A link's values read again from the file at path, as an Undo step, and the formulas worked out again:
+ * each sheet the book keeps takes the values the file's sheet has now (one the file no longer has keeps its
+ * last values; *sheets says how many were updated). A file that cannot be read returns its error and changes
+ * nothing, so the formulas keep showing the last values. */
+int oc_core_update_link(oc_core *core, int index, const char *path, owf_report *report, int *sheets);
 /* Excel's 16-bit hash of a password (0 for none). */
 unsigned oc_password_hash(const char *password);
 

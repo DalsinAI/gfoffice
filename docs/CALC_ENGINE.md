@@ -233,6 +233,21 @@ showValue="0". `oc_condfmt_spec` takes `OC_CF_DATA_BAR` and `OC_CF_ICON_SET`
 (`opencalc_core.h` 0.34.0) and writes the cfRule; ARexx `CONDFMT range rule`
 takes the window's words ("bar blue only", "icons 3Arrows reverse") and
 `CONDFMT range CLEAR`.
+## Links to other workbooks
+
+A formula on another book (`'[Rates.xlsx]Q1'!A1`) works from the values
+that book last had, which the book keeps (`owf_book.extbooks`, from XLSX's
+externalLink parts and ODS's value tables), so a book whose links' files
+are not there still shows its values. The core's Edit Links
+(`oc_links.c`) lists the links (`oc_core_link_count`, `oc_core_link`: the
+name formulas give, the target as the file wrote it, the sheets kept),
+turns a target into a file (`oc_link_path`: `file:///C:/x.xlsx`,
+`file:///home/x.ods`, a name beside the book, "%20" decoded; not `http:`)
+and updates a link from its file (`oc_core_update_link`): each sheet kept
+takes the values the file's sheet has now, as an Undo step, and the
+formulas are worked out again. A file that cannot be read changes
+nothing; a sheet the file no longer has keeps its last values.
+
 ## Sheet and cell protection
 
 owf.library 2.6 gives `owf_sheet` its protection (`protect`, the
@@ -396,10 +411,10 @@ has both (an older GFOpenCalc's names and a newer table) takes the table.
   cells is found like a loop of two.
 - **Files.** `owf_calc_new` parses a book and calculates nothing: the
   cells show the results the file saved. A formula the engine cannot work
-  out (a function it does not have, a reference to another book) keeps the
-  file's value (`OWF_CALC_KEPT`), and what reads it uses that value, until
-  the user types the cell again; then it is `#NAME?` (another book's
-  reference: `#REF!`).
+  out (a function it does not have, a reference to another book it has no
+  values for) keeps the file's value (`OWF_CALC_KEPT`), and what reads it
+  uses that value, until the user types the cell again; then it is
+  `#NAME?` (another book's reference: `#REF!`).
 
 ## Formulas
 
@@ -409,8 +424,14 @@ has both (an older GFOpenCalc's names and a newer table) takes the table.
 - Cells and ranges, relative or absolute: `A1`, `$A$1`, `A$1`, `A1:B2`,
   whole columns `A:C`, whole rows `2:5`, up to `XFD1048576`.
 - Other sheets: `Sheet2!A1`, `'Q1 sales'!A1:B2`, 3-D `Sheet1:Sheet3!A1`
-  (and `'Sheet1:My sheet'!A1`); another book's (`[Book.xls]Sheet1!A1`)
-  is not read (`#REF!`, or the file's value). The book keeps each other
+  (and `'Sheet1:My sheet'!A1`); another book's (`[Book.xls]Sheet1!A1`,
+  `SUM([Book.xls]Sheet1!A:A)`) gives the values that book last had, as
+  the file kept them (`OP_XREF`: a cell, or an array cut at the last row
+  and column the values reach, one row or column at least; an area too
+  big to hold as values is `#NUM!`), so a formula on a book that is not there
+  still shows its value, not an error. A book or sheet the file kept no
+  values for, and another book's defined name, are `#REF!` (or, loaded,
+  the file's value). The book keeps each other
   book a formula links (`owf_book.extbooks`: its name as the formulas give
   it, its target as the file wrote it, its sheets and the values their
   cells last had): XLSX reads and writes them from an externalLink part's
