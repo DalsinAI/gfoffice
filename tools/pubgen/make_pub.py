@@ -935,12 +935,15 @@ FILES = {
 def masters2010():
     """Two masters as some Publisher files have them (PUB-FORMAT.md 5.4): field
     0x10 is 1 and 0, not 3, so only the pages' field 0x0D shows they are
-    masters. The first has a text frame; four pages take the two in turn."""
+    masters. They are one two-page master: one name, 1 its right page and
+    0 its left. The right has a text frame; four pages take the two in turn,
+    right first. A third master, 0 but alone, is a one-page master."""
     pw, ph = 210 * EMU_MM, 297 * EMU_MM
     c = Contents(0x18, pw, ph)
     m1 = page_chunk(c, name='Master Page A', kind=1)
-    m2 = page_chunk(c, name='Master Page B', letter='B', kind=0)
-    pages = [page_chunk(c, master=m1 if k % 2 == 0 else m2) for k in range(4)]
+    m2 = page_chunk(c, name='Master Page A', kind=0)
+    m3 = page_chunk(c, name='Master Page B', letter='B', kind=0)
+    pages = [page_chunk(c, master=m1 if k % 2 == 0 else m2) for k in range(3)] + [page_chunk(c, master=m3)]
     t = Text(['Times New Roman'], [DEFAULT_STYLE])
     t.story(1, [(None, [('On every page of master A', None)])])
     t.story(2, [(None, [('Page one', None)])])
@@ -948,8 +951,8 @@ def masters2010():
     fp = frame_chunk(c, pages[0], text_id=2)
     master_shapes = [Shape(fm, box_mm(pw, ph, 20, 270, 170, 12), text_id=1, look=NO_FILL_LINE + INSET)]
     page_shapes = [Shape(fp, box_mm(pw, ph, 20, 20, 170, 20), text_id=2, look=NO_FILL_LINE + INSET)]
-    return publication(c.build(doc_fields(c, pw, ph, [m1, m2] + pages)), t,
-                       [master_shapes, [], page_shapes, [], [], []], [], (14, 0))
+    return publication(c.build(doc_fields(c, pw, ph, [m1, m2, m3] + pages)), t,
+                       [master_shapes, [], [], page_shapes, [], [], []], [], (14, 0))
 
 
 FILES['gen-2010-masters.pub'] = masters2010

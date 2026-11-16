@@ -202,9 +202,9 @@ static void write_pages(writer *w)
         at = open_block(b);
         if (k < pub->nmasters) {
             char letter[2];
-            letter[0] = (char)('A' + k % 26);
-            letter[1] = 0;
-            f16(b, 0x10, 0x18, 3, 0);
+            letter[0] = (char)('A' + (pg->pair >= 0 && pg->pair < k ? pg->pair : k) % 26);
+            letter[1] = 0;                   /* a two-page master's two pages: one letter */
+            f16(b, 0x10, 0x18, pg->pair < 0 ? 3 : pg->side == OWF_PUB_RIGHT ? 1 : 0, 0);
             f_text(b, 0x0E, letter);
             f_text(b, 0x0F, pg->name ? pg->name : "Master Page");
         } else {
