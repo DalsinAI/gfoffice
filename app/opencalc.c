@@ -4772,6 +4772,19 @@ static void do_edit_links(void)
 #include "opencalc_extdb.h"
 #endif
 
+/* dst (size bytes) set to the Latin-1 text src made UTF-8, cut short to fit. */
+static void set_utf8(char *dst, size_t size, const char *src)
+{
+    char *u = from_latin1(src);
+    const char *from = u ? u : src;
+    size_t n = strlen(from);
+    if (n >= size) n = size - 1;
+    while (n && ((unsigned char)from[n] & 0xC0) == 0x80) n--;   /* not inside a character */
+    memcpy(dst, from, n);
+    dst[n] = 0;
+    owf_free(u);
+}
+
 static char extdata_base[512];
 static long extdata_last[OC_EXTDATA_MAX];       /* when each range was last read (seconds; 0: not since opening) */
 
@@ -4904,12 +4917,10 @@ static void db_item_list(const char *path, char *out, size_t size, char *first, 
 /* The rest of a range's settings asked for: where, the headers, the refreshing. 0 when cancelled. */
 static int extdata_ask_rest(oc_extdata_spec *spec, const char *where)
 {
-    char buf[OC_EXTDATA_REF], *u;
+    char buf[OC_EXTDATA_REF];
     int pick;
     if (!text_requester("External Data", "Put it at (its top left cell)", where, buf, sizeof buf)) return 0;
-    u = from_latin1(buf);
-    snprintf(spec->dest, sizeof spec->dest, "%s", u ? u : buf);
-    owf_free(u);
+    set_utf8(spec->dest, sizeof spec->dest, buf);
     if (spec->kind == OC_EXTDATA_DATABASE) {
         pick = ask_window("External Data", "Put the field names in the first row?", "Yes|No|Cancel");
         if (pick == 0 || pick == 3) return 0;
@@ -4929,7 +4940,7 @@ static int extdata_ask_rest(oc_extdata_spec *spec, const char *where)
 static void extdata_add(int kind)
 {
     oc_extdata_spec spec;
-    char path[512], list[1400], first[200], item[OC_EXTDATA_ITEM], here[16], err[300], *u;
+    char path[512], list[1400], first[200], item[OC_EXTDATA_ITEM], here[16], err[300];
     unsigned row, col;
     int rc, index = -1;
 #ifndef OC_EXTDATA_DATABASES
@@ -4942,9 +4953,7 @@ static void extdata_add(int kind)
     spec.kind = kind;
     if (!ask_file(0, kind == OC_EXTDATA_WEB ? "Web page (a saved .html file)" : "Database (.oadb or SQLite)", "",
                   path, sizeof path)) return;
-    u = from_latin1(path);
-    snprintf(spec.source, sizeof spec.source, "%s", u ? u : path);
-    owf_free(u);
+    set_utf8(spec.source, sizeof spec.source, path);
     first[0] = 0;
     if (kind == OC_EXTDATA_WEB) {
         web_table_list(spec.source, list, sizeof list);
@@ -4956,9 +4965,7 @@ static void extdata_add(int kind)
     if (list[0] && ask_window("External Data", list, "Choose...|Cancel") != 1) return;
     if (!text_requester("External Data", kind == OC_EXTDATA_WEB ? "Table (HTML_1, a number, an id or a caption)"
                         : "Table, view, query, or SELECT ...", first, item, sizeof item)) return;
-    u = from_latin1(item);
-    snprintf(spec.item, sizeof spec.item, "%s", u ? u : item);
-    owf_free(u);
+    set_utf8(spec.item, sizeof spec.item, item);
     oc_core_active(core, &row, &col);
     oc_cell_name(row, col, here);
     if (!extdata_ask_rest(&spec, here)) return;
@@ -5028,15 +5035,13 @@ static void do_extdata(void)
         if (pick == 4) extdata_refresh(i);
         else if (pick == 5) {
             oc_extdata_spec spec;
-            char item[OC_EXTDATA_ITEM], shown[OC_EXTDATA_ITEM], err[300], *u;
+            char item[OC_EXTDATA_ITEM], shown[OC_EXTDATA_ITEM], err[300];
             int rc;
             oc_core_extdata(core, i, &spec, NULL, NULL);
             to_latin1(spec.item, strlen(spec.item), shown, sizeof shown);
             if (!text_requester("External Data", spec.kind == OC_EXTDATA_WEB ? "Table" : "Table, view, query, or SELECT ...",
                                 shown, item, sizeof item)) return;
-            u = from_latin1(item);
-            snprintf(spec.item, sizeof spec.item, "%s", u ? u : item);
-            owf_free(u);
+            set_utf8(spec.item, sizeof spec.item, item);
             to_latin1(spec.dest, strlen(spec.dest), shown, sizeof shown);
             if (!extdata_ask_rest(&spec, shown)) return;
             rc = oc_core_extdata_change(core, i, &spec, extdata_io(), 0, err, sizeof err);
@@ -5079,7 +5084,7 @@ static const char *rexx_phrase(const char *p, char *out, size_t size)
 static int rexx_extdata_add(const char *arg, int change, char *out, size_t size, int *now)
 {
     oc_extdata_spec spec;
-    char word[OC_EXTDATA_ITEM], err[300], *u;
+    char word[OC_EXTDATA_ITEM], err[300];
     int flags = 0, rc, index = -1;
     *now = 0;
     oc_extdata_init(&spec);
@@ -5093,20 +5098,14 @@ static int rexx_extdata_add(const char *arg, int change, char *out, size_t size,
     else if (!strcasecmp(word, "DATABASE")) spec.kind = OC_EXTDATA_DATABASE;
     else { snprintf(out, size, "WEB or DATABASE first"); return 0; }
     arg = rexx_phrase(arg, word, sizeof word);
-    u = from_latin1(word);
-    snprintf(spec.source, sizeof spec.source, "%s", u ? u : word);
-    owf_free(u);
+    set_utf8(spec.source, sizeof spec.source, word);
     arg = rexx_phrase(arg, word, sizeof word);
-    u = from_latin1(word);
-    snprintf(spec.item, sizeof spec.item, "%s", u ? u : word);
-    owf_free(u);
+    set_utf8(spec.item, sizeof spec.item, word);
     if (!change) spec.dest[0] = 0;
     for (arg = rexx_word(arg, word, sizeof word); word[0]; arg = rexx_word(arg, word, sizeof word)) {
         if (!strcasecmp(word, "AT")) {
             arg = rexx_phrase(arg, word, sizeof word);
-            u = from_latin1(word);
-            snprintf(spec.dest, sizeof spec.dest, "%s", u ? u : word);
-            owf_free(u);
+            set_utf8(spec.dest, sizeof spec.dest, word);
         } else if (!strcasecmp(word, "NOHEADERS")) spec.headers = 0;
         else if (!strcasecmp(word, "HEADERS")) spec.headers = 1;
         else if (!strcasecmp(word, "ONOPEN")) spec.refresh_on_open = 1;
