@@ -6,7 +6,11 @@
  * values, or formulas that link to the sources (=SUM('Q1'!$B$2,'Q2'!$B$2))
  * so it follows them. The work is done on a private copy of the book and
  * swapped in as one Undo step; the settings stay on the sheet it was run from
- * in a hidden name, _GF_CONSOLIDATE, for the window to offer again.
+ * in a hidden name, _GF_CONSOLIDATE, for the window to offer again, with
+ * the table's size and, in _GF_CONSOLIDATE_S1.. and _GF_CONSOLIDATE_D, its
+ * sources and destination as references, which follow rows and columns put
+ * in or taken out as any name's do: Refresh runs it again over the sources
+ * as they are now, so a table grows with them.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "oc_internal.h"
@@ -19,6 +23,8 @@
 #include <string.h>
 
 #define CONSOLIDATE_NAME "_GF_CONSOLIDATE"
+#define CONSOLIDATE_SOURCE "_GF_CONSOLIDATE_S"   /* _S1.. each source typed as a range, as a reference that follows */
+#define CONSOLIDATE_DEST "_GF_CONSOLIDATE_D"     /* the destination's first cell, the same way */
 #define CONSOLIDATE_KEYS 4096u            /* labels on one side, at most */
 
 typedef struct {
@@ -169,14 +175,59 @@ static int ref_text(const owf_book *book, int sheet, unsigned r0, unsigned c0, u
     return n > 0 && (size_t)n < size - at;
 }
 
-static int put_settings(owf_book *book, int sheet, const oc_consolidate_spec *spec)
+/* The sheet's hidden name: set to formula (taken), or added. */
+static int set_hidden(owf_book *book, int sheet, const char *name, char *formula)
 {
-    char text[OC_CONSOLIDATE_SOURCES * (OC_CONSOLIDATE_REF + 1) + OC_CONSOLIDATE_REF + 64], *copy;
+    int k;
+    if (!formula)
+        return OWF_ERR_MEMORY;
+    for (k = 0; k < book->nnames; k++)
+        if (book->names[k].sheet == sheet && book->names[k].name && !strcmp(book->names[k].name, name)) {
+            owf_free(book->names[k].formula);
+            book->names[k].formula = formula;
+            book->names[k].hidden = 1;
+            return OWF_OK;
+        }
+    k = owf_book_add_name(book, name, sheet, formula, 1);
+    owf_free(formula);
+    return k < 0 ? OWF_ERR_MEMORY : OWF_OK;
+}
+
+static void drop_hidden(owf_book *book, int sheet, const char *name)
+{
+    int k;
+    for (k = 0; k < book->nnames; k++)
+        if (book->names[k].sheet == sheet && book->names[k].name && !strcmp(book->names[k].name, name)) {
+            owf_free(book->names[k].name);
+            owf_free(book->names[k].formula);
+            memmove(&book->names[k], &book->names[k + 1], (size_t)(book->nnames - k - 1) * sizeof book->names[0]);
+            book->nnames--;
+            return;
+        }
+}
+
+static const char *hidden_formula(const owf_book *book, int sheet, const char *name)
+{
+    int k;
+    for (k = 0; k < book->nnames; k++)
+        if (book->names[k].sheet == sheet && book->names[k].name && !strcmp(book->names[k].name, name))
+            return book->names[k].formula;
+    return NULL;
+}
+
+/* The settings; with each source typed as a range, and the destination, as references (ref: the ranges
+ * read, dest_sheet/row/col the destination) and the table's size. */
+static int put_settings(owf_book *book, int sheet, const oc_consolidate_spec *spec, const cs_source *src,
+                        int dest_sheet, unsigned dest_row, unsigned dest_col, unsigned out_rows, unsigned out_cols)
+{
+    char text[OC_CONSOLIDATE_SOURCES * (OC_CONSOLIDATE_REF + 1) + OC_CONSOLIDATE_REF + 96], name[40],
+         ref[OC_CONSOLIDATE_REF + 8];
     size_t at;
     unsigned i;
-    int k;
-    at = (size_t)snprintf(text, sizeof text, "\"1;f=%d;l=%d;k=%d;d=", spec->function,
-                          (spec->row_labels ? 1 : 0) | (spec->column_labels ? 2 : 0), spec->link ? 1 : 0);
+    int k, rc;
+    at = (size_t)snprintf(text, sizeof text, "\"1;f=%d;l=%d;k=%d;o=%u,%u;d=", spec->function,
+                          (spec->row_labels ? 1 : 0) | (spec->column_labels ? 2 : 0), spec->link ? 1 : 0, out_rows,
+                          out_cols);
     for (i = 0; spec->dest[i] && at + 4 < sizeof text; i++)
         if (spec->dest[i] != '"' && spec->dest[i] != ';')
             text[at++] = spec->dest[i];
@@ -191,16 +242,60 @@ static int put_settings(owf_book *book, int sheet, const oc_consolidate_spec *sp
     }
     text[at++] = '"';
     text[at] = 0;
-    for (k = 0; k < book->nnames; k++)
-        if (book->names[k].sheet == sheet && !strcmp(book->names[k].name, CONSOLIDATE_NAME)) {
-            if (!(copy = oc_strdup(text)))
-                return OWF_ERR_MEMORY;
-            owf_free(book->names[k].formula);
-            book->names[k].formula = copy;
-            book->names[k].hidden = 1;
-            return OWF_OK;
+    if ((rc = set_hidden(book, sheet, CONSOLIDATE_NAME, oc_strdup(text))) != OWF_OK)
+        return rc;
+    for (k = 0; k < OC_CONSOLIDATE_SOURCES; k++) {
+        int s2;
+        owf_range r;
+        snprintf(name, sizeof name, CONSOLIDATE_SOURCE "%d", k + 1);
+        /* a source typed as a range follows as a reference; one typed otherwise (a name) is read afresh */
+        if (k < spec->nsources && oc_sheet_range(book, spec->source[k], sheet, &s2, &r)) {
+            if (!ref_text(book, src[k].sheet, src[k].r.first_row, src[k].r.first_col, src[k].r.last_row,
+                          src[k].r.last_col, ref, sizeof ref))
+                return OWF_ERR_UNSUPPORTED;
+            if ((rc = set_hidden(book, sheet, name, oc_strdup(ref))) != OWF_OK)
+                return rc;
+        } else {
+            drop_hidden(book, sheet, name);
         }
-    return owf_book_add_name(book, CONSOLIDATE_NAME, sheet, text, 1) < 0 ? OWF_ERR_MEMORY : OWF_OK;
+    }
+    if (!ref_text(book, dest_sheet, dest_row, dest_col, dest_row, dest_col, ref, sizeof ref))
+        return OWF_ERR_UNSUPPORTED;
+    return set_hidden(book, sheet, CONSOLIDATE_DEST, oc_strdup(ref));
+}
+
+/* A reference kept in a hidden name, as one types it: "B2:D9" on the sheet the settings are on, else
+ * "'Q1'!A1:C20". 0 when there is none or it no longer reads (its cells were taken out). */
+static int followed(const oc_core *core, const char *name, char *out, size_t size)
+{
+    const char *f = hidden_formula(core->book, core->sheet, name);
+    char a[16], b[16], quoted[OC_CONSOLIDATE_REF];
+    const char *sheet_name;
+    owf_range r;
+    int s2, n;
+    size_t q = 0, i;
+    if (!f || !oc_sheet_range(core->book, f, core->sheet, &s2, &r) || s2 < 0 || s2 >= core->book->nsheets)
+        return 0;
+    oc_cell_name(r.first_row, r.first_col, a);
+    oc_cell_name(r.last_row, r.last_col, b);
+    quoted[0] = 0;
+    if (s2 != core->sheet) {
+        sheet_name = core->book->sheets[s2].name;
+        quoted[q++] = '\'';
+        for (i = 0; sheet_name[i] && q + 4 < sizeof quoted; i++) {
+            if (sheet_name[i] == '\'')
+                quoted[q++] = '\'';
+            quoted[q++] = sheet_name[i];
+        }
+        quoted[q++] = '\'';
+        quoted[q++] = '!';
+        quoted[q] = 0;
+    }
+    if (r.first_row == r.last_row && r.first_col == r.last_col)
+        n = snprintf(out, size, "%s%s", quoted, a);
+    else
+        n = snprintf(out, size, "%s%s:%s", quoted, a, b);
+    return n > 0 && (size_t)n < size;
 }
 
 void oc_consolidate_init(oc_consolidate_spec *spec)
@@ -209,10 +304,12 @@ void oc_consolidate_init(oc_consolidate_spec *spec)
     spec->function = OC_SUBTOTAL_SUM;
 }
 
-int oc_core_consolidate_settings(const oc_core *core, oc_consolidate_spec *spec)
+/* The settings, with the sources and destination where they are now, and the table's size when kept. */
+static int read_settings(const oc_core *core, oc_consolidate_spec *spec, unsigned *out_rows, unsigned *out_cols)
 {
     const char *p = NULL;
     int k;
+    *out_rows = *out_cols = 0;
     if (!core || !spec)
         return 0;
     oc_consolidate_init(spec);
@@ -232,6 +329,11 @@ int oc_core_consolidate_settings(const oc_core *core, oc_consolidate_spec *spec)
         if (!strncmp(p, "f=", 2)) spec->function = atoi(p + 2);
         else if (!strncmp(p, "l=", 2)) { spec->row_labels = (atoi(p + 2) & 1) != 0; spec->column_labels = (atoi(p + 2) & 2) != 0; }
         else if (!strncmp(p, "k=", 2)) spec->link = atoi(p + 2) != 0;
+        else if (!strncmp(p, "o=", 2)) {
+            const char *comma = strchr(p, ',');
+            *out_rows = (unsigned)strtoul(p + 2, NULL, 10);
+            *out_cols = comma ? (unsigned)strtoul(comma + 1, NULL, 10) : 0u;
+        }
         else if (!strncmp(p, "d=", 2)) { out = spec->dest; size = sizeof spec->dest; }
         else if (!strncmp(p, "s=", 2) && spec->nsources < OC_CONSOLIDATE_SOURCES) {
             out = spec->source[spec->nsources++];
@@ -246,10 +348,29 @@ int oc_core_consolidate_settings(const oc_core *core, oc_consolidate_spec *spec)
         if (out)
             out[n] = 0;
     }
+    /* the ranges as they are now: rows and columns put in or taken out since */
+    for (k = 0; k < spec->nsources; k++) {
+        char name[40], now[OC_CONSOLIDATE_REF];
+        snprintf(name, sizeof name, CONSOLIDATE_SOURCE "%d", k + 1);
+        if (followed(core, name, now, sizeof now))
+            memcpy(spec->source[k], now, sizeof now);
+    }
+    {
+        char now[OC_CONSOLIDATE_REF];
+        if (followed(core, CONSOLIDATE_DEST, now, sizeof now))
+            memcpy(spec->dest, now, sizeof now);
+    }
     return spec->nsources > 0;
 }
 
-int oc_core_consolidate(oc_core *core, const oc_consolidate_spec *spec)
+int oc_core_consolidate_settings(const oc_core *core, oc_consolidate_spec *spec)
+{
+    unsigned rows, cols;
+    return read_settings(core, spec, &rows, &cols);
+}
+
+/* With clear_rows x clear_cols cells at the destination emptied first (the table as it was, for Refresh). */
+static int consolidate(oc_core *core, const oc_consolidate_spec *spec, unsigned clear_rows, unsigned clear_cols)
 {
     cs_source src[OC_CONSOLIDATE_SOURCES];
     cs_keys rows, cols;
@@ -324,6 +445,13 @@ int oc_core_consolidate(oc_core *core, const oc_consolidate_spec *spec)
     work = oc_book_copy(core->book);
     if (!work || !(calc = owf_calc_new(work)))
         goto done;
+    /* the table as it was, emptied: a smaller one leaves nothing of it behind */
+    if ((unsigned long)clear_rows * clear_cols <= OC_MAX_RANGE_CELLS)
+        for (r = 0; r < clear_rows && dest_row + r < OC_MAX_ROWS; r++)
+            for (c = 0; c < clear_cols && dest_col + c < OC_MAX_COLS; c++)
+                if (owf_sheet_find(&work->sheets[dest_sheet], dest_row + r, dest_col + c) &&
+                    owf_calc_enter(calc, dest_sheet, dest_row + r, dest_col + c, "") != OWF_OK)
+                    goto done;
     /* each source cell into its bucket */
     for (k = 0; k < spec->nsources; k++) {
         const owf_range *g = &src[k].r;
@@ -406,7 +534,7 @@ int oc_core_consolidate(oc_core *core, const oc_consolidate_spec *spec)
         rc = owf_calc_enter(calc, dest_sheet, dest_row, dest_col + lc + c, cols.text[c][0] ? text : "");
     }
     if (rc == OWF_OK)
-        rc = put_settings(work, core->sheet, spec);
+        rc = put_settings(work, core->sheet, spec, src, dest_sheet, dest_row, dest_col, out_rows, out_cols);
     if (rc == OWF_OK)
         rc = owf_calc_recalc(calc);
     if (rc != OWF_OK)
@@ -447,4 +575,20 @@ done:
     keys_free(&rows);
     keys_free(&cols);
     return rc;
+}
+
+int oc_core_consolidate(oc_core *core, const oc_consolidate_spec *spec)
+{
+    return consolidate(core, spec, 0, 0);
+}
+
+int oc_core_consolidate_refresh(oc_core *core)
+{
+    oc_consolidate_spec spec;
+    unsigned rows, cols;
+    if (!core)
+        return OWF_ERR_FORMAT;
+    if (!read_settings(core, &spec, &rows, &cols))
+        return OWF_ERR_UNSUPPORTED;
+    return consolidate(core, &spec, rows, cols);
 }

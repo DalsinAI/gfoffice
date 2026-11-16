@@ -107,7 +107,7 @@ enum {
     M_NAME_DEFINE, M_NAME_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
     M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE, M_CONDFMT, M_CONDFMT_CLEAR,
     M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK, M_SUBTOTALS,
-    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER, M_SCENARIOS, M_CONSOLIDATE, M_NAME_MANAGE, M_ADV_FILTER,
+    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER, M_SCENARIOS, M_CONSOLIDATE, M_CONSOLIDATE_REFRESH, M_NAME_MANAGE, M_ADV_FILTER,
     M_TEXT_COLUMNS, M_REMOVE_DUPS,
     M_PROTECT_SHEET, M_UNPROTECT_SHEET, M_CELL_PROTECT
 };
@@ -249,6 +249,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Solver...", NULL, 0, 0, (APTR)M_SOLVER },
     { NM_ITEM, "Scenarios...", NULL, 0, 0, (APTR)M_SCENARIOS },
     { NM_ITEM, "Consolidate...", NULL, 0, 0, (APTR)M_CONSOLIDATE },
+    { NM_ITEM, "Refresh Consolidation", NULL, 0, 0, (APTR)M_CONSOLIDATE_REFRESH },
     { NM_ITEM, "Multiple Operations...", NULL, 0, 0, (APTR)M_MULTIPLE_OPS },
     { NM_ITEM, "Refresh Multiple Operations", NULL, 0, 0, (APTR)M_MULTIPLE_REFRESH },
     { NM_ITEM, "Subtotals...", NULL, 0, 0, (APTR)M_SUBTOTALS },
@@ -5879,6 +5880,16 @@ static void menu_action(ULONG id)
     case M_SOLVER: do_solver(); break;
     case M_SCENARIOS: do_scenarios(); break;
     case M_CONSOLIDATE: do_consolidate(); break;
+    case M_CONSOLIDATE_REFRESH:
+        {
+            static oc_consolidate_spec probe;
+            int rc = oc_core_consolidate_refresh(core);
+            if (rc == OWF_ERR_UNSUPPORTED && !oc_core_consolidate_settings(core, &probe))
+                set_status("The active sheet has not been consolidated (Data > Consolidate...).");
+            else if (cs_result(rc))
+                refresh();
+        }
+        break;
     case M_MULTIPLE_OPS: do_multiple_operations(); break;
     case M_MULTIPLE_REFRESH:
         {
@@ -6322,7 +6333,8 @@ static int rexx_scenario(const char *arg, char *out, size_t size, int *now)
 }
 
 /* CONSOLIDATE function range [range ...] TO cell [ROWLABELS] [COLUMNLABELS] [LINK]: Data > Consolidate. A range
- * with spaces (a sheet's name) in double quotes. 1 done. */
+ * with spaces (a sheet's name) in double quotes. CONSOLIDATE REFRESH: the active sheet's last one again, over its
+ * sources as they are now. 1 done. */
 static int rexx_consolidate(const char *arg, char *out, size_t size)
 {
     static oc_consolidate_spec spec;
@@ -6330,6 +6342,15 @@ static int rexx_consolidate(const char *arg, char *out, size_t size)
     const char *p = rexx_word(arg, word, sizeof word);
     int to = 0, rc;
     oc_consolidate_init(&spec);
+    if (!strcasecmp(word, "REFRESH")) {
+        rc = oc_core_consolidate_refresh(core);
+        if (rc == OWF_ERR_UNSUPPORTED && !oc_core_consolidate_settings(core, &spec))
+            snprintf(status, sizeof status, "The active sheet has not been consolidated");
+        else
+            cs_result(rc);
+        snprintf(out, size, "%s", rc == OWF_OK ? "OK" : status);
+        return rc == OWF_OK;
+    }
     if (!(spec.function = subtotal_function(word))) {
         snprintf(out, size, "CONSOLIDATE: SUM, COUNT, AVERAGE, MAX, MIN, PRODUCT, COUNTA, STDEV, STDEVP, VAR or VARP first");
         return 0;
