@@ -104,7 +104,7 @@ struct RxsLib *RexxSysBase = NULL;
 
 #ifdef OPENPRESSMASTER
 #define PROGRAM "GFOpenPressmaster"
-#define VERSION_TEXT "GFOpenPressmaster 0.3.32 (16.11.2026)"
+#define VERSION_TEXT "GFOpenPressmaster 0.3.33 (16.11.2026)"
 #define REXX_PORT_NAME "GFOPENPRESSMASTER"
 #define REXX_OLD_PORT_NAME "GFOPENPUBLISHER"         /* the name before 16 Nov 2026, kept so old scripts run */
 #define UNIT "Page"
