@@ -1275,6 +1275,22 @@ int oc_core_pivot_field(const oc_core *core, const owf_pivotdef *def, const char
  * table too large; OWF_ERR_FORMAT: words that are not one of these. out
  * gets why, for the status line (may be NULL). */
 int oc_core_pivot_command(oc_core *core, const char *text, char *out, size_t size);
+/* The same words applied to def only (it is not laid out; all or nothing),
+ * as the layout window does before Create or Apply. */
+int oc_core_pivot_words(const oc_core *core, owf_pivotdef *def, const char *text, char *out, size_t size);
+/* A field's group (OC_PIVOT_WORDS_GROUP: "YEARS", "0 100 10"... or "" for
+ * none) or hidden items (OC_PIVOT_WORDS_HIDDEN: as HIDE takes them, "East
+ * \"New York\" (blank)", or "") as the window shows them, into out. 0 when
+ * they did not fit. */
+enum { OC_PIVOT_WORDS_GROUP, OC_PIVOT_WORDS_HIDDEN };
+int oc_core_pivot_field_words(const owf_pivotdef *def, unsigned field, int what, char *out, size_t size);
+/* The layout window's choices for one field (from 0) put on def: sort
+ * (OWF_PIVOT_SORT_..., -1 to keep it), show (OWF_PIVOT_SHOW_... for each of
+ * the field's data entries, -1 to keep), group and hidden as
+ * oc_core_pivot_field_words writes them (NULL to keep; "" for none). Only
+ * what changed is applied; on a refusal def is unchanged and out says why. */
+int oc_core_pivot_field_choices(const oc_core *core, owf_pivotdef *def, unsigned field, int sort, int show,
+                                const char *group, const char *hidden, char *out, size_t size);
 
 /* The book as it is, written to path (a copy: the edit line, the sheet saved as
  * active and the dirty mark are left as they are; owf_export_book_file). */

@@ -255,6 +255,21 @@ unprotecting are not Undo steps; a wrong password is
 `UNPROTECT [p]`, `CELLPROTECT range LOCKED|UNLOCKED [HIDDEN]`, `ISPROTECTED`
 (on, the allow bits, whether it has a password).
 
+The workbook's structure (`oc_core_protect_book`): while it is protected
+no sheet is added, duplicated, deleted, renamed, moved, hidden or shown,
+and no pivot table is made on a new sheet; protecting clears Undo. Sheet >
+Protect Workbook and Unprotect Workbook; ARexx `PROTECTBOOK [p]`,
+`UNPROTECTBOOK [p]`, `ISBOOKPROTECTED` (on, whether it has a password).
+XLSX `workbookProtection lockStructure`, ODS `table:structure-protected`.
+
+A pivot table's choices (`oc_core_pivot_command`, `oc_pivotset.c`): ARexx
+`PIVOTSET SORT field ASCENDING|DESCENDING|SOURCE`, `HIDE field items`,
+`SHOW field items|ALL`, `GROUP field YEARS|QUARTERS|MONTHS|NONE|start end
+step`, `NAME field group items`, `UNNAME field items`, `SHOWAS data
+NORMAL|ROW|COLUMN|TOTAL|INDEX`, each one Undo step. The layout window
+offers the same for the selected field: Sort items, Show data as, Group and
+Hidden items (`oc_core_pivot_field_choices`).
+
 GFOpenCalc 0.1.77 (`opencalc_core.h` 0.35.1), from the Workbench build plan
 test of 13 Nov:
 - Opening a book in which a formula has no stored result (an `.xlsx` written

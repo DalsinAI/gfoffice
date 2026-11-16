@@ -6127,8 +6127,6 @@ static void test_pivot_sort(void)
     oc_core_free(core);
 }
 
-/* Hidden items (owf_pivot_set_hidden): a row item and a column item left out with their totals,
- * kept through a new layout, XLSX and ODS, idle while their field is not on the rows or columns. */
 /* The pivot table changed by PIVOTSET's words (oc_core_pivot_command): sorts, hidden items, groups, groups by
    hand and "show data as", each one Undo step. */
 static void test_pivot_command(void)
@@ -6227,9 +6225,61 @@ static void test_pivot_command(void)
     CHECK(oc_core_pivot_command(core, "HIDE Region \"West", why, sizeof why) == OWF_ERR_FORMAT);
     CHECK(oc_core_pivot_command(core, "HIDE Region", why, sizeof why) == OWF_ERR_FORMAT);
     CHECK(oc_core_pivot_command(core, "SORT", NULL, 0) == OWF_ERR_FORMAT);
+
+    /* the layout window's choices for one field, on a definition not yet laid out */
+    CHECK(oc_core_pivot_get(core, &got));
+    got.row[0] = 0;
+    got.nhide = 0;
+    got.ngroup = 0;
+    got.nnamed = 0;
+    got.nsort = 0;
+    got.data[0].show = OWF_PIVOT_SHOW_NORMAL;
+    def = got;
+    CHECK(oc_core_pivot_words(core, &def, "HIDE Region \"No such\"", why, sizeof why) == OWF_OK && def.nhide == 1);
+    def = got;
+    CHECK(oc_core_pivot_words(core, &def, "GROUP Region 1 0 1", why, sizeof why) == OWF_ERR_FORMAT && why[0] &&
+          def.ngroup == 0);
+    CHECK(oc_core_pivot_field_choices(core, &def, 0, OWF_PIVOT_SORT_DESCENDING, -1, NULL,
+                                      "North \"(blank)\"", why, sizeof why) == OWF_OK);
+    CHECK(owf_pivot_sort_of(&def, 0) == OWF_PIVOT_SORT_DESCENDING && def.nhide == 2);
+    {
+        char words[160];
+        CHECK(oc_core_pivot_field_words(&def, 0, OC_PIVOT_WORDS_HIDDEN, words, sizeof words));
+        CHECK_STR(words, "North (blank)");
+        CHECK(oc_core_pivot_field_words(&def, 0, OC_PIVOT_WORDS_GROUP, words, sizeof words) && !words[0]);
+        CHECK(!oc_core_pivot_field_words(&def, 0, OC_PIVOT_WORDS_HIDDEN, words, 6));   /* cut short */
+        CHECK(oc_core_pivot_field_choices(core, &def, 4, -1, OWF_PIVOT_SHOW_TOTAL, "0 5 3", NULL, why,
+                                          sizeof why) == OWF_OK);
+        CHECK(oc_core_pivot_field_words(&def, 4, OC_PIVOT_WORDS_GROUP, words, sizeof words));
+        CHECK_STR(words, "0 5 3");
+        CHECK(def.data[0].show == OWF_PIVOT_SHOW_NORMAL);                  /* Units has no data entry */
+        CHECK(oc_core_pivot_field_choices(core, &def, 3, -1, OWF_PIVOT_SHOW_TOTAL, NULL, NULL, why,
+                                          sizeof why) == OWF_OK && def.data[0].show == OWF_PIVOT_SHOW_TOTAL);
+        /* a date field's group words back; clearing them; a refusal leaves def as it was */
+        CHECK(oc_core_pivot_field_choices(core, &def, 2, -1, -1, "YEARS", "", why, sizeof why) == OWF_OK);
+        CHECK(oc_core_pivot_field_words(&def, 2, OC_PIVOT_WORDS_GROUP, words, sizeof words));
+        CHECK_STR(words, "YEARS");
+        got = def;
+        CHECK(oc_core_pivot_field_choices(core, &def, 0, OWF_PIVOT_SORT_ASCENDING, -1, "MONTHS", "West", why,
+                                          sizeof why) == OWF_OK);
+        def = got;
+        CHECK(oc_core_pivot_field_choices(core, &def, 0, OWF_PIVOT_SORT_ASCENDING, -1, "0 5 -1", "West", why,
+                                          sizeof why) == OWF_ERR_FORMAT && why[0]);
+        CHECK(owf_pivot_sort_of(&def, 0) == OWF_PIVOT_SORT_DESCENDING && def.nhide == 2 &&
+              !owf_pivot_group_of(&def, 0));
+        CHECK(oc_core_pivot_field_choices(core, &def, 0, -1, -1, "", "", why, sizeof why) == OWF_OK &&
+              def.nhide == 0);
+        CHECK(oc_core_pivot_field_choices(core, &def, 5, -1, -1, NULL, NULL, why, sizeof why) == OWF_ERR_FORMAT);
+        /* laid out: North alone, as the window's Apply does */
+        CHECK(oc_core_pivot_field_choices(core, &def, 0, -1, -1, NULL, "East West", why, sizeof why) == OWF_OK);
+        CHECK(oc_core_pivot_set_layout(core, &def) == OWF_OK);
+        CHECK_STR(text(core, "A2"), "North");
+    }
     oc_core_free(core);
 }
 
+/* Hidden items (owf_pivot_set_hidden): a row item and a column item left out with their totals,
+ * kept through a new layout, XLSX and ODS, idle while their field is not on the rows or columns. */
 static void test_pivot_hide(void)
 {
     static const char *const rows[][5] = {
