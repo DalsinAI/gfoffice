@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.14.3"
+#define OB_CORE_VERSION "0.14.4"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -314,6 +314,8 @@ typedef struct ob_form_crit {
 } ob_form_crit;
 
 /* About 5 KB: fine on a 64 KB stack, but not many at once. */
+#define OB_VIEW_THEN 2           /* fields a view sorts by after its sort */
+
 typedef struct ob_view {
     char sort[OB_NAME_MAX];
     int desc;
@@ -322,6 +324,8 @@ typedef struct ob_view {
     char value[OB_VALUE_MAX];
     int ncrit;
     ob_form_crit crit[OB_FORM_CRIT];
+    char then[OB_VIEW_THEN][OB_NAME_MAX];   /* 0.14.4: then by these, in order ("" ends them), the same way
+                                               up or down as sort; only with a sort */
 } ob_view;
 
 void ob_view_init(ob_view *v);                  /* key order, every row */
