@@ -743,7 +743,7 @@ static void squeeze(const char *s, char *out, size_t size)
 static const char *const column_titles[OPJ_NCOLS] = {
     "ID", "Task Name", "Duration", "Start", "Finish", "Predecessors", "% Complete", "WBS", "Resource Names",
     "Baseline Start", "Baseline Finish", "Start Var.", "Finish Var.", "Constraint Type", "Constraint Date", "Notes",
-    "Actual Start", "Actual Finish", "Actual Duration", "Remaining Dur.",
+    "Actual Start", "Actual Finish", "Actual Duration", "Remaining Dur.", "BCWS", "BCWP", "ACWP", "SV", "CV",
 };
 
 static const char *const constraint_names[] = {   /* OWF_CON_ order */
@@ -861,6 +861,12 @@ void opj_cell_text(const opj_doc *doc, int row, int column, char *out, size_t si
     case OPJ_COL_REMAINING_DURATION:
         owf_pduration_text(doc->plan, owf_ptask_remaining_duration(t), t->elapsed, 0, text);
         break;
+    case OPJ_COL_BCWS: case OPJ_COL_BCWP: case OPJ_COL_ACWP: case OPJ_COL_SV: case OPJ_COL_CV: {
+        static const int which[] = { OWF_EV_BCWS, OWF_EV_BCWP, OWF_EV_ACWP, OWF_EV_SV, OWF_EV_CV };
+        if (!doc->plan->has_status_date && (column == OPJ_COL_BCWS || column == OPJ_COL_SV)) strcpy(text, "NA");
+        else opj_money_text(owf_ptask_earned(doc->plan, row, doc->plan->status_date, which[column - OPJ_COL_BCWS]), text);
+        break;
+    }
     default: return;
     }
     n = strlen(s);

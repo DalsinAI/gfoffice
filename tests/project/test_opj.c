@@ -1631,6 +1631,31 @@ static void test_actual_cells(void)
     CHECK_N(opj_update_project(doc, AT(18, 12, 0), 1, NULL), OWF_OK);
     CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "0%");                 /* 0% or 100% only */
     CHECK_S(cell_of(doc, 1, OPJ_COL_ACTUAL_START), "Wed 18/11/26");
+    /* Earned value columns: NA for BCWS and SV until there is a status date; money otherwise. */
+    {
+        opj_doc *ev = opj_doc_new(NULL, AT(16, 8, 0));
+        CHECK(ev != NULL);
+        if (ev) {
+            CHECK_N(opj_insert_task(ev, 0, "Dig"), OWF_OK);
+            CHECK_N(opj_set_cell(ev, 0, OPJ_COL_DURATION, "2d"), OWF_OK);
+            CHECK_N(opj_add_resource(ev, "Dale", NULL), OWF_OK);
+            CHECK_N(opj_set_resource_cell(ev, 0, OPJ_RCOL_RATE, "10"), OWF_OK);
+            CHECK_N(opj_set_cell(ev, 0, OPJ_COL_RESOURCES, "Dale"), OWF_OK);
+            CHECK_N(opj_set_baseline(ev, 0, -1), OWF_OK);
+            CHECK_S(opj_column_title(OPJ_COL_BCWS), "BCWS");
+            CHECK_S(cell_of(ev, 0, OPJ_COL_BCWS), "NA");
+            CHECK_S(cell_of(ev, 0, OPJ_COL_SV), "NA");
+            CHECK_S(cell_of(ev, 0, OPJ_COL_BCWP), "0.00");
+            CHECK(!opj_column_typed(OPJ_COL_CV));
+            CHECK_N(opj_update_project(ev, AT(16, 17, 0), 0, NULL), OWF_OK);   /* a day of two done */
+            CHECK_S(cell_of(ev, 0, OPJ_COL_BCWS), "80.00");
+            CHECK_S(cell_of(ev, 0, OPJ_COL_BCWP), "80.00");
+            CHECK_S(cell_of(ev, 0, OPJ_COL_ACWP), "80.00");
+            CHECK_S(cell_of(ev, 0, OPJ_COL_SV), "0.00");
+            CHECK_S(cell_of(ev, 0, OPJ_COL_CV), "0.00");
+            opj_doc_free(ev);
+        }
+    }
     CHECK_N(opj_update_project(NULL, AT(18, 12, 0), 0, &changed), OWF_ERR_FORMAT);
     CHECK_N(changed, 0);
     opj_doc_free(doc);

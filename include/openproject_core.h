@@ -144,6 +144,11 @@ enum {
     OPJ_COL_ACTUAL_FINISH,
     OPJ_COL_ACTUAL_DURATION,             /* duration times % complete, worked out */
     OPJ_COL_REMAINING_DURATION,
+    OPJ_COL_BCWS,                        /* earned value at the status date (NA without one), money */
+    OPJ_COL_BCWP,
+    OPJ_COL_ACWP,
+    OPJ_COL_SV,                          /* NA without a status date */
+    OPJ_COL_CV,
     OPJ_NCOLS
 };
 
