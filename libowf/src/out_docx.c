@@ -95,6 +95,25 @@ static void put_rpr(owf_buf *out, const owf_doc *doc, const owf_charfmt *f, owf_
     put_rpr_change(out, doc, f, NULL, 0, report);
 }
 
+/* 1.12.1: how footnotes and endnotes are numbered, when not the usual way: w:footnotePr and w:endnotePr, which
+ * come first in a w:sectPr after its header and footer references (CT_SectPr) */
+static void put_note_pr(owf_buf *out, const owf_page *pg)
+{
+    static const char *const pr[2] = { "footnotePr", "endnotePr" };
+    static const char *const fmt[OWF_NOTE_FORMAT_COUNT] = {
+        NULL, "decimal", "lowerRoman", "upperRoman", "lowerLetter", "upperLetter", "chicago" };
+    int k;
+    for (k = 0; k < 2; ++k) {
+        int f = pg->note_format[k] > OWF_NOTE_FORMAT_DEFAULT && pg->note_format[k] < OWF_NOTE_FORMAT_COUNT
+                ? pg->note_format[k] : OWF_NOTE_FORMAT_DEFAULT;
+        if (!f && pg->note_start[k] <= 1) continue;
+        owf_buf_printf(out, "<w:%s>", pr[k]);
+        if (f) owf_buf_printf(out, "<w:numFmt w:val=\"%s\"/>", fmt[f]);
+        if (pg->note_start[k] > 1) owf_buf_printf(out, "<w:numStart w:val=\"%d\"/>", pg->note_start[k]);
+        owf_buf_printf(out, "</w:%s>", pr[k]);
+    }
+}
+
 static void put_section_columns(owf_buf *out, const owf_doc *doc,
                                 const owf_para *section, int break_kind)
 {
@@ -102,6 +121,7 @@ static void put_section_columns(owf_buf *out, const owf_doc *doc,
     int columns = section && section->section_columns > 0 ? section->section_columns : 1;
     int gap = section && section->section_gap > 0 ? section->section_gap : 720;
     const owf_page *pg = &doc->page;
+    put_note_pr(out, pg);
     if (break_kind >= OWF_SECTION_CONTINUOUS && break_kind <= OWF_SECTION_EVEN_PAGE)
         owf_buf_printf(out, "<w:type w:val=\"%s\"/>", type[break_kind]);
     owf_buf_printf(out, "<w:pgSz w:w=\"%d\" w:h=\"%d\"/>", pg->width, pg->height);
@@ -444,7 +464,7 @@ static long change_id(const owf_doc *doc, const owf_story *story, const owf_para
     if (k > 900) k = 900;
     for (q = story->paras; q < para; ++q)
         before += q->nruns + 1;
-    return base + (long)k * 2000000L + (before + j) * 8L;    /* +1 to +3: a run's later pieces */
+    return base + (long)k * 2000000L + (before + j) * 8L;    /* +1 to +3: a run's later pieces, +4 to +7 their format changes */
 }
 
 static const owf_revision *run_change(const owf_doc *doc, int number)
@@ -488,7 +508,37 @@ static void put_note_mark(owf_buf *out, const owf_doc *doc, const owf_story *sto
     owf_buf_puts(out, "</w:r>");
 }
 
-static void build_notes(owf_buf *out, const owf_doc *doc, int endnote)
+/* 1.12.2: a formatted note's paragraphs, the first with the note's mark (w:footnoteRef) after its w:pPr */
+static void put_note_story(owf_buf *out, const owf_doc *doc, const owf_story *st, const char *tag, owf_report *report)
+{
+    owf_buf para;
+    int i;
+    owf_buf_init(&para);
+    for (i = 0; i < st->nparas; ++i) {
+        const char *at;
+        size_t cut;
+        para.length = 0;
+        put_para(&para, doc, st, &st->paras[i], report, 0, NULL, 0);
+        if (para.failed) {
+            out->failed = 1;
+            break;
+        }
+        owf_buf_putc(&para, 0);
+        if (i) {
+            owf_buf_puts(out, (const char *)para.data);
+            continue;
+        }
+        at = strstr((const char *)para.data, "</w:pPr>");
+        cut = at ? (size_t)(at - (const char *)para.data) + 8 : 5;   /* after w:pPr, or after "<w:p>" */
+        owf_buf_put(out, para.data, cut);
+        owf_buf_printf(out, "<w:r><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr><w:%sRef/></w:r>"
+                            "<w:r><w:t xml:space=\"preserve\"> </w:t></w:r>", tag);
+        owf_buf_puts(out, (const char *)para.data + cut);
+    }
+    owf_buf_free(&para);
+}
+
+static void build_notes(owf_buf *out, const owf_doc *doc, int endnote, owf_report *report)
 {
     const char *tag = endnote ? "endnote" : "footnote";
     int i, j;
@@ -506,6 +556,11 @@ static void build_notes(owf_buf *out, const owf_doc *doc, int endnote)
             if (m <= 0 || m > doc->nnotes || doc->notes[m - 1].endnote != endnote)
                 continue;
             owf_buf_printf(out, "<w:%s w:id=\"%d\">", tag, m);
+            if (OWF_DOC_NOTE_STORY(doc, m - 1)) {
+                put_note_story(out, doc, &doc->note_stories[m - 1], tag, report);
+                owf_buf_printf(out, "</w:%s>", tag);
+                continue;
+            }
             for (t = doc->notes[m - 1].text; ; t = nl + 1, first = 0) {
                 nl = strchr(t, '\n');
                 owf_buf_puts(out, "<w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr>");
@@ -683,8 +738,9 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
             put_note_mark(out, doc, story, run, report);
             continue;
         }
-        /* 1.5: a tracked change's run inside w:ins or w:del (a picture or frame is never one) */
-        const owf_revision *chg = run->kind != OWF_RUN_IMAGE && run->kind != OWF_RUN_FRAME ? run_change(doc, run->revision) : NULL;
+        /* 1.5: a tracked change's run inside w:ins or w:del (1.12: a picture in the line or a frame's run too,
+         * its w:drawing inside) */
+        const owf_revision *chg = run_change(doc, run->revision);
         int del = chg && chg->kind == OWF_REV_DELETE;
         /* 1.11: its tracked format change, in each of its w:r's w:rPr */
         const owf_format_change *fc = run->kind != OWF_RUN_IMAGE && run->kind != OWF_RUN_FRAME ?
@@ -934,6 +990,7 @@ static void build_document(owf_buf *out, const owf_doc *doc, owf_report *report)
     if (title_page && pg->footer_on_first && (doc->footer.nparas || doc->footer_left.nparas))
         owf_buf_printf(out, "<w:footerReference w:type=\"first\" r:id=\"rId%d\"/>",
                        first_left && doc->footer_left.nparas ? 5 : 3);
+    put_note_pr(out, pg);
     owf_buf_printf(out, "<w:pgSz w:w=\"%d\" w:h=\"%d\"/>", pg->width, pg->height);
     owf_buf_printf(out, "<w:pgMar w:top=\"%d\" w:right=\"%d\" w:bottom=\"%d\" w:left=\"%d\" w:header=\"708\" w:footer=\"708\" w:gutter=\"0\"/>",
                    pg->margin_top, pg->margin_right, pg->margin_bottom, pg->margin_left);
@@ -1065,12 +1122,12 @@ static int export_docx(const owf_doc *doc, unsigned char **data, size_t *length,
     }
 
     if (footnotes) {                                 /* 1.8 */
-        build_notes(&part, doc, 0);
+        build_notes(&part, doc, 0, report);
         if (result == OWF_OK)
             result = add_part(zip, &part, "word/footnotes.xml");
     }
     if (endnotes) {
-        build_notes(&part, doc, 1);
+        build_notes(&part, doc, 1, report);
         if (result == OWF_OK)
             result = add_part(zip, &part, "word/endnotes.xml");
     }

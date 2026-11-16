@@ -128,7 +128,8 @@ def test_condfmt(work):
     check("cf 8 stopIfTrue", "type=0 op=2" in l and "stop=1" in l and 'formula "\\"To confirm\\""' in l, l)
     rc, out, err = run([DUMP, FIX])
     check("cf: no 'not read yet' note", "Conditional formatting is not read" not in out, out)
-    check("cf: kept-not-shown note", "kept but not shown" in out, out)
+    # its one kept rule is a data bar, which GFOpenCalc shows: no "kept but not shown" note
+    check("cf: no kept-not-shown note", "kept but not shown" not in out, out)
 
     # saved as .xlsx and read again: the same rules
     xlsx = os.path.join(work, "features.xlsx")

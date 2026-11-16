@@ -43,7 +43,7 @@ static const char *ok(const char *line)
 
 static void test_words(void)
 {
-    CHECK(strstr(ok("HELP"), "VERSION ACTIVATE DEACTIVATE FAULT PRINT QUIT HELP LASTERROR") == out);
+    CHECK(strstr(ok("HELP"), "VERSION ACTIVATE DEACTIVATE FAULT PRINT VIEW QUIT HELP LASTERROR") == out);
     CHECK(strstr(out, " SETCELL ") && strstr(out, " BASELINE ") && strstr(out, " CRITICAL"));
     CHECK_S(ok("help setcell"), "SETCELL ROW/A/N,COLUMN/A,TEXT/A/F");
     CHECK_N(rx_do("HELP NOTHING"), OPJ_RX_ERROR);

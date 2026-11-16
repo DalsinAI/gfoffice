@@ -112,6 +112,7 @@ static const owf_format *const formats[] = {
     &owf_format_wordworth,
     &owf_format_finalwriter,
     &owf_format_ansi,
+    &owf_format_markdown,
     &owf_format_text,
     &owf_format_amiga_text,
     &format_ole,
@@ -152,12 +153,30 @@ const owf_format *owf_format_for_filename(const char *filename)
     return NULL;
 }
 
+/* The format a file's bytes say it is, or NULL. */
+static const owf_format *by_content(const unsigned char *data, size_t length)
+{
+    const owf_format *f = NULL;
+    int i, best = 0;
+    for (i = 0; i < NFORMATS; i++) {
+        int score;
+        if (!formats[i]->detect || !formats[i]->import)
+            continue;
+        score = formats[i]->detect(data, length);
+        if (score > best) {
+            best = score;
+            f = formats[i];
+        }
+    }
+    return f;
+}
+
 int owf_import_memory(const unsigned char *data, size_t length, const char *format,
                       owf_doc **doc_out, owf_report *report, const owf_format **used)
 {
     const owf_format *f = NULL;
     owf_doc *doc;
-    int i, best = 0, result;
+    int result;
 
     *doc_out = NULL;
     if (format) {
@@ -165,16 +184,7 @@ int owf_import_memory(const unsigned char *data, size_t length, const char *form
         if (!f || !f->import)
             return OWF_ERR_UNSUPPORTED;
     } else {
-        for (i = 0; i < NFORMATS; i++) {
-            int score;
-            if (!formats[i]->detect || !formats[i]->import)
-                continue;
-            score = formats[i]->detect(data, length);
-            if (score > best) {
-                best = score;
-                f = formats[i];
-            }
-        }
+        f = by_content(data, length);
         if (!f)
             return OWF_ERR_FORMAT;
     }
@@ -207,6 +217,13 @@ int owf_import_file(const char *path, const char *format, owf_doc **doc,
     result = owf_sys_read_file(path, &data, &size);
     if (result != OWF_OK)
         return result;
+    if (!format) {
+        /* Text its bytes can't tell apart (Markdown) is what its name says, when the bytes allow it */
+        const owf_format *named = owf_format_for_filename(path);
+        if (named && named->import && named->detect && named->detect(data, size) > 0 &&
+            by_content(data, size) == &owf_format_text)
+            format = named->name;
+    }
     result = owf_import_memory(data, size, format, doc, report, used);
     free(data);
     return result;
@@ -240,6 +257,9 @@ int owf_export_file(const owf_doc *doc, const char *path, const char *format, ow
     } else {
         if (f == &owf_format_odt && owf_doc_has_format_changes(doc))   /* 1.11: DOCX keeps them; ODT not yet */
             owf_report_add(report, OWF_NOTE_APPROX, "Tracked format changes were saved accepted (as the format is now) in %s",
+                           f->description);
+        if (f == &owf_format_odt && owf_doc_has_frame_changes(doc))    /* 1.12: DOCX keeps them; ODT not yet */
+            owf_report_add(report, OWF_NOTE_APPROX, "Tracked text box and frame changes were saved accepted in %s",
                            f->description);
         result = f->export(doc, &data, &length, report);
     }

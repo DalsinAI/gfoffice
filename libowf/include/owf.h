@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.11.0"
+#define OWF_VERSION "1.12.2"
 
 /* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
@@ -99,7 +99,8 @@ typedef struct {
     int image;               /* index into doc->images for OWF_RUN_IMAGE, doc->frames for OWF_RUN_FRAME */
     int revision;            /* 1.5: a tracked change: 1 + its index in doc->revisions (OWF_REV_INSERT: this
                                 run was inserted, OWF_REV_DELETE: deleted but kept, shown struck through);
-                                0: none */
+                                0: none. 1.12: a picture in the line (OWF_RUN_IMAGE) or a frame's run (its
+                                frame put in or deleted; DOCX keeps it, ODT saves it accepted) may be one */
     int comment;             /* 1.6: a comment's place (OWF_RUN_TEXT runs with no text, kept apart from the text
                                 round them): 1 + its index in doc->comments where it is anchored (shown, and where
                                 a range ends); -(1 + its index) where its range starts. 0: none */
@@ -222,7 +223,18 @@ typedef struct {
     int start_page;
     owf_pagenum_style pagenum_style;
     int header_on_first, footer_on_first;
+    /* 1.12.1: how footnotes ([0]) and endnotes ([1]) are numbered (DOCX's w:footnotePr and w:endnotePr, ODF's
+     * text:notes-configuration): an owf_note_format (OWF_NOTE_FORMAT_DEFAULT: the kind's own, footnotes 1, 2,
+     * endnotes i, ii) and the first number (0 or 1: 1) */
+    int note_format[2], note_start[2];
 } owf_page;
+
+/* 1.12.1: a kind of note's numbers. Symbols are Word's Chicago style: *, dagger, double dagger, section, then
+ * doubled (**), and so on. Letters run a to z, then aa to zz (as Word does). */
+typedef enum {
+    OWF_NOTE_FORMAT_DEFAULT, OWF_NOTE_FORMAT_ARABIC, OWF_NOTE_FORMAT_LOWER_ROMAN, OWF_NOTE_FORMAT_UPPER_ROMAN,
+    OWF_NOTE_FORMAT_LOWER_LETTER, OWF_NOTE_FORMAT_UPPER_LETTER, OWF_NOTE_FORMAT_SYMBOL, OWF_NOTE_FORMAT_COUNT
+} owf_note_format;
 
 /* A physical page number in the document's selected style: 1, iv, IV, d or
  * D. Shared by layout fields, generated references and front ends. */
@@ -373,7 +385,21 @@ typedef struct owf_doc {
      * only grows, as the comments' and notes' do */
     int nformat_changes, capformat_changes;
     struct owf_format_change *format_changes;
+    /* 1.12.2: the notes' text with its formats: note_stories[i] is notes[i]'s paragraphs and their runs (bold,
+     * italic, underline, strike, size, font, colour, fields; the note's mark is not among them). notes[i] is
+     * plain, as its text has it, when i >= nnote_stories or that story has no paragraphs (OWF_DOC_NOTE_STORY);
+     * notes[i].text stays its plain copy either way. DOCX's notes come in and go out with their formats.
+     * The list is as long as the last note with formats needs, never longer than nnotes. */
+    int nnote_stories;
+    owf_story *note_stories;
 } owf_doc;
+
+/* 1.12.2: note index's formatted text (owf_doc.note_stories), NULL when it is plain. A macro, so that programs on
+ * the library have it too. */
+#define OWF_DOC_NOTE_STORY(doc, index)                                                                     \
+    ((index) >= 0 && (index) < (doc)->nnote_stories && (doc)->note_stories[(index)].nparas > 0             \
+         ? &(doc)->note_stories[(index)]                                                                   \
+         : (owf_story *)0)
 
 /* ---- Memory ----
  * Everything an owf_doc holds (stories, paragraphs, runs, their text,
