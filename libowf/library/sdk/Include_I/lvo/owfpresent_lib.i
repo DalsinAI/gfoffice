@@ -89,5 +89,6 @@ _LVOowf_slide_obj_by_id	EQU	-516
 _LVOowf_deck_new_obj_id	EQU	-522
 _LVOowf_slide_add_anim	EQU	-528
 _LVOowf_slide_delete_anim	EQU	-534
+_LVOowf_pdf_gradient	EQU	-540
 
 	ENDC	; LVO_OWFPRESENT_LIB_I
