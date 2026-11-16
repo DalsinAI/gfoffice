@@ -214,6 +214,12 @@ void owf_project_clear_baseline(owf_project *p, int first, int count);
  * minutes on the task's calendar (later is above 0), duration and work in minutes, cost in hundredths. */
 enum { OWF_VAR_START, OWF_VAR_FINISH, OWF_VAR_DURATION, OWF_VAR_WORK, OWF_VAR_COST };
 long owf_ptask_variance(const owf_project *p, int task, int which);
+/* Earned value at status, in hundredths of the currency, against Baseline 0 (a summary: its subtasks'):
+ * BCWS the baseline cost of the work planned by status (in proportion to the baseline's working time),
+ * BCWP the baseline cost times % complete, ACWP the cost times % complete (GFOpenProject keeps no
+ * separate actual cost yet), SV = BCWP - BCWS, CV = BCWP - ACWP. 0 with no baseline. */
+enum { OWF_EV_BCWS, OWF_EV_BCWP, OWF_EV_ACWP, OWF_EV_SV, OWF_EV_CV };
+long owf_ptask_earned(const owf_project *p, int task, owf_ptime status, int which);
 
 /* ---- Tracking (owf_project.c) ---- */
 

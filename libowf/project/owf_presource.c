@@ -330,3 +330,43 @@ long owf_ptask_variance(const owf_project *p, int task, int which)
     default: return 0;
     }
 }
+
+/* ---- Earned value ---- */
+
+#define MAX_MONEY 2000000000L
+
+/* A leaf task's BCWS, BCWP and ACWP at status. */
+static void leaf_earned(const owf_project *p, const owf_ptask *t, owf_ptime status, long *ev)
+{
+    ev[OWF_EV_BCWS] = ev[OWF_EV_BCWP] = 0;
+    ev[OWF_EV_ACWP] = mul_div(t->cost, t->percent, 100, MAX_MONEY);
+    if (!t->baselined) return;
+    ev[OWF_EV_BCWP] = mul_div(t->baseline_cost, t->percent, 100, MAX_MONEY);
+    if (status >= t->baseline_finish) ev[OWF_EV_BCWS] = t->baseline_cost;
+    else if (status > t->baseline_start && t->baseline_duration > 0) {
+        const owf_pcal *c = task_cal(p, t);
+        long done = c ? owf_pcal_work(c, t->baseline_start, status) : status - t->baseline_start;
+        if (done > t->baseline_duration) done = t->baseline_duration;
+        ev[OWF_EV_BCWS] = mul_div(t->baseline_cost, done, t->baseline_duration, MAX_MONEY);
+    }
+}
+
+long owf_ptask_earned(const owf_project *p, int task, owf_ptime status, int which)
+{
+    long ev[3], sum[3] = { 0, 0, 0 };
+    int i, k, end;
+    if (!p || task < 0 || task >= p->ntasks || which < OWF_EV_BCWS || which > OWF_EV_CV) return 0;
+    end = task + 1;
+    if (p->tasks[task].summary)
+        while (end < p->ntasks && p->tasks[end].level > p->tasks[task].level) end++;
+    for (i = p->tasks[task].summary ? task + 1 : task; i < end; i++) {
+        if (p->tasks[i].summary) continue;
+        leaf_earned(p, &p->tasks[i], status, ev);
+        for (k = 0; k < 3; k++) sum[k] = sum[k] > MAX_MONEY - ev[k] ? MAX_MONEY : sum[k] + ev[k];
+    }
+    switch (which) {
+    case OWF_EV_SV: return sum[OWF_EV_BCWP] - sum[OWF_EV_BCWS];
+    case OWF_EV_CV: return sum[OWF_EV_BCWP] - sum[OWF_EV_ACWP];
+    default: return sum[which];
+    }
+}
