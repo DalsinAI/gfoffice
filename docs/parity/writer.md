@@ -21,6 +21,7 @@ undoes; **Part** = some of it; **Gap** = missing.
 | 14 Nov 2026 | 2.0.36 | Print and export comments | 78% |
 | 15 Nov 2026 | 2.0.37 | Merge to the printer; own label sheets; envelopes with a return address and the printer's feed (gap 4.2) | 79% |
 | 16 Nov 2026 | 2.0.37 (main 72b77cb) | Re-score, merged work only: tracked format changes accepted, rejected and stepped to (#228 #231 #235), the final view (#243), tracked pictures (#244), comments by author and picked in the margin (#258 #261 #265), note numbering and formatted note text (#274 #285), RTF notes read (#218), Markdown in and out (#217) | 82% |
+| 16 Nov 2026 (second) | 2.0.37 (main 3569cf3) | Re-score, merged work only: tracked frames (#247) and table rows (#255 #259), comments printed in the margin (#269 #321), note numbering restarted per page or section (#288), number ranges (SEQ, #292) and references to figures and tables (#298) | 85% |
 
 The 16 November re-score counts only what is merged on main. Reviewing gets
 most of its three points: format changes now accept, reject and step like text
@@ -29,10 +30,18 @@ point); comments can be shown by author and picked in the margin (half a
 point). Notes get numbering settings, formatted text and RTF import (one
 point), and Markdown in and out adds half a point.
 
-Waiting to merge, not scored: #247 tracked frames, #255 and #259 tracked table
-rows, #269 comments printed in the margin, #288 note numbering restarted per
-page or section, #292 number ranges (SEQ), #298 references to figures and
-tables.
+The second 16 November re-score, on main 3569cf3, adds three points. Tracked
+frames and tracked table rows finish most of the tracked objects (one point);
+comments printed in the margin (half a point) and note numbering restarted per
+page or section (half a point) close two Part rows; SEQ number ranges and
+references to figures and tables give captions that number and cross-refer
+(one point). The about box still reads 2.0.37 because those PRs did not bump
+the version line; the feature rows below give the version each one shipped in.
+
+Waiting to merge, not scored: none open.
+
+Top gaps now: tracked paragraph formats and table columns (the last of
+reviewing), conditional, hidden and input fields, and document compare.
 
 Track changes was the largest single gap for reviewing documents, so it carries
 about a third of the nine points Phase 1 is meant to add to Writer (target 72%
