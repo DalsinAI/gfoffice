@@ -33,7 +33,7 @@ extern "C" {
 
 typedef enum {
     OWF_OBJ_TEXT, OWF_OBJ_PICTURE, OWF_OBJ_SHAPE, OWF_OBJ_TABLE,
-    OWF_OBJ_CHART,               /* a chart and its data (chart); PPTX's read, others still OWF_OBJ_OTHER */
+    OWF_OBJ_CHART,               /* a chart and its data (chart): PPTX's and ODP's */
     OWF_OBJ_GROUP,               /* its objects follow it, with parent set to it */
     OWF_OBJ_OTHER                /* kept for save (keep), drawn as its box */
 } owf_obj_kind;

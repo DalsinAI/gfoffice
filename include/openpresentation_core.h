@@ -82,7 +82,18 @@ typedef struct {
     const char *today;           /* the date fields' text; NULL: today's */
     opr_pdf_pages pages;         /* 0: the slides */
     int handout_slides;          /* OPR_PDF_HANDOUTS: 1, 2, 3, 4, 6 or 9 (others: 6) */
+    /* For a printer, OPR_PDF_SLIDES only: bleed, twips each page prints past its trimmed edge (0 none, at
+       most OPR_PDF_MAX_BLEED), and crop marks at the trimmed corners, outside the bleed. Either makes each
+       PDF page larger than the slide by opr_pdf_margin's on every side, the slide in the middle. */
+    int bleed;
+    int crop_marks;
 } opr_pdf_options;
+
+#define OPR_PDF_MAX_BLEED 1440
+#define OPR_PDF_MARK_LENGTH 360  /* a crop mark, twips */
+#define OPR_PDF_MARK_GAP 120     /* the least room between a mark and the trimmed edge, twips */
+/* The room round each page for options' bleed and crop marks, twips (0: none). */
+int opr_pdf_margin(const opr_pdf_options *options);
 
 /* The deck as a PDF: by options->pages, one page a slide at the slide's
  * size, a notes page a slide, or handouts, both on the deck's notes page
@@ -412,6 +423,13 @@ int opr_obj_set_wrap(opr_undo *u, owf_deck *deck, int slide, int obj,
  * consume them. */
 int opr_obj_set_picture_crop(opr_undo *u, owf_deck *deck, int slide, int obj,
                              const int crop[4]);
+/* Replace one top-level chart object's chart (its data and look, as the
+ * chart editor gives it back) with a copy of chart, as one undo step; the
+ * caller keeps chart. A chart object with no data gets one. -2 when the
+ * object is not a top-level chart or chart is NULL, -1 for no undo or
+ * memory, 0 done. */
+int opr_obj_set_chart(opr_undo *u, owf_deck *deck, int slide, int obj,
+                      const owf_chart *chart);
 /* Link a top-level text frame to a later empty top-level text frame, or remove
  * any non-first frame from a flow. A target must not already belong to another
  * flow; an insertion before a source's existing successor closes into the

@@ -5728,103 +5728,6 @@ static void test_external_books(void)
     owf_book_free(b);
 }
 
-/* Edit Links: the list, a target as a file, and an update from the file (an Undo step); a file not there
- * leaves the last values. */
-static void test_edit_links(void)
-{
-    static const char *const src_path = "build/host/calc-core-link-src.xlsx";
-    oc_core *core = fresh();
-    owf_book *src = owf_book_new();
-    owf_extbook *eb;
-    owf_sheet *sh;
-    owf_cell *c;
-    const char *name = NULL, *target = NULL;
-    char path[256];
-    int sheets = -1;
-    if (!core || !src) {
-        oc_core_free(core);
-        owf_book_free(src);
-        return;
-    }
-    /* the source file: Q1!A1 5, Q1!A2 a formula whose value is 8 */
-    sh = owf_book_add_sheet(src, "Q1");
-    if (sh && (c = owf_sheet_cell(sh, 0, 0, 1)) != NULL)
-        owf_cell_set_number(c, 5);
-    if (sh && (c = owf_sheet_cell(sh, 1, 0, 1)) != NULL) {
-        owf_cell_set_formula(c, "A1+3");
-        owf_cell_set_number(c, 8);
-    }
-    CHECK(owf_export_book_file(src, src_path, "xlsx", NULL) == OWF_OK);
-    owf_book_free(src);
-    /* the paths a target names */
-    CHECK(oc_link_path("file:///C:/Books/My%20Rates.xlsx", "Work:x", path, sizeof path) && !strcmp(path, "C:/Books/My Rates.xlsx"));
-    CHECK(oc_link_path("file:///home/dale/R.ods", NULL, path, sizeof path) && !strcmp(path, "/home/dale/R.ods"));
-    CHECK(oc_link_path("file://localhost/home/R.ods", NULL, path, sizeof path) && !strcmp(path, "/home/R.ods"));
-    CHECK(oc_link_path("Rates.xlsx", "Work:Books", path, sizeof path) && !strcmp(path, "Work:Books/Rates.xlsx"));
-    CHECK(oc_link_path("Rates.xlsx", "Work:", path, sizeof path) && !strcmp(path, "Work:Rates.xlsx"));
-    CHECK(oc_link_path("sub/Rates.xlsx", "/home/dale/", path, sizeof path) && !strcmp(path, "/home/dale/sub/Rates.xlsx"));
-    CHECK(oc_link_path("Work:Books/Rates.xlsx", "RAM:", path, sizeof path) && !strcmp(path, "Work:Books/Rates.xlsx"));
-    CHECK(oc_link_path("Rates.xlsx", NULL, path, sizeof path) && !strcmp(path, "Rates.xlsx"));
-    CHECK(!oc_link_path("https://example.org/r.xlsx", "Work:", path, sizeof path));
-    CHECK(!oc_link_path("Rates.xlsx", "Work:Books", path, 8));
-    CHECK(!oc_link_path("", NULL, path, sizeof path));
-    CHECK(!oc_link_path("file://server/share/R.xlsx", NULL, path, sizeof path));   /* another computer's */
-    CHECK(!oc_link_path("R%00.xlsx", "Work:", path, sizeof path));
-    /* the book: its link with the last values (Q1!A1 2), a sheet the file does not have (Old!A1 1) */
-    CHECK(oc_core_link_count(core) == 0 && oc_core_link(core, 0, &name, &target, &sheets) == OWF_ERR_UNSUPPORTED);
-    eb = owf_book_add_extbook(oc_core_book(core), "calc-core-link-src.xlsx", NULL);
-    CHECK(eb != NULL);
-    if (!eb) {
-        oc_core_free(core);
-        return;
-    }
-    if ((sh = owf_extbook_sheet(eb, "Q1", 1)) != NULL && (c = owf_sheet_cell(sh, 0, 0, 1)) != NULL)
-        owf_cell_set_number(c, 2);
-    if ((sh = owf_extbook_sheet(eb, "Old", 1)) != NULL && (c = owf_sheet_cell(sh, 0, 0, 1)) != NULL)
-        owf_cell_set_number(c, 1);
-    CHECK(oc_core_link_count(core) == 1 && oc_core_link(core, 0, &name, &target, &sheets) == OWF_OK);
-    CHECK_STR(name, "calc-core-link-src.xlsx");
-    CHECK_STR(target, "calc-core-link-src.xlsx");          /* no target: its name */
-    CHECK(sheets == 2);
-    enter_at(core, "A1", "='[calc-core-link-src.xlsx]Q1'!A1*10");
-    enter_at(core, "A2", "=SUM('[calc-core-link-src.xlsx]Q1'!A:A)");
-    enter_at(core, "A3", "='[calc-core-link-src.xlsx]Old'!A1");
-    CHECK(num(core, "A1") == 20 && num(core, "A2") == 2 && num(core, "A3") == 1);
-    /* a file not there: its error, nothing changes, no Undo step */
-    oc_core_mark_saved(core);
-    CHECK(oc_core_update_link(core, 0, "build/host/no-such-link.xlsx", NULL, &sheets) != OWF_OK && sheets == 0);
-    CHECK(num(core, "A1") == 20 && !oc_core_is_dirty(core));
-    CHECK(oc_core_update_link(core, 1, src_path, NULL, &sheets) == OWF_ERR_UNSUPPORTED);
-    CHECK(oc_core_update_link(core, 0, NULL, NULL, &sheets) == OWF_ERR_UNSUPPORTED);
-    /* from the file: Q1 takes its values now (the formula's value too), Old keeps its last */
-    CHECK(oc_link_path(target, "build/host", path, sizeof path));
-    CHECK(oc_core_update_link(core, 0, path, NULL, &sheets) == OWF_OK && sheets == 1);
-    CHECK(num(core, "A1") == 50 && num(core, "A2") == 13 && num(core, "A3") == 1 && oc_core_is_dirty(core));
-    sh = &oc_core_book(core)->extbooks[0].sheets[0];
-    CHECK(sh->ncells == 2 && !sh->cells[1].formula && sh->cells[1].number == 8 && !sh->cells[0].style);
-    /* Undo: the last values back, and what the formulas made of them */
-    CHECK(oc_core_undo(core) == OWF_OK);
-    CHECK(num(core, "A1") == 20 && num(core, "A2") == 2);
-    CHECK(oc_core_book(core)->extbooks[0].sheets[0].ncells == 1);
-    oc_core_free(core);
-    /* as the ARexx test does it: a formula on a book not kept is #REF!; saved, the file links that book (its
-       sheet, no values); opened again and updated, the formula has the file's value */
-    core = fresh();
-    if (core) {
-        enter_at(core, "A1", "='[calc-core-link-src.xlsx]Q1'!A2*2");
-        CHECK(at(core, "A1") && at(core, "A1")->type == OWF_VALUE_ERROR && oc_core_link_count(core) == 0);
-        CHECK(oc_core_save(core, "build/host/calc-core-link-main.xlsx", "xlsx", NULL) == OWF_OK);
-        CHECK(oc_core_open(core, "build/host/calc-core-link-main.xlsx", NULL, NULL, NULL) == OWF_OK);
-        CHECK(oc_core_link_count(core) == 1 && oc_core_link(core, 0, &name, &target, &sheets) == OWF_OK && sheets == 1);
-        CHECK(oc_link_path(target, "build/host", path, sizeof path) && !strcmp(path, "build/host/calc-core-link-src.xlsx"));
-        CHECK(oc_core_update_link(core, 0, path, NULL, &sheets) == OWF_OK && sheets == 1);
-        CHECK(num(core, "A1") == 16);
-        remove("build/host/calc-core-link-main.xlsx");
-        oc_core_free(core);
-    }
-    remove(src_path);
-}
-
 static void track_clock(void *user, char *out, size_t size)
 {
     (void)user;
@@ -6029,6 +5932,103 @@ static void test_track_changes(void)
         CHECK(oc_core_set_sheet(core, one) == OWF_OK && empty_at(core, "B2"));
         oc_core_free(core);
     }
+}
+
+/* Edit Links: the list, a target as a file, and an update from the file (an Undo step); a file not there
+ * leaves the last values. */
+static void test_edit_links(void)
+{
+    static const char *const src_path = "build/host/calc-core-link-src.xlsx";
+    oc_core *core = fresh();
+    owf_book *src = owf_book_new();
+    owf_extbook *eb;
+    owf_sheet *sh;
+    owf_cell *c;
+    const char *name = NULL, *target = NULL;
+    char path[256];
+    int sheets = -1;
+    if (!core || !src) {
+        oc_core_free(core);
+        owf_book_free(src);
+        return;
+    }
+    /* the source file: Q1!A1 5, Q1!A2 a formula whose value is 8 */
+    sh = owf_book_add_sheet(src, "Q1");
+    if (sh && (c = owf_sheet_cell(sh, 0, 0, 1)) != NULL)
+        owf_cell_set_number(c, 5);
+    if (sh && (c = owf_sheet_cell(sh, 1, 0, 1)) != NULL) {
+        owf_cell_set_formula(c, "A1+3");
+        owf_cell_set_number(c, 8);
+    }
+    CHECK(owf_export_book_file(src, src_path, "xlsx", NULL) == OWF_OK);
+    owf_book_free(src);
+    /* the paths a target names */
+    CHECK(oc_link_path("file:///C:/Books/My%20Rates.xlsx", "Work:x", path, sizeof path) && !strcmp(path, "C:/Books/My Rates.xlsx"));
+    CHECK(oc_link_path("file:///home/dale/R.ods", NULL, path, sizeof path) && !strcmp(path, "/home/dale/R.ods"));
+    CHECK(oc_link_path("file://localhost/home/R.ods", NULL, path, sizeof path) && !strcmp(path, "/home/R.ods"));
+    CHECK(oc_link_path("Rates.xlsx", "Work:Books", path, sizeof path) && !strcmp(path, "Work:Books/Rates.xlsx"));
+    CHECK(oc_link_path("Rates.xlsx", "Work:", path, sizeof path) && !strcmp(path, "Work:Rates.xlsx"));
+    CHECK(oc_link_path("sub/Rates.xlsx", "/home/dale/", path, sizeof path) && !strcmp(path, "/home/dale/sub/Rates.xlsx"));
+    CHECK(oc_link_path("Work:Books/Rates.xlsx", "RAM:", path, sizeof path) && !strcmp(path, "Work:Books/Rates.xlsx"));
+    CHECK(oc_link_path("Rates.xlsx", NULL, path, sizeof path) && !strcmp(path, "Rates.xlsx"));
+    CHECK(!oc_link_path("https://example.org/r.xlsx", "Work:", path, sizeof path));
+    CHECK(!oc_link_path("Rates.xlsx", "Work:Books", path, 8));
+    CHECK(!oc_link_path("", NULL, path, sizeof path));
+    CHECK(!oc_link_path("file://server/share/R.xlsx", NULL, path, sizeof path));   /* another computer's */
+    CHECK(!oc_link_path("R%00.xlsx", "Work:", path, sizeof path));
+    /* the book: its link with the last values (Q1!A1 2), a sheet the file does not have (Old!A1 1) */
+    CHECK(oc_core_link_count(core) == 0 && oc_core_link(core, 0, &name, &target, &sheets) == OWF_ERR_UNSUPPORTED);
+    eb = owf_book_add_extbook(oc_core_book(core), "calc-core-link-src.xlsx", NULL);
+    CHECK(eb != NULL);
+    if (!eb) {
+        oc_core_free(core);
+        return;
+    }
+    if ((sh = owf_extbook_sheet(eb, "Q1", 1)) != NULL && (c = owf_sheet_cell(sh, 0, 0, 1)) != NULL)
+        owf_cell_set_number(c, 2);
+    if ((sh = owf_extbook_sheet(eb, "Old", 1)) != NULL && (c = owf_sheet_cell(sh, 0, 0, 1)) != NULL)
+        owf_cell_set_number(c, 1);
+    CHECK(oc_core_link_count(core) == 1 && oc_core_link(core, 0, &name, &target, &sheets) == OWF_OK);
+    CHECK_STR(name, "calc-core-link-src.xlsx");
+    CHECK_STR(target, "calc-core-link-src.xlsx");          /* no target: its name */
+    CHECK(sheets == 2);
+    enter_at(core, "A1", "='[calc-core-link-src.xlsx]Q1'!A1*10");
+    enter_at(core, "A2", "=SUM('[calc-core-link-src.xlsx]Q1'!A:A)");
+    enter_at(core, "A3", "='[calc-core-link-src.xlsx]Old'!A1");
+    CHECK(num(core, "A1") == 20 && num(core, "A2") == 2 && num(core, "A3") == 1);
+    /* a file not there: its error, nothing changes, no Undo step */
+    oc_core_mark_saved(core);
+    CHECK(oc_core_update_link(core, 0, "build/host/no-such-link.xlsx", NULL, &sheets) != OWF_OK && sheets == 0);
+    CHECK(num(core, "A1") == 20 && !oc_core_is_dirty(core));
+    CHECK(oc_core_update_link(core, 1, src_path, NULL, &sheets) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_update_link(core, 0, NULL, NULL, &sheets) == OWF_ERR_UNSUPPORTED);
+    /* from the file: Q1 takes its values now (the formula's value too), Old keeps its last */
+    CHECK(oc_link_path(target, "build/host", path, sizeof path));
+    CHECK(oc_core_update_link(core, 0, path, NULL, &sheets) == OWF_OK && sheets == 1);
+    CHECK(num(core, "A1") == 50 && num(core, "A2") == 13 && num(core, "A3") == 1 && oc_core_is_dirty(core));
+    sh = &oc_core_book(core)->extbooks[0].sheets[0];
+    CHECK(sh->ncells == 2 && !sh->cells[1].formula && sh->cells[1].number == 8 && !sh->cells[0].style);
+    /* Undo: the last values back, and what the formulas made of them */
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK(num(core, "A1") == 20 && num(core, "A2") == 2);
+    CHECK(oc_core_book(core)->extbooks[0].sheets[0].ncells == 1);
+    oc_core_free(core);
+    /* as the ARexx test does it: a formula on a book not kept is #REF!; saved, the file links that book (its
+       sheet, no values); opened again and updated, the formula has the file's value */
+    core = fresh();
+    if (core) {
+        enter_at(core, "A1", "='[calc-core-link-src.xlsx]Q1'!A2*2");
+        CHECK(at(core, "A1") && at(core, "A1")->type == OWF_VALUE_ERROR && oc_core_link_count(core) == 0);
+        CHECK(oc_core_save(core, "build/host/calc-core-link-main.xlsx", "xlsx", NULL) == OWF_OK);
+        CHECK(oc_core_open(core, "build/host/calc-core-link-main.xlsx", NULL, NULL, NULL) == OWF_OK);
+        CHECK(oc_core_link_count(core) == 1 && oc_core_link(core, 0, &name, &target, &sheets) == OWF_OK && sheets == 1);
+        CHECK(oc_link_path(target, "build/host", path, sizeof path) && !strcmp(path, "build/host/calc-core-link-src.xlsx"));
+        CHECK(oc_core_update_link(core, 0, path, NULL, &sheets) == OWF_OK && sheets == 1);
+        CHECK(num(core, "A1") == 16);
+        remove("build/host/calc-core-link-main.xlsx");
+        oc_core_free(core);
+    }
+    remove(src_path);
 }
 
 static void test_book_protection(void)
@@ -8741,9 +8741,9 @@ int main(void)
     test_protection();
     test_book_protection();
     test_external_books();
-    test_edit_links();
     test_track_changes();
     test_change_window_helpers();
+    test_edit_links();
     test_pivot_summary();
     test_pivot_layout();
     test_pivot_sort();

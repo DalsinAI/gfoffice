@@ -1029,3 +1029,200 @@ int owf_chart_part_xml(const owf_chart *c, owf_buf *b)
     owf_buf_puts(b, "<c:plotVisOnly val=\"1\"/><c:dispBlanksAs val=\"gap\"/></c:chart></c:chartSpace>");
     return b->failed ? OWF_ERR_MEMORY : OWF_OK;
 }
+
+/* ---- A slide's chart with its own workbook, as PowerPoint embeds one (1.12.8) ---- */
+
+static void col_name(char *out, int col)          /* 0: "A" */
+{
+    char t[8];
+    int n = 0, i;
+    for (col++; col > 0 && n < 7; col = (col - 1) / 26)
+        t[n++] = (char)('A' + (col - 1) % 26);
+    for (i = 0; i < n; i++)
+        out[i] = t[n - 1 - i];
+    out[n] = 0;
+}
+
+/* *field becomes Sheet1's cell (row0 == row1) or column range, by A1 rows; the old one freed. */
+static void set_ref(char **field, const char *col, int row0, int row1, int *failed)
+{
+    char buf[48];
+    if (row1 > row0)
+        snprintf(buf, sizeof buf, "Sheet1!$%s$%d:$%s$%d", col, row0, col, row1);
+    else
+        snprintf(buf, sizeof buf, "Sheet1!$%s$%d", col, row0);
+    free(*field);
+    *field = dup_str(buf, failed);
+}
+
+static void clear_ref(char **field)
+{
+    free(*field);
+    *field = NULL;
+}
+
+/* The rows the data takes (after the names' row), and what column A shows on row i: a category, or an x. */
+static int data_rows(const owf_chart *c)
+{
+    int i, n = 0;
+    for (i = 0; i < c->nseries; i++)
+        if (c->series[i].npoints > n)
+            n = c->series[i].npoints;
+    return n;
+}
+
+static const owf_chart_point *column_a(const owf_chart *c, int row, int scatter)
+{
+    int i;
+    for (i = 0; i < c->nseries; i++)
+        if (row < c->series[i].npoints &&
+            (scatter ? c->series[i].points[row].has_x : c->series[i].points[row].label != NULL))
+            return &c->series[i].points[row];
+    return NULL;
+}
+
+static void put_xlsx_text(owf_buf *b, const char *col, int row, const char *s)
+{
+    owf_buf_printf(b, "<c r=\"%s%d\" t=\"inlineStr\"><is><t xml:space=\"preserve\">", col, row);
+    put_text(b, s);
+    owf_buf_puts(b, "</t></is></c>");
+}
+
+static void put_xlsx_number(owf_buf *b, const char *col, int row, double v)
+{
+    char num[40];
+    owf_number_exact(v, num);
+    owf_buf_printf(b, "<c r=\"%s%d\"><v>%s</v></c>", col, row, num);
+}
+
+static void put_xlsx_sheet(owf_buf *b, const owf_chart *c, int rows, int scatter)
+{
+    char col[8];
+    int i, r;
+    owf_buf_puts(b, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+                    "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>");
+    owf_buf_puts(b, "<row r=\"1\">");
+    for (i = 0; i < c->nseries; i++)
+        if (c->series[i].name) {
+            col_name(col, i + 1);
+            put_xlsx_text(b, col, 1, c->series[i].name);
+        }
+    owf_buf_puts(b, "</row>");
+    for (r = 0; r < rows; r++) {
+        const owf_chart_point *a = column_a(c, r, scatter);
+        owf_buf_printf(b, "<row r=\"%d\">", r + 2);
+        if (a && scatter)
+            put_xlsx_number(b, "A", r + 2, a->x);
+        else if (a)
+            put_xlsx_text(b, "A", r + 2, a->label);
+        for (i = 0; i < c->nseries; i++)
+            if (r < c->series[i].npoints && c->series[i].points[r].has_value) {
+                col_name(col, i + 1);
+                put_xlsx_number(b, col, r + 2, c->series[i].points[r].value);
+            }
+        owf_buf_puts(b, "</row>");
+    }
+    owf_buf_puts(b, "</sheetData></worksheet>");
+}
+
+static int add_text_part(owf_zip *z, const char *name, owf_buf *b)
+{
+    int r = b->failed || owf_zip_add(z, name, b->data ? b->data : (const unsigned char *)"", b->length, 1) < 0;
+    owf_buf_free(b);
+    return r;
+}
+
+static int put_xlsx(owf_buf *out, const owf_chart *c, int rows, int scatter)
+{
+    owf_zip *z = owf_zip_new(out);
+    owf_buf b;
+    int failed = 0;
+    if (!z)
+        return 1;
+    owf_buf_init(&b);
+    owf_buf_puts(&b, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+        "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+        "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+        "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+        "<Override PartName=\"/xl/workbook.xml\" "
+        "ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>"
+        "<Override PartName=\"/xl/worksheets/sheet1.xml\" "
+        "ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/></Types>");
+    failed |= add_text_part(z, "[Content_Types].xml", &b);
+    owf_buf_init(&b);
+    owf_buf_puts(&b, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+        "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
+        "officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>");
+    failed |= add_text_part(z, "_rels/.rels", &b);
+    owf_buf_init(&b);
+    owf_buf_puts(&b, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+        "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" "
+        "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">"
+        "<sheets><sheet name=\"Sheet1\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>");
+    failed |= add_text_part(z, "xl/workbook.xml", &b);
+    owf_buf_init(&b);
+    owf_buf_puts(&b, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+        "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
+        "worksheet\" Target=\"worksheets/sheet1.xml\"/></Relationships>");
+    failed |= add_text_part(z, "xl/_rels/workbook.xml.rels", &b);
+    owf_buf_init(&b);
+    put_xlsx_sheet(&b, c, rows, scatter);
+    failed |= add_text_part(z, "xl/worksheets/sheet1.xml", &b);
+    if (owf_zip_finish(z) < 0)
+        failed = 1;
+    return failed || out->failed;
+}
+
+int owf_chart_pptx_parts(const owf_chart *c, const char *data_rid, owf_buf *part, owf_buf *xlsx)
+{
+    static const char end[] = "</c:chartSpace>";
+    owf_chart w;
+    int i, failed = 0, scatter, rows, cats = 0;
+    char col[8];
+    memset(&w, 0, sizeof w);
+    if (!c || owf_chart_copy(&w, c) != OWF_OK)
+        return OWF_ERR_MEMORY;
+    scatter = w.kind == OWF_CHART_SCATTER;
+    rows = data_rows(&w);
+    for (i = 0; i < rows; i++)
+        if (column_a(&w, i, scatter))
+            cats = 1;
+    /* every series on the workbook's cells: its name in row 1, its values below, column A shared */
+    for (i = 0; i < w.nseries; i++) {
+        owf_chart_series *s = &w.series[i];
+        col_name(col, i + 1);
+        if (s->name)
+            set_ref(&s->name_cell, col, 1, 1, &failed);
+        else
+            clear_ref(&s->name_cell);
+        if (rows)
+            set_ref(&s->values, col, 2, rows + 1, &failed);
+        else
+            clear_ref(&s->values);
+        if (cats && rows)
+            set_ref(scatter ? &s->x_values : &s->categories, "A", 2, rows + 1, &failed);
+        else
+            clear_ref(scatter ? &s->x_values : &s->categories);
+        if (scatter)
+            clear_ref(&s->categories);
+    }
+    if (!failed && owf_chart_part_xml(&w, part) != OWF_OK)
+        failed = 1;
+    /* the workbook named last in c:chartSpace, after c:chart */
+    if (!failed && part->length >= sizeof end - 1 &&
+        !memcmp(part->data + part->length - (sizeof end - 1), end, sizeof end - 1)) {
+        part->length -= sizeof end - 1;
+        owf_buf_puts(part, "<c:externalData r:id=\"");
+        put_text(part, data_rid ? data_rid : "rId1");
+        owf_buf_puts(part, "\"><c:autoUpdate val=\"0\"/></c:externalData>");
+        owf_buf_puts(part, end);
+    } else {
+        failed = 1;
+    }
+    if (!failed && put_xlsx(xlsx, &w, rows, scatter))
+        failed = 1;
+    owf_chart_clear(&w);
+    return failed || part->failed || xlsx->failed ? OWF_ERR_MEMORY : OWF_OK;
+}

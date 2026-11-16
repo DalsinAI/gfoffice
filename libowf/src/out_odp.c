@@ -165,6 +165,8 @@ typedef struct {
     int *pic_used;                   /* per res image: written as Pictures/ (1) */
     const owf_master *master;        /* the master of what is being written */
     int on_master;
+    owf_buf *charts;                 /* the charts written: GFChart<n>/content.xml, n from 1 */
+    int ncharts, capcharts;
     int failed;
 } odpw;
 
@@ -998,6 +1000,44 @@ static void put_custom_geometry(owf_buf *out, const owf_obj *o)
     owf_buf_printf(out, " draw:enhanced-path=\"%s\"/>", path);
 }
 
+/* A chart with its data (Presentation gap 2): its object, written as its own chart document with its data in its
+ * local table, and its picture to show where a program can't draw it. */
+static void put_chart_object(odpw *w, owf_buf *out, const owf_obj *o)
+{
+    owf_buf *b;
+    if (w->flat) {                   /* one file: the chart document inside its object */
+        owf_buf_puts(out, "<draw:object>");
+        if (owf_chart_odf_xml(o->chart, o->width, o->height, 1, out) != OWF_OK)
+            w->failed = 1;
+        owf_buf_puts(out, "</draw:object>");
+        if (o->image >= 0)
+            put_image(w, out, "draw:image", NULL, o->image);
+        return;
+    }
+    if (w->ncharts == w->capcharts) {
+        int want = w->capcharts ? w->capcharts * 2 : 4;
+        owf_buf *c = realloc(w->charts, (size_t)want * sizeof *c);
+        if (!c) {
+            w->failed = 1;
+            return;
+        }
+        w->charts = c;
+        w->capcharts = want;
+    }
+    b = &w->charts[w->ncharts];
+    owf_buf_init(b);
+    if (owf_chart_odf_xml(o->chart, o->width, o->height, 0, b) != OWF_OK) {
+        owf_buf_free(b);
+        w->failed = 1;
+        return;
+    }
+    w->ncharts++;
+    owf_buf_printf(out, "<draw:object xlink:href=\"./GFChart%d\" xlink:type=\"simple\" xlink:show=\"embed\" "
+                        "xlink:actuate=\"onLoad\"/>", w->ncharts);
+    if (o->image >= 0)
+        put_image(w, out, "draw:image", NULL, o->image);
+}
+
 static void put_object(odpw *w, owf_buf *out, const owf_obj *objs, int n, int index, int depth)
 {
     const owf_obj *o = &objs[index];
@@ -1007,7 +1047,7 @@ static void put_object(odpw *w, owf_buf *out, const owf_obj *objs, int n, int in
 
     if (depth > OWF_DECK_MAX_DEPTH)
         return;
-    if (o->kind == OWF_OBJ_OTHER || o->kind == OWF_OBJ_CHART) {
+    if (o->kind == OWF_OBJ_OTHER || (o->kind == OWF_OBJ_CHART && !o->chart)) {
         if (o->keep >= 0 && o->keep < w->deck->nkept && w->deck->kept[o->keep].kind == OWF_KEPT_OBJECT)
             owf_buf_puts(out, w->deck->kept[o->keep].xml);
         else
@@ -1092,6 +1132,8 @@ static void put_object(odpw *w, owf_buf *out, const owf_obj *objs, int n, int in
             owf_buf_puts(out, "<draw:text-box/>");
     } else if (o->kind == OWF_OBJ_TABLE) {
         put_table(w, out, o);
+    } else if (o->kind == OWF_OBJ_CHART) {
+        put_chart_object(w, out, o);
     } else {
         owf_buf_puts(out, "<draw:text-box>");
         if ((flow_total < 2 || flow_ordinal == 0) &&
@@ -1691,6 +1733,10 @@ static odpw *new_writer(const owf_deck *deck, owf_report *report, int flat)
 
 static void free_writer(odpw *w)
 {
+    int i;
+    for (i = 0; i < w->ncharts; i++)
+        owf_buf_free(&w->charts[i]);
+    free(w->charts);
     reg_free(&w->autos_styles);
     reg_free(&w->autos_content);
     free(w->pic_used);
@@ -1766,6 +1812,11 @@ static int export_package(const owf_deck *deck, unsigned char **data, size_t *le
             result = owf_zip_add(zip, deck->parts[i].name, deck->parts[i].data, deck->parts[i].length, 1);
         else if (deck->parts[i].name[0] && deck->parts[i].name[strlen(deck->parts[i].name) - 1] != '/')
             result = owf_zip_add(zip, deck->parts[i].name, "", 0, 0);
+    for (i = 0; i < w->ncharts && result == OWF_OK; i++) {
+        char name[48];
+        snprintf(name, sizeof name, "GFChart%d/content.xml", i + 1);
+        result = owf_zip_add(zip, name, w->charts[i].data, w->charts[i].length, 1);
+    }
 
     part.length = 0;
     owf_buf_printf(&part, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -1792,6 +1843,11 @@ static int export_package(const owf_deck *deck, unsigned char **data, size_t *le
         owf_buf_puts_xml(&part, deck->parts[i].mime ? deck->parts[i].mime : "");
         owf_buf_puts(&part, "\"/>");
     }
+    for (i = 0; i < w->ncharts; i++)
+        owf_buf_printf(&part, "<manifest:file-entry manifest:full-path=\"GFChart%d/\" manifest:version=\"1.2\" "
+                              "manifest:media-type=\"application/vnd.oasis.opendocument.chart\"/>"
+                              "<manifest:file-entry manifest:full-path=\"GFChart%d/content.xml\" "
+                              "manifest:media-type=\"text/xml\"/>", i + 1, i + 1);
     owf_buf_puts(&part, "</manifest:manifest>\n");
     if (result == OWF_OK)
         result = part.failed ? OWF_ERR_MEMORY : owf_zip_add(zip, "META-INF/manifest.xml", part.data, part.length, 1);

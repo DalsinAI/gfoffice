@@ -76,6 +76,8 @@
 #include "ow_clipboard.h"
 #ifdef OPENPUBLISHER
 #include "openpublisher_core.h"
+#include "openpublisher_merge.h"
+#include "openpublisher_template.h"
 #endif
 #include "ow_layout.h"
 #include "owf_pdf.h"
@@ -155,18 +157,26 @@ enum {
     M_SHOW_FIRST, M_SHOW_CURRENT, M_SHOW_LOOP, M_SHOW_ON_AUTO, M_SHOW_ON_OWN, M_SHOW_ON_WB,
     M_VIEW_NORMAL, M_VIEW_SORTER, M_VIEW_NOTES, M_VIEW_OUTLINE,
     M_VIEW_MASTER, M_SLIDE_DESIGN, M_INSERT_FILE, M_PICTURES,
-    M_SPELL_AS_YOU_TYPE, M_SPELLING
+    M_SPELL_AS_YOU_TYPE, M_SPELLING,
+    M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_PAGES, M_MERGE_CATALOG,
+    M_NEW_TEMPLATE, M_PDF_PRINTER
 };
 
 static struct NewMenu menus[] = {
     { NM_TITLE, "Project", NULL, 0, 0, NULL },
     { NM_ITEM, "New", "N", 0, 0, (APTR)M_NEW },
+#ifdef OPENPUBLISHER
+    { NM_ITEM, "New from Template...", NULL, 0, 0, (APTR)M_NEW_TEMPLATE },
+#endif
     { NM_ITEM, "Open...", "O", 0, 0, (APTR)M_OPEN },
     { NM_ITEM, "Save", "S", 0, 0, (APTR)M_SAVE },
     { NM_ITEM, "Save As...", NULL, 0, 0, (APTR)M_SAVE_AS },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Print...", "P", 0, 0, (APTR)M_PRINT },
     { NM_ITEM, "Export PDF...", NULL, 0, 0, (APTR)M_PDF },
+#ifdef OPENPUBLISHER
+    { NM_ITEM, "Export PDF for a Printer...", NULL, 0, 0, (APTR)M_PDF_PRINTER },
+#endif
     { NM_ITEM, "Export as Pictures...", NULL, 0, 0, (APTR)M_PICTURES },
 #ifndef OPENPUBLISHER
     { NM_ITEM, "Export Handouts...", NULL, 0, 0, (APTR)M_HANDOUTS },
@@ -330,6 +340,19 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Spelling...", "L", 0, 0, (APTR)M_SPELLING },
     { NM_ITEM, "Spelling as You Type", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)M_SPELL_AS_YOU_TYPE },
 
+#ifdef OPENPUBLISHER
+    { NM_TITLE, "Mailings", NULL, 0, 0, NULL },
+    { NM_ITEM, "Data Source...", NULL, 0, 0, (APTR)M_MERGE_SOURCE },
+    { NM_ITEM, "Insert Merge Field...", NULL, 0, 0, (APTR)M_MERGE_FIELD },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Next Record", NULL, 0, 0, (APTR)M_MERGE_NEXT },
+    { NM_ITEM, "Previous Record", NULL, 0, 0, (APTR)M_MERGE_PREV },
+    { NM_ITEM, "Show Field Names", NULL, 0, 0, (APTR)M_MERGE_NAMES },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Merge to New Publication", NULL, 0, 0, (APTR)M_MERGE_PAGES },
+    { NM_ITEM, "Catalog Merge...", NULL, 0, 0, (APTR)M_MERGE_CATALOG },
+
+#endif
     { NM_TITLE, "Help", NULL, 0, 0, NULL },
     { NM_ITEM, "About " PROGRAM "...", NULL, 0, 0, (APTR)M_ABOUT },
     { NM_END, NULL, NULL, 0, 0, NULL }
@@ -7468,6 +7491,256 @@ static void open_deck(const char *path)
     owf_report_free(report);
 }
 
+#ifdef OPENPUBLISHER
+/* ---- Mailings: mail merge (src/pub/opp_merge.c) ----
+ * The data source is a CSV file whose first line names the columns. Merge fields show the column's name in
+ * guillemets, or the values of the record shown; Merge to New Publication makes the pages once for each record
+ * in this window, as a new untitled publication (the publication's own file is left as it is). */
+static ow_merge_table *merge_table;
+static int merge_at = -1;                            /* the record shown; -1: the field names */
+
+/* A list of names (Latin-1) to choose one from: its index, or -1 */
+static int pick_requester(const char *title, const char *label, const char *button, char (*names)[72], int n)
+{
+    struct Gadget *glist = NULL, *last, *glv, *gok, *gcancel;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    struct List items;
+    struct Node *nodes;
+    int i, chosen = -1, picked = 0, done = 0, ww = 320, wh = 190;
+    if (!scr || !vi || n <= 0) return -1;
+    if (!(nodes = (struct Node *)calloc((size_t)n, sizeof *nodes))) return -1;
+    NewList(&items);
+    for (i = 0; i < n; ++i) { nodes[i].ln_Name = names[i]; AddTail(&items, &nodes[i]); }
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr; ng.ng_VisualInfo = vi;
+    last = CreateContext(&glist);
+    ng.ng_LeftEdge = 12; ng.ng_TopEdge = 20; ng.ng_Width = 296; ng.ng_Height = 130;
+    ng.ng_GadgetText = (STRPTR)label; ng.ng_GadgetID = 1; ng.ng_Flags = PLACETEXT_ABOVE;
+    last = glv = CreateGadget(LISTVIEW_KIND, last, &ng, GTLV_Labels, (ULONG)&items, GTLV_ShowSelected, 0,
+                              GTLV_Selected, 0, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_GadgetText = (STRPTR)button; ng.ng_GadgetID = 2;
+    ng.ng_LeftEdge = 142; ng.ng_TopEdge = 160; ng.ng_Width = 78; ng.ng_Height = 20;
+    last = gok = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_GadgetText = (STRPTR)"Cancel"; ng.ng_GadgetID = 3; ng.ng_LeftEdge = 230;
+    last = gcancel = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!glv || !gok || !gcancel) goto out;
+    rw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)title, WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh,
+        WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)glist, WA_DragBar, TRUE, WA_DepthGadget, TRUE,
+        WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | LISTVIEWIDCMP | BUTTONIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((m = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = m->Class;
+            UWORD code = m->Code;
+            UWORD gid = m->IAddress && (cls == IDCMP_GADGETUP || cls == IDCMP_GADGETDOWN)
+                      ? ((struct Gadget *)m->IAddress)->GadgetID : 0;
+            GT_ReplyIMsg(m);
+            if (cls == IDCMP_CLOSEWINDOW) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); }
+            else if (cls == IDCMP_GADGETUP) {
+                if (gid == 1) picked = code;
+                else if (gid == 2) { chosen = picked >= 0 && picked < n ? picked : -1; done = 1; }
+                else if (gid == 3) done = 1;
+            }
+        }
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (glist) FreeGadgets(glist);
+    free(nodes);
+    return chosen;
+}
+
+static void merge_status(const char *before)
+{
+    char msg[200];
+    if (merge_at >= 0 && merge_table)
+        snprintf(msg, sizeof msg, "%.150sRecord %d of %d.", before, merge_at + 1, merge_table->nrows);
+    else snprintf(msg, sizeof msg, "%.150sField names shown.", before);
+    set_status(msg);
+}
+
+static const char *merge_error(int rc)
+{
+    return rc == OWF_ERR_IO ? "The data source could not be read." :
+           rc == OWF_ERR_FORMAT ? "The data source has no columns: its first line names them." :
+           rc == OWF_ERR_UNSUPPORTED ? "The data source is too big (4 MB at most)." : owf_error_text(rc);
+}
+
+/* The merge fields show record at (-1: their names) with no requester: OWF_OK or the error */
+static int merge_show_rc(int at)
+{
+    int rc = opp_merge_show(deck, merge_table, at, NULL);
+    if (rc != OWF_OK) return rc;
+    merge_at = at;
+    relayout();
+    return OWF_OK;
+}
+
+/* The same: 1, or 0 with the user told */
+static int merge_show(int at)
+{
+    int rc = merge_show_rc(at);
+    if (rc != OWF_OK) { tell("Mail Merge", owf_error_text(rc)); return 0; }
+    return 1;
+}
+
+/* Reads a data source and shows its first record: OWF_OK or the error */
+static int merge_load(const char *path, char *msg, size_t size)
+{
+    ow_merge_table *t = NULL;
+    int rc = opp_merge_load_file(path, &t), n = 0;
+    if (rc != OWF_OK) return rc;
+    ow_merge_table_free(merge_table);
+    merge_table = t;
+    if ((rc = opp_merge_show(deck, t, t->nrows ? 0 : -1, NULL)) != OWF_OK) return rc;
+    merge_at = t->nrows ? 0 : -1;
+    relayout();
+    snprintf(msg, size, "%.100s: %d columns, %d records. ", leaf(path), t->ncols, t->nrows);
+    if (opp_merge_fields(deck, t, &n) && n)
+        snprintf(msg + strlen(msg), size - strlen(msg), "%d field%s name a column it lacks. ", n, n == 1 ? "" : "s");
+    return OWF_OK;
+}
+
+/* The pages once for each record, as a new untitled publication: OWF_OK or the error */
+static int merge_pages_now(void)
+{
+    char msg[120];
+    int rc, n = merge_table ? merge_table->nrows : 0;
+    stop_typing();
+    if ((rc = opp_merge_pages(deck, merge_table, -1, -1)) != OWF_OK) return rc;
+    if (undo) opr_undo_clear(undo);
+    laid_clear();
+    current = 0;
+    clear_object_selection();
+    current_path[0] = 0;
+    dirty = 1;
+    update_window_title();
+    relayout();
+    snprintf(msg, sizeof msg, "%d records merged: %d %s.", n, deck->nslides, deck->nslides == 1 ? UNIT_LOWER : UNITS_LOWER);
+    set_status(msg);
+    return OWF_OK;
+}
+
+/* Catalog merge of the page shown: OWF_OK or the error; *made the pages made */
+static int merge_catalog_now(const opp_catalog *cat, int *made)
+{
+    char msg[120];
+    int rc, n = merge_table ? merge_table->nrows : 0, page = current;
+    stop_typing();
+    if ((rc = opp_merge_catalog(deck, merge_table, page, cat, -1, -1, made)) != OWF_OK) return rc;
+    if (undo) opr_undo_clear(undo);
+    laid_clear();
+    clear_object_selection();
+    current_path[0] = 0;
+    dirty = 1;
+    update_window_title();
+    show_slide(page);
+    relayout();
+    snprintf(msg, sizeof msg, "%d records in a catalog: %d %s.", n, *made, *made == 1 ? UNIT_LOWER : UNITS_LOWER);
+    set_status(msg);
+    return OWF_OK;
+}
+
+static void do_merge(int what)
+{
+    char path[512], msg[240];
+    int rc, n, k;
+    if (!deck) return;
+    master_view_leave();
+    switch (what) {
+    case M_MERGE_SOURCE:
+        if (!ask_file(0, "Mail merge data source (CSV)", NULL, path, sizeof path)) return;
+        if ((rc = merge_load(path, msg, sizeof msg)) != OWF_OK) { tell("Mail Merge", merge_error(rc)); return; }
+        merge_status(msg);
+        break;
+    case M_MERGE_FIELD: {
+        char (*names)[72];
+        owf_obj *o;
+        box b;
+        if (!merge_table) { tell("Mail Merge", "Choose a data source first (Mailings > Data Source...)."); return; }
+        if (edit_obj < 0 || edit_obj >= deck->slides[current].nobjs) {
+            tell("Mail Merge", "Click in a text box where the field should go, then insert it.");
+            return;
+        }
+        if (!(names = (char (*)[72])calloc((size_t)merge_table->ncols, sizeof *names))) return;
+        for (k = 0; k < merge_table->ncols; ++k) name_to_latin1(merge_table->cells[k], names[k], sizeof names[k]);
+        k = pick_requester("Insert Merge Field", "Column", "Insert", names, merge_table->ncols);
+        free(names);
+        if (k < 0) return;
+        before_change(&b);
+        o = &deck->slides[current].objs[edit_obj];
+        rc = opp_merge_insert_field_at(o, caret.para, caret.offset, merge_table->cells[k]);
+        if (rc == OWF_OK) rc = opp_merge_show(deck, merge_table, merge_at, NULL);
+        if (rc != OWF_OK) { tell("Mail Merge", owf_error_text(rc)); return; }
+        edit_grouped = 0;                            /* the field is a step of its own */
+        laid_clear();
+        text_changed(NULL);
+        set_status("Merge field inserted.");
+        break;
+    }
+    case M_MERGE_NEXT: case M_MERGE_PREV: case M_MERGE_NAMES:
+        n = merge_table ? merge_table->nrows : 0;
+        if (!n && what != M_MERGE_NAMES) { tell("Mail Merge", "The data source has no records, or there is none."); return; }
+        k = what == M_MERGE_NAMES ? -1 : what == M_MERGE_NEXT ? (merge_at + 1 < n ? merge_at + 1 : n - 1)
+                                                               : (merge_at > 0 ? merge_at - 1 : 0);
+        if (!merge_show(k)) return;
+        merge_status("");
+        break;
+    case M_MERGE_PAGES:
+        n = merge_table ? merge_table->nrows : 0;
+        if (!n) { tell("Mail Merge", "The data source has no records, or there is none."); return; }
+        if (!opp_merge_fields(deck, merge_table, NULL)) {
+            tell("Mail Merge", "The publication has no merge fields (Mailings > Insert Merge Field...).");
+            return;
+        }
+        snprintf(msg, sizeof msg, "The pages are made once for each of the %d records, in this window, as a new "
+                 "untitled publication.\n\n%s", n,
+                 dirty ? "The changes to this publication that are not saved are lost." :
+                         "The publication's own file is left as it is.");
+        if (ask("Merge to New Publication", msg, "Merge|Cancel") != 1) return;
+        if ((rc = merge_pages_now()) != OWF_OK) { tell("Mail Merge", owf_error_text(rc)); return; }
+        break;
+    case M_MERGE_CATALOG: {                          /* the selected object is the item; it repeats to fill the page */
+        opp_catalog cat;
+        const owf_obj *o;
+        int made = 0;
+        n = merge_table ? merge_table->nrows : 0;
+        if (!n) { tell("Mail Merge", "The data source has no records, or there is none."); return; }
+        if (selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
+            tell("Catalog Merge", "Select the first item (a group or a frame with merge fields), then merge.");
+            return;
+        }
+        o = &deck->slides[current].objs[selected_obj];
+        if (o->width <= 0 || o->height <= 0) { tell("Catalog Merge", "The item has no size."); return; }
+        cat.x = o->x; cat.y = o->y; cat.width = o->width; cat.height = o->height;
+        cat.across = o->x + o->width <= deck->width ? (deck->width - o->x) / o->width : 1;
+        cat.down = o->y + o->height <= deck->height ? (deck->height - o->y) / o->height : 1;
+        if (cat.across > OPP_CATALOG_MAX) cat.across = OPP_CATALOG_MAX;
+        if (cat.down > OPP_CATALOG_MAX) cat.down = OPP_CATALOG_MAX;
+        snprintf(msg, sizeof msg, "The selected item repeats %d across and %d down this page, one record each: "
+                 "%d records make %d %s, as a new untitled publication.\n\n%s", cat.across, cat.down, n,
+                 (n + cat.across * cat.down - 1) / (cat.across * cat.down), UNITS_LOWER,
+                 dirty ? "The changes to this publication that are not saved are lost." :
+                         "The publication's own file is left as it is.");
+        if (ask("Catalog Merge", msg, "Merge|Cancel") != 1) return;
+        if ((rc = merge_catalog_now(&cat, &made)) != OWF_OK) { tell("Catalog Merge", owf_error_text(rc)); return; }
+        break;
+    }
+    }
+    draw_status();
+}
+#endif
+
 static void new_deck(void)
 {
     master_view_leave();
@@ -7489,6 +7762,40 @@ static void new_deck(void)
     set_status("A new " DOCUMENT_LOWER ": click a box to type in it.");
     relayout();
 }
+
+#ifdef OPENPUBLISHER
+/* A new publication from built-in template i: OWF_OK or the error */
+static int template_now(int i)
+{
+    owf_deck *d = NULL;
+    char msg[120];
+    const opp_template_info *t = opp_template_info_at(i);
+    int rc = opp_template_new(i, &d);
+    if (rc != OWF_OK) return rc;
+    master_view_leave();
+    set_deck(d, "", "ODP");
+    snprintf(msg, sizeof msg, "A new %s: click a box to type in it.", t ? t->name : "publication");
+    set_status(msg);
+    relayout();
+    return OWF_OK;
+}
+
+static void new_from_template(void)
+{
+    char (*names)[72];
+    int k, n = opp_template_count(), rc;
+    if (!confirm_discard()) return;
+    if (!(names = (char (*)[72])calloc((size_t)n, sizeof *names))) return;
+    for (k = 0; k < n; ++k) {
+        const opp_template_info *t = opp_template_info_at(k);
+        snprintf(names[k], sizeof names[k], "%s", t ? t->name : "");
+    }
+    k = pick_requester("New from Template", "Template", "New", names, n);
+    free(names);
+    if (k < 0) return;
+    if ((rc = template_now(k)) != OWF_OK) tell(PROGRAM, owf_error_text(rc));
+}
+#endif
 
 static void do_open(void)
 {
@@ -7596,6 +7903,8 @@ static void do_save(void)
 /* What a PDF holds: the slides, notes pages (Notes view, or EXPORT NOTES) or handouts. */
 static opr_pdf_pages pdf_pages = OPR_PDF_SLIDES;
 static int pdf_handout_slides = 6;
+static int pdf_bleed, pdf_marks;                     /* for a printer: twips past the trimmed edge, crop marks */
+#define PRINTER_BLEED 170                            /* 3 mm, what most printers ask for */
 
 static int write_pdf(const char *path)
 {
@@ -7609,6 +7918,8 @@ static int write_pdf(const char *path)
     memset(&options, 0, sizeof options);
     options.pages = pdf_pages;
     options.handout_slides = pdf_handout_slides;
+    options.bleed = pdf_bleed;
+    options.crop_marks = pdf_marks;
     rc = opr_export_pdf(deck, &options, &data, &length, report);
     owf_report_free(report);
     if (rc == OWF_OK && (f = Open((STRPTR)path, MODE_NEWFILE))) {
@@ -7634,6 +7945,25 @@ static void do_export_pdf(void)
     set_status(msg);
     draw_status();
 }
+
+#ifdef OPENPUBLISHER
+/* Project > Export PDF for a Printer...: crop marks and a 3 mm bleed round every page */
+static void do_export_pdf_printer(void)
+{
+    char path[512], name[128], msg[600];
+    if (!deck) return;
+    with_extension(current_path, "pdf", name, sizeof name);
+    if (!ask_file(1, "Export the " UNITS_LOWER " as PDF for a printer", name, path, sizeof path)) return;
+    pdf_pages = OPR_PDF_SLIDES;
+    pdf_bleed = PRINTER_BLEED;
+    pdf_marks = 1;
+    if (write_pdf(path)) snprintf(msg, sizeof msg, "%.200s written with crop marks and a 3 mm bleed.", leaf(path));
+    else snprintf(msg, sizeof msg, "%.200s could not be written.", leaf(path));
+    pdf_bleed = pdf_marks = 0;
+    set_status(msg);
+    draw_status();
+}
+#endif
 
 /* ---- File > Export as Pictures... (P9) ----
  * A slide painted as the show paints it, into a bitmap of its own, read back
@@ -7929,11 +8259,17 @@ static void menu_action(ULONG id)
     case M_VIEW_NOTES: set_view(2); break;
     case M_VIEW_OUTLINE: set_view(3); break;
     case M_NEW: new_deck(); break;
+#ifdef OPENPUBLISHER
+    case M_NEW_TEMPLATE: new_from_template(); break;
+#endif
     case M_OPEN: do_open(); break;
     case M_SAVE: do_save(); break;
     case M_SAVE_AS: do_save_as(); break;
     case M_PRINT: pdf_pages = notes_view ? OPR_PDF_NOTES : OPR_PDF_SLIDES; do_print(); pdf_pages = OPR_PDF_SLIDES; break;
     case M_PDF: do_export_pdf(); break;
+#ifdef OPENPUBLISHER
+    case M_PDF_PRINTER: do_export_pdf_printer(); break;
+#endif
     case M_PICTURES: export_pictures(NULL, 0, 0); break;
     case M_HANDOUTS: do_export_handouts(); break;
     case M_ABOUT: about(); break;
@@ -8012,6 +8348,10 @@ static void menu_action(ULONG id)
     case M_WRAP_TOP_BOTTOM: set_selected_wrap(OWF_WRAP_TOP_BOTTOM); break;
     case M_WRAP_DISTANCE: edit_selected_wrap_distance(); break;
     case M_LINK_TEXT_NEXT: link_selected_text_frame(); break;
+#ifdef OPENPUBLISHER
+    case M_MERGE_SOURCE: case M_MERGE_FIELD: case M_MERGE_NEXT: case M_MERGE_PREV: case M_MERGE_NAMES:
+    case M_MERGE_PAGES: case M_MERGE_CATALOG: do_merge((int)id); break;
+#endif
     case M_UNLINK_TEXT: unlink_selected_text_frame(); break;
 #endif
     case M_DUPLICATE_OBJECT: duplicate_selected_object(); break;
@@ -8346,7 +8686,11 @@ static int rexx_do_command(const char *command, char **result_out)
         rexx_copy(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE "
                   "SAVEAS EXPORT PRINT " UNIT_UPPER "S " UNIT_UPPER " NEW" UNIT_UPPER " DELETE" UNIT_UPPER " VIEW OUTLINE GETNOTES SETNOTES PICK PICKED MOVEPICKED COPYPICKED DELETEPICKED HIDEPICKED "
                   "SHOWPICKED OBJECTS PICKOBJECTS PICKEDOBJECTS OBJECTBOX MOVEOBJECTS ALIGN DISTRIBUTE GROUP UNGROUP DELETEOBJECTS GETTEXT "
-                  "SETTEXT SPELL UNDO REDO QUIT");
+                  "SETTEXT SPELL UNDO REDO QUIT"
+#ifdef OPENPUBLISHER
+                  " MERGESOURCE MERGEFIELD MERGEFIELDS MERGERECORD MERGEPAGES MERGECATALOG NEWTEMPLATE"
+#endif
+                  );
     else if (starts_word_ci(command, "FAULT", &arg)) {
         if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -8374,11 +8718,24 @@ static int rexx_do_command(const char *command, char **result_out)
             rexx_copy(result_text, sizeof result_text, status);
         } else { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Needs SAVEAS"); }
     } else if (starts_word_ci(command, "EXPORT", &arg) || starts_word_ci(command, "PRINT", &arg)) {
-        /* EXPORT [NOTES | HANDOUTS [n]] path, PRINT [NOTES | HANDOUTS [n]]: the slides, notes pages or handouts */
+        /* EXPORT [NOTES | HANDOUTS [n] | MARKS | BLEED n ...] path, PRINT [NOTES | HANDOUTS [n]]: the slides, notes
+           pages or handouts; MARKS (crop marks) and BLEED n (twips, at most an inch) for a printer, slides only */
         int printing = !strncasecmp(command, "PRINT", 5), per = 6, bad = 0;
         const char *rest;
         pdf_pages = OPR_PDF_SLIDES;
-        if (starts_word_ci(arg, "NOTES", &rest)) { pdf_pages = OPR_PDF_NOTES; arg = rest; }
+        pdf_bleed = pdf_marks = 0;
+        while (!printing && !bad) {
+            if (starts_word_ci(arg, "MARKS", &rest)) { pdf_marks = 1; arg = rest; }
+            else if (starts_word_ci(arg, "BLEED", &rest)) {
+                arg = rest;
+                if (*arg < '0' || *arg > '9') bad = 2;
+                pdf_bleed = 0;
+                while (*arg >= '0' && *arg <= '9' && pdf_bleed <= OPR_PDF_MAX_BLEED) pdf_bleed = pdf_bleed * 10 + (*arg++ - '0');
+                if (pdf_bleed > OPR_PDF_MAX_BLEED || (*arg && *arg != ' ')) bad = 2;
+                while (*arg == ' ') arg++;
+            } else break;
+        }
+        if (!bad && starts_word_ci(arg, "NOTES", &rest)) { pdf_pages = OPR_PDF_NOTES; arg = rest; }
         else if (starts_word_ci(arg, "HANDOUTS", &rest)) {
             pdf_pages = OPR_PDF_HANDOUTS;
             arg = rest;
@@ -8390,7 +8747,11 @@ static int rexx_do_command(const char *command, char **result_out)
             }
         }
         pdf_handout_slides = per;
-        if (bad) { ok = 0; rc_fail = RX_ERROR; rexx_copy(result_text, sizeof result_text, "HANDOUTS takes 1, 2, 3, 4, 6 or 9"); }
+        if (bad == 2) { ok = 0; rc_fail = RX_ERROR; rexx_copy(result_text, sizeof result_text, "BLEED takes 0 to 1440 twips"); }
+        else if (bad) { ok = 0; rc_fail = RX_ERROR; rexx_copy(result_text, sizeof result_text, "HANDOUTS takes 1, 2, 3, 4, 6 or 9"); }
+        else if ((pdf_marks || pdf_bleed) && pdf_pages != OPR_PDF_SLIDES) {
+            ok = 0; rc_fail = RX_ERROR; rexx_copy(result_text, sizeof result_text, "MARKS and BLEED are for the " UNITS_LOWER " only");
+        }
         else if (printing) {
             int r = do_print();
             ok = r > 0;
@@ -8399,6 +8760,7 @@ static int rexx_do_command(const char *command, char **result_out)
         } else if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "Missing path"); }
         else { ok = write_pdf(arg); rexx_copy(result_text, sizeof result_text, ok ? "Exported" : "Export failed"); }
         pdf_pages = OPR_PDF_SLIDES;
+        pdf_bleed = pdf_marks = 0;
     } else if (starts_word_ci(command, UNIT_UPPER "S", &arg)) {
         snprintf(result_text, sizeof result_text, "%d", deck ? deck->nslides : 0);
     } else if (starts_word_ci(command, UNIT_UPPER, &arg)) {   /* n: go to it; none given: which */
@@ -8859,6 +9221,101 @@ static int rexx_do_command(const char *command, char **result_out)
             }
             rexx_copy(result_text, sizeof result_text, ok ? "OK" : "Out of memory");
         }
+#ifdef OPENPUBLISHER
+    } else if (starts_word_ci(command, "MERGESOURCE", &arg)) {   /* MERGESOURCE path: a CSV data source */
+        char msg[240];
+        int rc;
+        if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "Missing path"); }
+        else if ((rc = merge_load(arg, msg, sizeof msg)) != OWF_OK) { ok = 0; rexx_copy(result_text, sizeof result_text, merge_error(rc)); }
+        else { merge_status(msg); draw_status(); rexx_copy(result_text, sizeof result_text, msg); }
+    } else if (starts_word_ci(command, "MERGEFIELD", &arg)) {    /* MERGEFIELD n column: a field at the end of object n */
+        const char *column;
+        char *utf8;
+        int rc;
+        if (!merge_table) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No data source"); }
+        else if ((obj = rexx_obj(arg, &column)) < 0) { ok = 0; rexx_copy(result_text, sizeof result_text, "No such object"); }
+        else if (!opr_obj_editable(deck, current, obj)) { ok = 0; rexx_copy(result_text, sizeof result_text, "That object takes no text"); }
+        else if (!*column) { ok = 0; rexx_copy(result_text, sizeof result_text, "Missing column"); }
+        else if (!(utf8 = name_from_latin1(column))) { ok = 0; rexx_copy(result_text, sizeof result_text, "Out of memory"); }
+        else {
+            stop_typing();
+            rc = opr_undo_push(undo, deck, current, obj) < 0 ? OWF_ERR_MEMORY
+               : opp_merge_insert_field(&deck->slides[current].objs[obj], -1, utf8, NULL);
+            if (rc == OWF_OK) rc = opp_merge_show(deck, merge_table, merge_at, NULL);
+            owf_free(utf8);
+            if (rc != OWF_OK) { ok = 0; rexx_copy(result_text, sizeof result_text, owf_error_text(rc)); }
+            else {
+                laid_clear();
+                slide_changed(current);
+                dirty = 1;
+                update_window_title();
+                relayout();
+                set_status("Merge field inserted.");
+                draw_status();
+                rexx_copy(result_text, sizeof result_text, "OK");
+            }
+        }
+    } else if (starts_word_ci(command, "MERGERECORD", &arg)) {   /* MERGERECORD [n | NEXT | PREVIOUS | NAMES]: the record shown */
+        int n = merge_table ? merge_table->nrows : 0, at = merge_at, rc = OWF_OK;
+        if (!*arg) at = merge_at;
+        else if (starts_word_ci(arg, "NAMES", NULL)) at = -1;
+        else if (starts_word_ci(arg, "NEXT", NULL)) at = merge_at + 1 < n ? merge_at + 1 : n - 1;
+        else if (starts_word_ci(arg, "PREVIOUS", NULL)) at = merge_at > 0 ? merge_at - 1 : 0;
+        else {   /* a whole number only: 0 is the names, 1..n a record */
+            char *end = NULL;
+            long v = strtol(arg, &end, 10);
+            while (end && (*end == ' ' || *end == '\t')) end++;
+            at = (end == arg || !end || *end || v < 0 || v > n) ? -2 : (int)v - 1;
+        }
+        if (*arg && (at < -1 || at >= n)) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No such record"); }
+        else if (*arg && (rc = merge_show_rc(at)) != OWF_OK) { ok = 0; rexx_copy(result_text, sizeof result_text, owf_error_text(rc)); }
+        else {
+            if (*arg) { merge_status(""); draw_status(); }
+            snprintf(result_text, sizeof result_text, "%d %d", merge_at + 1, n);   /* the record shown (0: names), of n */
+        }
+    } else if (starts_word_ci(command, "MERGEFIELDS", &arg)) {   /* how many fields, and how many name no column */
+        int missing = 0, n = opp_merge_fields(deck, merge_table, &missing);
+        snprintf(result_text, sizeof result_text, "%d %d", n, missing);
+    } else if (starts_word_ci(command, "MERGEPAGES", &arg)) {    /* MERGEPAGES [FORCE]: merge to a new publication */
+        int rc;
+        if (!merge_table || !merge_table->nrows) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No records"); }
+        else if (!opp_merge_fields(deck, merge_table, NULL)) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No merge fields"); }
+        else if (dirty && strcasecmp(arg, "FORCE")) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Unsaved changes"); }
+        else if ((rc = merge_pages_now()) != OWF_OK) { ok = 0; rexx_copy(result_text, sizeof result_text, owf_error_text(rc)); }
+        else { draw_status(); snprintf(result_text, sizeof result_text, "%d", deck->nslides); }
+    } else if (starts_word_ci(command, "NEWTEMPLATE", &arg)) {   /* NEWTEMPLATE [name [FORCE]]: the names, or a new publication */
+        char name[64] = "";
+        int k, force = 0, rc;
+        size_t len = strlen(arg);
+        if (len >= 6 && !strcasecmp(arg + len - 5, "FORCE") && arg[len - 6] == ' ') { force = 1; len -= 6; }
+        while (len && arg[len - 1] == ' ') --len;
+        if (len >= sizeof name) len = sizeof name - 1;
+        memcpy(name, arg, len);
+        name[len] = 0;
+        if (*name == '"' && len >= 2 && name[len - 1] == '"') { memmove(name, name + 1, len - 2); name[len - 2] = 0; }
+        if (!*name) {                                /* the template names, one per line */
+            size_t at = 0;
+            result_text[0] = 0;
+            for (k = 0; k < opp_template_count() && at + 2 < sizeof result_text; ++k)
+                at += (size_t)snprintf(result_text + at, sizeof result_text - at, "%s%s", k ? "\n" : "", opp_template_info_at(k)->name);
+        } else if ((k = opp_template_find(name)) < 0) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No such template"); }
+        else if (dirty && !force) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Unsaved changes"); }
+        else if ((rc = template_now(k)) != OWF_OK) { ok = 0; rexx_copy(result_text, sizeof result_text, owf_error_text(rc)); }
+        else snprintf(result_text, sizeof result_text, "%d", deck->nslides);
+    } else if (starts_word_ci(command, "MERGECATALOG", &arg)) {  /* MERGECATALOG x y width height across down [FORCE] */
+        opp_catalog cat;
+        char force[8] = "";
+        int rc, made = 0, got = sscanf(arg, "%d %d %d %d %d %d %7s", &cat.x, &cat.y, &cat.width, &cat.height,
+                                       &cat.across, &cat.down, force);
+        if (got < 6) { ok = 0; rexx_copy(result_text, sizeof result_text, "MERGECATALOG needs x y width height across down"); }
+        else if (!merge_table || !merge_table->nrows) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No records"); }
+        else if (dirty && strcasecmp(force, "FORCE")) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Unsaved changes"); }
+        else if ((rc = merge_catalog_now(&cat, &made)) != OWF_OK) {
+            ok = 0;
+            if (rc == OWF_ERR_FORMAT) rc_fail = RX_NOW;  /* nothing inside the box */
+            rexx_copy(result_text, sizeof result_text, rc == OWF_ERR_FORMAT ? "No item in the area" : owf_error_text(rc));
+        } else { draw_status(); snprintf(result_text, sizeof result_text, "%d %d", made, deck->nslides); }
+#endif
     } else if (starts_word_ci(command, "UNDO", &arg) || starts_word_ci(command, "REDO", &arg)) {
         int redo = toupper((unsigned char)command[0]) == 'R';
         if (!(redo ? opr_redo_can(undo) : opr_undo_can(undo))) {

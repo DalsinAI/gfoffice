@@ -23,7 +23,8 @@ These follow the GFOffice conventions (docs/gfoffice/Design-Suite-Shared.md 6.3)
 
 The window (`app/openproject.c`, built by `build.d/project.sh`) answers `VERSION`, `ACTIVATE`,
 `DEACTIVATE` (5: it has no icon to go to), `FAULT CODE`, `PRINT` (every page of the Gantt view through
-printer.device), `VIEW` (`VIEW` gives `GANTT`, `USAGE`, `TASKUSAGE`, `GRAPH` or `NETWORK`; `VIEW USAGE` shows the
+printer.device), `VIEW` (`VIEW` gives `GANTT`, `TRACKING`, `USAGE`, `TASKUSAGE`, `GRAPH` or `NETWORK`; `VIEW TRACKING`
+shows the Tracking Gantt, `VIEW USAGE` the
 Resource Usage view, `VIEW TASKUSAGE` the Task Usage view, `VIEW GRAPH` the Resource Graph (of the
 first resource), `VIEW NETWORK` the Network Diagram and
 `VIEW GANTT` the Gantt chart; anything else is 10) and `QUIT` itself; `QUIT` gives 5 while the plan has unsaved changes and `QUIT FORCE`
