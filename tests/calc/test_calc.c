@@ -1581,6 +1581,58 @@ static void test_kept(void)
     CHECK(!(owf_calc_state(calc, 0, 0, 1) & OWF_CALC_KEPT), "B1 no longer kept");
 }
 
+/* ---- Other books: the values they last had ---- */
+
+static void test_linked_values(void)
+{
+    owf_extbook *eb;
+    owf_sheet *sh;
+    owf_cell *c;
+    fresh();
+    eb = owf_book_add_extbook(book, "Rates.xlsx", "file:///C:/Books/Rates.xlsx");
+    sh = owf_extbook_sheet(eb, "Q 1", 1);
+    CHECK(eb && sh, "an other book");
+    if (!eb || !sh)
+        return;
+    owf_cell_set_number(owf_sheet_cell(sh, 0, 0, 1), 2);           /* A1 */
+    owf_cell_set_number(owf_sheet_cell(sh, 1, 0, 1), 3);           /* A2 */
+    owf_cell_set_text(owf_sheet_cell(sh, 1, 1, 1), "three", 5);    /* B2 */
+    owf_cell_set_error(owf_sheet_cell(sh, 2, 0, 1), OWF_ERROR_DIV0);  /* A3 */
+    owf_calc_free(calc);
+    calc = owf_calc_new(book);
+    /* typed: the values the book last had; a cell it did not have is empty; a book or sheet it does not know is
+       #REF! */
+    EVAL("'[Rates.xlsx]Q 1'!A1*10", "20");
+    EVAL("'[rates.XLSX]q 1'!$A$2", "3");
+    EVAL("'[Rates.xlsx]Q 1'!B2", "\"three\"");
+    EVAL("'[Rates.xlsx]Q 1'!A3", "#DIV/0!");
+    EVAL("'[Rates.xlsx]Q 1'!Z9", "0");
+    EVAL("SUM('[Rates.xlsx]Q 1'!A1:A2)", "5");
+    EVAL("SUM('[Rates.xlsx]Q 1'!A:A)", "#DIV/0!");
+    EVAL("SUM('[Rates.xlsx]Q 1'!A1:A2,'[Rates.xlsx]Q 1'!A1)", "7");
+    EVAL("COUNTA('[Rates.xlsx]Q 1'!A1:B2)", "3");
+    EVAL("ROWS('[Rates.xlsx]Q 1'!A1:A2)", "2");
+    EVAL("'[Rates.xlsx]Other'!A1", "#REF!");
+    EVAL("[Missing.xlsx]Sheet1!A1", "#REF!");
+    /* loaded: a formula on a book the book keeps is worked out; one it does not keep keeps the file's value */
+    c = owf_sheet_cell(&book->sheets[0], 0, 0, 1);
+    owf_cell_set_formula(c, "'[Rates.xlsx]Q 1'!A2+1");
+    owf_cell_set_number(c, 99);
+    c = owf_sheet_cell(&book->sheets[0], 0, 1, 1);
+    owf_cell_set_formula(c, "[Missing.xlsx]Sheet1!A1");
+    owf_cell_set_number(c, 42);
+    owf_calc_rebuild(calc);
+    CHECK(owf_calc_recalc_all(calc) == OWF_OK, "recalc_all");
+    EXPECT("A1", "4");
+    EXPECT("B1", "42");
+    CHECK(!(owf_calc_state(calc, 0, 0, 0) & OWF_CALC_KEPT), "A1 worked out");
+    CHECK(owf_calc_state(calc, 0, 0, 1) & OWF_CALC_KEPT, "B1 kept");
+    /* the book's values changed (an update from the file): worked out again */
+    owf_cell_set_number(owf_sheet_cell(&book->extbooks[0].sheets[0], 1, 0, 1), 10);
+    CHECK(owf_calc_recalc_all(calc) == OWF_OK, "recalc_all");
+    EXPECT("A1", "11");
+}
+
 /* ---- Number formats ---- */
 
 static void test_formats(void)
@@ -2218,6 +2270,7 @@ int main(int argc, char **argv)
     test_rename();
     test_move_range();
     test_kept();
+    test_linked_values();
     test_formats();
     test_names_of_cells();
     test_consistency();
