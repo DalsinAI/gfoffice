@@ -231,7 +231,14 @@ typedef struct {
      * text:notes-configuration): an owf_note_format (OWF_NOTE_FORMAT_DEFAULT: the kind's own, footnotes 1, 2,
      * endnotes i, ii) and the first number (0 or 1: 1) */
     int note_format[2], note_start[2];
+    /* 1.12.3: where each kind's numbers start again (DOCX's w:numRestart, ODF's text:start-numbering-at): an
+     * owf_note_restart. Endnotes can't start again on each page (Word's rule): they run on. */
+    int note_restart[2];
 } owf_page;
+
+/* 1.12.3: where a kind of note's numbering starts again: never (through the document), at each section's start
+ * (owf_para.section_columns), on each page (footnotes only) */
+typedef enum { OWF_NOTE_RESTART_CONTINUOUS, OWF_NOTE_RESTART_SECTION, OWF_NOTE_RESTART_PAGE, OWF_NOTE_RESTART_COUNT } owf_note_restart;
 
 /* 1.12.1: a kind of note's numbers. Symbols are Word's Chicago style: *, dagger, double dagger, section, then
  * doubled (**), and so on. Letters run a to z, then aa to zz (as Word does). */

@@ -47,6 +47,26 @@ static int owf_note_kind_start_impl(const owf_doc *doc, int endnote)
     return s >= 1 ? s : 1;
 }
 
+/* 1.12.3: where a kind's numbers start again (owf_note_restart); a page only for footnotes */
+static int owf_note_kind_restart_impl(const owf_doc *doc, int endnote)
+{
+    int r = doc ? doc->page.note_restart[endnote ? 1 : 0] : 0;
+    if (r == OWF_NOTE_RESTART_PAGE && endnote)
+        r = OWF_NOTE_RESTART_CONTINUOUS;
+    return r > OWF_NOTE_RESTART_CONTINUOUS && r < OWF_NOTE_RESTART_COUNT ? r : OWF_NOTE_RESTART_CONTINUOUS;
+}
+
+/* 1.12.3: at a body paragraph, the kinds' counts that start again there (a section's start, para > 0) */
+static void owf_note_section_restart_impl(const owf_doc *doc, const owf_story *story, int para, int count[2])
+{
+    int k;
+    if (!doc || story != &doc->body || para <= 0 || para >= story->nparas || !story->paras[para].section_columns)
+        return;
+    for (k = 0; k < 2; ++k)
+        if (owf_note_kind_restart_impl(doc, k) == OWF_NOTE_RESTART_SECTION)
+            count[k] = 0;
+}
+
 static void owf_note_format_impl(int format, int endnote, int number, char *out, size_t size)
 {
     static const char *const symbols[] = { "*", "\xe2\x80\xa0", "\xe2\x80\xa1", "\xc2\xa7" };

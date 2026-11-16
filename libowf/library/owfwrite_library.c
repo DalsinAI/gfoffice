@@ -48,6 +48,8 @@
  * again.
  * 3.13: libowf 1.12.2, the notes' text with its formats (owf_doc.note_stories, OWF_DOC_NOTE_STORY): DOCX's
  * notes' runs in and out. No new calls; owf_doc grew, so the three libraries go together again.
+ * 3.14: libowf 1.12.3, notes numbered again at each section or page (owf_page.note_restart): DOCX
+ * w:numRestart, ODT text:start-numbering-at, in and out. No new calls; owf_page grew, and owf_doc with it.
  * 3.16: libowf 1.12.5 (3.14 and 3.15, libowf 1.12.3 and 1.12.4, are #288's and #292's), a table row may be a
  * tracked change (owf_para.row_revision: DOCX w:trPr/w:ins and w:del; ODT saves it accepted). No new calls;
  * owf_para grew, so the three libraries go together again.

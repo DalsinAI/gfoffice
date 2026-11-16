@@ -1,5 +1,5 @@
 /*
- * owfpub.library 3.4, GFOpenPublisher's part of libowf: Publisher files. The
+ * owfpub.library 3.5, GFOpenPublisher's part of libowf: Publisher files. The
  * .pub reader and its compound-file reader, with the document model its text
  * uses.
  *
@@ -21,6 +21,8 @@
  *
  * 3.4: owf_doc.note_stories (owfwrite.library 3.13, libowf 1.12.2), so owf_doc is larger and a program's size
  * check refuses 3.3. No call changes.
+ * 3.5: owf_page.note_restart (owfwrite.library 3.14, libowf 1.12.3), so owf_page and owf_doc are larger and a
+ * program's size check refuses 3.4. No call changes.
  * 3.6: owf_para.row_revision (owfwrite.library 3.16, libowf 1.12.5; 3.5 is #288's), so owf_para is larger
  * and a program's size check refuses 3.5 and before. No call changes.
  *
