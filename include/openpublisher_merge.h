@@ -73,7 +73,9 @@ typedef struct {
  * copy moves by whole boxes, and a page's last items may stay empty. The
  * page's other objects come on each page with the page's first record.
  * Merge fields become plain text, every frame of a text flow keeps to its
- * own copy, and the deck's other pages and masters are left as they are.
+ * own copy (a flow from a frame inside the item to one outside it is split
+ * there: the item's part flows in each item, the rest on each page), and
+ * the deck's other pages and masters are left as they are.
  * *made (when not NULL): the pages made. OWF_OK; OWF_ERR_UNSUPPORTED: no
  * table or records, no such page, an area or range that cannot be;
  * OWF_ERR_FORMAT: no object inside the area's first box; OWF_ERR_MEMORY:
