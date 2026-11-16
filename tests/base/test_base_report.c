@@ -794,6 +794,56 @@ static void test_text_form_bands(void)
           strstr(err, "line 5"), "a fourth level: %s", err);
 }
 
+/* ---- The bands as a designer sees them (0.2.1): each band's text by its kind and level, and the names
+ * it may have ---- */
+
+static void test_band_api(ob_project *p)
+{
+    static ob_report r;
+    char err[OB_ERR_MAX] = "", text[OB_BAND_MAX];
+    size_t size = 0;
+    int b, L;
+
+    ob_report_init(&r, "Api");
+    CHECK(ob_report_band(&r, OB_BAND_HEAD, 0, &size) == r.head && size == sizeof r.head, "head");
+    CHECK(ob_report_band(&r, OB_BAND_FOOT, 0, &size) == r.foot, "foot");
+    CHECK(ob_report_band(&r, OB_BAND_PAGE_HEAD, 0, &size) == r.page_head, "page head");
+    CHECK(ob_report_band(&r, OB_BAND_PAGE_FOOT, 0, &size) == r.page_foot, "page foot");
+    CHECK(ob_report_band(&r, OB_BAND_GROUP_HEAD, 2, &size) == r.group_head[2] && size == OB_BAND_MAX, "group head 3");
+    CHECK(ob_report_band(&r, OB_BAND_GROUP_FOOT, 1, NULL) == r.group_foot[1], "group foot 2, no size wanted");
+    CHECK(ob_report_band(&r, OB_BAND_GROUP_HEAD, OB_REPORT_LEVELS, &size) == NULL, "no fourth level");
+    CHECK(ob_report_band(&r, OB_BAND_GROUP_FOOT, -1, &size) == NULL, "no level -1");
+    CHECK(ob_report_band(&r, OB_BANDS, 0, &size) == NULL, "no band past the last");
+    CHECK(!strcmp(ob_report_band_title(OB_BAND_PAGE_FOOT), "page footer") &&
+          !strcmp(ob_report_band_title(OB_BAND_GROUP_HEAD), "group header") && !strcmp(ob_report_band_title(OB_BANDS), ""),
+          "titles");
+    CHECK(!strcmp(ob_report_band_names(OB_BAND_HEAD), "[Title] [Date]"), "%s", ob_report_band_names(OB_BAND_HEAD));
+    CHECK(!strcmp(ob_report_band_names(OB_BAND_FOOT), "[Title] [Date] [Count]"), "%s", ob_report_band_names(OB_BAND_FOOT));
+    CHECK(!strcmp(ob_report_band_names(OB_BAND_PAGE_HEAD), "[Title] [Date] [Page] [Pages]"), "%s",
+          ob_report_band_names(OB_BAND_PAGE_HEAD));
+    CHECK(!strcmp(ob_report_band_names(OB_BAND_GROUP_HEAD), "[Title] [Date] [Group] [Value] [a field]"), "%s",
+          ob_report_band_names(OB_BAND_GROUP_HEAD));
+    CHECK(!strcmp(ob_report_band_names(OB_BAND_GROUP_FOOT), "[Title] [Date] [Group] [Value] [Count] [a field]"), "%s",
+          ob_report_band_names(OB_BAND_GROUP_FOOT));
+
+    /* what each band says it may name, it may: every band made of its own names (a real field for
+     * "[a field]") passes the check, at every level */
+    strcpy(r.table, "Sales");
+    strcpy(r.group, "Region");
+    strcpy(r.subgroup[0], "Town");
+    strcpy(r.subgroup[1], "Customer");
+    ob_report_add_column(&r, "Amount", OB_TOTAL_SUM);
+    for (b = 0; b < OB_BANDS; b++)
+        for (L = 0; L < OB_REPORT_LEVELS; L++) {
+            char *t = ob_report_band(&r, (ob_band)b, L, &size);
+            const char *n = ob_report_band_names((ob_band)b), *f = strstr(n, "[a field]");
+            if (!t) continue;
+            snprintf(text, sizeof text, "%.*s%s", f ? (int)(f - n) : (int)strlen(n), n, f ? "[Customer]" : "");
+            snprintf(t, size, "%s", text);
+        }
+    CHECK(ob_report_check(p, &r, err, sizeof err) == 0, "every band of its own names: %s", err);
+}
+
 int main(int argc, char **argv)
 {
     ob_project *p;
@@ -818,6 +868,7 @@ int main(int argc, char **argv)
         test_query_levels(p);
         test_bands(p);
         test_text_form_bands();
+        test_band_api(p);
         ob_close(p);
     }
     printf("%s: %d checks, %d failed\n", fails ? "FAILED" : "base reports", checks, fails);
