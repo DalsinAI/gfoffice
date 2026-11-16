@@ -235,6 +235,9 @@ int owf_deps_write(const owf_diagram *d, int page, unsigned char **data, size_t 
 int owf_dmermaid_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
 /* page as a Graphviz DOT digraph; as owf_dmermaid_write. */
 int owf_ddot_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
+/* page as a GraphML graph: shapes as nodes keeping their places and sizes, a container as a node holding a
+ * nested graph; as owf_dmermaid_write. */
+int owf_dgraphml_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
 
 #ifdef __cplusplus
 }

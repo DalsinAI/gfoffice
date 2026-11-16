@@ -203,7 +203,7 @@ static void test_files(void)
     CHECK_S(rx.lasterror, "SAVEAS: a PDF doesn't open again as a diagram (EXPORT writes one; SAVEAS takes .drawio, .svg or .png)");
     CHECK_S(ok("GETFILE"), "build/host/odg-rexx.drawio");
     CHECK_N(rx_do("EXPORT build/host/x FORMAT DOC"), ODG_RX_ERROR);
-    CHECK_S(rx.lasterror, "EXPORT: FORMAT is SVG, PDF, EPS, PNG, ILBM, MERMAID, DOT or DRAWIO, not DOC");
+    CHECK_S(rx.lasterror, "EXPORT: FORMAT is SVG, PDF, EPS, PNG, ILBM, MERMAID, DOT, GRAPHML or DRAWIO, not DOC");
 
     /* EPS: the page as Encapsulated PostScript, by its name or FORMAT EPS; EXPORT only */
     CHECK_N(odg_rexx_format("x.eps"), ODG_FILE_EPS);
@@ -234,16 +234,22 @@ static void test_files(void)
     CHECK_N(odg_rexx_format("x.Mermaid"), ODG_FILE_MERMAID);
     CHECK_N(odg_rexx_format("x.dot"), ODG_FILE_DOT);
     CHECK_N(odg_rexx_format("x.GV"), ODG_FILE_DOT);
+    CHECK_N(odg_rexx_format("x.GraphML"), ODG_FILE_GRAPHML);
+    CHECK_N(odg_rexx_format("x.graphml.drawio"), ODG_FILE_DRAWIO);
     ok("EXPORT build/host/odg-rexx.mmd");
     ok("EXPORT build/host/odg-rexx-mmd.out FORMAT mermaid");
     ok("EXPORT build/host/odg-rexx.gv");
     ok("EXPORT build/host/odg-rexx-dot.out FORMAT DOT");
+    ok("EXPORT build/host/odg-rexx.graphml");
+    ok("EXPORT build/host/odg-rexx-graphml.out FORMAT graphml");
     {
-        const char *names[4] = { "build/host/odg-rexx.mmd", "build/host/odg-rexx-mmd.out", "build/host/odg-rexx.gv",
-                                 "build/host/odg-rexx-dot.out" };
-        const char *heads[4] = { "---\ntitle: ", "---\ntitle: ", "digraph ", "digraph " };
+        const char *names[6] = { "build/host/odg-rexx.mmd", "build/host/odg-rexx-mmd.out", "build/host/odg-rexx.gv",
+                                 "build/host/odg-rexx-dot.out", "build/host/odg-rexx.graphml",
+                                 "build/host/odg-rexx-graphml.out" };
+        const char *heads[6] = { "---\ntitle: ", "---\ntitle: ", "digraph ", "digraph ", "<?xml version=",
+                                 "<?xml version=" };
         int k;
-        for (k = 0; k < 4; k++) {
+        for (k = 0; k < 6; k++) {
             FILE *f = fopen(names[k], "rb");
             char head[16] = "";
             size_t want = strlen(heads[k]);
@@ -259,6 +265,8 @@ static void test_files(void)
     CHECK_S(rx.lasterror, "SAVEAS: a Mermaid chart doesn't open again as a diagram (EXPORT writes one; SAVEAS takes .drawio, .svg or .png)");
     CHECK_N(rx_do("SAVEAS build/host/odg-rexx-as.dot"), ODG_RX_ERROR);
     CHECK_S(rx.lasterror, "SAVEAS: a DOT graph doesn't open again as a diagram (EXPORT writes one; SAVEAS takes .drawio, .svg or .png)");
+    CHECK_N(rx_do("SAVEAS build/host/odg-rexx-as.graphml"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "SAVEAS: a GraphML graph doesn't open again as a diagram (EXPORT writes one; SAVEAS takes .drawio, .svg or .png)");
     CHECK_S(ok("GETFILE"), "build/host/odg-rexx.drawio");
 
     /* OPEN won't drop unsaved changes without FORCE */
