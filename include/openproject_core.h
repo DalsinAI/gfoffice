@@ -324,6 +324,9 @@ enum {
     OPJ_RCOL_RATE,                       /* Std. Rate: "20.00/h" for work, "5.00" a unit for material */
     OPJ_RCOL_WORK,                       /* worked out: "40h" */
     OPJ_RCOL_COST,                       /* worked out: "800.00" */
+    OPJ_RCOL_CALENDAR,                   /* Base Calendar: its calendar's name, the plan's when it has none of
+                                          * its own; typed: a calendar's name or number, "" for the plan's.
+                                          * Its tasks are scheduled on it (owf_ptask_calendar) */
     OPJ_NRCOLS
 };
 

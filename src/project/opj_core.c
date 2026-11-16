@@ -1577,7 +1577,7 @@ int opj_replace_text(opj_doc *doc, int column, const char *find, const char *wit
 /* ---- The resource sheet ---- */
 
 static const char *const resource_titles[OPJ_NRCOLS] = {
-    "ID", "Resource Name", "Type", "Initials", "Group", "Max. Units", "Std. Rate", "Work", "Cost",
+    "ID", "Resource Name", "Type", "Initials", "Group", "Max. Units", "Std. Rate", "Work", "Cost", "Base Calendar",
 };
 
 const char *opj_resource_column_title(int column)
@@ -1648,6 +1648,12 @@ void opj_resource_cell_text(const opj_doc *doc, int resource, int column, char *
         if (r->type == OWF_RES_WORK) opj_work_text(r->work, text);
         break;
     case OPJ_RCOL_COST: opj_money_text(r->cost, text); break;
+    case OPJ_RCOL_CALENDAR: {
+        const owf_project *p = doc->plan;
+        int cal = r->calendar >= 0 && r->calendar < p->ncalendars ? r->calendar : p->calendar;
+        s = cal >= 0 && cal < p->ncalendars && p->calendars[cal].name ? p->calendars[cal].name : "";
+        break;
+    }
     default: return;
     }
     copy_out(s, out, size);
@@ -1775,6 +1781,11 @@ int opj_set_resource_cell(opj_doc *doc, int resource, int column, const char *te
         } else if (*s)
             return fail(work, OWF_ERR_FORMAT);
         r->rate = v;
+        break;
+    case OPJ_RCOL_CALENDAR:                /* "" (or "-"): the plan's calendar again */
+        if (!*s || word_is(s, "-")) r->calendar = -1;
+        else if ((v = opj_find_calendar(work, s)) >= 0) r->calendar = (int)v;
+        else return fail(work, OWF_ERR_FORMAT);
         break;
     default:
         return fail(work, OWF_ERR_FORMAT);
