@@ -104,6 +104,41 @@ int owf_pivot_set_hidden(owf_pivotdef *def, const owf_pivot_page *item, int hidd
     return 1;
 }
 
+int owf_pivot_subtotal_of(const owf_pivotdef *def, unsigned field)
+{
+    unsigned i;
+    for (i = 0; def && i < def->nsubtotal && i < OWF_PIVOT_SUBTOTALS; i++)
+        if (def->subtotal_field[i] == field)
+            return 1;
+    return 0;
+}
+
+int owf_pivot_set_subtotal(owf_pivotdef *def, unsigned field, int on)
+{
+    unsigned i;
+    if (!def)
+        return 0;
+    if (def->nsubtotal > OWF_PIVOT_SUBTOTALS)
+        def->nsubtotal = OWF_PIVOT_SUBTOTALS;
+    for (i = 0; i < def->nsubtotal; i++)
+        if (def->subtotal_field[i] == field)
+            break;
+    if (!on) {
+        if (i < def->nsubtotal) {
+            memmove(&def->subtotal_field[i], &def->subtotal_field[i + 1u],
+                    (def->nsubtotal - i - 1u) * sizeof def->subtotal_field[0]);
+            def->nsubtotal--;
+        }
+        return 1;
+    }
+    if (i < def->nsubtotal)
+        return 1;
+    if (def->nsubtotal == OWF_PIVOT_SUBTOTALS)
+        return 0;
+    def->subtotal_field[def->nsubtotal++] = field;
+    return 1;
+}
+
 const owf_pivot_group *owf_pivot_group_of(const owf_pivotdef *def, unsigned field)
 {
     unsigned i;
@@ -649,6 +684,13 @@ int owf_pivot_config_text(const owf_pivotdef *def, char *out, size_t size)
             pt_put(&t, number);
         }
     }
+    if (def->nsubtotal) {                    /* the same */
+        pt_put(&t, ";u=");
+        for (i = 0; i < def->nsubtotal && i < OWF_PIVOT_SUBTOTALS; i++) {
+            if (i) pt_put(&t, ",");
+            pt_unsigned(&t, def->subtotal_field[i]);
+        }
+    }
     if (def->nmember) {                      /* the same: name:field:value for each item */
         pt_put(&t, ";m=");
         for (i = 0; i < def->nmember && i < OWF_PIVOT_MEMBERS; i++) {
@@ -810,6 +852,7 @@ int owf_pivot_parse_config(const char *formula, owf_pivotdef *def)
     if (*p++ != '"')
         return 0;
     def->nrow = def->ncol = def->ndata = def->npage = def->nsort = def->nhide = def->ngroup = 0;
+    def->nsubtotal = 0;
     def->nnamed = def->nmember = 0;
     if (p[0] != '2' || p[1] != ';')
         return parse_old_config(p, def);
@@ -954,6 +997,14 @@ int owf_pivot_parse_config(const char *formula, owf_pivotdef *def)
                     p++;
             }
             break;
+        case 'u':
+            while (*p >= '0' && *p <= '9') {
+                if (!pivot_number_at(&p, &v) || !owf_pivot_set_subtotal(def, v, 1))
+                    return 0;
+                if (*p == ',')
+                    p++;
+            }
+            break;
         case 's':
             while (*p >= '0' && *p <= '9') {
                 if (!pivot_number_at(&p, &v) || *p++ != ':' || (*p != 'a' && *p != 'd') ||
@@ -985,7 +1036,7 @@ int owf_pivot_check(const owf_book *book, const owf_pivotdef *def)
         def->source.first_row >= def->source.last_row || def->source.last_col < def->source.first_col ||
         !def->ndata || def->ndata > OWF_PIVOT_DATA || def->nrow > OWF_PIVOT_FIELDS ||
         def->ncol > OWF_PIVOT_FIELDS || def->npage > OWF_PIVOT_PAGES || def->nsort > OWF_PIVOT_SORTS ||
-        def->nhide > OWF_PIVOT_HIDES || def->ngroup > OWF_PIVOT_GROUPS ||
+        def->nhide > OWF_PIVOT_HIDES || def->ngroup > OWF_PIVOT_GROUPS || def->nsubtotal > OWF_PIVOT_SUBTOTALS ||
         !(def->nrow + def->ncol))
         return 0;
     width = def->source.last_col - def->source.first_col + 1u;
@@ -1020,6 +1071,9 @@ int owf_pivot_check(const owf_book *book, const owf_pivotdef *def)
             return 0;
     for (i = 0; i < def->nhide; i++)
         if (def->hide[i].field >= width)
+            return 0;
+    for (i = 0; i < def->nsubtotal; i++)
+        if (def->subtotal_field[i] >= width)
             return 0;
     for (i = 0; i < def->ndata; i++)
         if (def->data[i].field >= width || def->data[i].function < OWF_PIVOT_FN_FIRST ||

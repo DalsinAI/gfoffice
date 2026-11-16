@@ -926,7 +926,7 @@ static void line(md *m, const char *s, size_t n)
             m->lv[d - 1].content_col = (int)(ind + width);
             m->depth = d;
             if (ordered)
-                sprintf(m->item_prefix, "%ld%c", m->lv[d - 1].number % 1000000000L, ch);
+                snprintf(m->item_prefix, sizeof m->item_prefix, "%ld%c", m->lv[d - 1].number % 1000000000L, ch);
             else
                 strcpy(m->item_prefix, "\xE2\x80\xA2");   /* U+2022 */
             m->item_prefix_set = 1;

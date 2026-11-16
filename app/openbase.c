@@ -55,7 +55,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenBase 0.14.3 (15.11.2026)"
+#define VERSION_TEXT "GFOpenBase 0.14.3 (16.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenBase, the database of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -65,7 +65,7 @@ enum {
     M_NEW = 1, M_OPEN, M_CLOSE, M_COPY, M_COMPACT, M_CHECK, M_ABOUT, M_QUIT,
     M_T_NEW, M_T_DESIGN, M_T_DELETE, M_T_RELATIONS, M_R_ADD, M_R_EDIT, M_R_DELETE, M_R_FIRST, M_R_LAST,
     M_T_VIEW, M_T_ALL, M_T_IMPORT, M_T_EXPORT, M_UNDO, M_T_FROMCSV,
-    M_Q_NEW, M_Q_OPEN, M_Q_DESIGN, M_Q_AGAIN, M_T_FORM, M_T_FORMS, M_T_FROMDBF, M_T_IMPORTDBF, M_T_EXPORTDBF, M_T_FDESIGN
+    M_Q_NEW, M_Q_OPEN, M_Q_DESIGN, M_Q_AGAIN, M_T_FORM, M_T_FORMS, M_T_FROMDBF, M_T_IMPORTDBF, M_T_EXPORTDBF, M_T_FDESIGN, M_Q_VIEW
 };
 
 /* 4.3: the Report window (app/ob_reportwin.c) */
@@ -110,6 +110,9 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Open Query...", "U", 0, 0, (APTR)M_Q_OPEN },
     { NM_ITEM, "Design Query...", NULL, 0, 0, (APTR)M_Q_DESIGN },
     { NM_ITEM, "Run Again", NULL, 0, 0, (APTR)M_Q_AGAIN },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Export Results as CSV...", NULL, 0, 0, (APTR)M_T_EXPORT },
+    { NM_ITEM, "Save as View...", NULL, 0, 0, (APTR)M_Q_VIEW },
     { NM_TITLE, "Row", NULL, 0, 0, NULL },
     { NM_ITEM, "Add Row...", "A", 0, 0, (APTR)M_R_ADD },
     { NM_ITEM, "Edit Row...", "E", 0, 0, (APTR)M_R_EDIT },
@@ -2076,9 +2079,9 @@ static void export_csv(void)
     char path[512], msg[160];
     ob_int n;
     BPTR l;
-    if (q_on) { set_status("A query's rows are read only: choose a table to change its rows"); return; }
-    if (!proj || !have_cur) return;
-    snprintf(msg, sizeof msg, "Export %.60s as CSV", cur.name);
+    if (!proj || (!q_on && !have_cur)) return;
+    if (q_on) snprintf(msg, sizeof msg, "Export %.60s's results as CSV", qy.name[0] ? qy.name : "the query");
+    else snprintf(msg, sizeof msg, "Export %.60s as CSV", cur.name);
     if (!ask_file(msg, TRUE, "#?.csv", path, sizeof path)) return;
     if ((l = Lock((STRPTR)path, ACCESS_READ)) != 0) {
         UnLock(l);
@@ -2093,11 +2096,13 @@ static void export_csv(void)
         csv_o.charset = c == 2 ? OB_CHARSET_UTF8 : OB_CHARSET_LATIN1;
     }
     SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
-    n = ob_csv_export_with(proj, cur.name, &view, path, &csv_o);
+    /* a query's rows with the answers it was run with */
+    if (q_on) n = ob_query_csv_export(proj, &qy, q_pv, path, &csv_o);
+    else n = ob_csv_export_with(proj, cur.name, &view, path, &csv_o);
     SetWindowPointer(win, TAG_DONE);
     if (n < 0) { tell(ob_error(proj)); return; }
     snprintf(msg, sizeof msg, "Wrote %lld rows to %.60s%s", n, leaf(path),
-             ob_view_filtered(&view) ? " (the filtered rows)" : "");
+             !q_on && ob_view_filtered(&view) ? " (the filtered rows)" : "");
     set_status(msg);
 }
 
@@ -4917,6 +4922,30 @@ static void undo_last(void)
     set_status(msg);
 }
 
+/* ---- Query > Save as View... ---- */
+
+static void save_view(void)
+{
+    char name[OB_NAME_MAX], msg[OB_NAME_MAX + 80];
+    int i, n;
+    if (!proj) return;
+    if (!qy.ntables && !qy.sql_only) { set_status("No query yet: Query > New Query..."); return; }
+    snprintf(name, sizeof name, "%s", qy.name[0] ? qy.name : "");
+    if (!ask_text("Save as View", "View name (other SQLite programs can read it)", name, sizeof name)) return;
+    n = ob_sqlview_count(proj);
+    for (i = 0; i < n; i++) {
+        const char *v = ob_sqlview_name(proj, i);
+        if (v && same_name(v, name)) {
+            snprintf(msg, sizeof msg, "There is a view named %.40s.\nReplace it?", v);
+            if (!ask(msg, "Replace|Cancel")) return;
+            break;
+        }
+    }
+    if (!ob_query_save_view(proj, &qy, name)) { tell(ob_error(proj)); return; }
+    snprintf(msg, sizeof msg, "Saved the view %.40s", name);
+    set_status(msg);
+}
+
 /* The Report window over this one, its new report from the table or query shown. */
 static void report_window(void)
 {
@@ -4994,6 +5023,7 @@ static void menu_action(ULONG id)
     case M_Q_NEW: design_query(1); break;
     case M_Q_OPEN: open_query(); break;
     case M_Q_DESIGN: design_query(!qy.ntables && !qy.sql_only); break;
+    case M_Q_VIEW: save_view(); break;
     case M_Q_AGAIN:
         if (qy.ntables || qy.sql_only) run_query(1);
         else set_status("No query yet: Query > New Query...");
