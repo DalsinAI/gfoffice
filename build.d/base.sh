@@ -19,8 +19,8 @@ if [ -f "$OPENSQLITE/lib/libsqlite3.a" ] && [ -f "$OPENSQLITE/include/sqlite3.h"
     else
         OB_SHEET="$HERE/src/base/sheet/ob_sheet.c"
         OB_BOOK=""
-        for f in owf_book owf_booknum owf_xlformula owf_xlfunc owf_chart owf_cfb in_xls in_xlsx out_xlsx in_ods out_ods \
-                 in_csv out_csv; do
+        for f in owf_book owf_booknum owf_xlformula owf_xlfunc owf_chart owf_chartbook owf_cfb in_xls in_xlsx out_xlsx \
+                 in_ods out_ods in_csv out_csv; do
             OB_BOOK="$OB_BOOK $HERE/libowf/src/$f.c"
         done
     fi

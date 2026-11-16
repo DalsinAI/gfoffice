@@ -230,12 +230,26 @@ class Text:
         self.old = old
         self.stories = []                    # [(text id, [(para props, [(text, char props)])])]
         self.links = {}                      # story: [(from, length, kind, target)]
+        self.cells = {}                      # story: paragraphs in each cell
+        self.spare = {}                      # story: links of a second TOKN, which readers ignore
 
-    def story(self, text_id, paras, links=None):
+    def story(self, text_id, paras, links=None, cells=None):
         self.stories.append((text_id, paras))
         if links:
             self.links[len(self.stories) - 1] = links
+        if cells:
+            self.cells[len(self.stories) - 1] = cells
         return len(self.stories) - 1
+
+    def tcd(self, k, marks, length):
+        """Story k's cells as TCD (PUB-FORMAT.md 6.8): each cell's last
+        paragraph mark, the last cell's the story's length."""
+        ends, at = [], 0
+        for n in self.cells[k]:
+            at += n
+            ends.append(marks[at - 1])
+        ends[-1] = length
+        return struct.pack('<III', len(ends) - 1, 0, 0xFF00) + b''.join(struct.pack('<I', e) for e in ends)
 
     def tokn(self, k, length):
         """Story k's links as TOKN (PUB-FORMAT.md 6.7): places, each link's
@@ -266,7 +280,7 @@ class Text:
 
     def build(self):
         text = ''
-        cruns, pruns, lengths = [], [], []
+        cruns, pruns, lengths, marks = [], [], [], []
 
         def units():
             return len(text.encode('utf-16-le')) // 2
@@ -276,6 +290,7 @@ class Text:
                 for s, cprops in runs:
                     text += s
                     cruns.append((units(), cprops))
+                marks.append(units() - start)
                 text += '\r'
                 if cruns and cruns[-1][0] == units() - 1:
                     cruns[-1] = (units(), cruns[-1][1])     # the paragraph's mark takes its last run's look
@@ -283,7 +298,20 @@ class Text:
                     cruns.append((units(), None))
                 pruns.append((units(), pprops))
             lengths.append(units() - start)
+            marks.append(None)                # a story's end: marks restart
         tokns = [('TOKN', k, self.tokn(k, lengths[k])) for k in sorted(self.links)]
+        for k in sorted(self.spare):                 # a later copy of story k's links
+            first, self.links[k] = self.links[k], self.spare[k]
+            tokns.append(('TOKN', k, self.tokn(k, lengths[k])))
+            self.links[k] = first
+        per_story, cur = [], []
+        for m in marks:
+            if m is None:
+                per_story.append(cur)
+                cur = []
+            else:
+                cur.append(m)
+        tokns += [('TCD ', k, self.tcd(k, per_story[k], lengths[k])) for k in sorted(self.cells)]
         tbytes = text.encode('utf-16-le')
         strs = struct.pack('<III', len(lengths), 8, 0xFF) + b''.join(struct.pack('<I', n) for n in lengths)
         syid = struct.pack('<II', 0, len(self.stories)) + b''.join(struct.pack('<I', t) for t, _ in self.stories)
@@ -610,12 +638,15 @@ def runs():
                         ('bold alone', char_props(bold=True))]),
                 (None, [('A second paragraph, italic', char_props(italic=True))])])
     t.story(3, [(None, [('Cell one', None)]), (None, [('Cell two', None)]), (None, [('Cell three', None)]),
-                (None, [('Cell four', None)]), (None, [('Cell five', None)]), (None, [('Cell six', None)])])
+                (None, [('Cell three, its second paragraph', None)]),
+                (None, [('Cell four', None)]), (None, [('Cell five', None)]), (None, [('Cell six', None)])],
+            cells=[1, 1, 2, 1, 1, 1])
     t.story(4, [(None, [('On the second page', None)])])
     t.story(5, [(None, [('Left on the scratch area', None)])])
-    t.story(6, [(None, [('See our site, write to us, or turn to page 1.', None)])],
+    s6 = t.story(6, [(None, [('See our site, write to us, or turn to page 1.', None)])],
             links=[(4, 8, 1, 'https://example.org/gfoffice/'), (14, 11, 4, 'mailto:team@example.org?subject=Hello'),
                    (30, 14, 3, '\u010a')])
+    t.spare[s6] = [(0, 3, 1, 'https://example.org/not-this-one/')]
     f1 = frame_chunk(c, p1, text_id=1)
     f2 = frame_chunk(c, p1, text_id=2)
     tb = frame_chunk(c, p1, kind=0x10, text_id=3, extra=[fv(0x66, 0x20, 3), fv(0x67, 0x20, 2)])
@@ -751,7 +782,8 @@ def old(mark, owner_bytes):
     pw, ph = 210 * EMU_MM, 297 * EMU_MM
     t = Text(['Times New Roman', 'Arial'], [(char_props(size=10, font=0, old=True), para_props())], old=True)
     t.story(1, [(None, [('Old form text, ', None), ('bold Arial', char_props(True, None, 12, 1, old=True))])])
-    t.story(2, [(None, [('One', None)]), (None, [('Two', None)]), (None, [('Three', None)]), (None, [('Four', None)])])
+    t.story(2, [(None, [('One', None)]), (None, [('Two', None)]), (None, [('Three', None)]), (None, [('Four', None)])],
+            cells=[1, 1, 1, 1])
     chunks = []                              # (id, parent, bytes)
 
     def frame(typ, box, text_id=None, rows=0, cols=0):

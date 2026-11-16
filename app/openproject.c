@@ -1159,6 +1159,41 @@ static void tick_view(void)
     ResetMenuStrip(win, menu);
 }
 
+/* ---- Dragging on the Gantt chart (opj_drag.c works out the edit) ---- */
+
+static opj_drag drag;
+static int dragging;
+static char drag_shown[80];
+
+static void drag_move(int x, int y)
+{
+    char text[80];
+    if (!dragging) return;
+    if (!opj_drag_text(&view, DOC, &drag, x, y, text, sizeof text)) text[0] = 0;
+    if (!strcmp(text, drag_shown)) return;          /* redraw only when what the drop would do changes */
+    put_text(drag_shown, sizeof drag_shown, text);
+    set_status(text);
+    redraw();
+}
+
+static void drag_drop(int x, int y)
+{
+    static const char *what[] = { "Move", "Stretch", "% Complete", "Link" };
+    char text[80];
+    int rc;
+    if (!dragging) return;
+    dragging = 0;
+    drag_shown[0] = 0;
+    if (!opj_drag_text(&view, DOC, &drag, x, y, text, sizeof text)) { set_status(""); redraw(); return; }
+    rc = opj_drag_end(DOC, &view, &drag, x, y);
+    set_status(rc == OWF_OK && DOC->schedule_error ? "The links make a loop: the plan can't be scheduled" : "");
+    if (rc != OWF_OK) {
+        int k = !strncmp(text, "Link", 4) ? OPJ_DRAG_LINK : drag.kind;
+        edit_failed(rc, k >= 0 && k < (int)(sizeof what / sizeof what[0]) ? what[k] : "Drag");
+    }
+    redraw();
+}
+
 static void click(int x, int y, ULONG secs, ULONG micros)
 {
     static ULONG last_s, last_m;
@@ -1205,6 +1240,8 @@ static void click(int x, int y, ULONG secs, ULONG micros)
         last_m = micros;
         redraw();
         if (dbl) { last_row = -1; task_info(); }
+        else if (hit.what == OPJ_HIT_BAR && !rexx_busy && edit_allowed(OPJ_EDIT_CELL))
+            dragging = opj_drag_begin(&view, DOC, &hit, x, y, &drag);
     } else if (hit.what == OPJ_HIT_COLUMN_TITLE) {
         if (hit.column >= 0 && hit.column < OPJ_NCOLS) { sel_col = hit.column; redraw(); }
     }
@@ -1236,7 +1273,9 @@ static void events(void)
             break;
         case IDCMP_MOUSEBUTTONS:
             if (code == SELECTDOWN) click(mx, my, secs, micros);
+            else if (code == SELECTUP) drag_drop(mx, my);
             break;
+        case IDCMP_MOUSEMOVE: drag_move(mx, my); break;
         case IDCMP_VANILLAKEY: {
             int edit = opj_edit_for_key(code, (qual & (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0);
             if (!edit_allowed(edit)) break;
@@ -1422,7 +1461,8 @@ static int open_window(void)
         WA_GimmeZeroZero, TRUE,
         WA_Activate, TRUE, WA_SmartRefresh, TRUE, WA_NewLookMenus, TRUE, WA_AutoAdjust, TRUE,
         WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_MENUPICK | IDCMP_NEWSIZE | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY |
-                  IDCMP_RAWKEY | IDCMP_MOUSEBUTTONS,
+                  IDCMP_RAWKEY | IDCMP_MOUSEBUTTONS | IDCMP_MOUSEMOVE,
+        WA_ReportMouse, TRUE,
         TAG_DONE);
     if (!win) return 0;
     if (menu) SetMenuStrip(win, menu);
