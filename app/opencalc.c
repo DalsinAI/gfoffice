@@ -1091,6 +1091,7 @@ static LONG role_pen(int role, unsigned long rgb)
     case OC_ROLE_COMMENT: return rgb_pen(0xD01010UL);        /* Excel's red mark */
     case OC_ROLE_NOTE: return rgb_pen(0xFFFFE1UL);           /* and its comment's pale yellow */
     case OC_ROLE_NOTE_LINE: return rgb_pen(0x808080UL);
+    case OC_ROLE_SCENARIO: return rgb_pen(0x6B7F99UL);       /* the shown scenario's frame and tab */
     }
     return rgb_pen(0xFFFFFFUL);                      /* the paper, behind typing */
 }

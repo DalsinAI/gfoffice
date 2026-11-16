@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #ifndef __amigaos__
 #include <unistd.h>
 #endif
@@ -1155,6 +1156,15 @@ static char *slurp(const char *file)
     return buf;
 }
 
+/* slurp into memory of its own, for comparing two files */
+static char *slurp_own(const char *file)
+{
+    const char *t = slurp(file);
+    char *c = malloc(strlen(t) + 1);
+    if (c) strcpy(c, t);
+    return c;
+}
+
 static void spill(const char *file, const char *text)
 {
     FILE *f = fopen(path(file), "wb");
@@ -1351,6 +1361,275 @@ static void test_undo(void)
         int i;
         for (i = 0; i < 105; i++) add_customer(p, "Many", "York", NULL, NULL, NULL, NULL);
         CHECK(ob_undo_count(p) == 100, "100 steps: %d", ob_undo_count(p));
+    }
+    ob_close(p);
+}
+
+/* A file's bytes (made up here, or written by the core); its length in *n. */
+static unsigned char *bytes_of(const char *file, long *n)
+{
+    FILE *f = fopen(path(file), "rb");
+    unsigned char *b;
+    *n = 0;
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    *n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    b = malloc((size_t)*n + 1);
+    if (b && fread(b, 1, (size_t)*n, f) != (size_t)*n) { free(b); b = NULL; }
+    fclose(f);
+    return b;
+}
+
+static void put_bytes(const char *file, const void *b, size_t n)
+{
+    FILE *f = fopen(path(file), "wb");
+    if (!f) return;
+    fwrite(b, 1, n, f);
+    fclose(f);
+}
+
+/* A made-up .dbf: cols as "NAME:T:len:dec" each, records each a whole record
+ * (its flag first); nrecs as the header says (-1: as many as given). */
+static void made_dbf(const char *file, int version, const char *const *cols, int ncols,
+                     const char *const *recs, int nr, int nrecs, int reclen_off)
+{
+    unsigned char b[8192];
+    int i, n = 32, reclen = 1;
+    memset(b, 0, sizeof b);
+    for (i = 0; i < ncols; i++) {
+        char nm[16], t;
+        int len, dec;
+        unsigned char *d = b + 32 + 32 * i;
+        sscanf(cols[i], "%15[^:]:%c:%d:%d", nm, &t, &len, &dec);
+        memcpy(d, nm, strlen(nm));
+        d[11] = (unsigned char)t;
+        d[16] = (unsigned char)len;
+        d[17] = (unsigned char)dec;
+        reclen += len;
+        n += 32;
+    }
+    b[0] = (unsigned char)version;
+    b[1] = 126; b[2] = 11; b[3] = 15;
+    i = nrecs < 0 ? nr : nrecs;
+    b[4] = (unsigned char)i; b[5] = (unsigned char)(i >> 8);
+    b[8] = (unsigned char)((n + 1) & 255); b[9] = (unsigned char)((n + 1) >> 8);
+    reclen += reclen_off;
+    b[10] = (unsigned char)(reclen & 255); b[11] = (unsigned char)(reclen >> 8);
+    b[n++] = 0x0D;
+    for (i = 0; i < nr; i++) {
+        memcpy(b + n, recs[i], strlen(recs[i]));
+        n += (int)strlen(recs[i]);
+    }
+    if (nrecs < 0 || nrecs == nr) b[n++] = 0x1A;
+    put_bytes(file, b, (size_t)n);
+}
+
+static void test_dbf(void)
+{
+    ob_project *p = fresh("dbf.oadb"), *q;
+    static ob_table t;
+    ob_csv_opts o;
+    ob_view v;
+    unsigned char *b;
+    long n;
+    char want[256];
+    if (!p) return;
+    five_customers(p);
+
+    /* Customers out: the header, the columns, a record */
+    CHECK(ob_dbf_export(p, "Customers", NULL, path("cust.dbf")) == 5, "export: %s", ob_error(p));
+    b = bytes_of("cust.dbf", &n);
+    CHECK(b && n == 257 + 5 * 48 + 1, "257 + 5 x 48 + 1 bytes: %ld", n);
+    if (b && n > 3) {
+        time_t now = time(NULL);
+        struct tm *tm = localtime(&now);
+        CHECK(tm && b[1] == tm->tm_year && b[2] == tm->tm_mon + 1 && b[3] == tm->tm_mday && b[1] >= 126,
+              "last updated, the year from 1900 (126 for 2026): %d %d %d", b[1], b[2], b[3]);
+        CHECK(b[29] == 0, "no language driver claimed");
+    }
+    if (b && n == 498) {
+        static const char *const names[] = { "ID", "NAME", "TOWN", "EMAIL", "JOINED", "MEMBER", "CREDIT" };
+        static const char types[] = "NCCCDLN";
+        static const int lens[] = { 1, 3, 5, 22, 8, 1, 7 }, decs[] = { 0, 0, 0, 0, 0, 0, 2 };
+        int i;
+        CHECK(b[0] == 0x03 && b[4] == 5 && b[5] == 0 && b[8] == 1 && b[9] == 1 && b[10] == 48 && b[11] == 0,
+              "dBASE III, 5 records, 257 header, 48 a record");
+        for (i = 0; i < 7; i++) {
+            const unsigned char *d = b + 32 + 32 * i;
+            CHECK(!strcmp((const char *)d, names[i]) && d[11] == (unsigned char)types[i] && d[16] == lens[i] && d[17] == decs[i],
+                  "column %d: %s %c %d.%d", i, (const char *)d, d[11], d[16], d[17]);
+        }
+        CHECK(b[256] == 0x0D && b[497] == 0x1A, "the ends");
+        snprintf(want, sizeof want, " 2AnnLeeds%22s20251231F1500.00", "");
+        CHECK(!memcmp(b + 257 + 48, want, 48), "Ann's record: %.48s", (const char *)b + 257 + 48);
+        snprintf(want, sizeof want, " 3Cy Hull cy@example.org%8s%8sT  99.99", "", "");
+        CHECK(!memcmp(b + 257 + 96, want, 48), "Cy's record: %.48s", (const char *)b + 257 + 96);
+        snprintf(want, sizeof want, " 5EveLeedseve@example.org%7s20240102T  -5.00", "");
+        CHECK(!memcmp(b + 257 + 192, want, 48), "Eve's record: %.48s", (const char *)b + 257 + 192);
+    }
+    free(b);
+    view_set(&v, "Name", 0, "Town", OB_FILTER_EQUALS, "Leeds");
+    CHECK(ob_dbf_export(p, "Customers", &v, path("leeds.dbf")) == 2, "a view: %s", ob_error(p));
+    CHECK(ob_dbf_export(p, "Customers", NULL, path("no/such/drawer/x.dbf")) == -1 && strstr(ob_error(p), "could not be made"), "nowhere");
+
+    /* and back, into a fresh project: the same rows */
+    q = fresh("dbf2.oadb");
+    if (q) {
+        char *a, *c;
+        customers(&t);
+        CHECK(ob_table_create(q, &t), "Customers in dbf2: %s", ob_error(q));
+        ob_csv_opts_init(&o);
+        CHECK(ob_dbf_import(q, "Customers", path("cust.dbf"), &o) == 5 && o.deleted == 0, "import: %s", ob_error(q));
+        ob_csv_export(p, "Customers", NULL, path("d1.csv"), 0);
+        ob_csv_export(q, "Customers", NULL, path("d2.csv"), 0);
+        a = slurp_own("d1.csv");
+        c = slurp_own("d2.csv");
+        CHECK(a && c && !strcmp(a, c), "the same rows:\n%s\n%s", a ? a : "", c ? c : "");
+        free(a);
+        free(c);
+        CHECK(ob_undo_count(q) == 1 && ob_undo(q) && ob_view_total(q, "Customers", NULL) == 0, "undone: %s", ob_error(q));
+        ob_close(q);
+    }
+
+    /* memos: a Memo, and Text too long for C, go to the .dbt; a Number's decimals */
+    ob_table_init(&t, "Notes");
+    ob_table_add_field(&t, "Title", OB_TEXT);
+    ob_table_add_field(&t, "Body", OB_MEMO);
+    ob_table_add_field(&t, "Num", OB_NUMBER);
+    ob_table_add_field(&t, "At", OB_TIME);
+    ob_table_add_field(&t, "A very long field name", OB_INTEGER);
+    ob_table_add_field(&t, "A very long field nam2", OB_INTEGER);
+    CHECK(ob_table_create(p, &t), "Notes: %s", ob_error(p));
+    {
+        static char title[301], body[601];
+        const char *f[] = { "Title", "Body", "Num", "At" }, *v1[] = { title, body, "2.5", "9:30" }, *v2[] = { "short", NULL, "-1234.125", NULL };
+        int i;
+        for (i = 0; i < 300; i++) title[i] = (char)('a' + i % 26);
+        for (i = 0; i < 600; i++) body[i] = (char)('A' + i % 26);
+        body[100] = '\n';
+        CHECK(ob_row_add(p, "Notes", 4, f, v1, NULL) && ob_row_add(p, "Notes", 4, f, v2, NULL), "notes: %s", ob_error(p));
+    }
+    CHECK(ob_dbf_export(p, "Notes", NULL, path("notes.dbf")) == 2, "notes out: %s", ob_error(p));
+    b = bytes_of("notes.dbf", &n);
+    if (b && n > 32 * 8) {
+        CHECK(b[0] == 0x83, "dBASE III with memos: %02x", b[0]);
+        CHECK(b[32 + 32 * 1 + 11] == 'M' && b[32 + 32 * 2 + 11] == 'M', "Title (300 long) and Body are memos");
+        CHECK(b[32 + 32 * 3 + 11] == 'N' && b[32 + 32 * 3 + 16] == 9 && b[32 + 32 * 3 + 17] == 3, "Num N 9.3: %d.%d", b[32 + 32 * 3 + 16], b[32 + 32 * 3 + 17]);
+        CHECK(b[32 + 32 * 4 + 11] == 'C' && b[32 + 32 * 4 + 16] == 8, "At C 8");
+        CHECK(!strcmp((const char *)b + 32 + 32 * 5, "A_VERY_LON") && !strcmp((const char *)b + 32 + 32 * 6, "A_VERY_L_2"),
+              "dBASE names: %s %s", (const char *)b + 32 + 32 * 5, (const char *)b + 32 + 32 * 6);
+    } else CHECK(0, "notes.dbf: %ld bytes", n);
+    free(b);
+    b = bytes_of("notes.dbt", &n);
+    CHECK(b && n == 5 * 512 && b[0] == 5 && b[1] == 0 && b[512 + 300] == 0x1A && b[1024 + 600] == 0x1A && !memcmp(b + 2048, "short\x1A\x1A", 7),
+          "notes.dbt: 5 blocks, 1 the title, 2 and 3 the body, 4 the second title: %ld", n);
+    free(b);
+    q = fresh("dbf3.oadb");
+    if (q) {
+        char *a, *c;
+        CHECK(ob_table_create(q, &t), "Notes in dbf3: %s", ob_error(q));
+        CHECK(ob_dbf_import(q, "Notes", path("notes.dbf"), NULL) == 2, "notes in: %s", ob_error(q));
+        ob_csv_export(p, "Notes", NULL, path("n1.csv"), 0);
+        ob_csv_export(q, "Notes", NULL, path("n2.csv"), 0);
+        a = slurp_own("n1.csv");
+        c = slurp_own("n2.csv");
+        CHECK(a && c && !strcmp(a, c), "memos back:\n%.200s\n%.200s", a ? a : "", c ? c : "");
+        free(a);
+        free(c);
+        ob_close(q);
+    }
+
+    /* a dBASE IV file made here, its memos, a deleted record: a new table from it */
+    {
+        static const char *const cols[] = { "ID:N:5:0", "NAME:C:10:0", "PRICE:N:8:2", "WHEN:D:8:0", "OK:L:1:0", "NOTE:M:10:0" };
+        static const char *const recs[] = {
+            "     7Tea           2.5020261115T         1",
+            "*    8Gone          1.0020261115F          ",
+            "     9Cake                      ?          ",
+            "    10Big       ********00000000n         2",
+        };
+        unsigned char m[3 * 512];
+        static ob_table g;
+        char *a;
+        memset(m, 0, sizeof m);
+        m[0] = 3; m[20] = 0; m[21] = 2;             /* next block 3, blocks of 512 */
+        memcpy(m + 512, "\xff\xff\x08\x00\x0d\x00\x00\x00hello", 13);
+        memcpy(m + 1024, "plain\x1a\x1a", 7);
+        made_dbf("SALES.DBF", 0x8B, cols, 6, recs, 4, -1, 0);
+        put_bytes("SALES.DBT", m, sizeof m);
+        CHECK(ob_dbf_guess(p, path("SALES.DBF"), NULL, &g), "guess: %s", ob_error(p));
+        CHECK(!strcmp(g.name, "Sales") && g.nfields == 6, "Sales, 6 fields: %s %d", g.name, g.nfields);
+        CHECK(g.fields[0].type == OB_COUNTER && !strcmp(g.fields[0].name, "ID"), "ID the Counter: %s", g.fields[0].name);
+        CHECK(!strcmp(g.fields[1].name, "Name") && g.fields[1].type == OB_TEXT && g.fields[1].max_len == 10, "Name, Text 10");
+        CHECK(g.fields[2].type == OB_CURRENCY && g.fields[3].type == OB_DATE && g.fields[4].type == OB_YESNO && g.fields[5].type == OB_MEMO
+              && !strcmp(g.fields[5].name, "Note"), "Currency, Date, Yes/No, Memo");
+        CHECK(ob_table_create(p, &g), "Sales made: %s", ob_error(p));
+        ob_csv_opts_init(&o);
+        CHECK(ob_dbf_import(p, "Sales", path("SALES.DBF"), &o) == 3 && o.deleted == 1, "3 in, 1 deleted: %s", ob_error(p));
+        CHECK(!o.report[0], "nothing to report: %s", o.report);
+        ob_csv_export(p, "Sales", NULL, path("sales.csv"), 0);
+        a = slurp_own("sales.csv");
+        CHECK(a && !strcmp(a, "ID,Name,Price,When,Ok,Note\r\n7,Tea,2.50,2026-11-15,Yes,hello\r\n9,Cake,,,,\r\n10,Big,,,No,plain\r\n"),
+              "sales:\n%s", a ? a : "");
+        free(a);
+        CHECK(ob_dbf_guess(p, path("SALES.DBF"), "Shop sales", &g) && !strcmp(g.name, "Shop sales"), "a name given");
+        /* a file that names its code page: read as it is, and said */
+        {
+            static const char *const one[] = { "NAME:C:3:0" }, *r1[] = { " Zed" };
+            unsigned char *c;
+            long cn;
+            made_dbf("lang.dbf", 0x03, one, 1, r1, 1, -1, 0);
+            c = bytes_of("lang.dbf", &cn);
+            if (c && cn > 29) { c[29] = 0x03; put_bytes("lang.dbf", (const char *)c, (size_t)cn); }
+            free(c);
+            ob_csv_opts_init(&o);
+            CHECK(ob_dbf_import(p, "Sales", path("lang.dbf"), &o) == 1 && strstr(o.report, "Windows code page 1252"), "CP1252 said: %s", o.report);
+            if (c) {
+                c = bytes_of("lang.dbf", &cn);
+                if (c && cn > 29) { c[29] = 0x7E; put_bytes("lang.dbf", (const char *)c, (size_t)cn); }
+                free(c);
+            }
+            ob_csv_opts_init(&o);
+            CHECK(ob_dbf_import(p, "Sales", path("lang.dbf"), &o) == 1 && strstr(o.report, "as 7E"), "an unknown one by number: %s", o.report);
+        }
+    }
+
+    /* refused */
+    put_bytes("short.dbf", "\x03\x01\x02", 3);
+    CHECK(ob_dbf_import(p, "Customers", path("short.dbf"), NULL) == -1 && strstr(ob_error(p), "not a dBASE file"), "short: %s", ob_error(p));
+    CHECK(ob_dbf_import(p, "Customers", path("none.dbf"), NULL) == -1 && strstr(ob_error(p), "could not be opened"), "none");
+    {
+        static const char *const one[] = { "NAME:C:3:0" }, *bad[] = { "PIC:B:10:0" }, *memo[] = { "M:M:10:0" };
+        static const char *const r1[] = { " Zed", " Yan" }, *r3[] = { "          " };
+        made_dbf("fox.dbf", 0xF5, one, 1, r1, 1, -1, 0);
+        CHECK(ob_dbf_import(p, "Customers", path("fox.dbf"), NULL) == -1 && strstr(ob_error(p), "is a FoxPro table"), "FoxPro: %s", ob_error(p));
+        made_dbf("vfp.dbf", 0x30, one, 1, r1, 1, -1, 0);
+        CHECK(ob_dbf_import(p, "Customers", path("vfp.dbf"), NULL) == -1 && strstr(ob_error(p), "Visual FoxPro"), "VFP: %s", ob_error(p));
+        made_dbf("odd.dbf", 0x07, one, 1, r1, 1, -1, 0);
+        CHECK(ob_dbf_import(p, "Customers", path("odd.dbf"), NULL) == -1 && strstr(ob_error(p), "not a dBASE III or IV"), "odd version");
+        made_dbf("pic.dbf", 0x03, bad, 1, r3, 1, -1, 0);
+        CHECK(ob_dbf_import(p, "Customers", path("pic.dbf"), NULL) == -1 && strstr(ob_error(p), "of type B"), "type B: %s", ob_error(p));
+        made_dbf("len.dbf", 0x03, one, 1, r1, 1, -1, 1);
+        CHECK(ob_dbf_import(p, "Customers", path("len.dbf"), NULL) == -1 && strstr(ob_error(p), "record length"), "record length: %s", ob_error(p));
+        made_dbf("memo.dbf", 0x83, memo, 1, r3, 1, -1, 0);
+        CHECK(ob_dbf_import(p, "Customers", path("memo.dbf"), NULL) == -1 && strstr(ob_error(p), "memo file"), "no .dbt: %s", ob_error(p));
+        made_dbf("cut.dbf", 0x03, one, 1, r1, 2, 3, 0);
+        CHECK(ob_dbf_import(p, "Customers", path("cut.dbf"), NULL) == -1 && strstr(ob_error(p), "ends inside record 3"), "cut short: %s", ob_error(p));
+        CHECK(ob_view_total(p, "Customers", NULL) == 5, "all or none: still 5");
+    }
+    /* by order when the names don't match; bad records left out on request */
+    {
+        static const char *const cols[] = { "A:C:5:0", "B:C:5:0" };
+        static const char *const recs[] = { " Zoe  Hull ", "      Hull ", " Yan  Leeds" };
+        made_dbf("order.dbf", 0x03, cols, 2, recs, 3, -1, 0);
+        ob_csv_opts_init(&o);
+        CHECK(ob_dbf_import(p, "Customers", path("order.dbf"), &o) == -1 && strstr(ob_error(p), "Record 2:"), "all or none: %s", ob_error(p));
+        ob_csv_opts_init(&o);
+        o.skip_bad = 1;
+        CHECK(ob_dbf_import(p, "Customers", path("order.dbf"), &o) == 2 && o.bad == 1 && strstr(o.report, "Record 2:"),
+              "the good two, Name and Town by order: %s", o.report);
+        CHECK(ob_view_total(p, "Customers", NULL) == 7, "7 now");
     }
     ob_close(p);
 }
@@ -1663,6 +1942,18 @@ static void test_forms(void)
         CHECK(strstr(got, "|4|4.50|") != NULL, "changed: %s", got);
         CHECK(ob_row_delete(p, "Orders", ob_child_key(p, &r[0], 4, 1)), "delete: %s", ob_error(p));
         CHECK(ob_child_key(p, &r[0], 4, 0) == 6 && ob_child_key(p, &r[0], 4, 1) == -1, "bob has one left");
+
+        /* a subform row opened in its table's form: the record's rows (core 0.6.4) */
+        ob_child_view(&kids, &r[0], 1);
+        CHECK(ob_view_filtered(&kids) && !kids.sort[0], "filtered, key order");
+        CHECK(ob_view_total(p, "Orders", &kids) == 2, "dan's two orders");
+        CHECK(ob_view_position(p, "Orders", &kids, 1) == 0 && ob_view_position(p, "Orders", &kids, 2) == 1,
+              "Tea first, then the second");
+        CHECK(ob_view_position(p, "Orders", &kids, 3) == -1, "Ann's order is not dan's");
+        CHECK(ob_view_position(p, "Orders", &kids, ob_child_key(p, &r[0], 1, 1)) == 1, "the key a place gives is at that place");
+        ob_child_view(&kids, &r[0], 4);
+        CHECK(ob_view_total(p, "Orders", &kids) == 1 && ob_view_position(p, "Orders", &kids, 6) == 0, "bob's one");
+        CHECK(ob_view_check(p, "Orders", &kids), "a view Orders takes: %s", ob_error(p));
     }
     ob_close(p);
 }
@@ -2139,7 +2430,7 @@ static void test_queries(void)
 }
 
 /* A query's rows as CSV, a query as a view, saved queries following a
- * table's rename (core 0.10.1) */
+ * table's rename (core 0.12.1) */
 static void test_query_out(void)
 {
     ob_project *p = fresh("qout.oadb");
@@ -2357,6 +2648,7 @@ int main(int argc, char **argv)
     test_csv();
     test_undo();
     test_csv_options();
+    test_dbf();
     test_rexx_rows();
     test_queries();
     test_query_out();
