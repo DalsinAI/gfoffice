@@ -47,6 +47,8 @@ void owf_pcal_standard(owf_pcal *cal);
 int owf_pcal_set_week(owf_pcal *cal, int weekday, int nspans, const unsigned short *pairs);
 /* A day off (nspans 0) or a day with its own hours; replaces an exception on that day. */
 int owf_pcal_set_exception(owf_pcal *cal, long day, int nspans, const unsigned short *pairs);
+/* Takes away day's exception, so it works the week's hours again; no exception there is no change. */
+void owf_pcal_clear_exception(owf_pcal *cal, long day);
 void owf_pcal_free(owf_pcal *cal);
 /* The working hours of the day holding t. */
 const owf_pday *owf_pcal_day(const owf_pcal *cal, long day);
