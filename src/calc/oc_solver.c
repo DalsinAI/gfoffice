@@ -258,7 +258,7 @@ static double nl_value(nl_run *r, double *x)
 /* One Nelder-Mead search from x (its answer back in x, its measure returned); v holds n + 1 points of n. */
 static double nl_search(nl_run *r, double *x, double *v, double *f, double *c, double *t1, double *t2)
 {
-    unsigned n = r->s->nvar, i, j, it;
+    unsigned n = r->s->nvar, i, j;
     for (i = 0; i <= n; i++) {
         double *pt = &v[(size_t)i * n];
         memcpy(pt, x, n * sizeof *pt);
@@ -270,7 +270,7 @@ static double nl_search(nl_run *r, double *x, double *v, double *f, double *c, d
         }
         f[i] = nl_value(r, pt);
     }
-    for (it = 0; !r->stopped && !r->failed; it++) {
+    while (!r->stopped && !r->failed) {
         unsigned best = 0, worst = 0, next;
         double size = 0.0, scale = 0.0, fr, fe, fc;
         for (i = 1; i <= n; i++) {
