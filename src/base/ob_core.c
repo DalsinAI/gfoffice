@@ -5444,6 +5444,77 @@ void ob_form_extent(const ob_form *f, int *cols, int *rows)
     if (rows) *rows = r;
 }
 
+int ob_form_free_row(const ob_form *f)
+{
+    int r;
+    ob_form_extent(f, NULL, &r);
+    return r < OB_FORM_ROWS ? r : -1;
+}
+
+int ob_form_nudge(ob_form *f, int i, int dx, int dy, int dw, int dh)
+{
+    ob_fitem *it;
+    int w, h;
+    if (i < 0 || i >= f->nitems) return 0;
+    it = &f->items[i];
+    w = clampi(it->w + dw, 1, OB_FORM_COLS - it->x);
+    h = clampi(it->h + dh, 1, OB_FORM_ROWS - it->y);
+    if (it->kind == OB_FI_LINE && w > 1 && h > 1) {
+        if (it->h == 1) h = 1;
+        else w = 1;
+    }
+    fitem_fit(it, clampi(it->x + dx, 0, OB_FORM_COLS - w), clampi(it->y + dy, 0, OB_FORM_ROWS - h), w, h);
+    return 1;
+}
+
+static int form_shows(const ob_form *f, const char *field)
+{
+    int i;
+    for (i = 0; i < f->nitems; i++)
+        if (f->items[i].kind == OB_FI_FIELD && same(f->items[i].field, field)) return 1;
+    return 0;
+}
+
+int ob_form_unplaced(ob_project *p, const ob_form *f, char (*names)[OB_NAME_MAX], int max)
+{
+    static ob_table t;
+    int i, n = 0;
+    if (!ob_table_get(p, f->table, &t)) return -1;
+    for (i = 0; i < t.nfields; i++) {
+        if (form_shows(f, t.fields[i].name)) continue;
+        if (n < max) copy(names[n], OB_NAME_MAX, t.fields[i].name);
+        n++;
+    }
+    ok(p);
+    return n;
+}
+
+int ob_form_add_field(ob_project *p, ob_form *f, const char *field, int x, int y)
+{
+    static ob_table t;
+    const ob_field *fd = NULL;
+    ob_fitem *lab, *it;
+    int i, lw;
+    if (!ob_table_get(p, f->table, &t)) return -1;
+    for (i = 0; i < t.nfields && !fd; i++)
+        if (same(t.fields[i].name, field)) fd = &t.fields[i];
+    if (!fd) { fail(p, "%s has no field %s", t.name, field ? field : ""); return -1; }
+    if (form_shows(f, fd->name)) { fail(p, "%s is on the form already", fd->name); return -1; }
+    if (f->nitems + 2 > OB_FORM_ITEMS || x < 0 || y < 0 || y >= OB_FORM_ROWS) {
+        fail(p, "There is no room on the form for %s", fd->name);
+        return -1;
+    }
+    lw = (int)strlen(fd->label[0] ? fd->label : fd->name);
+    if (lw > 24) lw = 24;
+    if (x + lw + 2 >= OB_FORM_COLS) { fail(p, "There is no room on the form for %s", fd->name); return -1; }
+    lab = ob_form_add(f, OB_FI_LABEL, x, y, lw, 1);
+    copy(lab->text, sizeof lab->text, fd->label[0] ? fd->label : fd->name);
+    it = ob_form_add(f, OB_FI_FIELD, x + lw + 2, y, 40, fd->type == OB_MEMO ? 4 : 1);
+    copy(it->field, sizeof it->field, fd->name);
+    ok(p);
+    return f->nitems - 1;
+}
+
 int ob_forms_of(ob_project *p, const char *table, char (*names)[OB_NAME_MAX], int max)
 {
     sqlite3_stmt *st;
