@@ -160,10 +160,74 @@ static void test_scatter(void)
     CHECK(opr_chart_edit_take(NULL, &out) == OWF_ERR_FORMAT, "no core");
 }
 
+/* The window's cycle gadgets: every choice back to the kind or legend it shows. */
+static void test_choices(void)
+{
+    int i;
+    CHECK(!strcmp(opr_chart_kind_labels[0], "Column") && opr_chart_kind_labels[OPR_CHART_KINDS] == NULL,
+          "the kinds' labels");
+    CHECK(opr_chart_grouping_labels[OPR_CHART_GROUPINGS] == NULL && opr_chart_legend_labels[OPR_CHART_LEGENDS] == NULL,
+          "the others NULL-ended");
+    for (i = 0; i < OPR_CHART_KINDS; i++)
+        CHECK(opr_chart_kind_choice(opr_chart_choice_kind(i)) == i, "kind choice %d", i);
+    for (i = 0; i < OPR_CHART_LEGENDS; i++)
+        CHECK(opr_chart_legend_choice(opr_chart_choice_legend(i)) == i, "legend choice %d", i);
+    CHECK(opr_chart_choice_kind(5) == OWF_CHART_SCATTER && opr_chart_choice_kind(4) == OWF_CHART_PIE, "pie, scatter");
+    CHECK(opr_chart_kind_choice(OWF_CHART_OTHER) == 0 && opr_chart_kind_choice(99) == 0, "others show as Column");
+    CHECK(opr_chart_choice_legend(0) == 0 && opr_chart_legend_choice(0) == 0 && opr_chart_legend_choice('b') == 4,
+          "no legend, bottom");
+    CHECK(opr_chart_choice_kind(-1) == OWF_CHART_COLUMN && opr_chart_choice_legend(9) == 0, "out of range");
+}
+
+static void type_chars(oc_core *core, const char *latin1)
+{
+    for (; *latin1; latin1++)
+        opr_chart_edit_char(core, (unsigned char)*latin1);
+}
+
+/* Keys as the window gets them, into the grid. */
+static void test_keys(void)
+{
+    owf_chart src, out;
+    oc_core *core;
+    char name[16];
+    memset(&src, 0, sizeof src);
+    CHECK(owf_chart_from_part(chart_xml, strlen(chart_xml), &src) == OWF_OK, "the chart");
+    core = opr_chart_edit_open(&src);
+    CHECK(core != NULL, "opened");
+    if (!core) { owf_chart_clear(&src); return; }
+    CHECK(oc_core_goto(core, "B2") == OWF_OK, "to B2");
+    type_chars(core, "7\r");
+    CHECK(!strcmp(cell(core, 1, 1), "7"), "typed, Return [%s]", cell(core, 1, 1));
+    oc_core_name_box(core, name, sizeof name);
+    CHECK(!strcmp(name, "B3"), "moved down (%s)", name);
+    type_chars(core, "\xe9x\t");
+    CHECK(!strcmp(cell(core, 2, 1), "\xc3\xa9x"), "Latin-1 typed as UTF-8 [%s]", cell(core, 2, 1));
+    oc_core_name_box(core, name, sizeof name);
+    CHECK(!strcmp(name, "C3"), "Tab moved right (%s)", name);
+    type_chars(core, "5\x1b");
+    CHECK(!strcmp(cell(core, 2, 2), ""), "Escape cancelled");
+    CHECK(oc_core_goto(core, "C4") == OWF_OK, "to C4");
+    CHECK(opr_chart_edit_char(core, 127) == OWF_OK && !strcmp(cell(core, 3, 2), ""), "Delete cleared");
+    CHECK(oc_core_goto(core, "B4") == OWF_OK, "to B4");
+    type_chars(core, "\b2\r");
+    CHECK(!strcmp(cell(core, 3, 1), "2"), "Backspace, then typed [%s]", cell(core, 3, 1));
+    CHECK(opr_chart_edit_char(core, 1) == OWF_ERR_UNSUPPORTED, "a control letter means nothing");
+    memset(&out, 0, sizeof out);
+    CHECK(opr_chart_edit_take(core, &out) == OWF_OK && out.nseries == 2 && out.series[0].points[0].value == 7 &&
+          !out.series[0].points[1].has_value && out.series[0].points[2].value == 2 &&
+          !out.series[1].points[2].has_value, "the chart as typed");
+    owf_chart_clear(&out);
+    oc_core_free(core);
+    owf_chart_clear(&src);
+}
+
 int main(void)
 {
     test_open_take();
     test_scatter();
+    test_choices();
+    test_keys();
     printf("test_chartedit: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }
