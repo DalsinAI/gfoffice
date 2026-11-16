@@ -4295,7 +4295,7 @@ static int do_compare(const char *given)
         request_document_redraw();
         return 0;
     }
-    snprintf(msg, sizeof msg, "%d change%s from %s, tracked; Next Change to review them.", rc, rc == 1 ? "" : "s", leaf(path));
+    snprintf(msg, sizeof msg, "%d change%s from %.60s, tracked; Next Change to review them.", rc, rc == 1 ? "" : "s", leaf(path));
     editor_repaint(msg);
     return rc;
 }
