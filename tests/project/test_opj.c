@@ -1408,6 +1408,90 @@ static void test_network(void)
     opj_doc_free(doc);
 }
 
+/* Tracking in the sheet: Actual Start, Actual Finish, Actual and Remaining Duration, % Complete moving the
+ * actual dates, and Update Project as one Undo step. Two 2-day tasks, A then B, from Mon 16 Nov 2026. */
+static void test_actual_cells(void)
+{
+    opj_doc *doc = opj_doc_new(NULL, AT(16, 8, 0));
+    int changed = -1;
+    unsigned long before;
+    CHECK(doc != NULL);
+    if (!doc) return;
+    CHECK_N(opj_insert_task(doc, 0, "A"), OWF_OK);
+    CHECK_N(opj_insert_task(doc, 1, "B"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_DURATION, "2d"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_DURATION, "2d"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_PREDECESSORS, "1"), OWF_OK);
+    CHECK_S(opj_column_title(OPJ_COL_ACTUAL_START), "Actual Start");
+    CHECK_S(opj_column_title(OPJ_COL_REMAINING_DURATION), "Remaining Dur.");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_START), "NA");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_FINISH), "NA");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_DURATION), "0d");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_REMAINING_DURATION), "2d");
+    /* Which columns are typed. */
+    CHECK(opj_column_typed(OPJ_COL_ACTUAL_START) && opj_column_typed(OPJ_COL_NOTES) && opj_column_typed(OPJ_COL_CONSTRAINT_TYPE));
+    CHECK(!opj_column_typed(OPJ_COL_ACTUAL_DURATION) && !opj_column_typed(OPJ_COL_ID) && !opj_column_typed(OPJ_COL_START_VARIANCE));
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_DURATION, "1d"), OWF_ERR_FORMAT);
+    /* 50% gives A its scheduled start as its actual start; a day done, a day to go. */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_PERCENT, "50"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_START), "Mon 16/11/26");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_FINISH), "NA");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_DURATION), "1d");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_REMAINING_DURATION), "1d");
+    /* 100% finishes it at its scheduled finish; 0% takes both away. */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_PERCENT, "100%"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_FINISH), "Tue 17/11/26");
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_PERCENT, "60"), OWF_OK);     /* not finished after all */
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_FINISH), "NA");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_START), "Mon 16/11/26");
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_PERCENT, "0"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_START), "NA");
+    /* A typed Actual Start a day late moves A and B; Actual Finish before it is refused. */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_START, "17/11/26"), OWF_OK);
+    CHECK_N(doc->plan->tasks[0].actual_start, AT(17, 8, 0));
+    CHECK_N(doc->plan->tasks[1].early_start, AT(19, 8, 0));
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_FINISH, "16/11/26"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_FINISH, "someday"), OWF_ERR_FORMAT);
+    /* Finished Wed at 17:00: 100%, 2 days, B from Thu. */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_FINISH, "18/11/26"), OWF_OK);
+    CHECK_N(doc->plan->tasks[0].actual_finish, AT(18, 17, 0));
+    CHECK_S(cell_of(doc, 0, OPJ_COL_PERCENT), "100%");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_REMAINING_DURATION), "0d");
+    /* An Actual Start later than the finish drops the finish. */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_START, "19/11/26"), OWF_OK);
+    CHECK(!doc->plan->tasks[0].has_actual_finish);
+    /* NA on the finish leaves it started, below 100%; NA on the start clears both and the percent. */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_FINISH, "20/11/26"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_FINISH, "NA"), OWF_OK);
+    CHECK(doc->plan->tasks[0].has_actual_start && doc->plan->tasks[0].percent == 99);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_START, "na"), OWF_OK);
+    CHECK(!doc->plan->tasks[0].has_actual_start && doc->plan->tasks[0].percent == 0);
+    /* An Actual Finish with no start: the scheduled start is taken. */
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_ACTUAL_FINISH, "18/11/26"), OWF_OK);
+    CHECK_N(doc->plan->tasks[1].actual_start, AT(18, 8, 0));         /* B starts Wed, after A */
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK(!doc->plan->tasks[1].has_actual_start);
+    /* Update Project through Tue 17 17:00: A done, B not started; one Undo step. */
+    before = doc->changes;
+    CHECK_N(opj_update_project(doc, AT(17, 17, 0), 0, &changed), OWF_OK);
+    CHECK_N(changed, 1);
+    CHECK_N(doc->changes, before + 1);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_PERCENT), "100%");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_FINISH), "Tue 17/11/26");
+    CHECK(doc->plan->has_status_date && doc->plan->status_date == AT(17, 17, 0));
+    CHECK_N(opj_update_project(doc, AT(18, 12, 0), 0, &changed), OWF_OK);
+    CHECK_N(changed, 1);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "25%");
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "0%");
+    CHECK_N(opj_update_project(doc, AT(18, 12, 0), 1, NULL), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "0%");                 /* 0% or 100% only */
+    CHECK_S(cell_of(doc, 1, OPJ_COL_ACTUAL_START), "Wed 18/11/26");
+    CHECK_N(opj_update_project(NULL, AT(18, 12, 0), 0, &changed), OWF_ERR_FORMAT);
+    CHECK_N(changed, 0);
+    opj_doc_free(doc);
+}
+
 int main(void)
 {
     test_dates();
@@ -1430,6 +1514,7 @@ int main(void)
     test_task_info();
     test_network();
     test_drag();
+    test_actual_cells();
     if (fails) {
         printf("project view tests: %d of %d checks failed\n", fails, checks);
         return 1;
