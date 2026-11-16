@@ -973,6 +973,22 @@ def long_list(n):
     return publication(c.build(doc_fields(c, pw, ph, [m1] * n + [m2, p1, p2])), t, [[], [], [], []], [], (14, 0))
 
 
+def many_halves(n):
+    """n left halves of two-page masters, each with its own name and a page
+    that uses it, then one real pair, "Pair" (not in FILES:
+    tests/pub/test_pub_many_masters.py makes it, to time pairing them)."""
+    pw, ph = 210 * EMU_MM, 297 * EMU_MM
+    c = Contents(0x18, pw, ph)
+    halves = [page_chunk(c, name='Half %06d' % k, kind=0) for k in range(n)]
+    right = page_chunk(c, name='Pair', kind=1)
+    left = page_chunk(c, name='Pair', kind=0)
+    pages = [page_chunk(c, master=m) for m in [right, left] + halves]
+    t = Text(['Times New Roman'], [DEFAULT_STYLE])
+    t.story(1, [(None, [('One', None)])])
+    return publication(c.build(doc_fields(c, pw, ph, halves + [right, left] + pages)), t,
+                       [[], [], [], []], [], (14, 0))   # no drawings: Escher numbers at most 4095
+
+
 def main():
     if len(sys.argv) != 2:
         print(__doc__)
