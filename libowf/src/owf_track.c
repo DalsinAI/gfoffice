@@ -178,9 +178,9 @@ void owf_track_switch(owf_track_span *t, owf_builder *b, int rev, int marks)
                 int from = i == t->para ? t->run : 0;
                 int to = i == end_para ? end_run : p->nruns;
                 for (j = from; j < to && j < p->nruns; ++j)
-                    if (p->runs[j].kind != OWF_RUN_FRAME && !p->runs[j].comment)
+                    if (!p->runs[j].comment)
                         p->runs[j].revision = t->rev;   /* text, tabs, breaks, fields and (1.12) pictures in the
-                                                           line: a frame or a comment's place is no change */
+                                                           line and frames' runs: a comment's place is no change */
                 if (t->marks && i < end_para)
                     p->mark_revision = t->rev;
             }
@@ -388,6 +388,32 @@ int owf_doc_has_format_changes(const owf_doc *doc)
         return 1;
     for (i = 0; i < doc->nframes; ++i)
         if (story_has_format_changes(&doc->frames[i].story))
+            return 1;
+    return 0;
+}
+
+static int story_has_frame_changes(const owf_doc *doc, const owf_story *s)
+{
+    int i, j;
+    for (i = 0; i < s->nparas; ++i)
+        for (j = 0; j < s->paras[i].nruns; ++j)
+            if (s->paras[i].runs[j].kind == OWF_RUN_FRAME && s->paras[i].runs[j].revision > 0 &&
+                s->paras[i].runs[j].revision <= doc->nrevisions)
+                return 1;
+    return 0;
+}
+
+int owf_doc_has_frame_changes(const owf_doc *doc)
+{
+    int i;
+    if (!doc || !doc->nrevisions)
+        return 0;
+    if (story_has_frame_changes(doc, &doc->body) || story_has_frame_changes(doc, &doc->header) ||
+        story_has_frame_changes(doc, &doc->footer) || story_has_frame_changes(doc, &doc->header_left) ||
+        story_has_frame_changes(doc, &doc->footer_left))
+        return 1;
+    for (i = 0; i < doc->nframes; ++i)
+        if (story_has_frame_changes(doc, &doc->frames[i].story))
             return 1;
     return 0;
 }

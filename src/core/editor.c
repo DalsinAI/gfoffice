@@ -44,6 +44,7 @@ struct ow_editor {
      * the same author in the same minute. */
     int track;
     int final_view;          /* 2.0.37: deletions hidden (ow_editor_set_final_view): the caret steps over them */
+    int *gone, ngone, capgone;   /* 2.0.38: frames an accept or reject takes away, dropped when it is done */
     char *author;
     int typing_rev;
     int ins_rev, del_rev;
@@ -2353,6 +2354,9 @@ static int pick_cb(void *userdata, const owf_story *story, int rev, ow_change_it
 
 /* Accepts or rejects the items, last first, so each leaves the ones before it where they were. 1 when
  * something changed, -1 no memory. */
+static int gone_frame(ow_editor *editor, int frame_index);
+static int resolve_done(ow_editor *editor);
+
 static int resolve_items(ow_editor *editor, owf_story *story, const ow_change_item *items, int n, int accept)
 {
     int k, changed = 0, low = story->nparas, high = -1;
@@ -2369,6 +2373,11 @@ static int resolve_items(ow_editor *editor, owf_story *story, const ow_change_it
             else p->runs[items[k].run].revision = 0;
         } else if (items[k].run < 0) {
             if (join_next_in(editor, story, items[k].para) < 0) return -1;
+        } else if (p->runs[items[k].run].kind == OWF_RUN_FRAME) {
+            /* 2.0.38: a frame goes with its story once every story is done (resolve_done): its run stays till
+             * then, with no change */
+            if (!gone_frame(editor, p->runs[items[k].run].image)) return -1;
+            p->runs[items[k].run].revision = 0;
         } else {
             owf_run *r = &p->runs[items[k].run];
             if (r->kind == OWF_RUN_TEXT && r->text && *r->text) {
@@ -2463,7 +2472,9 @@ int ow_editor_accept_change(ow_editor *editor, int accept)
     if (compare_position(clamp_position(editor, editor->selection.focus), caret) < 0)
         caret = clamp_position(editor, editor->selection.focus);
     rc = resolve_story(editor, ed_story(editor), 0, accept, &first);
-    if (rc < 0) return OWF_ERR_MEMORY;
+    if (rc > 0 && !resolve_done(editor)) rc = -1;
+    editor->ngone = 0;
+    if (rc < 0) { ow_editor_undo(editor); return OWF_ERR_MEMORY; }
     if (!rc) {
         snapshot_free(&editor->undo[editor->nundo - 1]);
         --editor->nundo;
@@ -2493,15 +2504,17 @@ int ow_editor_accept_all_changes(ow_editor *editor, int accept)
     for (k = 0; k < 5; ++k) {
         if (!stories[k]->nparas) continue;
         r = resolve_story(editor, stories[k], 1, accept, NULL);
-        if (r < 0) return OWF_ERR_MEMORY;
+        if (r < 0) { editor->ngone = 0; ow_editor_undo(editor); return OWF_ERR_MEMORY; }
         rc |= r;
     }
     for (k = 0; k < doc->nframes; ++k) {
         if (!doc->frames[k].story.nparas) continue;
         r = resolve_story(editor, &doc->frames[k].story, 1, accept, NULL);
-        if (r < 0) return OWF_ERR_MEMORY;
+        if (r < 0) { editor->ngone = 0; ow_editor_undo(editor); return OWF_ERR_MEMORY; }
         rc |= r;
     }
+    if (rc && !resolve_done(editor)) { editor->ngone = 0; ow_editor_undo(editor); return OWF_ERR_MEMORY; }
+    editor->ngone = 0;
     if (!rc) {
         snapshot_free(&editor->undo[editor->nundo - 1]);
         --editor->nundo;
@@ -3454,6 +3467,7 @@ void ow_editor_free(ow_editor *editor)
     owf_free(editor->para_y);
     owf_free(editor->author);
     owf_free(editor->file_name);
+    owf_free(editor->gone);
     owf_free(editor->comment_filter);
     ow_editor_merge_close(editor);                   /* 2.5.0 */
     owf_free(editor);
@@ -5025,7 +5039,8 @@ static int insert_anchored_frame(ow_editor *editor, owf_frame *frame, int enter_
         return OWF_ERR_FORMAT;
     editor->typing_group = 0;
     if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
-    if (!ow_editor_selection_empty(editor) && delete_selection_internal(editor) < 0) {
+    if (!ow_editor_selection_empty(editor) &&
+        (editor->track ? tracked_delete_selection(editor) : delete_selection_internal(editor)) < 0) {
         ow_editor_undo(editor);
         return OWF_ERR_MEMORY;
     }
@@ -5040,6 +5055,13 @@ static int insert_anchored_frame(ow_editor *editor, owf_frame *frame, int enter_
         return OWF_ERR_MEMORY;
     }
     memset(&frame->story, 0, sizeof frame->story);         /* ownership moved to doc */
+    if (editor->track) {
+        /* 2.0.38: recording, the frame is an insertion (its run's); rejecting it takes the frame away */
+        int ins = editor_revision(editor, OWF_REV_INSERT);
+        if (!ins) { ow_editor_undo(editor); return OWF_ERR_MEMORY; }
+        anchor = &editor->doc->body.paras[body_caret.paragraph];
+        anchor->runs[anchor->nruns - 1].revision = ins;
+    }
     if (enter_story) {
         const owf_story *story = &editor->doc->frames[frame_index].story;
         ow_position box_caret;
@@ -5219,16 +5241,79 @@ static int drop_frame(ow_editor *editor, int frame_index, int *anchor)
     return 1;
 }
 
+/* A frame's run in the fixed stories (body, headers, footers): where it is, NULL when none */
+static owf_run *frame_run(ow_editor *editor, int frame_index, int *para)
+{
+    owf_doc *doc = editor->doc;
+    owf_story *fixed[5];
+    int i, k, j;
+    fixed[0] = &doc->body; fixed[1] = &doc->header; fixed[2] = &doc->footer;
+    fixed[3] = &doc->header_left; fixed[4] = &doc->footer_left;
+    for (k = 0; k < 5; ++k)
+        for (i = 0; i < fixed[k]->nparas; ++i)
+            for (j = 0; j < fixed[k]->paras[i].nruns; ++j)
+                if (fixed[k]->paras[i].runs[j].kind == OWF_RUN_FRAME && fixed[k]->paras[i].runs[j].image == frame_index) {
+                    if (para) *para = k ? -1 : i;
+                    return &fixed[k]->paras[i].runs[j];
+                }
+    return NULL;
+}
+
+/* 2.0.38: the frames accepting or rejecting took away (resolve_items marks them; resolve_done drops them) */
+static int gone_frame(ow_editor *editor, int frame_index)
+{
+    int i;
+    for (i = 0; i < editor->ngone; ++i) if (editor->gone[i] == frame_index) return 1;
+    if (editor->ngone == editor->capgone) {
+        int want = editor->capgone ? editor->capgone * 2 : 4;
+        int *grown = (int *)owf_realloc(editor->gone, (size_t)want * sizeof(*grown));
+        if (!grown) return 0;
+        editor->gone = grown;
+        editor->capgone = want;
+    }
+    editor->gone[editor->ngone++] = frame_index;
+    return 1;
+}
+
+static int resolve_done(ow_editor *editor)
+{
+    int ok = 1, anchor;
+    while (editor->ngone > 0) {
+        int i, top = 0;
+        for (i = 1; i < editor->ngone; ++i) if (editor->gone[i] > editor->gone[top]) top = i;   /* last first */
+        if (ok && editor->gone[top] < editor->doc->nframes && !drop_frame(editor, editor->gone[top], &anchor)) ok = 0;
+        editor->gone[top] = editor->gone[--editor->ngone];
+    }
+    if (editor->selection.focus.box > editor->doc->nframes || editor->selection.anchor.box > editor->doc->nframes) {
+        editor->selection.anchor.box = editor->selection.focus.box = 0;
+        caret_to_para(editor, editor->selection.focus.paragraph);
+    }
+    return ok;
+}
+
 int ow_editor_delete_frame(ow_editor *editor, int frame_index)
 {
     owf_doc *doc;
+    owf_run *run;
     int anchor = -1;
     if (!editor || !editor->doc || frame_index < 0 || frame_index >= editor->doc->nframes)
         return OWF_ERR_FORMAT;
     editor->typing_group = 0;
     if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
     doc = editor->doc;
-    if (!drop_frame(editor, frame_index, &anchor)) {
+    run = frame_run(editor, frame_index, &anchor);
+    if (editor->track && run && !rev_mine(editor, run->revision)) {
+        /* 2.0.38: recording, someone else's frame (or one from before) is marked deleted; it stays until the
+         * deletion is accepted */
+        int del;
+        if (rev_kind(doc, run->revision) == OWF_REV_DELETE) {
+            snapshot_free(&editor->undo[editor->nundo - 1]);
+            --editor->nundo;
+            return OWF_OK;
+        }
+        if (!(del = editor_revision(editor, OWF_REV_DELETE))) { ow_editor_undo(editor); return OWF_ERR_MEMORY; }
+        run->revision = del;
+    } else if (!drop_frame(editor, frame_index, &anchor)) {
         ow_editor_undo(editor);
         return OWF_ERR_MEMORY;
     }
