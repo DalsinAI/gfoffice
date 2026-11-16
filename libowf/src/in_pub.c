@@ -416,6 +416,9 @@ typedef struct {
     span fdpp[QUILL_MAX_FDPC];   /* the paragraph runs' */
     int nfdpp;
     span stsh1;                  /* the style sheet's styles (STSH number 1) */
+    span tokn[QUILL_MAX_FDPC];   /* the hyperlinks: TOKN n is story n's (PUB-FORMAT.md 6.7) */
+    unsigned tokn_story[QUILL_MAX_FDPC];
+    int ntokn;
 } quill;
 
 static int read_quill_dir(span q, quill *out, owf_report *report)
@@ -445,6 +448,10 @@ static int read_quill_dir(span q, quill *out, owf_report *report)
                 out->fdpp[out->nfdpp++] = c;
             else if (!memcmp(q.p + e + 2, "STSH", 4) && rd16(q, e + 6) == 1)
                 out->stsh1 = c;
+            else if (!memcmp(q.p + e + 2, "TOKN", 4) && out->ntokn < QUILL_MAX_FDPC) {
+                out->tokn_story[out->ntokn] = rd16(q, e + 6);
+                out->tokn[out->ntokn++] = c;
+            }
             else if (!memcmp(q.p + e + 2, "STRS", 4))
                 out->strs = c;
             else if (!memcmp(q.p + e + 2, "SYID", 4))
@@ -683,13 +690,144 @@ static int same_fmt(const owf_charfmt *a, const owf_charfmt *b)
     return a->flags == b->flags && a->font == b->font && a->size == b->size && a->colour == b->colour;
 }
 
-/* Characters [from, to) of TEXT as a story's paragraphs, with their character runs. */
-static void make_story(reader *r, owf_story *story, span text, size_t from, size_t to)
+/* ---- Hyperlinks: TOKN (PUB-FORMAT.md, section 6.7) ----
+ * u32 n, u32 12, u32, then n + 1 u32 places in the story (the last its
+ * length); then n blocks of each link's properties, each holding only what
+ * changed from the link before (0x201 the link text's length, 0x202 its
+ * kind: 1 a web address, 3 a place in the publication, 4 an e-mail); then
+ * n blocks, each 0x200 the link's target in the table; then the table: u32
+ * the size of what follows its 12-byte head, u32 count, 12 bytes, count u32
+ * offsets from the offsets' start, and at each a u16 length and UTF-16. */
+
+typedef struct {
+    unsigned long from, to;      /* characters in the story */
+    char *href;                  /* UTF-8 */
+} tlink;
+
+#define MAX_LINKS 4096
+
+static char *link_target(span table, unsigned long count, unsigned long k)
+{
+    unsigned long off, len;
+    size_t at, end;
+    owf_buf b;
+    char *out;
+    if (k >= count || !has(table, 20 + 4 * k, 4))
+        return NULL;
+    off = rd32(table, 20 + 4 * k);
+    len = rd16(table, 20 + off);
+    if (!len || off > table.n || !has(table, 20 + off + 2, 2 * (size_t)len))
+        return NULL;
+    owf_buf_init(&b);
+    at = 20 + off + 2;
+    end = at + 2 * (size_t)len;
+    while (at < end)
+        put_utf16_char(&b, table, &at);
+    owf_buf_putc(&b, 0);
+    out = b.failed ? NULL : dup_text((const char *)b.data, b.length - 1);
+    owf_buf_free(&b);
+    return out;
+}
+
+/* A story's links, in order; 0 when there are none or they don't read. */
+static int read_links(reader *r, span t, unsigned long length, tlink **out)
+{
+    unsigned long n = rd32(t, 0), k, len = 0, kind = 0, count;
+    size_t at;
+    long *target;
+    tlink *links;
+    span table;
+    int made = 0;
+    *out = NULL;
+    if (!n || n > MAX_LINKS || !has(t, 12, 4 * (n + 1)))
+        return 0;
+    if (!(target = owf_malloc(n * sizeof *target)) || !(links = owf_calloc(n, sizeof *links))) {
+        owf_free(target);
+        r->failed = 1;
+        return 0;
+    }
+    at = 12 + 4 * (n + 1);
+    for (k = 0; k < 2 * n; k++) {            /* n property blocks, then n target blocks */
+        unsigned long bl = rd32(t, at);
+        span body;
+        size_t in = 0;
+        field f;
+        if (!has(t, at, 4) || bl < 4 || !has(t, at, bl))
+            goto done;
+        body = sub(t, at + 4, bl - 4);
+        if (k >= n)
+            target[k - n] = -1;
+        while (next_qfield(body, &in, &f) > 0) {
+            if (k < n && f.id == 0x201)
+                len = f.value;
+            else if (k < n && f.id == 0x202)
+                kind = f.value;
+            else if (k >= n && f.id == 0x200)
+                target[k - n] = (long)f.value;
+        }
+        if (k < n) {
+            links[k].from = rd32(t, 12 + 4 * k);
+            links[k].to = links[k].from + len;
+            if (links[k].to > rd32(t, 12 + 4 * (k + 1)) || links[k].to > length)
+                links[k].to = rd32(t, 12 + 4 * (k + 1)) < length ? rd32(t, 12 + 4 * (k + 1)) : length;
+            if (kind == 3)                   /* a place in the publication: kept as text for now */
+                links[k].to = links[k].from;
+        }
+        at += bl;
+    }
+    table = sub(t, at, t.n - at);
+    count = rd32(table, 4);
+    if (!has(table, 0, 20) || count > MAX_LINKS)
+        goto done;
+    for (k = 0; k < n && !r->failed; k++) {
+        if (k && links[k].from < links[k - 1].to)
+            break;                           /* places only go forward */
+        if (links[k].to <= links[k].from || target[k] < 0)
+            continue;
+        links[made] = links[k];
+        if (!(links[made].href = link_target(table, count, (unsigned long)target[k])))
+            continue;
+        made++;
+    }
+done:
+    owf_free(target);
+    if (!made) {
+        owf_free(links);
+        return 0;
+    }
+    *out = links;
+    return made;
+}
+
+static void free_links(tlink *links, int n)
+{
+    int i;
+    for (i = 0; i < n; i++)
+        owf_free(links[i].href);
+    owf_free(links);
+}
+
+/* The run's text, as a link when href is set. */
+static void put_run(owf_builder *b, owf_buf *run, const char *href)
+{
+    if (!run->length)
+        return;
+    if (href)
+        owf_builder_link_text(b, (const char *)run->data, run->length, href);
+    else
+        owf_builder_text(b, (const char *)run->data, run->length);
+    run->length = 0;
+}
+
+/* Characters [from, to) of TEXT as a story's paragraphs, with their character runs and links. */
+static void make_story(reader *r, owf_story *story, span text, size_t from, size_t to,
+                       const tlink *links, int nlinks)
 {
     owf_builder b;
     owf_buf run;
     size_t at = from * 2, end = to * 2;
-    int open = 0, chint = -1, phint = -1, style = 0, made_style = -1;
+    int open = 0, chint = -1, phint = -1, style = 0, made_style = -1, lk = 0;
+    const char *href = NULL;
     const trun *made_run = NULL;             /* want below is made for this run and style */
     owf_charfmt want;
     owf_builder_init(&b, r->pub->res, story);
@@ -713,11 +851,20 @@ static void make_story(reader *r, owf_story *story, span text, size_t from, size
             made_run = cr;
             made_style = style;
         }
-        if (!same_fmt(&want, &b.charfmt)) {
-            if (run.length) {
-                owf_builder_text(&b, (const char *)run.data, run.length);
-                run.length = 0;
+        {
+            const char *link = NULL;
+            unsigned long n = (unsigned long)(at / 2 - from);
+            while (lk < nlinks && links[lk].to <= n)
+                lk++;
+            if (lk < nlinks && links[lk].from <= n)
+                link = links[lk].href;
+            if (link != href) {
+                put_run(&b, &run, href);
+                href = link;
             }
+        }
+        if (!same_fmt(&want, &b.charfmt)) {
+            put_run(&b, &run, href);
             owf_builder_flush(&b);
             b.charfmt = want;
         }
@@ -726,10 +873,7 @@ static void make_story(reader *r, owf_story *story, span text, size_t from, size
             open = 1;
             continue;
         }
-        if (run.length) {
-            owf_builder_text(&b, (const char *)run.data, run.length);
-            run.length = 0;
-        }
+        put_run(&b, &run, href);
         at += 2;
         if (c == 0x0D) {                     /* a paragraph's end */
             owf_builder_end_para(&b);
@@ -744,8 +888,7 @@ static void make_story(reader *r, owf_story *story, span text, size_t from, size
         else
             owf_report_add(r->report, OWF_NOTE_APPROX, "Text control character U+%04X left out", c);
     }
-    if (run.length)
-        owf_builder_text(&b, (const char *)run.data, run.length);
+    put_run(&b, &run, href);
     if (run.failed)
         r->failed = 1;
     owf_buf_free(&run);
@@ -833,7 +976,15 @@ static void read_text(reader *r)
             owf_report_add(r->report, OWF_NOTE_APPROX, "A story runs past the end of the text; it is cut short");
             len = chars - pos;
         }
-        make_story(r, &r->pub->stories[r->pub->nstories++], qd.text, pos, pos + len);
+        {
+            tlink *links = NULL;
+            int nlinks = 0, k;
+            for (k = 0; k < qd.ntokn; k++)
+                if (qd.tokn_story[k] == i)
+                    nlinks = read_links(r, qd.tokn[k], (unsigned long)len, &links);
+            make_story(r, &r->pub->stories[r->pub->nstories++], qd.text, pos, pos + len, links, nlinks);
+            free_links(links, nlinks);
+        }
         pos += len;
     }
 
@@ -1057,7 +1208,7 @@ static int wordart_story(reader *r, span text)
     memset(st, 0, sizeof *st);
     while (len && !rd16(text, 2 * (len - 1)))
         len--;
-    make_story(r, st, text, 0, len);
+    make_story(r, st, text, 0, len, NULL, 0);
     return r->pub->nstories++;
 }
 

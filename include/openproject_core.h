@@ -225,6 +225,38 @@ int opj_link_path(const opj_view *v, const opj_doc *doc, int row, int link, opj_
 /* Draws what of the view crosses area (the view's own pixels) onto d. */
 void opj_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area);
 
+/* ---- The Resource Usage view (MS Project's): each resource's row, its assignments' rows under it, and
+ * the work of each in every period of the timescale's lower tier (a day, week, month or quarter, by the
+ * zoom); a period over the resource's max units is in red, and its ID has "!" (the resource sheet's). It
+ * uses a view's size, row height, zoom, origin, first row, selected row and font; its table is its own:
+ * ID, Resource Name and Work. ---- */
+#define OPJ_USAGE_ID_W 32
+#define OPJ_USAGE_NAME_W 180
+#define OPJ_USAGE_WORK_W 72
+enum { OPJ_UCOL_ID, OPJ_UCOL_NAME, OPJ_UCOL_WORK, OPJ_NUCOLS };
+/* The rows: every resource, each followed by its assignments in the order they were made. */
+int opj_usage_rows(const opj_doc *doc);
+/* Row's resource, and its assignment (-1: the resource's own row). 0 when there is no such row. */
+int opj_usage_row(const opj_doc *doc, int row, int *resource, int *assign);
+const char *opj_usage_column_title(int column);
+/* A table cell: the resource's ID, name and work (the resource sheet's), or for an assignment "", its
+ * task's name and its work. "" out of range. */
+void opj_usage_cell_text(const opj_doc *doc, int row, int column, char *out, size_t size);
+/* v as the usage view draws it: its table's width in place of the Gantt view's columns, so opj_view_x,
+ * opj_view_time, opj_chart_left and opj_row_y give the usage view's places. */
+void opj_usage_view(const opj_view *v, opj_view *usage);
+void opj_usage_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area);
+/* The task edits, which act on the Gantt chart's selected task, from the Edit menu or a key. Resource
+ * Usage hides that selection, so none of them runs while it shows. */
+enum { OPJ_EDIT_NONE = -1, OPJ_EDIT_CELL, OPJ_EDIT_INSERT, OPJ_EDIT_DELETE, OPJ_EDIT_INDENT, OPJ_EDIT_OUTDENT,
+       OPJ_EDIT_LINK, OPJ_EDIT_UNLINK, OPJ_NEDITS };
+/* The edit a key in the window asks for: Return the cell, Del the task's deletion, Tab indent (shift:
+ * outdent). OPJ_EDIT_NONE for any other key. */
+int opj_edit_for_key(int key, int shift);
+/* Why edit can't run with usage (1: Resource Usage shows, 0: the Gantt chart), as the status line says it;
+ * NULL when it may run (OPJ_EDIT_NONE always may). */
+const char *opj_edit_refused(int usage, int edit);
+
 /* ---- Printing the Gantt view: pages down, then across, as MS Project prints ----
  * The first page across holds the table and the start of the chart; the pages after it hold more of the
  * chart (to a day past the plan's finish) with no table. Every page has the timescale at its top and a
@@ -244,6 +276,21 @@ int opj_print_page_view(const opj_print *pr, int page, opj_view *v);
 /* Draws a page onto d (sized as the page). */
 void opj_print_draw(oldraw *d, const opj_print *pr, const opj_doc *doc, int page);
 
+/* ---- The printed Gantt view as a PDF (src/project/opj_pdf.c) ----
+ * Each page opj_print_layout lays out, drawn through an oldraw target that writes into libowf's page PDF
+ * writer (owf_pdf.h): A4 landscape, a 1 cm margin, OPJ_PDF_TWIPS twips a pixel, text in PDF's standard fonts,
+ * so it stays searchable. proto gives the columns, zoom and baselines; the font is the paper's own, Helvetica
+ * at OPJ_PDF_FONT_PX pixels in rows OPJ_PDF_ROW high, whatever the screen's. */
+#define OPJ_PDF_PAGE_W 16838                  /* A4 landscape, twips */
+#define OPJ_PDF_PAGE_H 11906
+#define OPJ_PDF_MARGIN 567                    /* 1 cm */
+#define OPJ_PDF_TWIPS 12                      /* a pixel: 0.6 pt */
+#define OPJ_PDF_FONT_PX 12                    /* 7.2 pt */
+#define OPJ_PDF_ROW 17
+/* The PDF, from malloc (owf_free it), and its page count in *pages (may be NULL). OWF_OK; OWF_ERR_MEMORY;
+ * OWF_ERR_FORMAT when the plan has no tasks or a page is too small for it. */
+int opj_pdf_write(const opj_doc *doc, const opj_view *proto, unsigned char **data, size_t *length, int *pages);
+
 /* What is at a point. */
 enum { OPJ_HIT_NONE, OPJ_HIT_COLUMN_TITLE, OPJ_HIT_TIMESCALE, OPJ_HIT_CELL, OPJ_HIT_SPLIT, OPJ_HIT_BAR, OPJ_HIT_CHART };
 typedef struct {
@@ -255,7 +302,7 @@ typedef struct {
 void opj_hit_test(const opj_view *v, const opj_doc *doc, int x, int y, opj_hit *hit);
 
 /* ---- ARexx (opj_rexx.c): the plan's commands of the GFOPENPROJECT port ----
- * The app answers VERSION, ACTIVATE, DEACTIVATE, FAULT, PRINT and QUIT itself and hands every other
+ * The app answers VERSION, ACTIVATE, DEACTIVATE, FAULT, PRINT, VIEW and QUIT itself and hands every other
  * command here. Arguments as a ReadArgs template (quotes, KEYWORD=value or KEYWORD value, /S switches);
  * rows and resources are numbered from 1, as the sheets' ID columns. Return codes as every Open app's
  * port: 0 done, 5 not possible now, 10 an error, 20 an unknown command or out of memory; on any but 0,
@@ -270,12 +317,17 @@ typedef struct {
     char file[256];                      /* the plan's file, "" when it has none */
     char lasterror[256];
     unsigned long docs;                  /* bumped each time NEW or OPEN replaces doc: a new plan, even at the old address */
+    const opj_view *view;                /* the window's view, whose columns and zoom EXPORT FORMAT PDF prints;
+                                          * NULL: a fresh one at days zoom */
 } opj_rexx;
 
 /* A command, its answer into result (cut to size, "" when it has none). */
 int opj_rexx_command(opj_rexx *rx, const char *command, char *result, size_t size);
 /* The file format a name's extension asks for: .xml MSPDI, .csv CSV, else .gfproj. */
 int opj_rexx_format(const char *file);
+/* EXPORT's format for the printed Gantt view as a PDF (FORMAT PDF, or a .pdf name): not a plan file, so
+ * SAVE and SAVEAS never write it. */
+#define OPJ_EXPORT_PDF 100
 
 #ifdef __cplusplus
 }

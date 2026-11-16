@@ -1355,6 +1355,91 @@ static void test_undo(void)
     ob_close(p);
 }
 
+/* ARexx row commands (ob_rexx_rows): what GFOpenBase's port does with rows */
+static int rexx(ob_project *p, ob_int current, const char *cmd, char *out, size_t size, ob_int *row)
+{
+    return ob_rexx_rows(p, "Customers", current, cmd, out, size, row);
+}
+
+static void test_rexx_rows(void)
+{
+    ob_project *p = fresh("rexxrows.oadb");
+    static ob_table t;
+    char out[400], cmd[200], small[8];
+    ob_int row, k, k2;
+    if (!p) return;
+    customers(&t);
+    CHECK(ob_table_create(p, &t), "Customers: %s", ob_error(p));
+
+    CHECK(rexx(p, 0, "GETFIELDS", out, sizeof out, NULL) == 0
+          && !strcmp(out, "\"id\" \"Name\" \"Town\" \"Email\" \"Joined\" \"Member\" \"Credit\""), "GETFIELDS: %s", out);
+    CHECK(rexx(p, 0, "addrow \"Name=Zoe Lee\" town=Hull Member=\"Yes\" 'Credit=12.50' Joined=2026-11-15", out, sizeof out, &row) == 0,
+          "ADDROW: %s", out);
+    k = (ob_int)atoll(out);
+    CHECK(k > 0 && row == k, "its key: %s", out);
+    snprintf(cmd, sizeof cmd, "GETROW KEY %lld", (long long)k);
+    CHECK(rexx(p, 0, cmd, out, sizeof out, &row) == 0 && row == k, "GETROW: %s", out);
+    {
+        char want[100];
+        snprintf(want, sizeof want, "%lld\tZoe Lee\tHull\t\t2026-11-15\tYes\t12.50", (long long)k);
+        CHECK(!strcmp(out, want), "every value, tabs between:\n%s\n%s", out, want);
+    }
+    snprintf(cmd, sizeof cmd, "GETROW KEY=%lld FIELD town", (long long)k);
+    CHECK(rexx(p, 0, cmd, out, sizeof out, NULL) == 0 && !strcmp(out, "Hull"), "one field, any case: %s", out);
+    snprintf(cmd, sizeof cmd, "GETROW FIELD Email KEY %lld", (long long)k);
+    CHECK(rexx(p, 0, cmd, out, sizeof out, NULL) == 0 && !out[0], "an empty one: %s", out);
+    CHECK(rexx(p, k, "GETROW FIELD Name", out, sizeof out, NULL) == 0 && !strcmp(out, "Zoe Lee"), "KEY left out: the row chosen");
+
+    /* the defaults fill what's left out */
+    CHECK(rexx(p, 0, "ADDROW Name=Al", out, sizeof out, NULL) == 0, "ADDROW Al: %s", out);
+    k2 = (ob_int)atoll(out);
+    snprintf(cmd, sizeof cmd, "GETROW KEY %lld FIELD Town", (long long)k2);
+    CHECK(rexx(p, 0, cmd, out, sizeof out, NULL) == 0 && !strcmp(out, "Leeds"), "Town's default: %s", out);
+
+    snprintf(cmd, sizeof cmd, "CHANGEROW KEY %lld Name=\"Zoe Ann\" \"Town\"=York", (long long)k);
+    CHECK(rexx(p, 0, cmd, out, sizeof out, &row) == 0 && !strcmp(out, "OK") && row == k, "CHANGEROW: %s", out);
+    CHECK(rexx(p, k, "GETROW FIELD Name", out, sizeof out, NULL) == 0 && !strcmp(out, "Zoe Ann"), "changed: %s", out);
+    CHECK(rexx(p, k, "CHANGEROW Email=", out, sizeof out, NULL) == 0, "emptied: %s", out);
+    CHECK(rexx(p, k, "CHANGEROW Credit=lots", out, sizeof out, NULL) == 10 && out[0], "a bad value: the core's reason: %s", out);
+    CHECK(rexx(p, k, "GETROW FIELD Credit", out, sizeof out, NULL) == 0 && !strcmp(out, "12.50"), "unchanged: %s", out);
+
+    /* refused, with the reason */
+    CHECK(rexx(p, 0, "ADDROW", out, sizeof out, NULL) == 10 && strstr(out, "Field=Value"), "nothing to add: %s", out);
+    CHECK(rexx(p, 0, "ADDROW Name", out, sizeof out, NULL) == 10 && strstr(out, "needs a value"), "no value: %s", out);
+    CHECK(rexx(p, 0, "ADDROW Nosuch=1", out, sizeof out, NULL) == 10 && strstr(out, "has no field Nosuch"), "no field: %s", out);
+    CHECK(rexx(p, 0, "ADDROW Town=Hull", out, sizeof out, NULL) == 10 && out[0], "Name is required: %s", out);
+    CHECK(rexx(p, 0, "GETROW", out, sizeof out, NULL) == 5 && strstr(out, "No row is chosen"), "no row: %s", out);
+    CHECK(rexx(p, 0, "GETROW KEY 99999", out, sizeof out, NULL) == 5 && strstr(out, "No row 99999"), "no such row: %s", out);
+    CHECK(rexx(p, 0, "GETROW KEY abc", out, sizeof out, NULL) == 10, "KEY abc: %s", out);
+    CHECK(rexx(p, k, "GETROW FIELD Nosuch", out, sizeof out, NULL) == 10, "FIELD Nosuch: %s", out);
+    CHECK(rexx(p, k, "GETROW Name=x", out, sizeof out, NULL) == 10 && strstr(out, "takes KEY and FIELD"), "GETROW pairs: %s", out);
+    CHECK(rexx(p, 0, "CHANGEROW KEY 99999 Name=x", out, sizeof out, NULL) == 5, "change no such row: %s", out);
+    CHECK(rexx(p, k, "CHANGEROW", out, sizeof out, NULL) == 10, "nothing to change: %s", out);
+    CHECK(rexx(p, k, "GETROW", small, sizeof small, NULL) == 5, "too long for the answer: %s", small);
+    CHECK(rexx(p, 0, "ROWS", out, sizeof out, NULL) == -1 && rexx(p, 0, "GETROWS", out, sizeof out, NULL) == -1, "not one of these");
+    CHECK(ob_rexx_rows(p, NULL, 0, "GETFIELDS", out, sizeof out, NULL) == 5 && strstr(out, "No table"), "no table: %s", out);
+    CHECK(ob_rexx_rows(p, "Nosuch", 0, "GETFIELDS", out, sizeof out, NULL) == 10, "no such table: %s", out);
+
+    /* a field named Key goes in quotes */
+    {
+        static ob_table kt;
+        ob_table_init(&kt, "Keys");
+        ob_table_add_field(&kt, "Key", OB_TEXT);
+        CHECK(ob_table_create(p, &kt), "Keys: %s", ob_error(p));
+        CHECK(ob_rexx_rows(p, "Keys", 0, "ADDROW \"Key=A1\"", out, sizeof out, &row) == 0, "Key in quotes: %s", out);
+        CHECK(ob_rexx_rows(p, "Keys", row, "GETROW FIELD key", out, sizeof out, NULL) == 0 && !strcmp(out, "A1"), "it's there: %s", out);
+    }
+
+    snprintf(cmd, sizeof cmd, "DELETEROW KEY %lld", (long long)k);
+    CHECK(rexx(p, 0, cmd, out, sizeof out, &row) == 0 && row == k, "DELETEROW: %s", out);
+    CHECK(rexx(p, k, "GETROW", out, sizeof out, NULL) == 5, "gone");
+    CHECK(rexx(p, k, "DELETEROW", out, sizeof out, NULL) == 5, "not twice: %s", out);
+    CHECK(rexx(p, k2, "DELETEROW FIELD x", out, sizeof out, NULL) == 10 && strstr(out, "takes KEY"), "DELETEROW FIELD: %s", out);
+    CHECK(ob_row_total(p, "Customers") == 1, "Al is left");
+    CHECK(ob_undo(p) && ob_row_total(p, "Customers") == 2, "the delete undoes: %s", ob_error(p));
+    ob_close(p);
+}
+
 static void test_csv_options(void)
 {
     ob_project *p = fresh("csvopt.oadb");
@@ -1637,6 +1722,99 @@ static void shop_orders(ob_project *p)
     CHECK(ob_table_create(p, &o), "Orders: %s", ob_error(p));
     for (i = 0; i < sizeof rows / sizeof rows[0]; i++)
         CHECK(ob_row_add(p, "Orders", 3, f, rows[i], NULL), "order %u: %s", i, ob_error(p));
+}
+
+/* Joins drawn in the query designer: inner, left and right; what a saved
+ * query keeps; what is refused. Orders 1 1 2 3 5: bob (4) has none. */
+static void test_query_joins(void)
+{
+    ob_project *p = fresh("joins.oadb");
+    static ob_query q, back;
+    static ob_table nt;
+    int i;
+    if (!p) return;
+    five_customers(p);
+    shop_orders(p);
+    ob_table_init(&nt, "Notes");
+    ob_table_add_field(&nt, "Text", OB_TEXT);
+    CHECK(ob_table_create(p, &nt), "Notes: %s", ob_error(p));
+
+    ob_query_init(&q, "Who bought");
+    ob_query_add_table(&q, "Customers");
+    ob_query_add_table(&q, "Orders");
+    ob_query_add_column(&q, "Customers", "Name");
+    ob_query_add_column(&q, "Orders", "Total");
+    CHECK(ob_query_total(p, &q, NULL) == 5, "no join drawn: by the relationship, 5");
+
+    /* the relationship drawn as a join */
+    CHECK(ob_query_relation_joins(p, &q) == 1 && q.njoins == 1, "one drawn: %s", ob_error(p));
+    CHECK(!strcmp(q.joins[0].left, "Orders") && !strcmp(q.joins[0].lfield, "Customer") && !strcmp(q.joins[0].right, "Customers")
+          && !strcmp(q.joins[0].rfield, "id") && q.joins[0].kind == OB_JOIN_INNER,
+          "Orders.Customer = Customers.id: %s.%s %s.%s", q.joins[0].left, q.joins[0].lfield, q.joins[0].right, q.joins[0].rfield);
+    CHECK(ob_query_relation_joins(p, &q) == 0 && q.njoins == 1, "not twice");
+    CHECK(strstr(qsql(p, &q), " FROM \"Customers\" JOIN \"Orders\" ON \"Orders\".\"Customer\" = \"Customers\".\"id\""), "inner: %s", qsql(p, &q));
+    CHECK(ob_query_total(p, &q, NULL) == 5, "inner: 5");
+
+    /* every customer: a left join from Customers, or a right one to it */
+    ob_query_remove_join(&q, 0);
+    CHECK(q.njoins == 0, "removed");
+    CHECK(ob_query_add_join(&q, "Customers", "id", "Orders", "Customer", OB_JOIN_LEFT) == 0, "left join");
+    CHECK(strstr(qsql(p, &q), " LEFT JOIN \"Orders\" ON \"Customers\".\"id\" = \"Orders\".\"Customer\""), "left: %s", qsql(p, &q));
+    CHECK(ob_query_total(p, &q, NULL) == 6, "left: 6 rows, bob with none: %d", (int)ob_query_total(p, &q, NULL));
+    q.joins[0].kind = OB_JOIN_RIGHT;
+    CHECK(ob_query_total(p, &q, NULL) == 5, "right (every order): 5");
+    ob_query_remove_join(&q, 0);
+    ob_query_add_join(&q, "Orders", "Customer", "Customers", "id", OB_JOIN_RIGHT);
+    CHECK(strstr(qsql(p, &q), " LEFT JOIN \"Orders\""), "right with Orders on the left, turned round: %s", qsql(p, &q));
+    CHECK(ob_query_total(p, &q, NULL) == 6, "6 again");
+    /* Orders first: the new table is the join's right side, kept as written */
+    snprintf(q.tables[0], sizeof q.tables[0], "%s", "Orders");
+    snprintf(q.tables[1], sizeof q.tables[1], "%s", "Customers");
+    CHECK(strstr(qsql(p, &q), " FROM \"Orders\" RIGHT JOIN \"Customers\""), "Orders first: %s", qsql(p, &q));
+    CHECK(ob_query_total(p, &q, NULL) == 6, "Orders first, still 6");
+
+    /* kept and read back */
+    CHECK(ob_query_save(p, &q), "saved: %s", ob_error(p));
+    CHECK(ob_query_get(p, "Who bought", &back) && !back.sql_only && back.njoins == 1 && back.joins[0].kind == OB_JOIN_RIGHT
+          && !strcmp(back.joins[0].left, "Orders") && !strcmp(back.joins[0].rfield, "id"), "read back: %d joins", back.njoins);
+    CHECK(back.ntables == 2 && back.ncolumns == 2 && ob_query_total(p, &back, NULL) == 6, "runs the same");
+    back.njoins = 0;
+    CHECK(ob_query_save(p, &back) && ob_query_get(p, "Who bought", &back) && back.njoins == 0 && ob_query_total(p, &back, NULL) == 5,
+          "no joins: kept as before, by the relationship");
+
+    /* refused */
+    CHECK(ob_query_add_join(&q, "Orders", "Customer", "Customers", "id", OB_JOIN_INNER) == -1, "the same fields twice");
+    CHECK(ob_query_add_join(&q, "customers", "ID", "orders", "customer", OB_JOIN_INNER) == -1, "or turned round, any case");
+    CHECK(ob_query_add_join(&q, "Orders", "Total", "orders", "Weight", OB_JOIN_INNER) == -1, "a table to itself");
+    CHECK(ob_query_add_join(&q, "Orders", "", "Customers", "id", OB_JOIN_INNER) == -1, "no field");
+    CHECK(ob_query_add_join(&q, "Orders", "Total", "Customers", "Credit", OB_JOINS) == -1, "no kind");
+    i = ob_query_add_join(&q, "Orders", "Weight", "Customers", "Nope", OB_JOIN_INNER);
+    CHECK(i == 1 && !ob_query_check(p, &q) && strstr(ob_error(p), "Customers.Nope, which isn't there"), "a field not there: %s", ob_error(p));
+    ob_query_remove_join(&q, 1);
+    i = ob_query_add_join(&q, "Orders", "Weight", "Notes", "Text", OB_JOIN_INNER);
+    CHECK(!ob_query_check(p, &q) && strstr(ob_error(p), "Notes, which isn't in the query"), "a table not in it: %s", ob_error(p));
+    ob_query_remove_join(&q, i);
+    ob_query_add_table(&q, "Notes");
+    CHECK(!ob_query_check(p, &q) && strstr(ob_error(p), "Notes isn't joined"), "a table not joined: %s", ob_error(p));
+    CHECK(ob_query_relation_joins(p, &q) == 0, "no relationship to Notes");
+    /* Notes joined to the second table: placed after it */
+    ob_query_add_join(&q, "Notes", "Text", "Customers", "Name", OB_JOIN_LEFT);
+    CHECK(ob_query_check(p, &q), "three tables: %s", ob_error(p));
+    CHECK(strstr(qsql(p, &q), "RIGHT JOIN \"Customers\" ON \"Orders\".\"Customer\" = \"Customers\".\"id\" RIGHT JOIN \"Notes\" ON \"Notes\".\"Text\" = \"Customers\".\"Name\""),
+          "chained: %s", qsql(p, &q));
+    /* two joins between two tables: ON both */
+    ob_query_add_join(&q, "Customers", "Town", "Notes", "Text", OB_JOIN_LEFT);
+    CHECK(strstr(qsql(p, &q), "\"Notes\".\"Text\" = \"Customers\".\"Name\" AND \"Customers\".\"Town\" = \"Notes\".\"Text\""), "ON both: %s", qsql(p, &q));
+    ob_query_remove_table(&q, 2);
+    CHECK(q.ntables == 2 && q.njoins == 1 && !strcmp(q.joins[0].right, "Customers"), "Notes out, its joins with it");
+    for (i = 0; q.njoins < OB_QUERY_JOINS && i < 40; i++) {
+        char f[16];
+        snprintf(f, sizeof f, "F%d", i);
+        ob_query_add_join(&q, "Orders", f, "Customers", "id", OB_JOIN_INNER);
+    }
+    CHECK(q.njoins == OB_QUERY_JOINS && ob_query_add_join(&q, "Orders", "X", "Customers", "Y", OB_JOIN_INNER) == -1, "full");
+    CHECK(!strcmp(ob_join_name(OB_JOIN_LEFT), "Left") && !strcmp(ob_join_name(OB_JOINS), ""), "names");
+    ob_close(p);
 }
 
 static void test_queries(void)
@@ -2006,7 +2184,9 @@ int main(int argc, char **argv)
     test_csv();
     test_undo();
     test_csv_options();
+    test_rexx_rows();
     test_queries();
+    test_query_joins();
     test_forms();
     test_not_projects();
     test_cut_short();

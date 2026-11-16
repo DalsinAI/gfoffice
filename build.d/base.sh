@@ -8,8 +8,11 @@
 OPENSQLITE=${OPENSQLITE:-$HERE/../gfopensqlite/out-soft-st}
 if [ -f "$OPENSQLITE/lib/libsqlite3.a" ] && [ -f "$OPENSQLITE/include/sqlite3.h" ]; then
     # shellcheck disable=SC2086
-    "$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign -I"$HERE/include" -I"$HERE/app" \
-        -I"$OPENSQLITE/include" "$HERE"/src/base/*.c "$HERE/app/openbase.c" "$HERE/app/ow_stack.c" \
+    # Reports (4.3) write documents through libowf: GFOpenWrite's part of it ($OWFSRC_DOCS and $OWF_WRITE,
+    # so OWF=library uses owfwrite.library as GFOpenWrite does).
+    "$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_WRITE -I"$HERE/include" -I"$HERE/app" \
+        -I"$OPENSQLITE/include" "$HERE"/src/base/*.c "$HERE"/src/base/report/*.c $OWFSRC_DOCS \
+        "$HERE/app/openbase.c" "$HERE/app/ob_reportwin.c" "$HERE/app/ow_stack.c" \
         -L"$OPENSQLITE/lib" -lsqlite3 -lm -lamiga -o "$OUT/GFOpenBase"
     echo "GFOpenBase: $(wc -c < "$OUT/GFOpenBase") bytes"
 else

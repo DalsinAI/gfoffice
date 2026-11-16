@@ -33,6 +33,11 @@ int owf_note_number(const owf_doc *doc, int index);
 void owf_note_mark_text(const owf_doc *doc, int index, char *out, size_t size);
 /* A number in lower case roman (i, ii, iv), 1 to 3999; others in digits. */
 void owf_note_roman(int number, char *out, size_t size);
+/* 1.12.1: a note's number in a format (owf_note_format; DEFAULT: endnote's i, ii, else 1, 2), UTF-8 */
+void owf_note_format_number(int format, int endnote, int number, char *out, size_t size);
+/* 1.12.1: a kind's format as the page sets it, never DEFAULT, and its first number */
+int owf_note_kind_format(const owf_doc *doc, int endnote);
+int owf_note_kind_start(const owf_doc *doc, int endnote);
 
 /* Where note index's mark is: 1 and its story (owf_doc_story's n), paragraph and run, or 0. Any out pointer
  * may be NULL. */
