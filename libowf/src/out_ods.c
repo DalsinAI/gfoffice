@@ -1066,6 +1066,53 @@ static int val_at(const ods_out *w, const owf_sheet *sh, unsigned long row, unsi
     return v ? w->val_base + (int)(v - sh->validations) + 1 : 0;
 }
 
+/* "['Other.xlsx'#": the other books' formulas name them by where they are, as their value tables do. */
+static void put_quoted_link(owf_buf *b, const char *s)
+{
+    for (; *s; s++) {
+        owf_buf_putc(b, *s);
+        if (*s == '\'')
+            owf_buf_putc(b, '\'');
+    }
+}
+
+static char *with_targets(ods_out *w, char *of)
+{
+    int i;
+    for (i = 0; of && i < w->book->nextbooks; i++) {
+        const owf_extbook *eb = &w->book->extbooks[i];
+        owf_buf needle, out;
+        const char *p, *hit;
+        unsigned char *data;
+        size_t length;
+        if (!eb->target || !strcmp(eb->target, eb->name))
+            continue;
+        owf_buf_init(&needle);
+        owf_buf_puts(&needle, "['");
+        put_quoted_link(&needle, eb->name);
+        owf_buf_puts(&needle, "'#");
+        owf_buf_putc(&needle, 0);
+        if (needle.failed || !strstr(of, (const char *)needle.data)) {
+            owf_buf_free(&needle);
+            continue;
+        }
+        owf_buf_init(&out);
+        for (p = of; (hit = strstr(p, (const char *)needle.data)) != NULL; p = hit + needle.length - 1) {
+            owf_buf_put(&out, p, (size_t)(hit - p));
+            owf_buf_puts(&out, "['");
+            put_quoted_link(&out, eb->target);
+            owf_buf_puts(&out, "'#");
+        }
+        owf_buf_puts(&out, p);
+        owf_buf_free(&needle);
+        free(of);
+        of = owf_buf_take(&out, &data, &length) == OWF_OK ? (char *)data : NULL;
+        if (!of)
+            w->failed = 1;
+    }
+    return of;
+}
+
 /* A cell's or a name's formula for table:formula or table:expression. OpenFormula when it holds the
  * formula; Excel's own text under msoxl: (which LibreOffice and libowf read) when the formula names
  * another workbook's name or one sheet's own ("Other.xls!Rate", "Sheet2!Rate"): of: would keep only
@@ -1073,7 +1120,7 @@ static int val_at(const ods_out *w, const owf_sheet *sh, unsigned long row, unsi
 static char *table_formula(ods_out *w, const char *excel)
 {
     int lost = 0;
-    char *of = owf_excel_to_of_lossy(excel, &lost);
+    char *of = with_targets(w, owf_excel_to_of_lossy(excel, &lost));
     if (of && lost) {
         owf_buf b;
         unsigned char *data;
@@ -1393,7 +1440,7 @@ static void put_address(ods_out *w, owf_buf *b, const char *sheet, unsigned row,
 static char *of_expr(ods_out *w, const char *excel)
 {
     int lost = 0;
-    char *of = excel ? owf_excel_to_of_lossy(excel, &lost) : NULL;
+    char *of = excel ? with_targets(w, owf_excel_to_of_lossy(excel, &lost)) : NULL;
     if (lost)
         owf_report_add(w->report, OWF_NOTE_APPROX, "Names of one sheet or of another workbook in formulas lost their sheet or workbook: ODF formulas have no such names");
     if (of && !strncmp(of, "of:=", 4))
@@ -3009,6 +3056,92 @@ static void put_pivots(ods_out *w, owf_buf *b)
         owf_buf_puts(b, "</table:data-pilot-tables>");
 }
 
+/* ---- Other books' last values: a table each of their sheets, as LibreOffice keeps them ---- */
+
+static void put_link_cell(ods_out *w, owf_buf *b, const owf_cell *c)
+{
+    char num[48];
+    switch (c->type) {
+    case OWF_VALUE_NUMBER:
+        owf_number_text(c->number, num);
+        owf_buf_printf(b, "<table:table-cell office:value-type=\"float\" office:value=\"%s\"/>", num);
+        break;
+    case OWF_VALUE_BOOL:
+        owf_buf_printf(b, "<table:table-cell office:value-type=\"boolean\" office:boolean-value=\"%s\"/>",
+                       c->number ? "true" : "false");
+        break;
+    case OWF_VALUE_ERROR:
+        owf_buf_printf(b, "<table:table-cell office:value-type=\"string\" office:string-value=\"\" "
+                          "calcext:value-type=\"error\"><text:p>%s</text:p></table:table-cell>", owf_xl_error_text(c->error));
+        break;
+    default:
+        owf_buf_puts(b, "<table:table-cell office:value-type=\"string\">");
+        put_paragraphs(w, b, c->text);
+        owf_buf_puts(b, "</table:table-cell>");
+        break;
+    }
+}
+
+static void put_link_tables(ods_out *w, owf_buf *b)
+{
+    int i, k, c;
+    for (i = 0; i < w->book->nextbooks; i++) {
+        const owf_extbook *eb = &w->book->extbooks[i];
+        const char *target = eb->target ? eb->target : eb->name;
+        for (k = 0; k < eb->nsheets; k++) {
+            const owf_sheet *sh = &eb->sheets[k];
+            unsigned long row = 0, col = 0, cols = 1;
+            int open = 0;
+            owf_buf name;
+            for (c = 0; c < sh->ncells; c++)
+                if (sh->cells[c].col + 1ul > cols)
+                    cols = sh->cells[c].col + 1ul;
+            owf_buf_init(&name);
+            owf_buf_putc(&name, '\'');
+            put_quoted_link(&name, target);
+            owf_buf_puts(&name, "'#");
+            owf_buf_puts(&name, sh->name);
+            owf_buf_putc(&name, 0);
+            if (name.failed) {
+                w->failed = 1;
+                owf_buf_free(&name);
+                return;
+            }
+            owf_buf_puts(b, "<table:table table:name=\"");
+            attr(w, b, (const char *)name.data);
+            owf_buf_free(&name);
+            owf_buf_puts(b, "\"><table:table-source xlink:type=\"simple\" xlink:href=\"");
+            attr(w, b, target);
+            owf_buf_puts(b, "\" table:table-name=\"");
+            attr(w, b, sh->name);
+            owf_buf_printf(b, "\" table:mode=\"copy-results-only\"/><table:table-column table:number-columns-repeated=\"%lu\"/>",
+                           cols);
+            for (c = 0; c < sh->ncells; c++) {
+                const owf_cell *cell = &sh->cells[c];
+                if (cell->type == OWF_VALUE_EMPTY)
+                    continue;
+                if (!open || cell->row + 1ul != row) {   /* row: the next row to write */
+                    if (open)
+                        owf_buf_puts(b, "</table:table-row>");
+                    if (cell->row > row)
+                        owf_buf_printf(b, "<table:table-row table:number-rows-repeated=\"%lu\"><table:table-cell/>"
+                                          "</table:table-row>", cell->row - row);
+                    owf_buf_puts(b, "<table:table-row>");
+                    open = 1;
+                    row = cell->row + 1ul;
+                    col = 0;
+                }
+                if (cell->col > col)
+                    owf_buf_printf(b, "<table:table-cell table:number-columns-repeated=\"%lu\"/>", cell->col - col);
+                put_link_cell(w, b, cell);
+                col = cell->col + 1ul;
+            }
+            owf_buf_puts(b, open ? "</table:table-row>" : "<table:table-row><table:table-cell/></table:table-row>");
+            owf_buf_puts(b, "</table:table>");
+        }
+    }
+}
+
 /* ---- Scenarios: each a scenario table after its sheet, holding the scenario's cells ---- */
 
 static void put_scenario_cell(ods_out *w, owf_buf *b, const char *input)
@@ -3197,6 +3330,7 @@ static void body(ods_out *w, owf_buf *b)
     if (!w->book->nsheets)
         owf_buf_puts(b, "<table:table table:name=\"Sheet1\"><table:table-column/><table:table-row><table:table-cell/>"
                         "</table:table-row></table:table>");
+    put_link_tables(w, b);
     put_names(w, b, -1);
     put_autofilters(w, b);
     put_pivots(w, b);

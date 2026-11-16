@@ -2689,30 +2689,6 @@ static void external_cell(xlsx *x, owf_sheet *sheet, const owf_xml_node *cell, o
     }
 }
 
-/* The name formulas give a book: the last part of its path, "%20" and the
- * like decoded. */
-static char *external_name(xlsx *x, const char *target)
-{
-    const char *p, *start = target;
-    char *name;
-    size_t i, n = 0;
-    for (p = target; *p; p++)
-        if (*p == '/' || *p == '\\' || *p == ':')
-            start = p + 1;
-    if (!*start || !(name = copy(x, start, strlen(start))))
-        return NULL;
-    for (i = 0; name[i]; i++) {
-        if (name[i] == '%' && hex_digit(name[i + 1]) >= 0 && hex_digit(name[i + 2]) >= 0) {
-            name[n++] = (char)(hex_digit(name[i + 1]) * 16 + hex_digit(name[i + 2]));
-            i += 2;
-        } else {
-            name[n++] = name[i];
-        }
-    }
-    name[n] = 0;
-    return name;
-}
-
 /* Another book, from an externalLink part: its name as formulas give it
  * (NULL for a link that is not to a book: DDE, OLE), and in the model its
  * target, sheets and the values the file last saw. */
@@ -2728,7 +2704,7 @@ static char *external_book(xlsx *x, const char *part)
     eb = main_child(owf_xml_root(xml), "externalBook");
     read_rels(x->zip, part, &r);
     it = eb ? rel_by_id(&r, rel_attr(eb, "id")) : NULL;
-    if (it && (name = external_name(x, it->target))) {
+    if (it && (name = owf_link_name(it->target, strlen(it->target))) != NULL) {
         owf_extbook *book = owf_book_add_extbook(x->book, name, it->target);
         owf_sheet **sheets = NULL;
         int count = count_children(main_child(eb, "sheetNames"), "sheetName"), i = 0;

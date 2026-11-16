@@ -241,6 +241,7 @@ typedef struct {
     ods_array *arrays;
     int narrays, caparrays;
     int default_width, default_height;   /* from libowf's own attributes, or -1 */
+    char *link_href, *link_sheet;        /* a table:table-source copy-results-only: another book's last values */
 
     /* the cell being read */
     int in_cell, skip_depth;
@@ -1562,8 +1563,31 @@ static void end_table(ods *o)
         free(o->arrays[i].text);
     o->narrays = 0;
     rule_table(o);
+    if (o->link_href && o->link_sheet && !o->failed && owf_book_link_last_sheet(o->book, o->link_href, o->link_sheet) < 0)
+        o->failed = 1;
+    free(o->link_href);
+    free(o->link_sheet);
+    o->link_href = o->link_sheet = NULL;
     o->sheet = NULL;
     o->table_depth = 0;
+}
+
+/* LibreOffice keeps another book's values as a table of its own, named "'URL'#Sheet1", holding a
+ * table:table-source in mode copy-results-only: the model keeps them with that book, not as a sheet. */
+static void table_source(ods *o, const owf_xml_event *e)
+{
+    const char *mode = ev(e, NS_TABLE, "mode"), *href = ev(e, NS_XLINK, "href");
+    const char *sheet = ev(e, NS_TABLE, "table-name");
+    if (!mode || strcmp(mode, "copy-results-only") || !href || !*href || o->link_href) {
+        owf_report_add(o->report, OWF_NOTE_LOST, "Sheets linked to other files keep their cells but not their link");
+        return;
+    }
+    if (!sheet || !*sheet) {
+        const char *hash = strrchr(o->sheet->name, '#');
+        sheet = hash && hash[1] ? hash + 1 : o->sheet->name;
+    }
+    o->link_href = copy(o, href);
+    o->link_sheet = copy(o, sheet);
 }
 
 /* ---- Named ranges and expressions ---- */
@@ -3881,6 +3905,8 @@ static void body_start(ods *o, const owf_xml_event *e)
             named(o, e, 0);
         } else if (!strcmp(n, "named-expression")) {
             named(o, e, 1);
+        } else if (!strcmp(n, "table-source")) {
+            table_source(o, e);
         } else if (!strcmp(n, "shapes")) {
             o->in_shapes = 1;                    /* its frames: from the sheet's corner */
         } else if (!strcmp(n, "table") && o->sheet) {
@@ -4473,6 +4499,8 @@ static void free_reader(ods *o)
     }
     free(o->scens);
     free(o->active);
+    free(o->link_href);
+    free(o->link_sheet);
     for (i = 0; i < o->nsplits; i++)
         free(o->splits[i].sheet);
     free(o->splits);
