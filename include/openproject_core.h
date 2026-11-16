@@ -58,6 +58,11 @@ int opj_delete_tasks(opj_doc *doc, int first, int count);
 int opj_indent(opj_doc *doc, int first, int count, int by);
 /* Links each row to the next, finish to start (MS Project's Link Tasks); count >= 2. */
 int opj_link_rows(opj_doc *doc, int first, int count);
+/* A finish-to-start link from task pred to task succ (a link dragged between bars); OWF_ERR_FORMAT when
+ * they are the same, out of range, linked already, or the link would make a loop (the plan unchanged). */
+int opj_link_tasks(opj_doc *doc, int pred, int succ);
+/* A task's duration in working minutes (a bar stretched), no longer estimated; not a summary's. */
+int opj_set_duration(opj_doc *doc, int row, long minutes);
 /* Removes every link between the rows (Unlink Tasks), or each row's links when count is 1. */
 int opj_unlink_rows(opj_doc *doc, int first, int count);
 /* Percent complete, 0..100. */
@@ -109,7 +114,8 @@ void opj_cell_text(const opj_doc *doc, int row, int column, char *out, size_t si
 int opj_set_cell(opj_doc *doc, int row, int column, const char *text);
 /* Task Information's OK: several of row's cells typed at once, in the order given, as one edit (one Undo
  * step), scheduled once at the end. Nothing changes when any cell is refused: its place in columns goes
- * in *bad (when not NULL; -1 when none was), with OWF_ERR_FORMAT, or OWF_ERR_MEMORY. */
+ * in *bad (when not NULL; -1 when none was), with OWF_ERR_FORMAT, or OWF_ERR_MEMORY. A Constraint Date
+ * after a Constraint Type of As Soon or As Late As Possible is left alone, so the type chosen stands. */
 int opj_set_cells(opj_doc *doc, int row, const int *columns, const char *const *texts, int n, int *bad);
 /* The outline number of a row, "1.2.3". */
 void opj_outline_number(const opj_doc *doc, int row, char *out, size_t size);
@@ -180,6 +186,7 @@ typedef struct {
     int first_row;                       /* the top row shown */
     int selected;                        /* a selected row, -1 none */
     int show_baseline;                   /* a thin grey bar under each bar, at its baseline dates */
+    int scroll_x, scroll_y;              /* the Network Diagram's scroll, in pixels */
     oldraw_font font;
 } opj_view;
 
@@ -269,6 +276,60 @@ void opj_usage_cell_text(const opj_doc *doc, int row, int column, char *out, siz
  * opj_view_time, opj_chart_left and opj_row_y give the usage view's places. */
 void opj_usage_view(const opj_view *v, opj_view *usage);
 void opj_usage_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area);
+
+/* ---- The Task Usage view (MS Project's): Resource Usage turned round. Each task's row (indented by its
+ * outline level, a summary's name bold), its assignments' rows under it, and the work of each in every
+ * period; a task's row holds its own and its subtasks' work and is shaded. Its table: ID, Task Name and
+ * Work, as wide as Resource Usage's; it uses the same view fields (opj_usage_view gives its places).
+ * Read only. ---- */
+int opj_task_usage_rows(const opj_doc *doc);
+/* Row's task, and its assignment (-1: the task's own row). 0 when there is no such row. */
+int opj_task_usage_row(const opj_doc *doc, int row, int *task, int *assign);
+const char *opj_task_usage_column_title(int column);
+/* A table cell: the task's ID, name and work, or for an assignment "", its resource's name and its work. */
+void opj_task_usage_cell_text(const opj_doc *doc, int row, int column, char *out, size_t size);
+/* Work of a task (assign -1: its own assignments' and its subtasks') or of one of its assignments in
+ * [from, to), as opj_work_text puts it, "" when none. */
+void opj_task_usage_text(const opj_doc *doc, int task, int assign, owf_ptime from, owf_ptime to, char *out,
+                         size_t size);
+void opj_task_usage_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area);
+/* ---- The Network Diagram view (MS Project's, src/project/opj_network.c): a box for every task that
+ * isn't a summary, holding its name, ID and duration, start and finish, four rows of the view's row height
+ * high. A box stands in the column one past its furthest predecessor's (the first column: no
+ * predecessors), and down its column in the sheet's order. A link is a line with an arrow from the
+ * predecessor's box's right side to the successor's left side; red when both tasks are critical. A
+ * critical task's box is edged in red; a milestone's edge is doubled; a task under way is struck through
+ * once and a finished one crossed. It uses a view's size, row height, selected row, font and scroll. ---- */
+#define OPJ_NET_BOX_W 160
+#define OPJ_NET_GAP_X 40
+#define OPJ_NET_GAP_Y 16
+#define OPJ_NET_MARGIN 16
+typedef struct {
+    int ntasks;                          /* the plan's tasks when laid out */
+    int *column, *line;                  /* each task's box's column and place down it; -1 for a summary */
+    int columns, lines;                  /* how many columns, and the most boxes in one */
+} opj_network;
+/* Lays doc's boxes out (lay it out again after any edit). OWF_OK, OWF_ERR_MEMORY, OWF_ERR_FORMAT. */
+int opj_network_layout(const opj_doc *doc, opj_network *net);
+void opj_network_free(opj_network *net);
+/* Row's box in the view (scrolled); 0 for a summary or out of range. */
+int opj_network_box(const opj_view *v, const opj_network *net, int row, oldraw_rect *box);
+/* The whole diagram's size in pixels, margins included; 0 by 0 with no boxes. */
+void opj_network_size(const opj_view *v, const opj_network *net, int *width, int *height);
+/* The row whose box is at x, y; -1 none. */
+int opj_network_hit(const opj_view *v, const opj_network *net, int x, int y);
+/* Scrolls by dx, dy pixels, kept to the diagram; scrolls just enough to show row's box whole. */
+void opj_network_scroll(opj_view *v, const opj_network *net, int dx, int dy);
+void opj_network_reveal(opj_view *v, const opj_network *net, int row);
+/* The line of link (of row's links) to row's box: 2 or 4 points, the last at the arrow's tip. 0 when
+ * either end is a summary or out of range. */
+int opj_network_link_path(const opj_view *v, const opj_network *net, const opj_doc *doc, int row, int link,
+                          opj_path *path);
+/* A box's line of text, 0 to 3: the name; "ID: 2  Dur: 3d"; "Start: Mon 16/11/26"; "Finish: ...". */
+void opj_network_line_text(const opj_doc *doc, int row, int line, char *out, size_t size);
+void opj_network_draw(oldraw *d, const opj_view *v, const opj_network *net, const opj_doc *doc,
+                      const oldraw_rect *area);
+
 /* The task edits, which act on the Gantt chart's selected task, from the Edit menu or a key (OPJ_EDIT_INFO:
  * Task Information). Resource
  * Usage hides that selection, so none of them runs while it shows. */
@@ -277,8 +338,9 @@ enum { OPJ_EDIT_NONE = -1, OPJ_EDIT_CELL, OPJ_EDIT_INSERT, OPJ_EDIT_DELETE, OPJ_
 /* The edit a key in the window asks for: Return the cell, Del the task's deletion, Tab indent (shift:
  * outdent). OPJ_EDIT_NONE for any other key. */
 int opj_edit_for_key(int key, int shift);
-/* Why edit can't run with usage (1: Resource Usage shows, 0: the Gantt chart), as the status line says it;
- * NULL when it may run (OPJ_EDIT_NONE always may). */
+/* Why edit can't run with usage showing (OPJ_VIEW_: the usage views are read only), as the status line
+ * says it; NULL when it may run (OPJ_EDIT_NONE always may). */
+enum { OPJ_VIEW_GANTT, OPJ_VIEW_USAGE, OPJ_VIEW_TASK_USAGE };
 const char *opj_edit_refused(int usage, int edit);
 
 /* ---- Printing the Gantt view: pages down, then across, as MS Project prints ----
@@ -324,6 +386,29 @@ typedef struct {
     int part;                            /* BAR: 0 its middle (move), 1 its right end (stretch), 2 its done part */
 } opj_hit;
 void opj_hit_test(const opj_view *v, const opj_doc *doc, int x, int y, opj_hit *hit);
+
+/* ---- Dragging on the Gantt chart (opj_drag.c), MS Project's mouse ----
+ * A bar's middle moves the task (Start No Earlier Than the day it is dropped on, at that day's first
+ * working minute), its right end stretches it (its duration the working time to the end of the day it is
+ * dropped on), its done part or its left 3 pixels set % Complete, and a bar dropped on another task's bar
+ * links the two, finish to start. Moves and stretches go by whole days at every zoom; summaries and
+ * milestones are only linked. Each drop is one edit, one Undo step. */
+enum { OPJ_DRAG_MOVE, OPJ_DRAG_STRETCH, OPJ_DRAG_PROGRESS, OPJ_DRAG_LINK };
+typedef struct {
+    int kind;                            /* OPJ_DRAG_MOVE, _STRETCH or _PROGRESS (a link is found on the drop) */
+    int row;                             /* the bar's task */
+    int x0, y0;                          /* where the button went down */
+} opj_drag;
+/* A drag from where the button went down (hit, x, y): 1 when it is on a bar that can be dragged. Letting
+ * go within OPJ_DRAG_SLOP pixels of there is a click, not a drag, and does nothing. */
+#define OPJ_DRAG_SLOP 3
+int opj_drag_begin(const opj_view *v, const opj_doc *doc, const opj_hit *hit, int x, int y, opj_drag *d);
+/* What letting go at x, y would do, for the status line: "Start: Mon 23/11/26", "Duration: 4d",
+ * "% Complete: 50%", "Link 2 to 3, finish to start"; 0 (out "") when it would do nothing. */
+int opj_drag_text(const opj_view *v, const opj_doc *doc, const opj_drag *d, int x, int y, char *out, size_t size);
+/* Lets go at x, y: OWF_OK, or OWF_ERR_FORMAT when it does nothing (a click, no change, off the row, a
+ * link that would loop) and the plan is as it was. */
+int opj_drag_end(opj_doc *doc, const opj_view *v, const opj_drag *d, int x, int y);
 
 /* ---- ARexx (opj_rexx.c): the plan's commands of the GFOPENPROJECT port ----
  * The app answers VERSION, ACTIVATE, DEACTIVATE, FAULT, PRINT, VIEW and QUIT itself and hands every other

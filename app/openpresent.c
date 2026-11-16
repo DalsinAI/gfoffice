@@ -98,7 +98,7 @@ struct RxsLib *RexxSysBase = NULL;
 
 #ifdef OPENPUBLISHER
 #define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.27 (14.11.2026)"
+#define VERSION_TEXT "GFOpenPublisher 0.3.30 (15.11.2026)"
 #define REXX_PORT_NAME "GFOPENPUBLISHER"
 #define UNIT "Page"
 #define UNIT_UPPER "PAGE"
@@ -155,7 +155,7 @@ enum {
     M_SHOW_FIRST, M_SHOW_CURRENT, M_SHOW_LOOP, M_SHOW_ON_AUTO, M_SHOW_ON_OWN, M_SHOW_ON_WB,
     M_VIEW_NORMAL, M_VIEW_SORTER, M_VIEW_NOTES, M_VIEW_OUTLINE,
     M_VIEW_MASTER, M_SLIDE_DESIGN, M_INSERT_FILE, M_PICTURES,
-    M_SPELL_AS_YOU_TYPE
+    M_SPELL_AS_YOU_TYPE, M_SPELLING
 };
 
 static struct NewMenu menus[] = {
@@ -327,6 +327,7 @@ static struct NewMenu menus[] = {
     { NM_SUB, "The Workbench Screen", NULL, CHECKIT, ~4 & 7, (APTR)M_SHOW_ON_WB },
 
     { NM_TITLE, "Tools", NULL, 0, 0, NULL },
+    { NM_ITEM, "Spelling...", "L", 0, 0, (APTR)M_SPELLING },
     { NM_ITEM, "Spelling as You Type", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)M_SPELL_AS_YOU_TYPE },
 
     { NM_TITLE, "Help", NULL, 0, 0, NULL },
@@ -2718,6 +2719,9 @@ static int spell_ready(int loud)
     if (spell) return 1;
     if (spell_tried && !loud) return 0;
     spell_tried = 1;
+    /* the word list is about a megabyte: say why the pause */
+    set_status("Opening the dictionary...");
+    draw_status();
     for (i = 0; paths[i]; i++)
         if ((spell = ow_spell_open(paths[i], "PROGDIR:Dictionaries/user.words", msg, sizeof msg)) != NULL) return 1;
     if (loud) set_status("No dictionary: GFOpenWrite's en_GB.words goes in PROGDIR:Dictionaries/.");
@@ -5255,6 +5259,184 @@ static int find_next_text(int ask_text)
     draw_slide();
     draw_status();
     return 1;
+}
+
+/* ---- Tools > Spelling: every slide's text and notes, word by word ---- */
+
+static int spell_found_compare(const opr_find_result *f, int slide, int obj, opr_pos at)
+{
+    if (f->slide != slide) return f->slide < slide ? -1 : 1;
+    if (f->obj != obj) return f->obj < obj ? -1 : 1;
+    return app_compare_pos(f->selection.anchor, at);
+}
+
+/* The word chosen in the slide or the notes, as Find shows what it found. */
+static void spell_show(const opr_find_result *f)
+{
+    if ((f->obj == OPR_NOTES) != notes_view) set_view(f->obj == OPR_NOTES ? 2 : 0);
+    show_slide(f->slide);
+    selected_obj = f->obj == OPR_NOTES ? -1 : f->obj;
+    edit_obj = f->obj;
+    text_selection = f->selection;
+    caret = f->selection.focus;
+    edit_grouped = 0;
+    draw_slide();
+}
+
+static void spell_dialog(void)
+{
+    enum { G_WORD = 1, G_CHANGE, G_LIST, G_IGNORE, G_IGNORE_ALL, G_ADD, G_DO_CHANGE, G_CLOSE };
+    static char sugg[8][48], word[96], change[96];
+    static struct Node nodes[8];
+    struct List labels;
+    struct Gadget *glist = NULL, *last, *gword, *gchange, *glv, *g;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    opr_find_result found;
+    opr_pos from, start;
+    int from_slide, from_obj, start_slide, start_obj, wrapped = 0, done = 0, nsugg = 0, i, rc, changed = 0;
+    int ww = 420, wh = 190;
+    if (!deck || !deck->nslides || !scr || !vi) return;
+    if (!spell_ready(1)) {
+        draw_status();
+        return;
+    }
+    if (sorter_view || outline_view) set_view(0);
+    /* from the caret, else the start of the slide shown */
+    start_slide = current;
+    start_obj = edit_obj >= 0 ? edit_obj : 0;
+    if (edit_obj >= 0) start = text_selection.anchor;
+    else start.para = 0, start.offset = 0;
+    if (edit_obj >= 0 && app_compare_pos(text_selection.focus, start) < 0) start = text_selection.focus;
+    from_slide = start_slide; from_obj = start_obj; from = start;
+    labels.lh_Head = (struct Node *)&labels.lh_Tail;
+    labels.lh_Tail = NULL;
+    labels.lh_TailPred = (struct Node *)&labels.lh_Head;
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr;
+    ng.ng_VisualInfo = vi;
+    last = CreateContext(&glist);
+    ng.ng_LeftEdge = 140; ng.ng_TopEdge = 14; ng.ng_Width = 170; ng.ng_Height = fh + 6;
+    ng.ng_GadgetText = (STRPTR)"Not in dictionary"; ng.ng_Flags = PLACETEXT_LEFT; ng.ng_GadgetID = G_WORD;
+    last = gword = CreateGadget(TEXT_KIND, last, &ng, GTTX_Border, TRUE, TAG_DONE);
+    ng.ng_TopEdge = 40; ng.ng_GadgetText = (STRPTR)"Change to"; ng.ng_GadgetID = G_CHANGE;
+    last = gchange = CreateGadget(STRING_KIND, last, &ng, GTST_MaxChars, (ULONG)(sizeof change - 1), TAG_DONE);
+    ng.ng_TopEdge = 82; ng.ng_Height = 96; ng.ng_GadgetText = (STRPTR)"Suggestions"; ng.ng_Flags = PLACETEXT_ABOVE;
+    ng.ng_GadgetID = G_LIST;
+    last = glv = CreateGadget(LISTVIEW_KIND, last, &ng, GTLV_Labels, (ULONG)&labels, GTLV_ShowSelected, 0, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_LeftEdge = 322; ng.ng_Width = 88; ng.ng_Height = fh + 8;
+    ng.ng_TopEdge = 14; ng.ng_GadgetText = (STRPTR)"Ignore"; ng.ng_GadgetID = G_IGNORE;
+    last = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_TopEdge = 40; ng.ng_GadgetText = (STRPTR)"Ignore All"; ng.ng_GadgetID = G_IGNORE_ALL;
+    last = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_TopEdge = 66; ng.ng_GadgetText = (STRPTR)"Add"; ng.ng_GadgetID = G_ADD;
+    last = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_TopEdge = 92; ng.ng_GadgetText = (STRPTR)"Change"; ng.ng_GadgetID = G_DO_CHANGE;
+    last = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_TopEdge = 160; ng.ng_GadgetText = (STRPTR)"Close"; ng.ng_GadgetID = G_CLOSE;
+    g = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!gword || !gchange || !glv || !g) goto out;
+    while (!done) {
+        int act = 0;
+        rc = opr_spell_next(deck, spell, from_slide, from_obj, from, &found, word, sizeof word);
+        if (rc < 0) {
+            tell("Spelling", "There is not enough memory to check this " DOCUMENT_LOWER ".");
+            break;
+        }
+        /* round once: past the end back to the start, then up to where it began */
+        if (rc && spell_found_compare(&found, from_slide, from_obj, from) < 0) wrapped = 1;
+        if (!rc || (wrapped && spell_found_compare(&found, start_slide, start_obj, start) >= 0)) {
+            set_status(changed ? "Spelling checked; the changes can be undone." : "Spelling checked: no more misspelt words.");
+            break;
+        }
+        spell_show(&found);
+        nsugg = ow_spell_suggest(spell, word, sugg, 8);
+        GT_SetGadgetAttrs(glv, rw, NULL, GTLV_Labels, (ULONG)~0, TAG_DONE);
+        labels.lh_Head = (struct Node *)&labels.lh_Tail;
+        labels.lh_TailPred = (struct Node *)&labels.lh_Head;
+        for (i = 0; i < nsugg; i++) {
+            memset(&nodes[i], 0, sizeof nodes[i]);
+            nodes[i].ln_Name = sugg[i];
+            AddTail(&labels, &nodes[i]);
+        }
+        snprintf(change, sizeof change, "%s", nsugg ? sugg[0] : word);
+        if (!rw) {
+            GT_SetGadgetAttrs(gword, NULL, NULL, GTTX_Text, (ULONG)word, GTTX_CopyText, TRUE, TAG_DONE);
+            GT_SetGadgetAttrs(gchange, NULL, NULL, GTST_String, (ULONG)change, TAG_DONE);
+            GT_SetGadgetAttrs(glv, NULL, NULL, GTLV_Labels, (ULONG)&labels, TAG_DONE);
+            rw = OpenWindowTags(NULL, WA_Title, (ULONG)"Spelling", WA_PubScreen, (ULONG)scr,
+                WA_InnerWidth, ww, WA_InnerHeight, wh, WA_Left, (scr->Width - ww) / 2, WA_Top, scr->Height - wh - 40,
+                WA_Gadgets, (ULONG)glist, WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE,
+                WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+                WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | BUTTONIDCMP | STRINGIDCMP | LISTVIEWIDCMP | TEXTIDCMP,
+                TAG_DONE);
+            if (!rw) break;
+            GT_RefreshWindow(rw, NULL);
+        } else {
+            GT_SetGadgetAttrs(gword, rw, NULL, GTTX_Text, (ULONG)word, GTTX_CopyText, TRUE, TAG_DONE);
+            GT_SetGadgetAttrs(gchange, rw, NULL, GTST_String, (ULONG)change, TAG_DONE);
+            GT_SetGadgetAttrs(glv, rw, NULL, GTLV_Labels, (ULONG)&labels, TAG_DONE);
+        }
+        while (!act) {
+            struct IntuiMessage *m;
+            Wait(1UL << rw->UserPort->mp_SigBit);
+            while (!act && (m = GT_GetIMsg(rw->UserPort))) {
+                ULONG cls = m->Class;
+                UWORD code = m->Code, id = 0;
+                if ((cls == IDCMP_GADGETUP || cls == IDCMP_GADGETDOWN) && m->IAddress)
+                    id = ((struct Gadget *)m->IAddress)->GadgetID;
+                GT_ReplyIMsg(m);
+                if (cls == IDCMP_CLOSEWINDOW) act = G_CLOSE;
+                else if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); }
+                else if (cls == IDCMP_GADGETUP && id == G_LIST && code < (UWORD)nsugg)
+                    GT_SetGadgetAttrs(gchange, rw, NULL, GTST_String, (ULONG)sugg[code], TAG_DONE);
+                else if (cls == IDCMP_GADGETUP && id >= G_IGNORE) act = id;
+            }
+        }
+        /* go on after the word, or after what replaced it */
+        from_slide = found.slide;
+        from_obj = found.obj;
+        from = found.selection.focus;
+        switch (act) {
+        case G_CLOSE:
+            done = 1;
+            set_status("Spelling stopped.");
+            break;
+        case G_IGNORE_ALL:
+            ow_spell_ignore(spell, word);
+            break;
+        case G_ADD:
+            if (!ow_spell_add(spell, word)) set_status("The word could not be saved in PROGDIR:Dictionaries/user.words.");
+            break;
+        case G_DO_CHANGE: {
+            STRPTR v = NULL;
+            GT_GetGadgetAttrs(gchange, rw, NULL, GTST_String, (ULONG)&v, TAG_DONE);
+            snprintf(change, sizeof change, "%s", v ? (char *)v : "");
+            if (strcmp(change, word)) {
+                long grow = (long)strlen(change) - (long)strlen(word);
+                type_text(change, strlen(change));
+                edit_grouped = 0;
+                changed = 1;
+                from = caret;
+                /* the start point moves with the text when it is after the change, in the same paragraph */
+                if (start_slide == found.slide && start_obj == found.obj && start.para == found.selection.anchor.para &&
+                    start.offset > found.selection.anchor.offset) {
+                    long moved = (long)start.offset + grow;
+                    start.offset = moved > (long)found.selection.anchor.offset ? (size_t)moved
+                                                                               : found.selection.anchor.offset;
+                }
+            }
+            break;
+        }
+        default:
+            break;
+        }
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (glist) FreeGadgets(glist);
+    draw_slide();
+    draw_status();
 }
 
 static void replace_text_command(int all)
@@ -7853,6 +8035,7 @@ static void menu_action(ULONG id)
     case M_ZOOM_IN: zoom_step(1); break;
     case M_ZOOM_OUT: zoom_step(-1); break;
     case M_ZOOM_FIT: set_zoom(100); break;
+    case M_SPELLING: spell_dialog(); break;
     case M_SPELL_AS_YOU_TYPE:
         spell_as_you_type = !spell_as_you_type;
         if (spell_as_you_type && !spell_ready(1)) {
@@ -8163,7 +8346,7 @@ static int rexx_do_command(const char *command, char **result_out)
         rexx_copy(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE "
                   "SAVEAS EXPORT PRINT " UNIT_UPPER "S " UNIT_UPPER " NEW" UNIT_UPPER " DELETE" UNIT_UPPER " VIEW OUTLINE GETNOTES SETNOTES PICK PICKED MOVEPICKED COPYPICKED DELETEPICKED HIDEPICKED "
                   "SHOWPICKED OBJECTS PICKOBJECTS PICKEDOBJECTS OBJECTBOX MOVEOBJECTS ALIGN DISTRIBUTE GROUP UNGROUP DELETEOBJECTS GETTEXT "
-                  "SETTEXT UNDO REDO QUIT");
+                  "SETTEXT SPELL UNDO REDO QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {
         if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -8344,6 +8527,16 @@ static int rexx_do_command(const char *command, char **result_out)
                 if (opr_outline_build(deck, &outline_rows) < 0) outline_rows.count = 0;
                 snprintf(result_text, sizeof result_text, "%d", outline_rows.count);
             }
+        }
+    } else if (starts_word_ci(command, "SPELL", &arg)) {    /* SPELL [COUNT|LIST|CHECK w|SUGGEST w|ADD w|IGNORE w] */
+        int r;
+        if (!spell_ready(0)) {
+            ok = 0; rc_fail = RX_NOW;
+            rexx_copy(result_text, sizeof result_text, "No dictionary: en_GB.words goes in PROGDIR:Dictionaries/");
+        } else if ((r = opr_spell_rexx(deck, spell, arg, result_text, sizeof result_text)) != 0) {
+            ok = 0; rc_fail = r;
+        } else if (starts_word_ci(arg, "ADD", NULL) || starts_word_ci(arg, "IGNORE", NULL)) {
+            draw_slide();                                  /* the underline changes */
         }
     } else if (starts_word_ci(command, "GETNOTES", &arg)) {  /* this slide's speaker notes, paragraphs as \n */
         char *t = deck ? opr_notes_get(deck, current) : NULL, *o = result_text;

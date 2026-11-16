@@ -488,6 +488,9 @@ int oc_core_solver_model(const oc_core *core, oc_solver_model *model);
  * says how it went; OWF_ERR_FORMAT: the model does not make sense (why says
  * how); OWF_ERR_UNSUPPORTED: too big; OWF_ERR_MEMORY. */
 int oc_core_solve(const oc_core *core, const oc_solver_model *model, oc_solver_result *result);
+/* The first sentence the Solver window says of a solved result (OC_SOLVED or OC_SOLVED_LIMIT), by engine:
+ * Simplex LP's answers are the best there is; the Nonlinear engine's the best near the starting values. */
+const char *oc_solver_summary(const oc_solver_model *model, const oc_solver_result *result);
 /* Keeps the model in the active sheet's names and, with a result, puts its
  * values in the variable cells: one Undo step. OWF_ERR_FORMAT: a cell of the
  * model is not one (bad names it). */

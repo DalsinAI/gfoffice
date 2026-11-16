@@ -193,6 +193,13 @@ static void put_text_run(owf_buf *b, const owf_deck *d, const owf_run *r)
                            r->field == OWF_FIELD_DATE ? "datetime1" : "datetime10");
             put_rpr(b, "rPr", d, &r->fmt, 0);
             owf_buf_puts(b, "<a:t>-</a:t></a:fld>");
+        } else if (r->field > OWF_FIELD_TIME && r->text && *r->text) {
+            /* PowerPoint has no merge (or other document) fields: the value last shown, as text */
+            owf_buf_puts(b, "<a:r>");
+            put_rpr(b, "rPr", d, &r->fmt, 0);
+            owf_buf_puts(b, "<a:t>");
+            owf_buf_puts_xml(b, r->text);
+            owf_buf_puts(b, "</a:t></a:r>");
         }
         return;
     default:
