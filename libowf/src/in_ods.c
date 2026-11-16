@@ -4070,6 +4070,19 @@ static char *buf_text(ods *o, owf_buf *b)
     return t;
 }
 
+/* A change read and then left out: its strings, cells and the changes it holds. */
+static void tc_free(owf_change *c)
+{
+    int j;
+    free(c->author); free(c->date); free(c->before); free(c->after);
+    for (j = 0; j < c->ncells; j++)
+        free(c->cells[j].input);
+    free(c->cells);
+    for (j = 0; j < c->nchildren; j++)
+        tc_free(&c->children[j]);
+    free(c->children);
+}
+
 static void track_end(ods *o, const owf_xml_event *e)
 {
     owf_change *c = o->tc_cur >= 0 ? &o->book->changes[o->tc_cur] : NULL;
@@ -4081,13 +4094,16 @@ static void track_end(ods *o, const owf_xml_event *e)
         return;
     if (e->depth == o->tc_cur_depth) {               /* the change read */
         if (o->tc_drop) {
-            owf_change gone = *c;
-            int j;
-            free(gone.author); free(gone.date); free(gone.before); free(gone.after);
-            for (j = 0; j < gone.ncells; j++)
-                free(gone.cells[j].input);
-            free(gone.cells);
+            int j, k;
+            tc_free(c);
             o->book->nchanges--;
+            for (j = k = 0; j < o->ntc_refs; j++)    /* the changes it named are not its any more */
+                if (o->tc_refs[2 * j] != o->tc_cur) {
+                    o->tc_refs[2 * k] = o->tc_refs[2 * j];
+                    o->tc_refs[2 * k + 1] = o->tc_refs[2 * j + 1];
+                    k++;
+                }
+            o->ntc_refs = k;
         }
         o->tc_cur = -1;
         o->tc_drop = 0;
@@ -4172,49 +4188,62 @@ static void track_join(ods *o)
 static void track_finish(ods *o)
 {
     owf_book *b = o->book;
-    int i, j, k;
+    int i, j, k, progress;
     for (i = 0; i < b->nchanges; i++)
         if (!b->changes[i].id)
             b->changes[i].id = ++o->tc_made_id;
-    for (k = 0; k < o->ntc_refs && !o->failed; k++) {
-        int d = o->tc_refs[2 * k], id = o->tc_refs[2 * k + 1], from = -1, cols;
-        owf_change *del, *grown;
-        unsigned p, *place;
-        if (d >= b->nchanges)
-            continue;
-        for (j = 0; j < b->nchanges; j++)
-            if (b->changes[j].id == id && j != d)
-                from = j;
-        if (from < 0 || (b->changes[from].kind != OWF_CHANGE_CELL && b->changes[from].kind !=
-                         b->changes[d].kind && b->changes[from].kind != b->changes[d].kind - 2))
-            continue;                                /* a cell, or rows (columns) as it is */
-        del = &b->changes[d];
-        cols = del->kind == OWF_CHANGE_DELETE_COLS;
-        p = cols ? del->col : del->row;
-        place = cols ? &b->changes[from].col : &b->changes[from].row;
-        if (*place < p)
-            continue;
-        if (!(grown = realloc(del->children, (size_t)(del->nchildren + 1) * sizeof *grown))) {
-            o->failed = 1;
-            return;
-        }
-        del->children = grown;
-        *place -= p;
-        del->children[del->nchildren++] = b->changes[from];
-        memmove(&b->changes[from], &b->changes[from + 1], (size_t)(b->nchanges - from - 1) * sizeof *b->changes);
-        b->nchanges--;
-        for (j = k + 1; j < o->ntc_refs; j++) {      /* the list closed up */
-            if (o->tc_refs[2 * j] > from)
-                o->tc_refs[2 * j]--;
+    /* a deletion named inside another takes its own changes first, then goes in whole (refs done are -1) */
+    for (progress = 1; progress && !o->failed;) {
+        progress = 0;
+        for (k = 0; k < o->ntc_refs && !o->failed; k++) {
+            int d = o->tc_refs[2 * k], id = o->tc_refs[2 * k + 1], from = -1, cols, waits = 0;
+            owf_change *del, *grown;
+            unsigned p, *place;
+            if (d < 0)
+                continue;
+            if (d >= b->nchanges) {
+                o->tc_refs[2 * k] = -1;
+                continue;
+            }
+            for (j = 0; j < b->nchanges; j++)
+                if (b->changes[j].id == id && j != d)
+                    from = j;
+            if (from < 0 || (b->changes[from].kind != OWF_CHANGE_CELL && b->changes[from].kind !=
+                             b->changes[d].kind && b->changes[from].kind != b->changes[d].kind - 2)) {
+                o->tc_refs[2 * k] = -1;              /* a cell, or rows (columns) as it is */
+                continue;
+            }
+            for (j = 0; j < o->ntc_refs; j++)
+                if (o->tc_refs[2 * j] == from)
+                    waits = 1;
+            if (waits)
+                continue;                            /* it has changes of its own to take first */
+            o->tc_refs[2 * k] = -1;
+            progress = 1;
+            del = &b->changes[d];
+            cols = del->kind == OWF_CHANGE_DELETE_COLS;
+            p = cols ? del->col : del->row;
+            place = cols ? &b->changes[from].col : &b->changes[from].row;
+            if (*place < p)
+                continue;
+            if (!(grown = realloc(del->children, (size_t)(del->nchildren + 1) * sizeof *grown))) {
+                o->failed = 1;
+                return;
+            }
+            del->children = grown;
+            *place -= p;
+            del->children[del->nchildren++] = b->changes[from];
+            memmove(&b->changes[from], &b->changes[from + 1], (size_t)(b->nchanges - from - 1) * sizeof *b->changes);
+            b->nchanges--;
+            for (j = 0; j < o->ntc_refs; j++)        /* the list closed up */
+                if (o->tc_refs[2 * j] > from)
+                    o->tc_refs[2 * j]--;
         }
     }
     for (i = j = 0; i < b->nchanges; i++) {
         owf_change *c = &b->changes[i];
         if (c->sheet < 0 || c->sheet >= b->nsheets) {
-            free(c->author); free(c->date); free(c->before); free(c->after);
-            for (k = 0; k < c->ncells; k++)
-                free(c->cells[k].input);
-            free(c->cells);
+            tc_free(c);
             owf_report_add(o->report, OWF_NOTE_LOST, "Tracked changes on sheets the file does not have were left out");
             continue;
         }

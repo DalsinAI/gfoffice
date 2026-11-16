@@ -12,6 +12,7 @@
 #include "opencalc_core.h"
 #include "oc_internal.h"                /* oc_lp_solve */
 #include "owf_zip.h"
+#include "owf_internal.h"              /* owf_zip_new, owf_buf: an .ods written by hand */
 
 static int failures, checks;
 
@@ -6032,6 +6033,92 @@ static void test_edit_links(void)
 }
 
 /* Tracked changes kept in ODS (table:tracked-changes): read back as they were, the new content from the cells. */
+/* An .ods written by hand from its tracked changes' content.xml (mimetype first, stored). */
+static int write_track_ods(const char *path, const char *changes)
+{
+    static const char *const head =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-content "
+        "xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+        "xmlns:table=\"urn:oasis:names:tc:opendocument:xmlns:table:1.0\" "
+        "xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" "
+        "xmlns:dc=\"http://purl.org/dc/elements/1.1/\" office:version=\"1.2\"><office:body><office:spreadsheet>"
+        "<table:tracked-changes>";
+    static const char *const tail =
+        "</table:tracked-changes><table:table table:name=\"Sheet1\"><table:table-row><table:table-cell/>"
+        "</table:table-row></table:table></office:spreadsheet></office:body></office:document-content>";
+    static const char *const manifest =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><manifest:manifest "
+        "xmlns:manifest=\"urn:oasis:names:tc:opendocument:xmlns:manifest:1.0\"><manifest:file-entry "
+        "manifest:full-path=\"/\" manifest:media-type=\"application/vnd.oasis.opendocument.spreadsheet\"/>"
+        "<manifest:file-entry manifest:full-path=\"content.xml\" manifest:media-type=\"text/xml\"/></manifest:manifest>";
+    static const char *const mime = "application/vnd.oasis.opendocument.spreadsheet";
+    owf_buf out, content;
+    owf_zip *zip;
+    FILE *f;
+    int ok;
+    owf_buf_init(&out);
+    owf_buf_init(&content);
+    owf_buf_puts(&content, head);
+    owf_buf_puts(&content, changes);
+    owf_buf_puts(&content, tail);
+    if (!(zip = owf_zip_new(&out))) {
+        owf_buf_free(&content);
+        return 0;
+    }
+    owf_zip_add(zip, "mimetype", mime, strlen(mime), 0);
+    owf_zip_add(zip, "META-INF/manifest.xml", manifest, strlen(manifest), 1);
+    owf_zip_add(zip, "content.xml", content.data, content.length, 1);
+    owf_zip_finish(zip);
+    ok = (f = fopen(path, "wb")) != NULL && fwrite(out.data, 1, out.length, f) == out.length;
+    if (f)
+        ok = fclose(f) == 0 && ok;
+    owf_buf_free(&out);
+    owf_buf_free(&content);
+    return ok;
+}
+
+#define TRACK_INFO "<office:change-info><dc:creator>Kryten</dc:creator><dc:date>2026-11-16T07:00:00</dc:date></office:change-info>"
+
+/* What a file's deletions name: one already rejected names nothing that is read after it; one named inside
+ * another takes its own changes first, whatever order the file lists them in. */
+static void test_track_changes_ods_refs(void)
+{
+    static const char *const path = "build/host/calc-core-track-refs.ods";
+    oc_core *core = fresh();
+    const owf_change *c;
+    if (!core) return;
+    CHECK(write_track_ods(path,
+        "<table:cell-content-change table:id=\"ct1\"><table:cell-address table:column=\"0\" table:row=\"4\" "
+        "table:table=\"0\"/>" TRACK_INFO "<table:previous><table:change-track-table-cell/></table:previous>"
+        "</table:cell-content-change>"
+        "<table:deletion table:id=\"ct2\" table:acceptance-state=\"rejected\" table:type=\"row\" table:position=\"4\" "
+        "table:table=\"0\">" TRACK_INFO "<table:deletions><table:change-deletion table:id=\"ct1\"/></table:deletions>"
+        "</table:deletion>"
+        "<table:deletion table:id=\"ct3\" table:type=\"row\" table:position=\"2\" table:table=\"0\">" TRACK_INFO
+        "</table:deletion>"));
+    CHECK(oc_core_open(core, path, NULL, NULL, NULL) == OWF_OK && oc_core_change_count(core) == 2);
+    c = oc_core_change_at(core, 0);
+    CHECK(c && c->kind == OWF_CHANGE_CELL && c->row == 4 && c->id == 1);
+    c = oc_core_change_at(core, 1);
+    CHECK(c && c->kind == OWF_CHANGE_DELETE_ROWS && c->row == 2 && c->nchildren == 0);
+    /* the outer deletion listed first, naming the inner, which names the cell */
+    CHECK(write_track_ods(path,
+        "<table:deletion table:id=\"ct3\" table:type=\"row\" table:position=\"1\" table:table=\"0\">" TRACK_INFO
+        "<table:deletions><table:change-deletion table:id=\"ct2\"/></table:deletions></table:deletion>"
+        "<table:deletion table:id=\"ct2\" table:type=\"row\" table:position=\"1\" table:table=\"0\">" TRACK_INFO
+        "<table:deletions><table:change-deletion table:id=\"ct1\"/></table:deletions></table:deletion>"
+        "<table:cell-content-change table:id=\"ct1\"><table:cell-address table:column=\"0\" table:row=\"1\" "
+        "table:table=\"0\"/>" TRACK_INFO "<table:previous><table:change-track-table-cell/></table:previous>"
+        "</table:cell-content-change>"));
+    CHECK(oc_core_open(core, path, NULL, NULL, NULL) == OWF_OK && oc_core_change_count(core) == 1);
+    c = oc_core_change_at(core, 0);
+    CHECK(c && c->kind == OWF_CHANGE_DELETE_ROWS && c->id == 3 && c->nchildren == 1);
+    CHECK(c && c->nchildren == 1 && c->children[0].kind == OWF_CHANGE_DELETE_ROWS && c->children[0].row == 0 &&
+          c->children[0].nchildren == 1 && c->children[0].children[0].kind == OWF_CHANGE_CELL &&
+          c->children[0].children[0].row == 0);
+    oc_core_free(core);
+}
+
 static void test_track_changes_ods(void)
 {
     static const char path[] = "build/host/calc-core-track.ods";
@@ -8777,6 +8864,7 @@ int main(void)
     test_track_changes();
     test_edit_links();
     test_track_changes_ods();
+    test_track_changes_ods_refs();
     test_pivot_summary();
     test_pivot_layout();
     test_pivot_sort();
