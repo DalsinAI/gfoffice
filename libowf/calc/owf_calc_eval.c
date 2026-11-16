@@ -215,13 +215,13 @@ static void xref_value(calc_ctx *ctx, const unsigned char *p, calc_value *out)
         if (sh->cells[k].col > maxc)
             maxc = sh->cells[k].col;
     }
-    if (r1 > maxr && maxr >= r0)
-        r1 = maxr;
-    if (c1 > maxc && maxc >= c0)
-        c1 = maxc;
+    if (r1 > maxr)                       /* cut at the values; an area wholly past them keeps one row or column */
+        r1 = maxr >= r0 ? maxr : r0;
+    if (c1 > maxc)
+        c1 = maxc >= c0 ? maxc : c0;
     rows = r1 - r0 + 1;
     cols = c1 - c0 + 1;
-    if ((unsigned long)rows * cols > 1048576ul || !(arr = calc_array_new(ctx, rows, cols))) {
+    if (!rows || !cols || rows > 1048576u / cols || !(arr = calc_array_new(ctx, rows, cols))) {
         cv_err(out, OWF_ERROR_NUM);
         return;
     }
@@ -378,8 +378,14 @@ void calc_scalar(calc_ctx *ctx, const calc_value *in, calc_value *out)
 calc_array *calc_array_new(calc_ctx *ctx, unsigned rows, unsigned cols)
 {
     calc_array *arr;
-    unsigned long n = (unsigned long)rows * cols, i;
-    if (!rows || !cols || n > (unsigned long)(CALC_ARENA_MAX / sizeof(calc_value))) {
+    unsigned long n, i;
+    /* each side tested, not their product: on the Amiga unsigned long is 32 bits and the product could wrap */
+    if (!rows || !cols || rows > (unsigned long)(CALC_ARENA_MAX / sizeof(calc_value)) / cols) {
+        ctx->too_big = 1;
+        return NULL;
+    }
+    n = (unsigned long)rows * cols;
+    if (n > (unsigned long)(CALC_ARENA_MAX / sizeof(calc_value))) {
         ctx->too_big = 1;
         return NULL;
     }
