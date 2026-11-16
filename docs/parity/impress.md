@@ -51,8 +51,8 @@ pictures in libowf. This one adds:
 and the chart editor window.
 
 **Largest gaps, workflow-weighted:**
-1. Fills: gradient (above), hatching, bitmap and transparency on objects
-   and backgrounds, and shadows.
+1. Fills: hatching, bitmap and transparency on objects and backgrounds,
+   and shadows (gradients done).
 2. Charts: a window to edit them, and drawing them as charts on the slide
    and in the PDF; OLE objects other than charts are still kept only.
 3. Tables: merged cells, row heights, designs and banding. Also no

@@ -34,9 +34,8 @@
  * writes the effects.
  *
  * 3.8: gradient fills. owf_look ends with gradient, gradient_angle and
- * fill2, so owf_obj is larger; owf_slide and owf_master end with
- * background_gradient, background_angle and background2. ODP and PPTX
- * read and write them. No call changes.
+ * fill2, so owf_obj is larger; ODP and PPTX read and write them. No call
+ * changes.
  *
  * 3.9 (after 3.8's gradients): owf_page.note_format and note_start (owfwrite.library 3.12, libowf
  * 1.12.1), so owf_page and owf_doc are larger and a program's size check refuses 3.8. No call changes.
@@ -52,12 +51,16 @@
  * 3.9 to 3.12's owf_page, owf_doc and owf_para, so owf_obj is larger and a program's size check refuses 3.12
  * and before. No call changes.
  *
+ * 3.14: gradient slide and master backgrounds (#262): owf_slide and owf_master end with background_gradient,
+ * background_angle and background2, so they are larger and a program's size check refuses 3.13 and before. No
+ * call changes.
+ *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfpresent.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 13
-#define OWF_LIB_VERS "3.13"
+#define OWF_LIB_REVISION 14
+#define OWF_LIB_VERS "3.14"
 #define OWF_LIB_DATE "16.11.2026"
 #define OWF_LIB_CALLS_H "owfpresent_calls.h"
 #include "owf_libbase.h"
