@@ -530,6 +530,45 @@ static void test_level(void)
     CHECK_S(ok("GETCELL 2 Start"), "Mon 16/11/26");
 }
 
+/* SORT, FIND and REPLACETEXT. */
+static void test_sort_find(void)
+{
+    opj_doc_free(rx.doc);
+    rx.doc = opj_doc_new(NULL, AT(16, 8, 0));
+    CHECK(rx.doc != NULL);
+    if (!rx.doc) return;
+    ok("ADDTASK Pour DURATION 2d");
+    ok("ADDTASK Dig DURATION 1d");
+    ok("ADDTASK Fill DURATION 3d");
+    ok("ADDRESOURCE Dale");
+    ok("SORT Name");
+    CHECK_S(ok("GETCELL 1 Name"), "Dig");
+    CHECK_S(ok("GETCELL 3 Name"), "Pour");
+    ok("SORT Duration DESC");
+    CHECK_S(ok("GETCELL 1 Name"), "Fill");
+    ok("SORT Start THEN Name THENDESC");
+    CHECK_S(ok("GETCELL 1 Name"), "Pour");
+    CHECK_N(rx_do("SORT Colour"), OPJ_RX_ERROR);
+    CHECK_S(rx.lasterror, "SORT: no column Colour");
+    CHECK_S(ok("FIND i"), "2");                                            /* Fill */
+    CHECK_S(ok("FIND i FROM 2"), "3");                                     /* Dig */
+    CHECK_S(ok("FIND i FROM 2 BACK"), "3");                                /* round the top */
+    CHECK_S(ok("FIND dig EXACT"), "3");
+    CHECK_S(ok("FIND 3d COLUMN Duration"), "2");
+    CHECK_S(ok("FIND da RESOURCES BEGINS"), "1");
+    CHECK_N(rx_do("FIND nothing"), OPJ_RX_NOW);
+    CHECK_S(rx.lasterror, "FIND: no nothing");
+    CHECK_N(rx_do("FIND i COLUMN Colour"), OPJ_RX_ERROR);
+    CHECK_S(ok("REPLACETEXT Name i o"), "2");
+    CHECK_S(ok("GETCELL 2 Name"), "Foll");
+    CHECK_S(ok("REPLACETEXT Name o i ROW 2"), "1");
+    CHECK_S(ok("GETCELL 2 Name"), "Fill");
+    CHECK_N(rx_do("REPLACETEXT Duration d x"), OPJ_RX_ERROR);
+    CHECK_S(rx.lasterror, "REPLACETEXT: 3 cells wouldn't take it; nothing changed");
+    ok("UNDO");
+    CHECK_S(ok("GETCELL 2 Name"), "Foll");
+}
+
 int main(void)
 {
     if (!own_folder()) {
@@ -550,6 +589,7 @@ int main(void)
     test_baselines();
     test_replace();
     test_level();
+    test_sort_find();
     if (!rx.doc) return 1;
     CHECK_N(opj_rexx_format("A.XML"), OWF_PFILE_MSPDI);
     CHECK_N(opj_rexx_format("plan.Csv"), OWF_PFILE_CSV);

@@ -12,7 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_ARGS 6
+#define MAX_ARGS 8
 #define ARG_TEXT 1024
 #define NUM_LIMIT 1000000000L
 
@@ -25,7 +25,7 @@ enum {
     C_HELP, C_LASTERROR, C_ISDIRTY, C_GETFILE, C_NEW, C_OPEN, C_SAVE, C_SAVEAS, C_EXPORT, C_TASKS, C_ADDTASK,
     C_DELETETASK, C_GETCELL, C_SETCELL, C_INDENT, C_OUTDENT, C_LINK, C_UNLINK, C_UNDO, C_REDO, C_BASELINE,
     C_RESOURCES, C_ADDRESOURCE, C_DELETERESOURCE, C_GETRESOURCE, C_SETRESOURCE, C_ASSIGN, C_USAGE, C_FINISH,
-    C_CRITICAL, C_COLUMN, C_CALENDARS, C_ADDCALENDAR, C_WORKTIME, C_SETCALENDAR, C_UPDATE, C_BASELINES, C_REPLACE, C_LEVEL, C_CLEARLEVELING, NCOMMANDS
+    C_CRITICAL, C_COLUMN, C_CALENDARS, C_ADDCALENDAR, C_WORKTIME, C_SETCALENDAR, C_UPDATE, C_BASELINES, C_REPLACE, C_LEVEL, C_CLEARLEVELING, C_SORT, C_FIND, C_REPLACETEXT, NCOMMANDS
 };
 
 static const command commands[NCOMMANDS] = {
@@ -69,6 +69,9 @@ static const command commands[NCOMMANDS] = {
     { "REPLACE", "ROW/A/N,FROM/A,TO/A,UNITS/K" },
     { "LEVEL", "WITHINSLACK/S" },
     { "CLEARLEVELING", "" },
+    { "SORT", "BY/A,DESC/S,THEN/K,THENDESC/S,LAST/K,LASTDESC/S" },
+    { "FIND", "TEXT/A,COLUMN/K,FROM/K/N,BACK/S,EXACT/S,BEGINS/S,RESOURCES/S" },
+    { "REPLACETEXT", "COLUMN/A,FIND/A,WITH/A,ROW/K/N" },
 };
 
 /* ---- Words ---- */
@@ -690,6 +693,54 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         return OPJ_RX_OK;
     }
     case C_CLEARLEVELING: return edit_rc(rx, opj_clear_leveling(doc), "CLEARLEVELING");
+    case C_SORT: {
+        opj_sort_key k[3];
+        int n = 0, i;
+        static const int name_at[3] = { 0, 2, 4 };
+        for (i = 0; i < 3; i++) {
+            const char *name = a->value[name_at[i]];
+            if (!name) continue;
+            if ((k[n].column = find_column(name, 0)) < 0) {
+                snprintf(rx->lasterror, sizeof rx->lasterror, "SORT: no column %.100s", name);
+                return OPJ_RX_ERROR;
+            }
+            k[n++].descending = a->value[name_at[i] + 1] != NULL;
+        }
+        return edit_rc(rx, opj_sort_tasks(doc, k, n), "SORT");
+    }
+    case C_FIND: {
+        int res = a->value[6] != NULL, how = a->value[4] ? OPJ_FIND_EQUALS : a->value[5] ? OPJ_FIND_BEGINS : OPJ_FIND_CONTAINS;
+        int from = a->value[2] ? (int)a->num[2] - 1 : -1;
+        col = res ? OPJ_RCOL_NAME : OPJ_COL_NAME;
+        if (a->value[1] && (col = find_column(a->value[1], res)) < 0) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "FIND: no column %.100s", a->value[1]);
+            return OPJ_RX_ERROR;
+        }
+        r = res ? opj_find_resource_row(doc, col, a->value[0], how, from, a->value[3] != NULL)
+                : opj_find_task(doc, col, a->value[0], how, from, a->value[3] != NULL);
+        if (r < 0) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "FIND: no %.100s", a->value[0]);
+            return OPJ_RX_NOW;
+        }
+        snprintf(result, size, "%d", r + 1);
+        return OPJ_RX_OK;
+    }
+    case C_REPLACETEXT: {
+        int changed = 0, refused = 0, first = a->value[3] ? (int)a->num[3] - 1 : 0, n = a->value[3] ? 1 : -1;
+        if ((col = find_column(a->value[0], 0)) < 0) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "REPLACETEXT: no column %.100s", a->value[0]);
+            return OPJ_RX_ERROR;
+        }
+        rc = opj_replace_text(doc, col, a->value[1], a->value[2], first, n, &changed, &refused);
+        if (rc == OWF_ERR_FORMAT && refused) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "REPLACETEXT: %d cell%s wouldn't take it; nothing changed",
+                     refused, refused == 1 ? "" : "s");
+            return OPJ_RX_ERROR;
+        }
+        if (rc != OWF_OK) return edit_rc(rx, rc, "REPLACETEXT");
+        snprintf(result, size, "%d", changed);
+        return OPJ_RX_OK;
+    }
     case C_REPLACE: {
         int to;
         if ((r = find_resource(p, a->value[1])) < 0 || (to = find_resource(p, a->value[2])) < 0) {

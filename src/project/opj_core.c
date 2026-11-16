@@ -1138,6 +1138,254 @@ int opj_clear_leveling(opj_doc *doc)
     return commit(doc, work);
 }
 
+/* ---- Sort ---- */
+
+/* A cell's value to sort by: 1 with *v for a date, duration, number or money; 0 for text; *na set for NA. */
+static int sort_value(const opj_doc *doc, int row, int column, long *v, int *na)
+{
+    const owf_ptask *t = &doc->plan->tasks[row];
+    *na = 0;
+    switch (column) {
+    case OPJ_COL_ID: *v = row; return 1;
+    case OPJ_COL_DURATION: *v = t->duration; return 1;
+    case OPJ_COL_START: *v = t->early_start; return 1;
+    case OPJ_COL_FINISH: *v = t->early_finish; return 1;
+    case OPJ_COL_PERCENT: *v = t->percent; return 1;
+    case OPJ_COL_BASELINE_START: *na = !t->baselined; *v = t->baseline_start; return 1;
+    case OPJ_COL_BASELINE_FINISH: *na = !t->baselined; *v = t->baseline_finish; return 1;
+    case OPJ_COL_START_VARIANCE: *v = owf_ptask_variance(doc->plan, row, OWF_VAR_START); return 1;
+    case OPJ_COL_FINISH_VARIANCE: *v = owf_ptask_variance(doc->plan, row, OWF_VAR_FINISH); return 1;
+    case OPJ_COL_CONSTRAINT_DATE:
+        *na = t->constraint == OWF_CON_ASAP || t->constraint == OWF_CON_ALAP;
+        *v = t->constraint_date;
+        return 1;
+    case OPJ_COL_ACTUAL_START: *na = !t->has_actual_start; *v = t->actual_start; return 1;
+    case OPJ_COL_ACTUAL_FINISH: *na = !t->has_actual_finish; *v = t->actual_finish; return 1;
+    case OPJ_COL_ACTUAL_DURATION: *v = owf_ptask_actual_duration(t); return 1;
+    case OPJ_COL_REMAINING_DURATION: *v = owf_ptask_remaining_duration(t); return 1;
+    case OPJ_COL_BCWS: case OPJ_COL_BCWP: case OPJ_COL_ACWP: case OPJ_COL_SV: case OPJ_COL_CV: {
+        static const int which[] = { OWF_EV_BCWS, OWF_EV_BCWP, OWF_EV_ACWP, OWF_EV_SV, OWF_EV_CV };
+        *na = !doc->plan->has_status_date && (column == OPJ_COL_BCWS || column == OPJ_COL_SV);
+        *v = owf_ptask_earned(doc->plan, row, doc->plan->status_date, which[column - OPJ_COL_BCWS]);
+        return 1;
+    }
+    case OPJ_COL_LEVELING_DELAY: *v = t->level_delay; return 1;
+    default: return 0;
+    }
+}
+
+static int lower(int c)
+{
+    return c >= 'A' && c <= 'Z' ? c + 32 : c;
+}
+
+static int text_cmp_ci(const char *a, const char *b)
+{
+    for (; *a && lower((unsigned char)*a) == lower((unsigned char)*b); a++, b++)
+        ;
+    return lower((unsigned char)*a) - lower((unsigned char)*b);
+}
+
+/* Row a against row b by the keys: below 0 when a goes first. */
+static int sort_cmp(const opj_doc *doc, const opj_sort_key *k, int nk, int a, int b)
+{
+    int i;
+    for (i = 0; i < nk; i++) {
+        long va = 0, vb = 0;
+        int naa, nab, d;
+        if (sort_value(doc, a, k[i].column, &va, &naa)) {
+            sort_value(doc, b, k[i].column, &vb, &nab);
+            if (naa != nab) return naa ? 1 : -1;               /* NA last, either way */
+            d = naa || va == vb ? 0 : va < vb ? -1 : 1;
+        } else {
+            char ta[160], tb[160];
+            opj_cell_text(doc, a, k[i].column, ta, sizeof ta);
+            opj_cell_text(doc, b, k[i].column, tb, sizeof tb);
+            d = text_cmp_ci(ta, tb);
+            d = d < 0 ? -1 : d > 0 ? 1 : 0;
+        }
+        if (d) return k[i].descending ? -d : d;
+    }
+    return 0;
+}
+
+static int row_end(const owf_project *p, int row)
+{
+    int j = row + 1;
+    while (j < p->ntasks && p->tasks[j].level > p->tasks[row].level) j++;
+    return j;
+}
+
+/* The rows of [first, end), one outline level, in sorted order into order[*n...], each followed by its
+ * own subtasks sorted the same way. 0 for memory. */
+static int sort_range(const opj_doc *doc, const opj_sort_key *k, int nk, int first, int end, int *order, int *n)
+{
+    int *starts, count = 0, i, j;
+    if (first >= end) return 1;
+    for (i = first; i < end; i = row_end(doc->plan, i)) count++;
+    if (!(starts = owf_malloc((size_t)count * sizeof *starts))) return 0;
+    for (count = 0, i = first; i < end; i = row_end(doc->plan, i)) {
+        int x = i;
+        for (j = count; j > 0 && sort_cmp(doc, k, nk, x, starts[j - 1]) < 0; j--) starts[j] = starts[j - 1];
+        starts[j] = x;
+        count++;
+    }
+    for (i = 0; i < count; i++) {
+        order[(*n)++] = starts[i];
+        if (!sort_range(doc, k, nk, starts[i] + 1, row_end(doc->plan, starts[i]), order, n)) {
+            owf_free(starts);
+            return 0;
+        }
+    }
+    owf_free(starts);
+    return 1;
+}
+
+int opj_sort_tasks(opj_doc *doc, const opj_sort_key *keys, int nkeys)
+{
+    owf_project *work;
+    owf_ptask *moved;
+    int *order, *map, i, j, n = 0, nt;
+    if (!doc || !keys || nkeys < 1 || nkeys > 3) return OWF_ERR_FORMAT;
+    for (i = 0; i < nkeys; i++)
+        if (keys[i].column < 0 || keys[i].column >= OPJ_NCOLS) return OWF_ERR_FORMAT;
+    nt = doc->plan->ntasks;
+    if (nt < 2) return OWF_OK;
+    order = owf_malloc((size_t)nt * sizeof *order);
+    map = owf_malloc((size_t)nt * sizeof *map);
+    if (!order || !map || !sort_range(doc, keys, nkeys, 0, nt, order, &n) || n != nt) {
+        owf_free(order), owf_free(map);
+        return OWF_ERR_MEMORY;
+    }
+    for (i = 0; i < nt && order[i] == i; i++)
+        ;
+    if (i == nt) {                               /* already in that order: nothing to do */
+        owf_free(order), owf_free(map);
+        return OWF_OK;
+    }
+    if (!(work = owf_project_copy(doc->plan)) || !(moved = owf_malloc((size_t)nt * sizeof *moved))) {
+        if (work) owf_project_free(work);
+        owf_free(order), owf_free(map);
+        return OWF_ERR_MEMORY;
+    }
+    for (i = 0; i < nt; i++) {
+        moved[i] = work->tasks[order[i]];
+        map[order[i]] = i;
+    }
+    memcpy(work->tasks, moved, (size_t)nt * sizeof *moved);
+    owf_free(moved);
+    for (i = 0; i < nt; i++)
+        for (j = 0; j < work->tasks[i].nlinks; j++) {
+            int pr = work->tasks[i].links[j].pred;
+            if (pr >= 0 && pr < nt) work->tasks[i].links[j].pred = map[pr];
+        }
+    owf_project_remap_assignments(work, map, nt);
+    owf_free(order), owf_free(map);
+    return commit(doc, work);
+}
+
+/* ---- Find and Replace ---- */
+
+/* Where needle is in hay, case ignored; NULL when it isn't. */
+static const char *find_ci(const char *hay, const char *needle)
+{
+    size_t n = strlen(needle);
+    for (; *hay; hay++) {
+        size_t i;
+        for (i = 0; i < n && hay[i] && lower((unsigned char)hay[i]) == lower((unsigned char)needle[i]); i++)
+            ;
+        if (i == n) return hay;
+    }
+    return NULL;
+}
+
+static int text_matches(const char *cell, const char *text, int how)
+{
+    switch (how) {
+    case OPJ_FIND_EQUALS: return text_cmp_ci(cell, text) == 0;
+    case OPJ_FIND_BEGINS: return find_ci(cell, text) == cell;
+    default: return find_ci(cell, text) != NULL;
+    }
+}
+
+/* The next of rows 0..n-1 after from (or before, backward) whose cell matches; round once; -1 for none. */
+static int find_row(const opj_doc *doc, int resources, int column, const char *text, int how, int from,
+                    int backward)
+{
+    int n, k, row;
+    char cell[400];
+    if (!doc || !text || !*text) return -1;
+    n = resources ? doc->plan->nresources : doc->plan->ntasks;
+    if (column < 0 || column >= (resources ? OPJ_NRCOLS : OPJ_NCOLS) || n < 1) return -1;
+    if (from < -1 || from >= n) from = -1;
+    for (k = 1; k <= n; k++) {
+        if (backward) row = from < 0 ? n - k : ((from - k) % n + n) % n;
+        else row = from < 0 ? k - 1 : (from + k) % n;
+        if (resources) opj_resource_cell_text(doc, row, column, cell, sizeof cell);
+        else opj_cell_text(doc, row, column, cell, sizeof cell);
+        if (text_matches(cell, text, how)) return row;
+    }
+    return -1;
+}
+
+int opj_find_task(const opj_doc *doc, int column, const char *text, int how, int from, int backward)
+{
+    return find_row(doc, 0, column, text, how, from, backward);
+}
+
+int opj_find_resource_row(const opj_doc *doc, int column, const char *text, int how, int from, int backward)
+{
+    return find_row(doc, 1, column, text, how, from, backward);
+}
+
+int opj_replace_text(opj_doc *doc, int column, const char *find, const char *with, int first, int count,
+                     int *changed, int *refused)
+{
+    owf_project *work;
+    char cell[400], now[800];
+    int i, done = 0, bad = 0;
+    if (changed) *changed = 0;
+    if (refused) *refused = 0;
+    if (!doc || !find || !*find || !opj_column_typed(column)) return OWF_ERR_FORMAT;
+    if (!with) with = "";
+    if (count < 0) first = 0, count = doc->plan->ntasks;
+    if (first < 0 || count < 0 || first > doc->plan->ntasks - count) return OWF_ERR_FORMAT;
+    if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
+    for (i = first; i < first + count; i++) {
+        const char *s, *at;
+        size_t k = 0, fl = strlen(find), wl = strlen(with);
+        int too_long = 0;
+        opj_cell_text(doc, i, column, cell, sizeof cell);
+        if (!find_ci(cell, find)) continue;
+        for (s = cell; (at = find_ci(s, find)) != NULL; s = at + fl) {
+            size_t lead = (size_t)(at - s);
+            if (k + lead + wl >= sizeof now) { too_long = 1; break; }
+            memcpy(now + k, s, lead);
+            memcpy(now + k + lead, with, wl);
+            k += lead + wl;
+        }
+        if (!too_long && k + strlen(s) < sizeof now) {
+            strcpy(now + k, s);
+            if (set_field(work, i, column, now) == OWF_OK) {
+                done++;
+                continue;
+            }
+        }
+        bad++;
+    }
+    if (changed) *changed = bad ? 0 : done;
+    if (refused) *refused = bad;
+    if (bad) {                                   /* a refused cell may be part-set on the copy: drop it all */
+        owf_project_free(work);
+        return OWF_ERR_FORMAT;
+    }
+    if (!done) {
+        owf_project_free(work);
+        return OWF_OK;
+    }
+    return commit(doc, work);
+}
+
 /* ---- The resource sheet ---- */
 
 static const char *const resource_titles[OPJ_NRCOLS] = {

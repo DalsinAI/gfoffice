@@ -808,6 +808,138 @@ static void test_level_cells(void)
     opj_doc_free(doc);
 }
 
+/* The names in row order, "Alpha,Build,..." */
+static const char *names_of(const opj_doc *doc)
+{
+    static char out[200];
+    size_t k = 0;
+    int i;
+    out[0] = 0;
+    for (i = 0; i < doc->plan->ntasks && k < sizeof out - 40; i++) {
+        const char *n = doc->plan->tasks[i].name ? doc->plan->tasks[i].name : "";
+        k += (size_t)snprintf(out + k, sizeof out - k, i ? ",%s" : "%s", n);
+    }
+    return out;
+}
+
+/* Project > Sort: by one key and by two, up and down; links and assignments follow; NA last; the outline. */
+static void test_sort(void)
+{
+    opj_doc *doc = three();
+    opj_sort_key k[3] = { { OPJ_COL_NAME, 0 }, { OPJ_COL_NAME, 0 }, { OPJ_COL_NAME, 0 } };
+    opj_sort_key bad[1] = { { OPJ_NCOLS, 0 } };
+    CHECK_N(opj_insert_task(doc, 3, "alpha"), OWF_OK);                    /* 1 day, no links */
+    CHECK_N(opj_add_resource(doc, "Dale", NULL), OWF_OK);
+    CHECK_N(opj_set_assignment(doc, 0, 0, 100), OWF_OK);                   /* Dale on Plan */
+    CHECK_N(opj_sort_tasks(doc, k, 1), OWF_OK);                            /* by name, case ignored */
+    CHECK_S(names_of(doc), "alpha,Build,Plan,Ship");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PREDECESSORS), "3");                   /* Build still after Plan */
+    CHECK_S(cell_of(doc, 3, OPJ_COL_PREDECESSORS), "2");
+    CHECK_S(cell_of(doc, 2, OPJ_COL_RESOURCES), "Dale");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_START), "Wed 18/11/26");               /* the dates didn't move */
+    k[0].column = OPJ_COL_DURATION, k[0].descending = 1;
+    CHECK_N(opj_sort_tasks(doc, k, 1), OWF_OK);
+    CHECK_S(names_of(doc), "Build,Plan,alpha,Ship");
+    k[0].column = OPJ_COL_START, k[0].descending = 0;                      /* Plan and alpha both Monday */
+    k[1].column = OPJ_COL_NAME;
+    CHECK_N(opj_sort_tasks(doc, k, 2), OWF_OK);
+    CHECK_S(names_of(doc), "alpha,Plan,Build,Ship");
+    CHECK_N(opj_sort_tasks(doc, k, 1), OWF_OK);                            /* ties keep their order */
+    CHECK_S(names_of(doc), "alpha,Plan,Build,Ship");
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK_S(names_of(doc), "Build,Plan,alpha,Ship");
+    /* NA after every value, up or down: only Build has an actual start */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_START, "Wed 18/11/26"), OWF_OK);
+    k[0].column = OPJ_COL_ACTUAL_START, k[0].descending = 1;
+    CHECK_N(opj_sort_tasks(doc, k, 1), OWF_OK);
+    CHECK_S(names_of(doc), "Build,Plan,alpha,Ship");
+    k[0].descending = 0;
+    k[0].column = OPJ_COL_NAME, k[0].descending = 1;
+    CHECK_N(opj_sort_tasks(doc, k, 1), OWF_OK);
+    CHECK_S(names_of(doc), "Ship,Plan,Build,alpha");
+    CHECK_N(opj_sort_tasks(doc, k, 0), OWF_ERR_FORMAT);
+    CHECK_N(opj_sort_tasks(doc, k, 4), OWF_ERR_FORMAT);
+    CHECK_N(opj_sort_tasks(doc, bad, 1), OWF_ERR_FORMAT);
+    CHECK_N(opj_sort_tasks(NULL, k, 1), OWF_ERR_FORMAT);
+    opj_doc_free(doc);
+
+    /* the outline: a summary carries its subtasks, which are sorted among themselves */
+    doc = opj_doc_new(NULL, AT(16, 8, 0));
+    CHECK_N(opj_insert_task(doc, 0, "Zed"), OWF_OK);
+    CHECK_N(opj_insert_task(doc, 1, "b"), OWF_OK);
+    CHECK_N(opj_insert_task(doc, 2, "a"), OWF_OK);
+    CHECK_N(opj_insert_task(doc, 3, "Top"), OWF_OK);
+    CHECK_N(opj_indent(doc, 1, 2, 1), OWF_OK);
+    k[0].column = OPJ_COL_NAME, k[0].descending = 0;
+    CHECK_N(opj_sort_tasks(doc, k, 1), OWF_OK);
+    CHECK_S(names_of(doc), "Top,Zed,a,b");
+    CHECK_N(doc->plan->tasks[1].level, 1);
+    CHECK_N(doc->plan->tasks[2].level, 2);
+    CHECK(doc->plan->tasks[1].summary);
+    opj_doc_free(doc);
+}
+
+/* Edit > Find and Replace on the task sheet, Find on the resource sheet. */
+static void test_find_replace(void)
+{
+    opj_doc *doc = three();
+    int changed = -1, refused = -1;
+    CHECK_N(opj_add_resource(doc, "Dale", NULL), OWF_OK);
+    CHECK_N(opj_add_resource(doc, "Bob", NULL), OWF_OK);
+    /* Plan, Build, Ship */
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "i", OPJ_FIND_CONTAINS, -1, 0), 1);       /* Build */
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "i", OPJ_FIND_CONTAINS, 1, 0), 2);        /* Ship */
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "I", OPJ_FIND_CONTAINS, 2, 0), 1);        /* round the end */
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "i", OPJ_FIND_CONTAINS, -1, 1), 2);       /* from the bottom */
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "i", OPJ_FIND_CONTAINS, 2, 1), 1);
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "i", OPJ_FIND_CONTAINS, 1, 1), 2);        /* round the top */
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "ship", OPJ_FIND_EQUALS, -1, 0), 2);
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "shi", OPJ_FIND_EQUALS, -1, 0), -1);
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "pl", OPJ_FIND_BEGINS, -1, 0), 0);
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "an", OPJ_FIND_BEGINS, -1, 0), -1);
+    CHECK_N(opj_find_task(doc, OPJ_COL_DURATION, "3d", OPJ_FIND_EQUALS, -1, 0), 1);
+    CHECK_N(opj_find_task(doc, OPJ_COL_START, "Wed", OPJ_FIND_CONTAINS, -1, 0), 1);
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "", OPJ_FIND_CONTAINS, -1, 0), -1);
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "zzz", OPJ_FIND_CONTAINS, -1, 0), -1);
+    CHECK_N(opj_find_task(doc, OPJ_NCOLS, "a", OPJ_FIND_CONTAINS, -1, 0), -1);
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "a", OPJ_FIND_CONTAINS, 99, 0), 0);       /* from out of range: the top */
+    CHECK_N(opj_find_task(NULL, OPJ_COL_NAME, "a", OPJ_FIND_CONTAINS, -1, 0), -1);
+    CHECK_N(opj_find_resource_row(doc, OPJ_RCOL_NAME, "BOB", OPJ_FIND_EQUALS, -1, 0), 1);
+    CHECK_N(opj_find_resource_row(doc, OPJ_RCOL_NAME, "x", OPJ_FIND_CONTAINS, -1, 0), -1);
+    CHECK_N(opj_find_resource_row(doc, OPJ_NRCOLS, "Bob", OPJ_FIND_CONTAINS, -1, 0), -1);
+
+    /* Replace All in names, then in durations ("3d" to "5d" moves Ship) */
+    CHECK_N(opj_replace_text(doc, OPJ_COL_NAME, "build", "Make", 0, -1, &changed, &refused), OWF_OK);
+    CHECK_N(changed, 1);
+    CHECK_N(refused, 0);
+    CHECK_S(names_of(doc), "Plan,Make,Ship");
+    CHECK_N(opj_replace_text(doc, OPJ_COL_NAME, "a", "aa", 0, -1, &changed, NULL), OWF_OK);   /* every place */
+    CHECK_S(names_of(doc), "Plaan,Maake,Ship");
+    CHECK_N(changed, 2);
+    CHECK_N(opj_replace_text(doc, OPJ_COL_DURATION, "3", "5", 0, -1, &changed, NULL), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "5d");
+    CHECK_S(cell_of(doc, 2, OPJ_COL_START), "Tue 24/11/26");                /* Build ends a week later */
+    /* only row 1 */
+    CHECK_N(opj_replace_text(doc, OPJ_COL_NAME, "aa", "a", 1, 1, &changed, NULL), OWF_OK);
+    CHECK_S(names_of(doc), "Plaan,Make,Ship");
+    /* a new text a cell won't take: nothing changes */
+    CHECK_N(opj_replace_text(doc, OPJ_COL_DURATION, "d", "x", 0, -1, &changed, &refused), OWF_ERR_FORMAT);
+    CHECK_N(changed, 0);
+    CHECK_N(refused, 3);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "5d");
+    /* nothing found: no edit */
+    doc->dirty = 0;
+    CHECK_N(opj_replace_text(doc, OPJ_COL_NAME, "zzz", "y", 0, -1, &changed, NULL), OWF_OK);
+    CHECK_N(changed, 0);
+    CHECK_N(doc->dirty, 0);
+    CHECK_N(opj_replace_text(doc, OPJ_COL_ID, "1", "2", 0, -1, NULL, NULL), OWF_ERR_FORMAT);  /* not typed */
+    CHECK_N(opj_replace_text(doc, OPJ_COL_NAME, "", "2", 0, -1, NULL, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_replace_text(doc, OPJ_COL_NAME, "a", "b", 2, 5, NULL, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK_S(names_of(doc), "Plaan,Maake,Ship");
+    opj_doc_free(doc);
+}
+
 /* Baselines 1 to 10 in the core: set, clear, Undo, which are saved, and the names the window takes. */
 static void test_baseline_n(void)
 {
@@ -1882,6 +2014,8 @@ int main(void)
     test_baseline();
     test_baseline_n();
     test_level_cells();
+    test_sort();
+    test_find_replace();
     test_assign_dialog();
     test_print();
     test_pdf();
