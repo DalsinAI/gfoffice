@@ -743,7 +743,7 @@ static void squeeze(const char *s, char *out, size_t size)
 static const char *const column_titles[OPJ_NCOLS] = {
     "ID", "Task Name", "Duration", "Start", "Finish", "Predecessors", "% Complete", "WBS", "Resource Names",
     "Baseline Start", "Baseline Finish", "Start Var.", "Finish Var.", "Constraint Type", "Constraint Date", "Notes",
-    "Actual Start", "Actual Finish", "Actual Duration", "Remaining Dur.", "BCWS", "BCWP", "ACWP", "SV", "CV",
+    "Actual Start", "Actual Finish", "Actual Duration", "Remaining Dur.", "BCWS", "BCWP", "ACWP", "SV", "CV", "Leveling Delay",
 };
 
 static const char *const constraint_names[] = {   /* OWF_CON_ order */
@@ -867,6 +867,9 @@ void opj_cell_text(const opj_doc *doc, int row, int column, char *out, size_t si
         else opj_money_text(owf_ptask_earned(doc->plan, row, doc->plan->status_date, which[column - OPJ_COL_BCWS]), text);
         break;
     }
+    case OPJ_COL_LEVELING_DELAY:
+        if (!t->summary) owf_pduration_text(doc->plan, t->level_delay, t->level_delay_elapsed, 0, text);
+        break;
     default: return;
     }
     n = strlen(s);
@@ -902,6 +905,11 @@ static int set_field(owf_project *work, int row, int column, const char *text)
         t->elapsed = el;
         t->estimated = es;
         t->milestone = v == 0;
+        return OWF_OK;
+    case OPJ_COL_LEVELING_DELAY:
+        if (t->summary || owf_pduration_parse(work, text, &v, &el, &es) != OWF_OK || v < 0) return OWF_ERR_FORMAT;
+        t->level_delay = v;
+        t->level_delay_elapsed = v ? el : 0;
         return OWF_OK;
     case OPJ_COL_START:
     case OPJ_COL_FINISH:
@@ -987,7 +995,7 @@ int opj_column_typed(int column)
     switch (column) {
     case OPJ_COL_NAME: case OPJ_COL_DURATION: case OPJ_COL_START: case OPJ_COL_FINISH: case OPJ_COL_PREDECESSORS:
     case OPJ_COL_PERCENT: case OPJ_COL_RESOURCES: case OPJ_COL_CONSTRAINT_TYPE: case OPJ_COL_CONSTRAINT_DATE:
-    case OPJ_COL_NOTES: case OPJ_COL_ACTUAL_START: case OPJ_COL_ACTUAL_FINISH:
+    case OPJ_COL_NOTES: case OPJ_COL_ACTUAL_START: case OPJ_COL_ACTUAL_FINISH: case OPJ_COL_LEVELING_DELAY:
         return 1;
     default:
         return 0;
@@ -1105,6 +1113,28 @@ int opj_update_project(opj_doc *doc, owf_ptime status, int whole, int *changed)
     if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
     n = owf_project_update(work, status, whole);
     if (changed) *changed = n;
+    return commit(doc, work);
+}
+
+int opj_level(opj_doc *doc, int within_slack, int *delayed)
+{
+    owf_project *work;
+    int n;
+    if (delayed) *delayed = 0;
+    if (!doc) return OWF_ERR_FORMAT;
+    if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
+    if ((n = owf_project_level(work, within_slack)) < 0) return fail(work, OWF_ERR_FORMAT);
+    if (delayed) *delayed = n;
+    return commit(doc, work);
+}
+
+int opj_clear_leveling(opj_doc *doc)
+{
+    owf_project *work;
+    int i;
+    if (!doc) return OWF_ERR_FORMAT;
+    if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
+    for (i = 0; i < work->ntasks; i++) work->tasks[i].level_delay = 0, work->tasks[i].level_delay_elapsed = 0;
     return commit(doc, work);
 }
 

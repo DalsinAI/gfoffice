@@ -48,7 +48,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenProject 0.1.15 (16.11.2026)"
+#define VERSION_TEXT "GFOpenProject 0.1.17 (16.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenProject, the project planner of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -58,7 +58,7 @@ enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_XML, M_EXPORT_CSV, M_EXPORT_PDF, M_PRINT, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_EDIT, M_INSERT, M_DELETE, M_INDENT, M_OUTDENT, M_LINK, M_UNLINK,
     M_DAYS, M_WEEKS, M_MONTHS, M_QUARTERS, M_SHOW_BASELINE, M_RESOURCES, M_START, M_GANTT, M_USAGE, M_NETWORK, M_TASK_USAGE, M_GRAPH, M_TRACKING,
-    M_SET_BASELINE, M_CLEAR_BASELINE, M_UPDATE_PROJECT, M_WORKTIME, M_PLAN_CALENDAR, M_TASK_CALENDAR,
+    M_SET_BASELINE, M_CLEAR_BASELINE, M_LEVEL, M_CLEAR_LEVELING, M_UPDATE_PROJECT, M_WORKTIME, M_PLAN_CALENDAR, M_TASK_CALENDAR,
     M_INFO,
     M_COLUMN                                 /* View > Columns: M_COLUMN + the column (OPJ_COL_) */
 };
@@ -138,9 +138,13 @@ static struct NewMenu menus[] = {
     { NM_SUB, "ACWP", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_ACWP) },
     { NM_SUB, "SV", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_SV) },
     { NM_SUB, "CV", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_CV) },
+    { NM_SUB, "Leveling Delay", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_LEVELING_DELAY) },
     { NM_TITLE, "Tools", NULL, 0, 0, NULL },
     { NM_ITEM, "Set Baseline...", NULL, 0, 0, (APTR)M_SET_BASELINE },
     { NM_ITEM, "Clear Baseline...", NULL, 0, 0, (APTR)M_CLEAR_BASELINE },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Level Resources...", NULL, 0, 0, (APTR)M_LEVEL },
+    { NM_ITEM, "Clear Leveling", NULL, 0, 0, (APTR)M_CLEAR_LEVELING },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Update Project...", NULL, 0, 0, (APTR)M_UPDATE_PROJECT },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -1038,6 +1042,28 @@ static void resources_window(void)
 
 /* ---- Menus, mouse and keys ---- */
 
+/* ---- Tools > Level Resources... ---- */
+
+/* Levels the plan, the whole of it or only within slack, with the busy pointer while it works (each move
+ * schedules the plan again, which takes a while on a large one). */
+static void level_resources(void)
+{
+    char msg[96];
+    int how, delayed = 0, rc, over = 0, i;
+    if (rexx_busy) return;
+    how = ask("Level Resources: delay tasks until no resource is over-allocated",
+              "Level|Within slack only|Cancel");
+    if (!how) return;
+    SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
+    rc = opj_level(DOC, how == 2, &delayed);
+    SetWindowPointer(win, TAG_DONE);
+    if (rc != OWF_OK) { edit_failed(rc, "Level Resources"); return; }
+    for (i = 0; i < DOC->plan->nresources; i++) over += DOC->plan->resources[i].overallocated != 0;
+    snprintf(msg, sizeof msg, "Level Resources: %d task%s delayed%s", delayed, delayed == 1 ? "" : "s",
+             over ? "; some over-allocation no move can mend" : "");
+    set_status(msg);
+}
+
 /* ---- Tools > Update Project... ---- */
 
 static owf_ptime today(void);
@@ -1269,6 +1295,11 @@ static void menu_action(ULONG id, struct MenuItem *item)
         break;
     case M_SET_BASELINE: baseline_n(0); break;
     case M_CLEAR_BASELINE: baseline_n(1); break;
+    case M_LEVEL: level_resources(); break;
+    case M_CLEAR_LEVELING:
+        if ((i = opj_clear_leveling(DOC)) == OWF_OK) set_status("Leveling cleared");
+        else edit_failed(i, "Clear Leveling");
+        break;
     case M_UPDATE_PROJECT: update_project(); break;
     case M_WORKTIME: change_working_time(); break;
     case M_PLAN_CALENDAR: plan_calendar(); break;
