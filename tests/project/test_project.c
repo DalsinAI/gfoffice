@@ -664,9 +664,6 @@ int main(void)
     test_resources();
     test_baseline();
     test_earned_value();
-    owf_project_free(p);
-}
-
     test_more_baselines();
     test_actuals();
     test_summary_back_to_task();
