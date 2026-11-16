@@ -10,6 +10,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include "owf_ifform.h"
 #include "openwrite_core.h"
 #include "owf_internal.h"
 #include "owf_zip.h"
@@ -658,6 +660,23 @@ static void test_if(void)
     CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_IF, "10 > 9 \"big\" \"small\"") == OWF_OK &&
           strstr(dump(doc), "=big}"), dump(doc));
     CHECK(ow_editor_undo(ed) == 1 && !strcmp(dump(doc), want), dump(doc));
+    {   /* Budgie on #376: many stars against a long text finish at once (the recursive matcher took 37 s on
+         * six); * and ? still match as Word's do; nan, inf and hex are text, not numbers */
+        char text[201], pattern[64];
+        clock_t t0 = clock();
+        memset(text, 'a', 200);
+        text[200] = 0;
+        strcpy(pattern, "*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*b");
+        CHECK(!owf_if_holds(text, "=", pattern) && owf_if_holds(text, "<>", pattern), "no b: no match");
+        text[199] = 'b';
+        CHECK(owf_if_holds(text, "=", pattern), "a b at the end: a match");
+        CHECK((double)(clock() - t0) / CLOCKS_PER_SEC < 0.5, "many stars, quickly");
+        CHECK(owf_if_holds("Female", "=", "F*") && owf_if_holds("Fe", "=", "F?") && !owf_if_holds("F", "=", "F?") &&
+              owf_if_holds("abc", "=", "*") && owf_if_holds("", "=", "*") && !owf_if_holds("abc", "=", "a*d"),
+              "Word's * and ?");
+        CHECK(owf_if_holds("nan", "=", "nan") && owf_if_holds("inf", "=", "inf") && !owf_if_holds("0x10", "=", "16") &&
+              owf_if_holds("1e1", "=", "10") && owf_if_holds("-2.5", "<", "1"), "numbers and words");
+    }
     for (k = 0; k < 2; ++k) {
         const owf_format *f = owf_format_named(fmts[k]);
         unsigned char *data = NULL;

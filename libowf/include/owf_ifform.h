@@ -115,20 +115,45 @@ static inline void owf_if_format(const owf_if_form *f, char *out, size_t size)
     owf_if_put_quoted(out, size, n, f->no);
 }
 
-/* Whether the comparison holds between the operands' values: numbers as numbers, else text; = and <> take
- * Word's * and ? in the second */
+/* Word's * and ? in p against s: iterative, going back only to the last * (with the text one on from where
+ * it last matched), so no pattern takes more than about len(s) * len(p) steps (Budgie on #376: the recursive
+ * one took 37 s on six stars) */
 static inline int owf_if_wild(const char *s, const char *p)
 {
-    if (!*p) return !*s;
-    if (*p == '*') return owf_if_wild(s, p + 1) || (*s && owf_if_wild(s + 1, p));
-    return *s && (*p == '?' || *p == *s) && owf_if_wild(s + 1, p + 1);
+    const char *star = NULL, *from = NULL;
+    while (*s) {
+        if (*p == '*') { star = p++; from = s; }
+        else if (*p == '?' || *p == *s) { ++p; ++s; }
+        else if (star) { p = star + 1; s = ++from; }
+        else return 0;
+    }
+    while (*p == '*') ++p;
+    return !*p;
 }
 
+/* A number as a comparison takes one: digits with a sign, a point and an exponent (not strtod's nan, inf or
+ * hex, Budgie) */
+static inline int owf_if_number(const char *s, double *v)
+{
+    const char *p = s;
+    char *end;
+    int digits = 0;
+    if (*p == '+' || *p == '-') ++p;
+    for (; *p; ++p) {
+        if (*p >= '0' && *p <= '9') digits = 1;
+        else if (*p != '.' && *p != 'e' && *p != 'E' && *p != '+' && *p != '-') return 0;
+    }
+    if (!digits) return 0;
+    *v = strtod(s, &end);
+    return !*end;
+}
+
+/* Whether the comparison holds between the operands' values: numbers as numbers, else text; = and <> take
+ * Word's * and ? in the second */
 static inline int owf_if_holds(const char *a, const char *op, const char *b)
 {
-    char *ea, *eb;
-    double x = strtod(a, &ea), y = strtod(b, &eb);
-    int c, numbers = *a && *b && !*ea && !*eb;
+    double x = 0, y = 0;
+    int c, numbers = owf_if_number(a, &x) && owf_if_number(b, &y);
     if (!strcmp(op, "=")) return numbers ? x == y : owf_if_wild(a, b);
     if (!strcmp(op, "<>")) return numbers ? x != y : !owf_if_wild(a, b);
     c = numbers ? (x > y) - (x < y) : strcmp(a, b);
