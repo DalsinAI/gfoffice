@@ -573,6 +573,21 @@ static void char_props(const reader *r, span props, owf_charfmt *fmt)
     }
 }
 
+/* A run's field (PUB-FORMAT.md 6.4): 0x200's low byte, 0 for none. 5 is a
+ * page number, whose character ("#", as Publisher shows the field on a
+ * master) stands for the field. */
+#define PUB_FIELD_PAGE 5
+
+static int run_field(span props)
+{
+    size_t at = 0;
+    field f;
+    while (next_qfield(props, &at, &f) > 0)
+        if (f.id == 0x200 && (f.type == 0x10 || f.type == 0x18 || f.type == 0x20))
+            return (int)(f.value & 0xFF);
+    return 0;
+}
+
 /* Paragraph properties (FDPP's, or a style's): the style (0x219) and the
  * alignment (0x204's low byte: 0 left, 1 right, 2 centred; PUB-FORMAT.md 6.5).
  * A paragraph's own alignment, left too, is over its style's. */
@@ -888,6 +903,8 @@ static void make_story(reader *r, owf_story *story, span text, size_t from, size
     int open = 0, chint = -1, phint = -1, style = 0, made_style = -1, lk = 0;
     const char *href = NULL;
     const trun *made_run = NULL;             /* want below is made for this run and style */
+    const trun *field_run = NULL;            /* the page number run whose field is made */
+    int page_run = 0;                        /* made_run is a page number's */
     owf_charfmt want;
     owf_builder_init(&b, r->pub->res, story);
     owf_buf_init(&run);
@@ -914,6 +931,7 @@ static void make_story(reader *r, owf_story *story, span text, size_t from, size
                 owf_charfmt_init(&want);
             if (cr)
                 char_props(r, cr->props, &want);
+            page_run = cr && run_field(cr->props) == PUB_FIELD_PAGE;
             made_run = cr;
             made_style = style;
         }
@@ -933,6 +951,16 @@ static void make_story(reader *r, owf_story *story, span text, size_t from, size
             put_run(&b, &run, href);
             owf_builder_flush(&b);
             b.charfmt = want;
+        }
+        if (c >= 0x20 && page_run) {         /* a page number: one field for the run's characters */
+            if (cr != field_run) {
+                put_run(&b, &run, href);
+                owf_builder_special(&b, OWF_RUN_FIELD, OWF_FIELD_PAGE);
+                field_run = cr;
+            }
+            at += 2;
+            open = 1;
+            continue;
         }
         if (c >= 0x20) {
             put_utf16_char(&run, text, &at);

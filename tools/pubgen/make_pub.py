@@ -172,8 +172,12 @@ def qf(fid, typ, value=None):
     return fv(fid, typ, value, wide=True)
 
 
-def char_props(bold=None, italic=None, size=None, font=None, old=False, underline=None, colour=None):
+def char_props(bold=None, italic=None, size=None, font=None, old=False, underline=None, colour=None, field=None):
     out = b''
+    if field is not None:                    # 0x200: the run's field, low byte 5 a page number; 0x222 beside it
+        out += qf(0x200, 0x10, field)
+        if field & 0xFF == 5:
+            out += qf(0x222, 0x20, 0xFFFFFFFF)
     if bold is not None:
         out += qf(0x202, 0x08 if bold else 0x10, None if bold else 0)
     if italic is not None:
@@ -886,6 +890,30 @@ def colours():
     return publication(c.build(doc_fields(c, pw, ph, [m, p])), t, [[], shapes], [], (12, 0))
 
 
+def pagenum():
+    """A page number on the master (" #", its "#" field 5, as Publisher 2010
+    writes it) and one in a page's own text ("Page #", 0xFF05 as 2003's
+    files have it), beside a "#" with field 6 (a link's, as Sample has),
+    which stays text."""
+    pw, ph = 148 * EMU_MM, 210 * EMU_MM
+    c = Contents(0x15, pw, ph)
+    m = page_chunk(c, name='Master Page A')
+    p1 = page_chunk(c, master=m)
+    p2 = page_chunk(c, master=m)
+    t = Text(['Calibri'], [DEFAULT_STYLE])
+    t.story(1, [(para_props(align='right'), [(' ', char_props(size=10)), ('#', char_props(size=10, field=5))])])
+    t.story(2, [(None, [('Page ', None), ('#', char_props(bold=True, field=0xFF05))]),
+                (None, [('Turn to ', None), ('#', char_props(field=6)), (' for more.', None)])])
+    t.story(3, [(None, [('Page two, numbered by its master', None)])])
+    fm = frame_chunk(c, m, text_id=1)
+    f2 = frame_chunk(c, p1, text_id=2)
+    f3 = frame_chunk(c, p2, text_id=3)
+    master = [Shape(fm, box_mm(pw, ph, 13, 197, 122, 8), text_id=1)]
+    page1 = [Shape(f2, box_mm(pw, ph, 20, 20, 100, 30), text_id=2)]
+    page2 = [Shape(f3, box_mm(pw, ph, 20, 20, 100, 30), text_id=3)]
+    return publication(c.build(doc_fields(c, pw, ph, [m, p1, p2])), t, [master, page1, page2], [], (14, 0))
+
+
 def damaged():
     t = Text(['Times New Roman'], [DEFAULT_STYLE])
     t.story(1, [(None, [('text without a publication', None)])])
@@ -896,7 +924,7 @@ FILES = {
     'gen-2007-plain.pub': plain, 'gen-2007-runs.pub': runs, 'gen-2010-styles.pub': styles,
     'gen-2013-look.pub': look, 'gen-2003-columns.pub': columns, 'gen-2003-names.pub': names,
     'gen-98.pub': lambda: old(0xB2D2, 2), 'gen-2000.pub': lambda: old(0xB2E8, 4),
-    'gen-cut.pub': cut, 'gen-colours.pub': colours, 'gen-notpub.pub': notpub, 'gen-damaged.pub': damaged,
+    'gen-pagenum.pub': pagenum, 'gen-cut.pub': cut, 'gen-colours.pub': colours, 'gen-notpub.pub': notpub, 'gen-damaged.pub': damaged,
 }
 
 

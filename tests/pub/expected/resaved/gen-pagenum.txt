@@ -1,0 +1,38 @@
+page-size 148.0 x 210.0 mm (emu 5328000 x 7560000, twips 8391 x 11906)
+masters 1
+master 1 "Master Page A" frames 1
+  frame 0 text box 13.0 197.0 122.0 8.0 mm (emu 468000 7092000 4860000 7380000) shape 202 text-id 1 story 0
+    para " {page}"
+      align right
+      run 0 " " 10.0pt font "Calibri"
+      run 1 field page 10.0pt font "Calibri"
+pages 2
+page 1 master 1 frames 1
+  frame 0 text box 20.0 20.0 100.0 30.0 mm (emu 720000 720000 4320000 1800000) shape 202 text-id 2 story 1
+    para "Page {page}"
+      run 0 "Page " 10.0pt font "Calibri"
+      run 1 field page bold 10.0pt font "Calibri"
+    para "Turn to # for more."
+      run 0 "Turn to # for more." 10.0pt font "Calibri"
+page 2 master 1 frames 1
+  frame 0 text box 20.0 20.0 100.0 30.0 mm (emu 720000 720000 4320000 1800000) shape 202 text-id 3 story 2
+    para "Page two, numbered by its master"
+      run 0 "Page two, numbered by it" 10.0pt font "Calibri"
+stories 3
+story 0
+  para " {page}"
+    align right
+    run 0 " " 10.0pt font "Calibri"
+    run 1 field page 10.0pt font "Calibri"
+story 1
+  para "Page {page}"
+    run 0 "Page " 10.0pt font "Calibri"
+    run 1 field page bold 10.0pt font "Calibri"
+  para "Turn to # for more."
+    run 0 "Turn to # for more." 10.0pt font "Calibri"
+story 2
+  para "Page two, numbered by its master"
+    run 0 "Page two, numbered by it" 10.0pt font "Calibri"
+fonts 1
+font "Calibri"
+pictures 0

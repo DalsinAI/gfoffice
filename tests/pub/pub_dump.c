@@ -70,6 +70,8 @@ static void put_story(const owf_doc *res, const owf_story *story, const char *in
                 printf("\\t");
             } else if (run->kind == OWF_RUN_LINEBREAK) {
                 printf("\\n");
+            } else if (run->kind == OWF_RUN_FIELD) {
+                printf(run->field == OWF_FIELD_PAGE ? "{page}" : "{field %d}", (int)run->field);
             }
         }
         printf("\"\n");
@@ -80,6 +82,12 @@ static void put_story(const owf_doc *res, const owf_story *story, const char *in
                    p->fmt.align == OWF_ALIGN_RIGHT ? "right" : "justify");
         for (j = 0; j < p->nruns; j++) {
             const owf_run *run = &p->runs[j];
+            if (run->kind == OWF_RUN_FIELD) {
+                printf("%s  run %d field %s", indent, j, run->field == OWF_FIELD_PAGE ? "page" : "other");
+                put_fmt(res, &run->fmt);
+                printf("\n");
+                continue;
+            }
             if (run->kind != OWF_RUN_TEXT || !run->text || (!has_fmt(&run->fmt) && !run->href))
                 continue;
             printf("%s  run %d \"%.24s\"", indent, j, run->text);
