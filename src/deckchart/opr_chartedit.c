@@ -199,21 +199,25 @@ static int cell_number(const owf_sheet *sh, unsigned row, unsigned col, double *
     return 1;
 }
 
-/* Frees series from..n-1 of c (keeping the array), as owf_chart_clear would. */
+/* Frees series from..nseries-1 of c in place (the array kept), as owf_chart_clear frees a series. */
 static void drop_series(owf_chart *c, int from)
 {
-    owf_chart tail;
-    int n = c->nseries - from;
-    if (n <= 0)
-        return;
-    memset(&tail, 0, sizeof tail);
-    tail.series = malloc((size_t)n * sizeof *tail.series);
-    if (tail.series) {
-        memcpy(tail.series, c->series + from, (size_t)n * sizeof *tail.series);
-        tail.nseries = n;
-        owf_chart_clear(&tail);
+    int i, k;
+    for (i = from; i < c->nseries; i++) {
+        owf_chart_series *s = &c->series[i];
+        free_cells(s);
+        for (k = 0; k < s->npoints; k++)
+            free(s->points[k].label);
+        free(s->points);
+        free(s->name);
+        free(s->label_format);
+        free(s->format);
+        free(s->error_plus_range);
+        free(s->error_minus_range);
+        memset(s, 0, sizeof *s);
     }
-    c->nseries = from;
+    if (from < c->nseries)
+        c->nseries = from;
 }
 
 static int rebuild(const owf_sheet *sh, owf_chart *c)
