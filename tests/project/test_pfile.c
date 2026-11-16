@@ -687,16 +687,55 @@ static void test_baseline(void)
     owf_project_free(q);
     q = NULL;
     owf_free(data);
-    /* By hand: a Baseline with no Number is Baseline 0; Baselines 1 to 10 are left out. */
+    /* By hand: a Baseline with no Number is Baseline 0; Baselines 1 to 10 are kept by number. */
     CHECK_N(owf_project_read((const unsigned char *)hand, sizeof hand - 1, &q), OWF_OK);
     if (q && q->ntasks == 2) {
         CHECK(q->tasks[0].baselined && q->tasks[0].baseline_start == AT(16, 8, 0));
         CHECK(q->tasks[0].baseline_finish == AT(16, 17, 0) && q->tasks[0].baseline_duration == D);
         CHECK(q->tasks[0].baseline_work == 240 && q->tasks[0].baseline_cost == 12345);
         CHECK(!q->tasks[1].baselined);
+        CHECK_N(q->tasks[0].more_baselined, 1 << 1);
+        CHECK_N(q->tasks[0].more_baselines[0].start, owf_ptime_make(2026, 11, 1, 8, 0));
+        CHECK_N(q->tasks[1].more_baselined, 1 << 2);
     } else
         CHECK(q && q->ntasks == 2);
     owf_project_free(q);
+    /* Baseline 3 out and back, after Baseline 0, in both formats; a Number past 10 is left out. */
+    owf_project_set_baseline_n(p, 3, 0, -1);
+    {
+        int f;
+        for (f = OWF_PFILE_GFPROJ; f <= OWF_PFILE_MSPDI; f++) {
+            q = NULL;
+            CHECK_N(owf_project_write(p, f, &data, &length), OWF_OK);
+            if (f == OWF_PFILE_MSPDI)
+                CHECK_HAS(data, "</Baseline><Baseline><Number>3</Number><Start>2026-11-16T08:00:00</Start>");
+            CHECK_N(owf_project_read(data, length, &q), OWF_OK);
+            if (q && q->ntasks == p->ntasks) {
+                for (i = 0; i < p->ntasks; i++) {
+                    owf_pbaseline x, y;
+                    CHECK(owf_ptask_baseline(&q->tasks[i], 3, &x) && owf_ptask_baseline(&p->tasks[i], 3, &y));
+                    CHECK(x.start == y.start && x.finish == y.finish && x.duration == y.duration);
+                    CHECK(x.work == y.work && x.cost == y.cost);
+                    CHECK(q->tasks[i].baselined && q->tasks[i].more_baselined == 1 << 3);
+                }
+            } else
+                CHECK(q && q->ntasks == p->ntasks);
+            owf_project_free(q);
+            owf_free(data);
+        }
+    }
+    {
+        static const char eleven[] =
+            "<?xml version=\"1.0\"?>\n<Project xmlns=\"http://schemas.microsoft.com/project\">"
+            "<StartDate>2026-11-16T08:00:00</StartDate><Tasks>"
+            "<Task><UID>1</UID><ID>1</ID><Name>Dig</Name><OutlineLevel>1</OutlineLevel><Duration>PT8H0M0S</Duration>"
+            "<Baseline><Number>11</Number><Start>2026-11-01T08:00:00</Start></Baseline>"
+            "<Baseline><Number>-1</Number><Start>2026-11-01T08:00:00</Start></Baseline></Task></Tasks></Project>\n";
+        q = NULL;
+        CHECK_N(owf_project_read((const unsigned char *)eleven, sizeof eleven - 1, &q), OWF_OK);
+        CHECK(q && q->ntasks == 1 && !q->tasks[0].baselined && q->tasks[0].more_baselined == 0);
+        owf_project_free(q);
+    }
     owf_project_free(p);
 }
 

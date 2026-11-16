@@ -306,6 +306,55 @@ void owf_project_clear_baseline(owf_project *p, int first, int count)
     }
 }
 
+void owf_project_set_baseline_n(owf_project *p, int n, int first, int count)
+{
+    int i;
+    if (n == 0) owf_project_set_baseline(p, first, count);
+    if (n < 1 || n >= OWF_NBASELINES || !task_range(p, &first, &count)) return;
+    for (i = first; i < first + count; i++) {
+        owf_ptask *t = &p->tasks[i];
+        owf_pbaseline *b = &t->more_baselines[n - 1];
+        t->more_baselined |= (unsigned short)(1u << n);
+        b->start = t->early_start;
+        b->finish = t->early_finish;
+        b->duration = t->summary ? task_minutes(p, t, t->early_start, t->early_finish) : t->duration;
+        b->work = t->work;
+        b->cost = t->cost;
+    }
+}
+
+void owf_project_clear_baseline_n(owf_project *p, int n, int first, int count)
+{
+    int i;
+    if (n == 0) owf_project_clear_baseline(p, first, count);
+    if (n < 1 || n >= OWF_NBASELINES || !task_range(p, &first, &count)) return;
+    for (i = first; i < first + count; i++) {
+        owf_ptask *t = &p->tasks[i];
+        t->more_baselined &= (unsigned short)~(1u << n);
+        memset(&t->more_baselines[n - 1], 0, sizeof t->more_baselines[n - 1]);
+    }
+}
+
+int owf_ptask_baseline(const owf_ptask *t, int n, owf_pbaseline *out)
+{
+    owf_pbaseline none;
+    if (!out) out = &none;
+    memset(out, 0, sizeof *out);
+    if (!t || n < 0 || n >= OWF_NBASELINES) return 0;
+    if (n == 0) {
+        if (!t->baselined) return 0;
+        out->start = t->baseline_start;
+        out->finish = t->baseline_finish;
+        out->duration = t->baseline_duration;
+        out->work = t->baseline_work;
+        out->cost = t->baseline_cost;
+        return 1;
+    }
+    if (!(t->more_baselined & (1u << n))) return 0;
+    *out = t->more_baselines[n - 1];
+    return 1;
+}
+
 /* Working minutes from a to b on t's calendar, below 0 when b is before a. */
 static long signed_work(const owf_project *p, const owf_ptask *t, owf_ptime a, owf_ptime b)
 {
