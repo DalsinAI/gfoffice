@@ -392,6 +392,11 @@ const owf_style *owf_styles_find(const owf_styles *styles, const char *name, int
 void owf_styles_free(owf_styles *styles);
 /* Applies the named style and its ancestors, from the first table that has
  * it (automatic styles before common ones). */
+/* 1.13: ODT's own namespace for what ODF has no place for (gfo:para-style-before on text:format-change), and
+ * the date written for a change with none (dc:date must be there), read back as none */
+#define OWF_ODF_NS_GFO "urn:amicradle:names:gfoffice:xmlns:odt:1.0"
+#define OWF_ODF_NO_DATE "1970-01-01T00:00:00"
+
 void owf_styles_resolve(const owf_styles *const *tables, int ntables, const char *name, int family,
                         owf_parafmt *para, owf_charfmt *chr);
 const owf_style *owf_styles_lookup(const owf_styles *const *tables, int ntables, const char *name, int family);

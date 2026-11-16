@@ -9,7 +9,10 @@
  * with tabs between the cells, and notes go to the end; the import report
  * says so. Tracked changes (text:tracked-changes; 1.5) are the document's:
  * insertions between text:change-start and text:change-end, deletions at
- * text:change with their text from the changed region.
+ * text:change with their text from the changed region. 1.13: a paragraph's
+ * format change (text:format-change with gfo:para-style-before, as out_odt
+ * writes it) is the paragraph's, with the format before from that style;
+ * one without it (no format before) is kept as the format is now.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
@@ -47,6 +50,7 @@ typedef struct {
     owf_list_style lists[MAX_LISTS];
     int nlists;
     owf_parafmt base_para;
+    const owf_xml_node *para_format;  /* 1.13: the paragraph format change begun in the paragraph being read */
     owf_charfmt base_char;           /* the default style's text, with real font and size */
     struct { const char *name; unsigned long colour; } cells[64];   /* table-cell styles with a background */
     int ncells;
@@ -1091,7 +1095,13 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
                owf_xml_is(c, NS_TEXT, "change")) {
         /* 1.5: a tracked change: an insertion from its start to its end, a deletion's text here */
         const owf_xml_node *what = NULL, *region = changed_region(o, owf_xml_attr(c, NS_TEXT, "change-id"));
-        int rev = region && !o->in_deletion ? region_change(o, region, &what) : 0;
+        const owf_xml_node *fc = region ? owf_xml_child(region, NS_TEXT, "format-change") : NULL;
+        int rev = 0;
+        if (fc && owf_xml_attr(fc, OWF_ODF_NS_GFO, "para-style-before")) {
+            /* 1.13: a paragraph's format change, made the paragraph's at its end (paragraph_format_change) */
+            if (owf_xml_is(c, NS_TEXT, "change-start") && !o->in_deletion) o->para_format = fc;
+        } else if (region && !o->in_deletion)
+            rev = region_change(o, region, &what);
         if (!rev || !what) {
             /* a format change, or a change we don't know: nothing */
         } else if (owf_xml_is(c, NS_TEXT, "change-start") && owf_xml_is(what, NS_TEXT, "insertion")) {
@@ -1186,10 +1196,43 @@ static void odt_para_bookmarks(odt *o)
     owf_buf_free(&names);
 }
 
+/* 1.13: the paragraph just made gets the format change begun in it (o->para_format): who, when, and the format
+ * before from gfo:para-style-before's automatic style, its heading level from the style's parent */
+static void paragraph_format_change(odt *o)
+{
+    const owf_xml_node *fc = o->para_format, *info;
+    owf_story *st = o->b->story;
+    owf_para *p = st && st->nparas ? &st->paras[st->nparas - 1] : NULL;
+    owf_parafmt before;
+    owf_charfmt cf;
+    owf_buf author, date;
+    const char *when;
+    int n;
+    o->para_format = NULL;
+    if (!fc || !p || p->para_format_change)
+        return;
+    before = o->base_para;
+    cf = o->base_char;
+    owf_styles_resolve(o->tables, 2, owf_xml_attr(fc, OWF_ODF_NS_GFO, "para-style-before"), OWF_FAMILY_PARAGRAPH,
+                       &before, &cf);
+    info = owf_xml_child(fc, NS_OFFICE, "change-info");
+    owf_buf_init(&author);
+    owf_buf_init(&date);
+    when = child_text(o, info, NS_DC, "date", &date);
+    if (when && !strcmp(when, OWF_ODF_NO_DATE))
+        when = NULL;
+    n = owf_track_para_format_add(o->doc, child_text(o, info, NS_DC, "creator", &author), when, NULL, &before);
+    owf_buf_free(&author);
+    owf_buf_free(&date);
+    if (n) p->para_format_change = n;
+    else o->failed = 1;
+}
+
 static void paragraph(odt *o, const owf_xml_node *p, const char *prefix, int list_level)
 {
     owf_parafmt pf;
     owf_charfmt cf;
+    const owf_xml_node *outer;
 
     para_formats(o, p, &pf, &cf);
     if (owf_xml_is(p, NS_TEXT, "h")) {
@@ -1216,9 +1259,13 @@ static void paragraph(odt *o, const owf_xml_node *p, const char *prefix, int lis
         owf_builder_text(o->b, prefix, strlen(prefix));
         owf_builder_special(o->b, OWF_RUN_TAB, OWF_FIELD_PAGE);
     }
+    outer = o->para_format;                          /* 1.13: a text box's paragraph inside keeps it */
+    o->para_format = NULL;
     inline_children(o, p, &cf);
     owf_builder_end_para(o->b);
     odt_para_bookmarks(o);                           /* 1.4 */
+    paragraph_format_change(o);                      /* 1.13 */
+    o->para_format = outer;
 }
 
 static void blocks(odt *o, const owf_xml_node *n, int list_level, const char *list_name);

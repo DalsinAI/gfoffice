@@ -1154,7 +1154,8 @@ static void test_para_format_changes(void)
     }
     CHECK(!kept, "the paragraphs' format changes are kept, not reported");
 
-    /* ODT keeps none yet, and says so */
+    /* 1.13: ODT keeps them too: a text:format-change round each paragraph, the format before an automatic
+     * style named by gfo:para-style-before; Hal's undated change comes back undated; the report says nothing */
     {
         owf_report *op = owf_report_new();
         int said = 0;
@@ -1162,10 +1163,77 @@ static void test_para_format_changes(void)
         for (i = 0; op && i < owf_report_count(op); ++i) {
             owf_note_level level;
             const char *note = owf_report_note(op, i, &level, NULL);
-            if (note && strstr(note, "Tracked format changes were saved accepted")) said = 1;
+            if (note && strstr(note, "format changes")) said = 1;
         }
-        CHECK(said, "the ODT report says the paragraph format changes were saved accepted");
+        CHECK(!said, "the ODT report says nothing of format changes");
         owf_report_free(op);
+        back = NULL;
+        CHECK(owf_import_file("/tmp/openwrite-parachange.odt", NULL, &back, NULL, NULL) == OWF_OK && back, "odt back");
+        if (back) {
+            CHECK(!strcmp(para_format_changes_dump(back), want), para_format_changes_dump(back));
+            CHECK(back->npara_format_changes == 2 && !back->nformat_changes && !back->nrevisions, "two, and no other");
+            CHECK(owf_export_file(back, "/tmp/openwrite-parachange.odt", "odt", NULL) == OWF_OK, "odt again");
+            owf_doc_free(back);
+            back = NULL;
+            CHECK(owf_import_file("/tmp/openwrite-parachange.odt", NULL, &back, NULL, NULL) == OWF_OK && back &&
+                  !strcmp(para_format_changes_dump(back), want), back ? para_format_changes_dump(back) : "second odt read");
+            owf_doc_free(back);
+            back = NULL;
+        }
+    }
+    /* a heading made body text, and body text made a heading: the level before comes back from the style's
+     * parent (Heading_20_1) */
+    {
+        static const char *const two[] = { "Was a heading", "Now a heading" };
+        owf_doc *h = doc_of(two, 2);
+        owf_parafmt b;
+        int n1, n2;
+        owf_parafmt_init(&b);
+        b.heading = 1;
+        n1 = h ? owf_track_para_format_add(h, "Ivy", "2026-11-04T09:00:00Z", NULL, &b) : 0;
+        b.heading = 0;
+        n2 = h ? owf_track_para_format_add(h, "Ivy", "2026-11-04T09:01:00Z", NULL, &b) : 0;
+        CHECK(n1 && n2, "two heading changes");
+        if (h && n1 && n2) {
+            h->body.paras[0].para_format_change = n1;
+            h->body.paras[1].para_format_change = n2;
+            h->body.paras[1].fmt.heading = 1;
+            CHECK(owf_export_file(h, "/tmp/openwrite-parachange-h.odt", "odt", NULL) == OWF_OK &&
+                  owf_import_file("/tmp/openwrite-parachange-h.odt", NULL, &back, NULL, NULL) == OWF_OK && back,
+                  "headings through ODT");
+            if (back) {
+                const owf_para_format_change *c1 = OWF_DOC_PARA_FORMAT_CHANGE(back, back->body.paras[0].para_format_change);
+                const owf_para_format_change *c2 = OWF_DOC_PARA_FORMAT_CHANGE(back, back->body.paras[1].para_format_change);
+                CHECK(back->body.paras[0].fmt.heading == 0 && c1 && c1->before.heading == 1, "was a heading");
+                CHECK(back->body.paras[1].fmt.heading == 1 && c2 && c2->before.heading == 0, "now a heading");
+                owf_doc_free(back);
+                back = NULL;
+            }
+        }
+        owf_doc_free(h);
+    }
+    /* OpenOffice's form: a text:format-change with no format before is kept as the format is now */
+    {
+        static const char *const onames[] = { "mimetype", "content.xml", "META-INF/manifest.xml" };
+        static const char *const oparts[] = {
+            "application/vnd.oasis.opendocument.text",
+            "<?xml version=\"1.0\"?><office:document-content xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+            "xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" office:version=\"1.3\">"
+            "<office:body><office:text><text:tracked-changes>"
+            "<text:changed-region text:id=\"ct1\"><text:format-change><office:change-info><dc:creator>Eve</dc:creator>"
+            "<dc:date>2026-10-30T08:00:00</dc:date></office:change-info></text:format-change></text:changed-region>"
+            "</text:tracked-changes><text:p><text:change-start text:change-id=\"ct1\"/>Reformatted"
+            "<text:change-end text:change-id=\"ct1\"/></text:p></office:text></office:body></office:document-content>",
+            "<?xml version=\"1.0\"?><manifest:manifest xmlns:manifest=\"urn:oasis:names:tc:opendocument:xmlns:manifest:1.0\">"
+            "<manifest:file-entry manifest:full-path=\"/\" manifest:media-type=\"application/vnd.oasis.opendocument.text\"/>"
+            "<manifest:file-entry manifest:full-path=\"content.xml\" manifest:media-type=\"text/xml\"/></manifest:manifest>" };
+        CHECK(zip_import(onames, oparts, 3, &back) == OWF_OK && back, "OpenOffice's format change");
+        if (back) {
+            CHECK(!back->npara_format_changes && !back->body.paras[0].para_format_change && !owf_doc_has_changes(back),
+                  "no format before: no change");
+            owf_doc_free(back);
+            back = NULL;
+        }
     }
     /* an edit and its undo leave the changes the document's (the editor keeps the list through undo) */
     {

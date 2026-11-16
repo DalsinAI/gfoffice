@@ -230,6 +230,18 @@ int owf_import_file(const char *path, const char *format, owf_doc **doc,
     return result;
 }
 
+/* 1.13: whether any run has a tracked format change (ODT keeps the paragraphs' only) */
+static int run_format_changes(const owf_doc *doc)
+{
+    const owf_story *st;
+    int n, i, j;
+    for (n = 0; (st = owf_doc_story((owf_doc *)doc, n)) != NULL; ++n)
+        for (i = 0; i < st->nparas; ++i)
+            for (j = 0; j < st->paras[i].nruns; ++j)
+                if (st->paras[i].runs[j].format_change > 0) return 1;
+    return 0;
+}
+
 int owf_export_file(const owf_doc *doc, const char *path, const char *format, owf_report *report)
 {
     const owf_format *f = format ? owf_format_named(format) : owf_format_for_filename(path);
@@ -256,7 +268,8 @@ int owf_export_file(const owf_doc *doc, const char *path, const char *format, ow
         result = f->export(view, &data, &length, report);
         owf_doc_accepted_free(view);
     } else {
-        if (f == &owf_format_odt && owf_doc_has_format_changes(doc))   /* 1.11: DOCX keeps them; ODT not yet */
+        if (f == &owf_format_odt && run_format_changes(doc))   /* 1.11: DOCX keeps them; ODT not yet (1.13: the
+                                                                  * paragraphs' it keeps) */
             owf_report_add(report, OWF_NOTE_APPROX, "Tracked format changes were saved accepted (as the format is now) in %s",
                            f->description);
         if (f == &owf_format_odt && owf_doc_has_row_changes(doc))      /* 1.12: DOCX keeps them; ODT not yet */
