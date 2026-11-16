@@ -480,6 +480,13 @@ int ow_editor_set_user_field(ow_editor *editor, const char *name, const char *va
 /* A reference to body paragraph paragraph at the caret: its text, or (page 1) its page; the paragraph gets a
  * bookmark ("_Ref1" ...) when it has none */
 int ow_editor_insert_cross_reference(ow_editor *editor, int paragraph, int page);
+/* libowf 1.12.4 (2.0.44): references to figures and tables. A caption is a body paragraph (not a heading) with a
+ * number range (OWF_FIELD_SEQ). Its reference shows its label and number ("Figure 1"): a bookmark over the text
+ * before its first SEQ field and the field (one already there, or a new _Ref), and a REF field to it, which
+ * shows the bookmark's place (a reference to any bookmark with a place shows just that). page: its page, as a
+ * heading's. OWF_ERR_FORMAT: not a caption. */
+int ow_editor_is_caption(const ow_editor *editor, int paragraph);
+int ow_editor_insert_caption_reference(ow_editor *editor, int paragraph, int page);
 
 /* ---- Mail merge (core 1.6) ----
  * A data source is a CSV file (comma, semicolon or tab separated; quoted cells; UTF-8 or Latin-1) whose first
