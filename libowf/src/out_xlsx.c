@@ -1700,11 +1700,14 @@ static void pivot_table_xml(xlsx_out *w, owf_buf *b, const owf_pivotdef *def, in
         if (xp_is_data(def, f))
             owf_buf_puts(b, " dataField=\"1\"");
         owf_buf_puts(b, " showAll=\"0\"");
+        if (axis_field && strcmp(axis, "axisPage") && !owf_pivot_subtotal_of(def, f))
+            owf_buf_puts(b, " defaultSubtotal=\"0\"");     /* Excel's default is a subtotal per item */
         if (axis_field && owf_pivot_sort_of(def, f) != OWF_PIVOT_SORT_SOURCE)
             owf_buf_printf(b, " sortType=\"%s\"",
                            owf_pivot_sort_of(def, f) == OWF_PIVOT_SORT_DESCENDING ? "descending" : "ascending");
         if (axis_field) {
             xpivot_items it;
+            int with_default = !strcmp(axis, "axisPage") || owf_pivot_subtotal_of(def, f);
             xpivot_group xg;
             if (!xp_collect(w->book, def, f, &it)) {
                 free(it.items);
@@ -1712,7 +1715,7 @@ static void pivot_table_xml(xlsx_out *w, owf_buf *b, const owf_pivotdef *def, in
                 return;
             }
             if (xp_group(w->book, def, f, &it, &xg)) {  /* the items are the group items */
-                owf_buf_printf(b, "><items count=\"%d\">", xg.n + 1);
+                owf_buf_printf(b, "><items count=\"%d\">", xg.n + with_default);
                 for (i = 0; i < xg.n; i++) {
                     owf_cell key;
                     memset(&key, 0, sizeof key);
@@ -1722,13 +1725,13 @@ static void pivot_table_xml(xlsx_out *w, owf_buf *b, const owf_pivotdef *def, in
                     owf_buf_printf(b, "<item x=\"%d\"%s/>", i, owf_pivot_is_hidden(def, f, &key) ? " h=\"1\"" : "");
                 }
             } else {
-                owf_buf_printf(b, "><items count=\"%d\">", it.n + 1);
+                owf_buf_printf(b, "><items count=\"%d\">", it.n + with_default);
                 for (i = 0; i < it.n; i++)        /* a hidden row or column item: h="1" */
                     owf_buf_printf(b, "<item x=\"%d\"%s/>", i,
                                    strcmp(axis, "axisPage") && owf_pivot_is_hidden(def, f, it.items[i]) ? " h=\"1\""
                                                                                           : "");
             }
-            owf_buf_puts(b, "<item t=\"default\"/></items></pivotField>");
+            owf_buf_puts(b, with_default ? "<item t=\"default\"/></items></pivotField>" : "</items></pivotField>");
             free(it.items);
         } else
             owf_buf_puts(b, "/>");
@@ -1837,6 +1840,18 @@ static void workbook_xml(xlsx_out *w, owf_buf *b)
     int i, active = book->active >= 0 && book->active < book->nsheets ? book->active : 0;
     owf_buf_puts(b, XML_HEAD "<workbook xmlns=\"" NS_MAIN "\" xmlns:r=\"" NS_R "\">");
     owf_buf_puts(b, book->date1904 ? "<workbookPr date1904=\"1\"/>" : "<workbookPr/>");
+    if (book->protect_structure) {
+        owf_buf_puts(b, "<workbookProtection");
+        if (book->protect_hash && strlen(book->protect_hash) == 4)
+            owf_buf_printf(b, " workbookPassword=\"%s\"", book->protect_hash);
+        else if (book->protect_kept && !strncmp(book->protect_kept, "xlsx:", 5))
+            owf_buf_puts(b, book->protect_kept + 5);
+        else if (book->protect_kept)
+            owf_report_add(w->report, OWF_NOTE_APPROX,
+                           "The workbook's password from an ODS file is not kept in XLSX: its structure stays "
+                           "protected without one");
+        owf_buf_puts(b, " lockStructure=\"1\"/>");
+    }
     owf_buf_printf(b, "<bookViews><workbookView activeTab=\"%d\"/></bookViews><sheets>", active);
     for (i = 0; i < book->nsheets; i++) {
         owf_buf_puts(b, "<sheet name=\"");

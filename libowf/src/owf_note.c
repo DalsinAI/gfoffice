@@ -321,20 +321,22 @@ int owf_doc_note_count(const owf_doc *doc, int endnote)
 int owf_note_number(const owf_doc *doc, int index)
 {
     owf_story *s;
-    int n, i, j, count = 0, kind;
+    int n, i, j, count[2] = {0, 0}, kind;
     if (!doc || index < 0 || index >= doc->nnotes)
         return 0;
-    kind = doc->notes[index].endnote;
+    kind = doc->notes[index].endnote ? 1 : 0;
     for (n = 0; (s = owf_doc_story((owf_doc *)doc, n)) != NULL; ++n)
-        for (i = 0; i < s->nparas; ++i)
+        for (i = 0; i < s->nparas; ++i) {
+            owf_note_section_restart_impl(doc, s, i, count);   /* 1.12.3: again at each section */
             for (j = 0; j < s->paras[i].nruns; ++j) {
                 int m = s->paras[i].runs[j].note;
-                if (m <= 0 || m > doc->nnotes || doc->notes[m - 1].endnote != kind || doc->notes[m - 1].label)
+                if (m <= 0 || m > doc->nnotes || (doc->notes[m - 1].endnote ? 1 : 0) != kind || doc->notes[m - 1].label)
                     continue;
-                ++count;
+                ++count[kind];
                 if (m == index + 1)
-                    return count;
+                    return count[kind];
             }
+        }
     return 0;
 }
 

@@ -360,6 +360,8 @@ int oc_core_add_sheet(oc_core *core, const char *name)
     oc_undo *u;
     owf_sheet *s, keep;
     int at = core->sheet + 1, i, n = book->nsheets + 1;
+    if (oc_book_locked(core))
+        return -1;
     if (core->edit_mode)
         oc_edit_commit_anyway(core, OC_MOVE_NONE);
     if (!name) {
@@ -409,6 +411,8 @@ int oc_core_rename_sheet(oc_core *core, int sheet, const char *name)
         return OWF_ERR_FORMAT;
     if (!strcmp(book->sheets[sheet].name, name))
         return OWF_OK;
+    if (oc_book_locked(core))
+        return OC_PROTECTED;
     if (core->edit_mode)
         oc_edit_commit_anyway(core, OC_MOVE_NONE);
     u = oc_undo_new(core, OC_UNDO_BOOK);
@@ -437,6 +441,8 @@ int oc_core_delete_sheet(oc_core *core, int sheet)
     int i, j;
     if (sheet < 0 || sheet >= book->nsheets || book->nsheets < 2)
         return OWF_ERR_UNSUPPORTED;
+    if (oc_book_locked(core))
+        return OC_PROTECTED;
     if (core->edit_mode)
         oc_edit_cancel(core);
     u = oc_undo_new(core, OC_UNDO_BOOK);
@@ -509,6 +515,8 @@ int oc_core_move_sheet(oc_core *core, int sheet, int to)
         return OWF_ERR_FORMAT;
     if (sheet == to)
         return OWF_OK;
+    if (oc_book_locked(core))
+        return OC_PROTECTED;
     if (core->edit_mode)
         oc_edit_commit_anyway(core, OC_MOVE_NONE);
     undo = oc_undo_new(core, OC_UNDO_BOOK);
@@ -559,6 +567,8 @@ int oc_core_set_sheet_hidden(oc_core *core, int sheet, int hidden)
     hidden = hidden != 0;
     if ((book->sheets[sheet].hidden != 0) == hidden)
         return OWF_OK;
+    if (oc_book_locked(core))
+        return OC_PROTECTED;
     for (i = 0; i < book->nsheets; i++)
         if (!book->sheets[i].hidden)
             visible++;
@@ -616,6 +626,8 @@ int oc_core_duplicate_sheet(oc_core *core, int sheet, const char *name)
     int ncharts = 0, at, i, rc = OWF_OK;
     if (!core || sheet < 0 || sheet >= core->book->nsheets || !name || !name_ok(core->book, name, -1))
         return OWF_ERR_FORMAT;
+    if (oc_book_locked(core))
+        return OC_PROTECTED;
     book = core->book;
     if (book->sheets[sheet].drawing && oc_drawing_has_nonchart(book, &book->sheets[sheet]))
         return OWF_ERR_UNSUPPORTED;

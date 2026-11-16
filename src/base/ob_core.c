@@ -63,6 +63,8 @@ struct ob_project {
 
 static void undo_drop_top(ob_project *p);
 static int query_exists(ob_project *p, const char *name);
+static int view_exists(ob_project *p, const char *name);
+static int queries_follow(ob_project *p, const char *old_name, const char *new_name);
 
 static const char *const type_names[OB_TYPE_COUNT] = {
     "Counter", "Text", "Memo", "Integer", "Number", "Currency", "Date", "Time",
@@ -812,6 +814,44 @@ static int step_end(ob_project *p, int good)
     return 0;
 }
 
+/* ---- SQL views (core 0.6.3) ---- */
+
+static int view_exists(ob_project *p, const char *name)
+{
+    sqlite3_stmt *st = prep(p, "SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = ?1 COLLATE NOCASE");
+    int found;
+    if (!st) return 0;
+    sqlite3_bind_text(st, 1, name, -1, SQLITE_TRANSIENT);
+    found = sqlite3_step(st) == SQLITE_ROW;
+    sqlite3_finalize(st);
+    return found;
+}
+
+static int view_count(ob_project *p)
+{
+    return (int)scalar(p, "SELECT count(*) FROM sqlite_schema WHERE type = 'view'", 0);
+}
+
+/* Whether every view still reads after table was changed or dropped in the
+ * caller's step; 0 with the first one that doesn't. */
+static int views_ok(ob_project *p, const char *table)
+{
+    sqlite3_stmt *st = prep(p, "SELECT name FROM sqlite_schema WHERE type = 'view' ORDER BY name COLLATE NOCASE");
+    int good = 1;
+    if (!st) return 0;
+    while (good && sqlite3_step(st) == SQLITE_ROW) {
+        const char *name = (const char *)sqlite3_column_text(st, 0);
+        char *sql = sqlite3_mprintf("SELECT * FROM \"%w\" LIMIT 0", name);
+        sqlite3_stmt *probe = NULL;
+        int rc = sql ? sqlite3_prepare_v2(p->db, sql, -1, &probe, NULL) : SQLITE_NOMEM;
+        sqlite3_finalize(probe);
+        sqlite3_free(sql);
+        if (rc != SQLITE_OK) good = fail(p, "The view %s uses %s: change or delete the view first", name, table);
+    }
+    sqlite3_finalize(st);
+    return good;
+}
+
 /* ---- Tables ---- */
 
 static int load_tables(ob_project *p)
@@ -1014,6 +1054,7 @@ static int check_design(ob_project *p, const ob_table *t, const char *old_name)
     char why[OB_ERR_MAX];
     if (!name_ok(t->name, why, sizeof why, "table")) return fail(p, "%s", why);
     if (query_exists(p, t->name)) return fail(p, "There is a query named %s: give the table another name", t->name);
+    if (view_exists(p, t->name)) return fail(p, "There is a view named %s: give the table another name", t->name);
     if (t->nfields < 1) return fail(p, "%s needs at least one field", t->name);
     if (t->nfields > OB_MAX_FIELDS) return fail(p, "%s has more than %d fields", t->name, OB_MAX_FIELDS);
     for (i = 0; i < t->nfields; i++) {
@@ -1471,8 +1512,10 @@ static int change_table(ob_project *p, const char *old_name, const ob_table *t, 
 {
     sqlite3_str *cols, *vals;
     char *sql = NULL, *cs = NULL, *vs = NULL;
-    int i, good = 0, any = 0, rc;
+    int i, good = 0, any = 0, rc, views, renamed;
+    const char *src;
     if (!ob_table_get(p, old_name, old)) return 0;
+    src = old->name;
     if (!check_design(p, t, old->name)) return 0;
     if (!same(old->name, t->name) && table_exists(p, t->name))
         return fail(p, "There is a table named %s already", t->name);
@@ -1497,17 +1540,38 @@ static int change_table(ob_project *p, const char *old_name, const ob_table *t, 
      * schema changes"), with foreign keys off for the copy and checked after */
     if (!run(p, "PRAGMA foreign_keys=OFF")) goto out;
     if (!run(p, "BEGIN IMMEDIATE")) goto keys;
+    /* A change that renames the table: rename it first, the plain way, so
+     * SQLite rewrites the other tables' REFERENCES (a Lookup of it would
+     * otherwise name a table that is gone) and the views that name it; the
+     * steps below then work on it under its new name. */
+    views = view_count(p) > 0;
+    if (!same(old->name, t->name)) {
+        if (!runf(p, "ALTER TABLE \"%w\" RENAME TO \"%w\"", old->name, t->name)) goto undo;
+        src = t->name;
+    }
     sql = table_sql_alloc(t, "oadb_change");
     if (!sql || !run(p, sql)) goto undo;
     sqlite3_free(sql);
     sql = NULL;
     if (any) {
-        sql = sqlite3_mprintf("INSERT INTO oadb_change(%s) SELECT %s FROM \"%w\"", cs, vs, old->name);
+        sql = sqlite3_mprintf("INSERT INTO oadb_change(%s) SELECT %s FROM \"%w\"", cs, vs, src);
         rc = sql ? sqlite3_exec(p->db, sql, NULL, NULL, NULL) : SQLITE_NOMEM;
         if (rc != SQLITE_OK) { change_fail(p, t, rc); goto undo; }
     }
-    if (!runf(p, "DROP TABLE \"%w\"", old->name)) goto undo;
-    if (!runf(p, "ALTER TABLE oadb_change RENAME TO \"%w\"", t->name)) goto undo;
+    if (!runf(p, "DROP TABLE \"%w\"", src)) goto undo;
+    /* A view names the table, which is gone until the copy takes its name, and
+     * the rename's check of the schema would refuse it: rename the old way and
+     * check the views after. */
+    if (views && !run(p, "PRAGMA legacy_alter_table=ON")) goto undo;
+    renamed = runf(p, "ALTER TABLE oadb_change RENAME TO \"%w\"", t->name);
+    if (views) {
+        char keep[OB_ERR_MAX];
+        copy(keep, sizeof keep, p->err);
+        sqlite3_exec(p->db, "PRAGMA legacy_alter_table=OFF", NULL, NULL, NULL);
+        copy(p->err, sizeof p->err, keep);
+    }
+    if (!renamed) goto undo;
+    if (views && !views_ok(p, old->name)) goto undo;
     if (!runf(p, "DELETE FROM oadb_fields WHERE tbl = %Q", old->name) || !save_fields(p, t)) goto undo;
     if (!forms_follow(p, old, t, t->name)) goto undo;     /* designed forms follow (core 0.7.0) */
     if (!make_indexes(p, t)) {
@@ -1519,8 +1583,11 @@ static int change_table(ob_project *p, const char *old_name, const ob_table *t, 
         goto undo;
     }
     if (!same(old->name, t->name)) {
-        /* other tables' Lookups follow the rename (SQLite rewrote their REFERENCES) */
+        /* other tables' Lookups follow the rename (SQLite rewrote their REFERENCES
+         * in the plain rename above) */
         if (!runf(p, "UPDATE oadb_fields SET lookup = %Q WHERE lookup = %Q", t->name, old->name)) goto undo;
+        forget(p);
+        if (!queries_follow(p, old->name, t->name)) goto undo;
     }
     {
         sqlite3_stmt *st = prep(p, "PRAGMA foreign_key_check");
@@ -1571,7 +1638,7 @@ int ob_table_change(ob_project *p, const char *old_name, const ob_table *t)
 
 int ob_table_rename(ob_project *p, const char *old_name, const char *new_name)
 {
-    char why[OB_ERR_MAX];
+    char why[OB_ERR_MAX], was[OB_NAME_MAX];
     const ob_table *t;
     int good;
     if (!(t = design(p, old_name))) return 0;
@@ -1579,11 +1646,16 @@ int ob_table_rename(ob_project *p, const char *old_name, const char *new_name)
     if (!same(t->name, new_name) && table_exists(p, new_name))
         return fail(p, "There is a table named %s already", new_name);
     if (query_exists(p, new_name)) return fail(p, "There is a query named %s: give the table another name", new_name);
+    if (view_exists(p, new_name)) return fail(p, "There is a view named %s: give the table another name", new_name);
+    copy(was, sizeof was, t->name);
     if (!step_begin(p)) return 0;
-    good = runf(p, "ALTER TABLE \"%w\" RENAME TO \"%w\"", t->name, new_name)
-        && runf(p, "UPDATE oadb_fields SET tbl = %Q WHERE tbl = %Q", new_name, t->name)
-        && runf(p, "UPDATE oadb_fields SET lookup = %Q WHERE lookup = %Q", new_name, t->name)
+    /* SQLite rewrites the views that name the table */
+    good = runf(p, "ALTER TABLE \"%w\" RENAME TO \"%w\"", was, new_name)
+        && runf(p, "UPDATE oadb_fields SET tbl = %Q WHERE tbl = %Q", new_name, was)
+        && runf(p, "UPDATE oadb_fields SET lookup = %Q WHERE lookup = %Q", new_name, was)
         && forms_follow(p, t, NULL, new_name);
+    forget(p);
+    good = good && queries_follow(p, was, new_name);
     forget(p);
     return step_end(p, good) && ok(p);
 }
@@ -1605,7 +1677,13 @@ int ob_table_drop(ob_project *p, const char *name)
     sqlite3_finalize(st);
     if (!forms_allow(p, t, NULL)) return 0;
     if (!step_begin(p)) return 0;
-    good = runf(p, "DROP TABLE \"%w\"", t->name) && runf(p, "DELETE FROM oadb_fields WHERE tbl = %Q", t->name);
+    {
+        char was[OB_NAME_MAX];
+        copy(was, sizeof was, t->name);
+        good = runf(p, "DROP TABLE \"%w\"", was) && runf(p, "DELETE FROM oadb_fields WHERE tbl = %Q", was);
+        forget(p);
+        good = good && views_ok(p, was);
+    }
     forget(p);
     return step_end(p, good) && ok(p);
 }
@@ -2592,7 +2670,7 @@ typedef struct csv_out {
     int sep;
     int utf8;
     int nf;
-    unsigned char types[OB_MAX_FIELDS];
+    unsigned char types[OB_QUERY_OUT > OB_MAX_FIELDS ? OB_QUERY_OUT : OB_MAX_FIELDS];
     int bad;
 } csv_out;
 
@@ -4893,6 +4971,7 @@ static int query_name_ok(ob_project *p, const char *name, const char *old)
     char why[OB_ERR_MAX];
     if (!name_ok(name, why, sizeof why, "query")) return fail(p, "%s", why);
     if (table_exists(p, name)) return fail(p, "There is a table named %s: give the query another name", name);
+    if (view_exists(p, name)) return fail(p, "There is a view named %s: give the query another name", name);
     if (old && !same(old, name) && query_exists(p, name))
         return fail(p, "There is a query named %s already", name);
     return 1;
@@ -5272,6 +5351,180 @@ static int forms_follow(ob_project *p, const ob_table *old, const ob_table *t, c
     return good;
 }
 
+/* ---- Saved queries follow a table's rename (core 0.6.3) ---- */
+
+/* An expression's "Old". (the designer's way of naming a table's field)
+ * becomes "New".; how many were changed. */
+static int rename_in_expr(char *expr, const char *old_name, const char *new_name)
+{
+    char want[OB_NAME_MAX + 4], put[OB_NAME_MAX + 4], out[OB_EXPR_MAX];
+    size_t wl, pl, o = 0;
+    const char *s = expr;
+    int n = 0;
+    snprintf(want, sizeof want, "\"%s\".", old_name);
+    snprintf(put, sizeof put, "\"%s\".", new_name);
+    wl = strlen(want);
+    pl = strlen(put);
+    while (*s) {
+        if (starts_nocase(s, want) && o + pl < sizeof out) {
+            memcpy(out + o, put, pl);
+            o += pl;
+            s += wl;
+            n++;
+        } else {
+            if (o + 1 >= sizeof out) return 0;      /* would not fit: kept as it was */
+            out[o++] = *s++;
+        }
+    }
+    out[o] = 0;
+    if (n) copy(expr, OB_EXPR_MAX, out);
+    return n;
+}
+
+static int rename_in_query(ob_query *q, const char *old_name, const char *new_name)
+{
+    int i, n = 0;
+    for (i = 0; i < q->ntables; i++)
+        if (same(q->tables[i], old_name)) { copy(q->tables[i], OB_NAME_MAX, new_name); n++; }
+    for (i = 0; i < q->ncolumns; i++) {
+        if (same(q->columns[i].table, old_name)) { copy(q->columns[i].table, OB_NAME_MAX, new_name); n++; }
+        if (!q->columns[i].table[0]) n += rename_in_expr(q->columns[i].expr, old_name, new_name);
+    }
+    return n;
+}
+
+/* Grid queries that name old_name (as a table, a column's table, or
+ * "old_name". in an expression) are written again naming new_name, with
+ * their SQL made again (kept as it was when it can't be). SQL typed as SQL
+ * is kept as it was typed. Inside the caller's step. */
+static int queries_follow(ob_project *p, const char *old_name, const char *new_name)
+{
+    sqlite3_stmt *st;
+    sqlite3_str *names;
+    ob_query *q;
+    char *list, *s, *e;
+    int good = 1;
+    if (!has_queries(p)) return 1;
+    if (!(q = malloc(sizeof *q))) return fail(p, "Not enough memory");
+    if (!(st = prep(p, "SELECT name, grid FROM oadb_queries WHERE grid IS NOT NULL"))) { free(q); return 0; }
+    names = sqlite3_str_new(NULL);
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        const char *grid = (const char *)sqlite3_column_text(st, 1);
+        memset(q, 0, sizeof *q);
+        if (grid && grid_read(grid, q) && rename_in_query(q, old_name, new_name)) {
+            sqlite3_str_appendall(names, (const char *)sqlite3_column_text(st, 0));
+            sqlite3_str_appendchar(names, 1, '\n');     /* names have no line ends */
+        }
+    }
+    sqlite3_finalize(st);
+    list = sqlite3_str_finish(names);
+    for (s = list; good && s && *s; s = e + 1) {
+        char *grid;
+        qplan *pl;
+        e = strchr(s, '\n');
+        *e = 0;
+        if (!(good = ob_query_get(p, s, q))) break;
+        rename_in_query(q, old_name, new_name);
+        if (!(grid = grid_text(q))) { good = fail(p, "Not enough memory"); break; }
+        pl = plan_make(p, q);
+        if (!(st = prep(p, "UPDATE oadb_queries SET grid = ?1, sql = coalesce(?2, sql) WHERE name = ?3"))) {
+            good = 0;
+        } else {
+            int rc;
+            sqlite3_bind_text(st, 1, grid, -1, SQLITE_TRANSIENT);
+            if (pl) sqlite3_bind_text(st, 2, pl->sql, -1, SQLITE_TRANSIENT);
+            else sqlite3_bind_null(st, 2);
+            sqlite3_bind_text(st, 3, s, -1, SQLITE_TRANSIENT);
+            rc = sqlite3_step(st);
+            sqlite3_finalize(st);
+            if (rc != SQLITE_DONE) good = sql_fail(p, NULL, rc);
+        }
+        plan_free(pl);
+        sqlite3_free(grid);
+    }
+    sqlite3_free(list);
+    free(q);
+    return good;
+}
+
+/* ---- A query's rows as CSV, a query as a view (core 0.6.3) ---- */
+
+ob_int ob_query_csv_export(ob_project *p, const ob_query *q, const char *const *params, const char *path,
+                           const ob_csv_opts *opts)
+{
+    ob_qresult *res;
+    csv_out *o;
+    int i, nres, first = 1, shut, sep = opts && opts->sep ? opts->sep : ',';
+    ob_int n;
+    if (!sep_ok(sep)) { fail(p, "CSV values are separated by a comma, a semicolon or a tab"); return -1; }
+    if (!(res = malloc(sizeof *res * OB_QUERY_OUT))) { fail(p, "Not enough memory"); return -1; }
+    nres = ob_query_columns(p, q, res, OB_QUERY_OUT);
+    /* the answers are checked before the file is made */
+    if (nres < 0 || ob_query_total(p, q, params) < 0) { free(res); return -1; }
+    if (nres > OB_QUERY_OUT) nres = OB_QUERY_OUT;
+    if (!(o = calloc(1, sizeof *o))) { free(res); fail(p, "Not enough memory"); return -1; }
+    if (!(o->f = fopen(path, "wb"))) { free(o); free(res); fail(p, "%s could not be made", path); return -1; }
+    o->sep = sep;
+    o->utf8 = opts && opts->charset == OB_CHARSET_UTF8;
+    o->nf = nres;
+    if (o->utf8) fputs("\xEF\xBB\xBF", o->f);
+    for (i = 0; i < nres; i++) {
+        o->types[i] = (unsigned char)(res[i].type < 0 ? 0xff : res[i].type);
+        if (res[i].type == OB_OBJECT) continue;
+        csv_cell(o, res[i].heading, first);
+        first = 0;
+    }
+    fputs("\r\n", o->f);
+    n = ob_query_rows(p, q, params, 0, -1, csv_row, o);
+    shut = fclose(o->f);
+    if (n >= 0 && (o->bad || shut != 0)) { fail(p, "%s could not be written: is the disk full?", path); n = -1; }
+    free(o);
+    free(res);
+    return n;
+}
+
+int ob_query_save_view(ob_project *p, const ob_query *q, const char *name)
+{
+    char why[OB_ERR_MAX];
+    qplan *pl;
+    int good;
+    if (!name_ok(name, why, sizeof why, "view")) return fail(p, "%s", why);
+    if (table_exists(p, name)) return fail(p, "There is a table named %s: give the view another name", name);
+    if (query_exists(p, name)) return fail(p, "There is a query named %s: give the view another name", name);
+    if (!(pl = plan_make(p, q))) return 0;
+    if (pl->nparams) {
+        plan_free(pl);
+        return fail(p, "A view can't ask questions: take %s's [questions] out first", qname(q));
+    }
+    if (!step_begin(p)) { plan_free(pl); return 0; }
+    good = (!view_exists(p, name) || runf(p, "DROP VIEW \"%w\"", name))
+        && runf(p, "CREATE VIEW \"%w\" AS %s", name, pl->sql);
+    plan_free(pl);
+    forget(p);
+    return step_end(p, good) && ok(p);
+}
+
+int ob_sqlview_count(ob_project *p)
+{
+    return view_count(p);
+}
+
+const char *ob_sqlview_name(ob_project *p, int i)
+{
+    sqlite3_stmt *st;
+    const char *r = NULL;
+    if (i < 0) return NULL;
+    st = prep(p, "SELECT name FROM sqlite_schema WHERE type = 'view' ORDER BY name COLLATE NOCASE LIMIT 1 OFFSET ?1");
+    if (!st) return NULL;
+    sqlite3_bind_int(st, 1, i);
+    if (sqlite3_step(st) == SQLITE_ROW) {
+        copy(p->qname, sizeof p->qname, (const char *)sqlite3_column_text(st, 0));
+        r = p->qname;
+    }
+    sqlite3_finalize(st);
+    return r;
+}
+
 /* ---- Reports kept in the project (oadb_reports; include/openbase_report.h) ----
  * The core keeps each report's text under its name and never reads it: ob_report.c writes and parses
  * it. Names are a query's kind of name, and no table has one. */
@@ -5324,6 +5577,14 @@ const char *ob_report_name(ob_project *p, int i)
     }
     sqlite3_finalize(st);
     return r;
+}
+
+int ob_sqlview_drop(ob_project *p, const char *name)
+{
+    if (!view_exists(p, name)) return fail(p, "There is no view named %s", name);
+    if (!runf(p, "DROP VIEW \"%w\"", name)) return 0;
+    forget(p);
+    return ok(p);
 }
 
 int ob_report_get_text(ob_project *p, const char *name, char *out, size_t size)
