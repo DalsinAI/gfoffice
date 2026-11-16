@@ -16,6 +16,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <string.h>
 
 #define EMU(twips) ((long)(twips) * 635L)
@@ -34,7 +35,7 @@ typedef struct {
     int *image_used;             /* per res image: its media number, 0: not written yet */
     int nmedia;
     int ncharts;                 /* charts written: ppt/charts/chart<n>.xml, each with its workbook */
-    int lost_tables, lost_groups, lost_other, lost_transition;
+    int lost_groups, lost_other, lost_transition;
 } pptxw;
 
 /* ---- Small pieces ---- */
@@ -230,6 +231,8 @@ static void put_text_run(owf_buf *b, const owf_deck *d, const owf_run *r)
     }
 }
 
+static void put_para(owf_buf *b, const owf_deck *d, const owf_obj *o, const owf_para *p, int level);
+
 static void put_body(owf_buf *b, const owf_deck *d, const owf_obj *o, const owf_story *story, int in_shape)
 {
     int i;
@@ -252,9 +255,18 @@ static void put_body(owf_buf *b, const owf_deck *d, const owf_obj *o, const owf_
     if ((o->flags & OWF_OBJ_EMPTY) || !story->nparas) {
         owf_buf_puts(b, "<a:p><a:endParaRPr lang=\"en-GB\"/></a:p>");
     } else {
-        for (i = 0; i < story->nparas; i++) {
-            const owf_para *p = &story->paras[i];
-            int level = owf_obj_level(o, i), j;
+        for (i = 0; i < story->nparas; i++)
+            put_para(b, d, o, &story->paras[i], owf_obj_level(o, i));
+    }
+    owf_buf_puts(b, in_shape ? "</p:txBody>" : "</a:txBody>");
+}
+
+/* One paragraph (a:p) at its list level. */
+static void put_para(owf_buf *b, const owf_deck *d, const owf_obj *o, const owf_para *p, int level)
+{
+    int j;
+    {
+        {
             owf_buf_puts(b, "<a:p><a:pPr");
             if (level > 1) owf_buf_printf(b, " lvl=\"%d\"", level - 1);
             if (p->fmt.align != OWF_ALIGN_LEFT) owf_buf_printf(b, " algn=\"%s\"", align_name(p->fmt.align));
@@ -275,7 +287,6 @@ static void put_body(owf_buf *b, const owf_deck *d, const owf_obj *o, const owf_
             owf_buf_puts(b, "<a:endParaRPr lang=\"en-GB\"/></a:p>");
         }
     }
-    owf_buf_puts(b, in_shape ? "</p:txBody>" : "</a:txBody>");
 }
 
 /* ---- Objects ---- */
@@ -464,6 +475,116 @@ static void put_chart(pptxw *w, owf_buf *b, const owf_obj *o, const owf_obj *box
                       "</a:graphicData></a:graphic></p:graphicFrame>", rid);
 }
 
+/* A table's merge whose first cell is row, col; or (cover) the one covering it otherwise. */
+static const owf_table_merge *table_merge_at(const owf_obj *o, int row, int col, int cover)
+{
+    int i;
+    for (i = 0; o->merges && i < o->nmerges; i++) {
+        const owf_table_merge *m = &o->merges[i];
+        int first = m->row == row && m->col == col;
+        if (cover ? !first && row >= m->row && row < m->row + m->rows && col >= m->col && col < m->col + m->cols
+                  : first)
+            return m;
+    }
+    return NULL;
+}
+
+/* A PowerPoint table style's id: a GUID in braces, as a:tableStyleId has it
+ * (an ODP template's name is not one) */
+static int style_id(const char *s)
+{
+    size_t i;
+    if (!s || strlen(s) != 38 || s[0] != '{' || s[37] != '}')
+        return 0;
+    for (i = 1; i < 37; i++)
+        if (i == 9 || i == 14 || i == 19 || i == 24 ? s[i] != '-' : !isxdigit((unsigned char)s[i]))
+            return 0;
+    return 1;
+}
+
+/* A slide table as PowerPoint's own (a:tbl in a p:graphicFrame): its
+ * design's parts and style id, its columns, each row at its height (one
+ * without as tall as the table shares out), each cell's text and fill, a
+ * merge's spans on its first cell and the cells it covers marked so. */
+static void put_table(owf_buf *b, const owf_deck *d, const owf_obj *o, const owf_obj *box, int id)
+{
+    static const struct { const char *attr; unsigned flag; } design[] = {
+        { "firstRow", OWF_TABLE_FIRST_ROW }, { "lastRow", OWF_TABLE_LAST_ROW },
+        { "firstCol", OWF_TABLE_FIRST_COL }, { "lastCol", OWF_TABLE_LAST_COL },
+        { "bandRow", OWF_TABLE_BANDED_ROWS }, { "bandCol", OWF_TABLE_BANDED_COLS },
+    };
+    int ncols = o->ncols > 0 ? o->ncols : 1, nrows = 0, row, col, i, k, shared, left;
+    char name[48];
+    for (i = 0; i < o->text.nparas; i++)
+        if (o->text.paras[i].table_row + 1 > nrows)
+            nrows = o->text.paras[i].table_row + 1;
+    if (nrows < 1)
+        nrows = 1;
+    if (ncols > 64)
+        ncols = 64;
+    /* rows without a height share what those with one leave of the table's */
+    left = box->height;
+    k = 0;
+    for (row = 0; row < nrows; row++) {
+        if (o->row_heights && row < o->nrows && o->row_heights[row] > 0)
+            left -= o->row_heights[row];
+        else
+            k++;
+    }
+    shared = k && left > 0 ? left / k : 370;   /* 370 twips: PowerPoint's 0.26 in */
+    snprintf(name, sizeof name, "Table %d", id);
+    owf_buf_puts(b, "<p:graphicFrame>");
+    put_nv(b, "GraphicFrame", id, o, name);
+    owf_buf_puts(b, "<p:cNvGraphicFramePr><a:graphicFrameLocks noGrp=\"1\"/></p:cNvGraphicFramePr><p:nvPr/>"
+                    "</p:nvGraphicFramePr>");
+    put_xfrm(b, "p", box);
+    owf_buf_puts(b, "<a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/table\">"
+                    "<a:tbl><a:tblPr");
+    for (i = 0; i < (int)(sizeof design / sizeof design[0]); i++)
+        if (o->table_design & design[i].flag)
+            owf_buf_printf(b, " %s=\"1\"", design[i].attr);
+    owf_buf_puts(b, ">");
+    if (style_id(o->table_style))
+        owf_buf_printf(b, "<a:tableStyleId>%s</a:tableStyleId>", o->table_style);
+    owf_buf_puts(b, "</a:tblPr><a:tblGrid>");
+    for (col = 0; col < ncols; col++)
+        owf_buf_printf(b, "<a:gridCol w=\"%ld\"/>",
+                       EMU(o->col_widths && col < o->ncols ? o->col_widths[col] : box->width / ncols));
+    owf_buf_puts(b, "</a:tblGrid>");
+    for (row = 0; row < nrows; row++) {
+        int h = o->row_heights && row < o->nrows && o->row_heights[row] > 0 ? o->row_heights[row] : shared;
+        owf_buf_printf(b, "<a:tr h=\"%ld\">", EMU(h));
+        for (col = 0; col < ncols; col++) {
+            const owf_table_merge *m = table_merge_at(o, row, col, 0), *under = table_merge_at(o, row, col, 1);
+            unsigned long fill = 0;
+            int any = 0;
+            owf_buf_puts(b, "<a:tc");
+            if (m && m->cols > 1) owf_buf_printf(b, " gridSpan=\"%d\"", m->cols);
+            if (m && m->rows > 1) owf_buf_printf(b, " rowSpan=\"%d\"", m->rows);
+            if (under && col > under->col) owf_buf_puts(b, " hMerge=\"1\"");
+            if (under && row > under->row) owf_buf_puts(b, " vMerge=\"1\"");
+            owf_buf_puts(b, "><a:txBody><a:bodyPr/><a:lstStyle/>");
+            for (i = 0; i < o->text.nparas; i++) {
+                const owf_para *p = &o->text.paras[i];
+                if (p->table_row != row || p->table_col != col)
+                    continue;
+                put_para(b, d, o, p, owf_obj_level(o, i));
+                if (!any && OWF_SHADE_SET(p->cell_shading))
+                    fill = p->cell_shading;
+                any = 1;
+            }
+            if (!any)
+                owf_buf_puts(b, "<a:p><a:endParaRPr lang=\"en-GB\"/></a:p>");
+            owf_buf_puts(b, "</a:txBody><a:tcPr>");
+            if (fill)
+                put_colour(b, OWF_SHADE_RGB(fill));
+            owf_buf_puts(b, "</a:tcPr></a:tc>");
+        }
+        owf_buf_puts(b, "</a:tr>");
+    }
+    owf_buf_puts(b, "</a:tbl></a:graphicData></a:graphic></p:graphicFrame>");
+}
+
 static void put_object(pptxw *w, owf_buf *b, const owf_obj *o, const owf_obj *box, int id, rels *r, int first_rid,
                        int on_master)
 {
@@ -493,7 +614,10 @@ static void put_object(pptxw *w, owf_buf *b, const owf_obj *o, const owf_obj *bo
         owf_buf_puts(b, "</p:spPr></p:pic>");
         return;
     }
-    if (o->kind == OWF_OBJ_TABLE) w->lost_tables++;
+    if (o->kind == OWF_OBJ_TABLE) {
+        put_table(b, d, o, box, id);
+        return;
+    }
     if (o->kind == OWF_OBJ_OTHER || o->kind == OWF_OBJ_CHART) {
         if (!o->text.nparas) {
             w->lost_other++;
@@ -946,8 +1070,6 @@ int opr_export_pptx(const owf_deck *deck, unsigned char **data, size_t *length, 
         owf_buf_free(&out);
         return OWF_ERR_MEMORY;
     }
-    if (w.lost_tables)
-        owf_report_add(report, OWF_NOTE_APPROX, "Tables are saved as text boxes in PPTX for now (%d)", w.lost_tables);
     if (w.lost_groups)
         owf_report_add(report, OWF_NOTE_APPROX, "Groups are saved as their objects, ungrouped (%d)", w.lost_groups);
     if (w.lost_other)
