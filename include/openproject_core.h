@@ -293,6 +293,23 @@ void opj_task_usage_cell_text(const opj_doc *doc, int row, int column, char *out
 void opj_task_usage_text(const opj_doc *doc, int task, int assign, owf_ptime from, owf_ptime to, char *out,
                          size_t size);
 void opj_task_usage_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area);
+
+/* ---- The Resource Graph (MS Project's): one work resource's allocation in each period of the timescale's
+ * lower tier, as a bar of percent (its work there over its calendar's working time there): blue up to
+ * its max units, red above. A line marks its max units; the scale runs from 0 to opj_graph_scale. Its
+ * table's place (Resource Usage's width) holds the resource's name, its peak in the periods shown and its
+ * max units, with the scale's ends beside the chart. The plot runs from three rows down to a row above
+ * the bottom. It uses the same view fields as Resource Usage. Read only. ---- */
+/* A resource's percent allocated in [from, to); -1 for a material or cost resource, or no working time. */
+long opj_graph_percent(const opj_doc *doc, int resource, owf_ptime from, owf_ptime to);
+/* The scale's top: the larger of its max units and its peak in the periods v shows, at least 100,
+ * rounded up to 50. */
+long opj_graph_scale(const opj_view *v, const opj_doc *doc, int resource);
+/* The bar of the period holding period: within (up to the max units) and over (above it; h 0 when not
+ * over). 0 when the period has no allocation. */
+int opj_graph_bar(const opj_view *v, const opj_doc *doc, int resource, owf_ptime period, long scale,
+                  oldraw_rect *within, oldraw_rect *over);
+void opj_graph_draw(oldraw *d, const opj_view *v, const opj_doc *doc, int resource, const oldraw_rect *area);
 /* ---- The Network Diagram view (MS Project's, src/project/opj_network.c): a box for every task that
  * isn't a summary, holding its name, ID and duration, start and finish, four rows of the view's row height
  * high. A box stands in the column one past its furthest predecessor's (the first column: no
@@ -340,7 +357,7 @@ enum { OPJ_EDIT_NONE = -1, OPJ_EDIT_CELL, OPJ_EDIT_INSERT, OPJ_EDIT_DELETE, OPJ_
 int opj_edit_for_key(int key, int shift);
 /* Why edit can't run with usage showing (OPJ_VIEW_: the usage views are read only), as the status line
  * says it; NULL when it may run (OPJ_EDIT_NONE always may). */
-enum { OPJ_VIEW_GANTT, OPJ_VIEW_USAGE, OPJ_VIEW_TASK_USAGE };
+enum { OPJ_VIEW_GANTT, OPJ_VIEW_USAGE, OPJ_VIEW_TASK_USAGE, OPJ_VIEW_GRAPH };
 const char *opj_edit_refused(int usage, int edit);
 
 /* ---- Printing the Gantt view: pages down, then across, as MS Project prints ----
