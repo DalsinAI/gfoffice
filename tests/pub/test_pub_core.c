@@ -165,6 +165,11 @@ int main(void)
     CHECK(deck_href(deck, "our site") && !strcmp(deck_href(deck, "our site"), "https://example.org/gfoffice/"));
     CHECK(deck_href(deck, "write to us") && !strcmp(deck_href(deck, "write to us"), "mailto:team@example.org?subject=Hello"));
     CHECK(deck_href(deck, "See ") == NULL && deck_href(deck, ", or turn to page 1.") == NULL);
+    /* P1b underline (0x21E's low byte): on the two linked words only */
+    CHECK(deck_run(deck, "our site") && (deck_run(deck, "our site")->flags & OWF_UNDERLINE));
+    CHECK(deck_run(deck, "write to us") && (deck_run(deck, "write to us")->flags & OWF_UNDERLINE));
+    CHECK(deck_run(deck, "See ") && !(deck_run(deck, "See ")->flags & OWF_UNDERLINE));
+    CHECK(deck_run(deck, "Bold and italic") && !(deck_run(deck, "Bold and italic")->flags & OWF_UNDERLINE));
     if (deck && deck->nslides > 0 && deck->slides[0].nobjs > 3) {
         const owf_charfmt *bold = run_fmt(&deck->slides[0].objs[1].text, "Bold and italic");
         const owf_charfmt *plain = run_fmt(&deck->slides[0].objs[0].text, "Plain text");
@@ -204,6 +209,7 @@ int main(void)
              * default (-1); the typeface itself is GFOffice's ODP round trip's, not the .pub reader's */
             CHECK(again && (again->font < 0 || !strcmp(font_name(roundtrip->res, again), "Liberation Sans")));
             CHECK(deck_href(roundtrip, "our site") && !strcmp(deck_href(roundtrip, "our site"), "https://example.org/gfoffice/"));
+            CHECK(deck_run(roundtrip, "our site") && (deck_run(roundtrip, "our site")->flags & OWF_UNDERLINE));
             if (roundtrip->slides[0].nobjs > 2) {
                 const owf_story *t = &roundtrip->slides[0].objs[2].text;
                 int k, last_row = -1, cells_ok = t->nparas >= 6;

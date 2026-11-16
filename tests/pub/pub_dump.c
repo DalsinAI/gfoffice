@@ -27,13 +27,15 @@ static void put_string(const char *s)
     putchar('"');
 }
 
-/* A run's character formatting when it has any: "bold italic 20pt font \"Arial\"". */
+/* A run's character formatting when it has any: "bold italic underline 20pt font \"Arial\"". */
 static void put_fmt(const owf_doc *res, const owf_charfmt *f)
 {
     if (f->flags & OWF_BOLD)
         printf(" bold");
     if (f->flags & OWF_ITALIC)
         printf(" italic");
+    if (f->flags & OWF_UNDERLINE)
+        printf(" underline");
     if (f->size)
         printf(" %d.%dpt", f->size / 20, (f->size % 20) * 10 / 20);
     if (f->font >= 0 && res && f->font < res->nfonts)
@@ -42,7 +44,7 @@ static void put_fmt(const owf_doc *res, const owf_charfmt *f)
 
 static int has_fmt(const owf_charfmt *f)
 {
-    return (f->flags & (OWF_BOLD | OWF_ITALIC)) || f->size || f->font >= 0;
+    return (f->flags & (OWF_BOLD | OWF_ITALIC | OWF_UNDERLINE)) || f->size || f->font >= 0;
 }
 
 static void put_story(const owf_doc *res, const owf_story *story, const char *indent)

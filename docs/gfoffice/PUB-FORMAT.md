@@ -326,7 +326,8 @@ one page and chunk to the next. The fields seen:
 | 0x237, 0x238, 0x239 | beside 0x202, 0x203 and 0x20C with the same values in the 2002-or-later files; not in the 98/2000 files | [V 6]; [H]: complex-script bold, italic and size |
 | 0x212, 0x23E | 0x809 (English, UK), 0x409, 0xC09 | [H]: languages (Windows LCIDs) |
 | 0x22D | set on SampleBrochure's en dashes | unknown |
-| 0x21E, 0x244, 0x248, 0x22E, 0x200 | on Sample's hyperlinks | [H]: underline and colour; not read yet |
+| 0x21E | underline: type 0x10, its low byte 1 for a single line (0: none); the high byte 8 or 4, unknown | [V 2: every hyperlink's text in Sample (2007, 2010, 2000, 98) and the Link files has 0x801, as Publisher underlines its links; govdocs1-923566's e-mail addresses and its "New Positions" headings have 0x401]; read as underline from 0.3.29 |
+| 0x244, 0x248, 0x22E, 0x200 | on Sample's hyperlinks (0x244 and 0x248 blocks holding 0x200 = 1; the 2000 form 0x22E = 0xE0E40005); 0x244 also on christmas's and the flyers' headings with 0x200 = 2 to 7 or 0xFFFFFFFE | [H]: 0x244 the colour as a place in the colour scheme (5.5); not read yet |
 
 A run's fields are laid over its paragraph style's (6.6): Sample's plain
 text says it is Times New Roman 10 point, has no fields of its own, and its
@@ -560,8 +561,8 @@ path in section 5.1.
 ## 12. Not known yet (phase 1's work)
 
 - Paragraph spacing, indents and the alignments other than left, right and
-  centred (6.5, 6.6; justified not seen yet, SampleBrochure's 6 unknown); style names; colour schemes (`Contents` kinds 0x46-0x8C); underline
-  and colour in `FDPC` (6.4).
+  centred (6.5, 6.6; justified not seen yet, SampleBrochure's 6 unknown); style names; colour schemes (`Contents` kinds 0x46-0x8C); the
+  text's colour and underline kinds other than single in `FDPC` (6.4).
 - A frame's own text columns (none of the samples has one: their columns
   are linked frames, 5.3), text wrap (5.3's 0x47 is a guess), layering beyond the back-to-front order, rotation and flips.
 - Tables' cell borders and merged cells.

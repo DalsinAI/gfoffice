@@ -541,6 +541,11 @@ static void char_props(const reader *r, span props, owf_charfmt *fmt)
             if (f.type == 0x20 && f.value > 0 && f.value < 635UL * 20000)
                 fmt->size = emu_twips((long)f.value);
             break;
+        case 0x21E:                              /* underline: its low byte, 1 single; 0 none */
+            if (f.type == 0x10 || f.type == 0x18 || f.type == 0x20) {
+                if (f.value & 0xFF) fmt->flags |= OWF_UNDERLINE; else fmt->flags &= ~(unsigned)OWF_UNDERLINE;
+            }
+            break;
         case 0x224:                              /* the typeface: FONT's numbers */
             if (f.type == 0x88 || f.type == 0x90 || f.type == 0x98 || f.type == 0xA0)
                 fmt->font = text_font(r, f.body);
