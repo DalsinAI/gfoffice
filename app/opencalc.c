@@ -107,9 +107,9 @@ enum {
     M_NAME_DEFINE, M_NAME_DELETE, M_SHEET_NEXT, M_SHEET_PREV,
     M_SORT_ASC, M_SORT_DESC, M_MERGE, M_UNMERGE, M_CONDFMT, M_CONDFMT_CLEAR,
     M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK, M_SUBTOTALS,
-    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER, M_SCENARIOS, M_CONSOLIDATE, M_NAME_MANAGE, M_ADV_FILTER,
+    M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_PIVOT_DETAILS, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER, M_SCENARIOS, M_CONSOLIDATE, M_CONSOLIDATE_REFRESH, M_NAME_MANAGE, M_ADV_FILTER,
     M_TEXT_COLUMNS, M_REMOVE_DUPS,
-    M_PROTECT_SHEET, M_UNPROTECT_SHEET, M_CELL_PROTECT
+    M_PROTECT_SHEET, M_UNPROTECT_SHEET, M_CELL_PROTECT, M_PROTECT_BOOK, M_UNPROTECT_BOOK
 };
 
 static struct NewMenu menus[] = {
@@ -249,6 +249,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Solver...", NULL, 0, 0, (APTR)M_SOLVER },
     { NM_ITEM, "Scenarios...", NULL, 0, 0, (APTR)M_SCENARIOS },
     { NM_ITEM, "Consolidate...", NULL, 0, 0, (APTR)M_CONSOLIDATE },
+    { NM_ITEM, "Refresh Consolidation", NULL, 0, 0, (APTR)M_CONSOLIDATE_REFRESH },
     { NM_ITEM, "Multiple Operations...", NULL, 0, 0, (APTR)M_MULTIPLE_OPS },
     { NM_ITEM, "Refresh Multiple Operations", NULL, 0, 0, (APTR)M_MULTIPLE_REFRESH },
     { NM_ITEM, "Subtotals...", NULL, 0, 0, (APTR)M_SUBTOTALS },
@@ -256,6 +257,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Remove Duplicates...", NULL, 0, 0, (APTR)M_REMOVE_DUPS },
     { NM_ITEM, "Pivot Table...", NULL, 0, 0, (APTR)M_PIVOT_SUMMARY },
     { NM_ITEM, "Refresh Pivot Table", NULL, 0, 0, (APTR)M_PIVOT_REFRESH },
+    { NM_ITEM, "Show Pivot Details", NULL, 0, 0, (APTR)M_PIVOT_DETAILS },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Validity...", NULL, 0, 0, (APTR)M_VALIDITY },
     { NM_ITEM, "Clear Validity", NULL, 0, 0, (APTR)M_VALIDITY_CLEAR },
@@ -267,6 +269,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Protect Sheet...", NULL, 0, 0, (APTR)M_PROTECT_SHEET },
     { NM_ITEM, "Unprotect Sheet...", NULL, 0, 0, (APTR)M_UNPROTECT_SHEET },
     { NM_ITEM, "Cell Protection...", NULL, 0, 0, (APTR)M_CELL_PROTECT },
+    { NM_ITEM, "Protect Workbook...", NULL, 0, 0, (APTR)M_PROTECT_BOOK },
+    { NM_ITEM, "Unprotect Workbook...", NULL, 0, 0, (APTR)M_UNPROTECT_BOOK },
     { NM_ITEM, "Move Left", NULL, 0, 0, (APTR)M_SHEET_LEFT },
     { NM_ITEM, "Move Right", NULL, 0, 0, (APTR)M_SHEET_RIGHT },
     { NM_ITEM, "Hide Sheet", NULL, 0, 0, (APTR)M_SHEET_HIDE },
@@ -975,6 +979,7 @@ static const char *leaf(const char *path)
 }
 
 static int result(int rc, const char *done);
+#define BOOK_LOCKED_TEXT "The workbook's structure is protected: its sheets stay as they are."
 static int ask_window(const char *title, const char *text, const char *buttons);
 
 /* A typed value its cell's rule refused: the rule's alert, as Excel shows it. Stop: Retry goes on typing,
@@ -2469,18 +2474,41 @@ static void do_row_height(void)
     result(oc_core_set_row_height(core, pts ? (int)(pts * 20L / 100L) : 1), "Row height changed.");
 }
 
+/* A sheet change's outcome: OC_PROTECTED from these is the workbook's structure, never the cells. */
+static int sheet_result(int rc, const char *done)
+{
+    if (rc == OC_PROTECTED) {
+        set_status(BOOK_LOCKED_TEXT);
+        return 0;
+    }
+    return result(rc, done);
+}
+
+/* Sheet > Insert Sheet and the "+" tab. */
+static void add_sheet_here(void)
+{
+    if (oc_core_add_sheet(core, NULL) >= 0)
+        set_status("Sheet added.");
+    else if (oc_core_book_protection(core, NULL))
+        set_status(BOOK_LOCKED_TEXT);
+    else
+        result(OWF_ERR_MEMORY, NULL);
+}
+
 static void do_rename_sheet(int sheet)
 {
     char name[96], latin[96];
     char *utf8;
+    int rc;
     if (sheet < 0 || sheet >= oc_core_sheet_count(core)) return;
     sheet_latin(sheet, latin, sizeof latin);
     if (!text_requester("Rename Sheet", "Name", latin, name, sizeof name)) return;
     if (!(utf8 = from_latin1(name))) { result(OWF_ERR_MEMORY, NULL); return; }
-    if (oc_core_rename_sheet(core, sheet, utf8) == OWF_ERR_FORMAT)
+    rc = oc_core_rename_sheet(core, sheet, utf8);
+    if (rc == OWF_ERR_FORMAT)
         tell("Rename Sheet", "A sheet's name is 1 to 31 characters, without [ ] : * ? / \\,\nand no other sheet may have it.");
     else
-        set_status("Sheet renamed.");
+        sheet_result(rc, "Sheet renamed.");
     owf_free(utf8);
 }
 
@@ -2492,7 +2520,7 @@ static void do_delete_sheet(void)
     int s = oc_core_sheet(core);
     if (oc_core_sheet_count(core) < 2) { set_status("A workbook keeps at least one sheet."); return; }
     sheet_latin(s, latin, sizeof latin);
-    if (EasyRequest(win, &es, NULL, (ULONG)latin)) result(oc_core_delete_sheet(core, s), "Sheet deleted.");
+    if (EasyRequest(win, &es, NULL, (ULONG)latin)) sheet_result(oc_core_delete_sheet(core, s), "Sheet deleted.");
 }
 
 static void do_show_sheet(void)
@@ -2514,7 +2542,7 @@ static void do_show_sheet(void)
     else {
         int rc = oc_core_set_sheet_hidden(core, found, 0);
         if (rc == OWF_OK) rc = oc_core_set_sheet(core, found);
-        result(rc, "Sheet shown.");
+        sheet_result(rc, "Sheet shown.");
     }
     owf_free(utf8);
 }
@@ -2534,7 +2562,7 @@ static void do_duplicate_sheet(void)
     else if (rc == OWF_ERR_UNSUPPORTED)
         set_status("A sheet with pictures or shapes cannot yet be duplicated; supported charts can.");
     else
-        result(rc, "Sheet duplicated.");
+        sheet_result(rc, "Sheet duplicated.");
     owf_free(utf8);
 }
 
@@ -4622,6 +4650,27 @@ static void do_unprotect_sheet(void)
     result(oc_core_unprotect_sheet(core, password), "The sheet is no longer protected.");
 }
 
+/* Sheet > Protect Workbook: its structure, with a password or none. */
+static void do_protect_book(void)
+{
+    char password[64];
+    if (oc_core_book_protection(core, NULL)) { set_status("The workbook's structure is protected already."); return; }
+    if (!text_requester("Protect Workbook", "Password (empty: none)", "", password, sizeof password)) return;
+    result(oc_core_protect_book(core, password), "The workbook's structure is protected: its sheets stay as they are.");
+}
+
+static void do_unprotect_book(void)
+{
+    char password[64];
+    int has = 0, rc;
+    if (!oc_core_book_protection(core, &has)) { set_status("The workbook's structure is not protected."); return; }
+    password[0] = 0;
+    if (has && !text_requester("Unprotect Workbook", "Password", "", password, sizeof password)) return;
+    rc = oc_core_unprotect_book(core, password);
+    if (rc == OC_WRONG_PASSWORD) set_status("That is not the workbook's password.");
+    else result(rc, "The workbook's structure is no longer protected.");
+}
+
 static void do_cell_protection(void)
 {
     char words[64], why[120];
@@ -4646,9 +4695,18 @@ typedef struct {
     char heading[64];                /* Latin-1 */
     int use;                         /* 0 none, 1 row, 2 column, 3 page */
     int data;                        /* pv_data_labels' index; 0 none */
+    int subtotal;                    /* a row field: a subtotal row under each item */
     unsigned order, data_order;
     char item[64];                   /* Latin-1; "" every item */
+    int sort;                        /* OWF_PIVOT_SORT_... */
+    int show;                        /* OWF_PIVOT_SHOW_... of its data entry */
+    char group[64];                  /* Latin-1, as oc_core_pivot_field_words: "YEARS", "0 100 10", "" none */
+    char hidden[200];                /* Latin-1: the items left out, as HIDE takes them */
 } pv_field;
+
+static STRPTR pv_sort_labels[] = { (STRPTR)"Source order", (STRPTR)"Ascending", (STRPTR)"Descending", NULL };
+static STRPTR pv_show_labels[] = { (STRPTR)"Normal", (STRPTR)"% of row", (STRPTR)"% of column",
+                                   (STRPTR)"% of total", (STRPTR)"Index", NULL };
 
 static STRPTR pv_use_labels[] = { (STRPTR)"Not used", (STRPTR)"Row field", (STRPTR)"Column field",
                                   (STRPTR)"Page field (filter)", NULL };
@@ -4664,10 +4722,11 @@ static void pv_label(pv_field *f)
     static const char *const uses[] = { "", "row", "column", "page" };
     char extra[96];
     extra[0] = 0;
+    const char *sub = f->subtotal && (f->use == 1 || f->use == 2) ? ", subtotals" : "";
     if (f->use && f->data)
-        snprintf(extra, sizeof extra, "  [%s, %s]", uses[f->use], (const char *)pv_data_labels[f->data]);
+        snprintf(extra, sizeof extra, "  [%s%s, %s]", uses[f->use], sub, (const char *)pv_data_labels[f->data]);
     else if (f->use)
-        snprintf(extra, sizeof extra, "  [%s%s%s]", uses[f->use], f->use == 3 && f->item[0] ? ": " : "",
+        snprintf(extra, sizeof extra, "  [%s%s%s%s]", uses[f->use], sub, f->use == 3 && f->item[0] ? ": " : "",
                  f->use == 3 ? f->item : "");
     else if (f->data)
         snprintf(extra, sizeof extra, "  [%s]", (const char *)pv_data_labels[f->data]);
@@ -4702,6 +4761,12 @@ static int pv_collect(pv_field *fields, unsigned n, owf_pivotdef *def)
     unsigned nwas = def->ndata <= OWF_PIVOT_DATA ? def->ndata : OWF_PIVOT_DATA;
     memcpy(was, def->data, sizeof was);      /* a data field keeps how it is shown */
     def->nrow = def->ncol = def->npage = def->ndata = 0;
+    def->nsubtotal = 0;
+    for (i = 0; i < n; ++i)
+        if (fields[i].subtotal && (fields[i].use == 1 || fields[i].use == 2) && !owf_pivot_set_subtotal(def, i, 1)) {
+            set_status("A pivot table takes subtotals on up to 16 fields.");
+            return 0;
+        }
     for (want = 1; want <= n * 2u + 2u; ++want)
         for (i = 0; i < n; ++i) {
             if (fields[i].use && fields[i].order == want) {
@@ -4733,16 +4798,40 @@ static int pv_collect(pv_field *fields, unsigned n, owf_pivotdef *def)
     return 1;
 }
 
+/* Each field's sort, "show data as", group and hidden items put on def (oc_core_pivot_field_choices); 0 (with
+   the reason on the status line) when one is refused. */
+static int pv_choices(pv_field *fields, unsigned n, owf_pivotdef *def)
+{
+    unsigned i;
+    for (i = 0; i < n; ++i) {
+        char why[160], latin[160];
+        char *group = from_latin1(fields[i].group), *hidden = from_latin1(fields[i].hidden);
+        int rc = group && hidden ? oc_core_pivot_field_choices(core, def, i, fields[i].sort, fields[i].show, group,
+                                                               hidden, why, sizeof why)
+                                 : OWF_ERR_MEMORY;
+        owf_free(group);
+        owf_free(hidden);
+        if (rc == OWF_ERR_MEMORY) { result(rc, NULL); return 0; }
+        if (rc != OWF_OK) {
+            to_latin1(why, strlen(why), latin, sizeof latin);
+            set_status(latin);
+            return 0;
+        }
+    }
+    return 1;
+}
+
 /* The layout window over def (its source set). 1 when OK was chosen and def holds the new layout. */
 static int pivot_layout_window(owf_pivotdef *def, int editing)
 {
-    struct Gadget *glist = NULL, *last, *gfields, *guse, *gdata, *gitem, *grow, *gcol, *gok, *gcancel;
+    struct Gadget *glist = NULL, *last, *gfields, *guse, *gdata, *gitem, *gsub, *grow, *gcol, *gok, *gcancel;
+    struct Gadget *gsort, *gshow, *ggroup, *ghidden;
     struct NewGadget ng;
     struct Window *rw = NULL;
     struct List items;
     pv_field *fields;
     unsigned n = def->source.last_col - def->source.first_col + 1u, i, next = 1;
-    int done = 0, ok = 0, ww, wh, lh = fh + 6, sel = 0, listw, rx, k;
+    int done = 0, ok = 0, ww, wh, lh = fh + 6, sel = 0, listw, rx, k, ytop, ysort, listh;
     if (!scr || !vi) return 0;
     if (n > PV_LIST_MAX) {
         set_status("Pivot tables here take sources up to 64 columns wide.");
@@ -4773,7 +4862,16 @@ static int pivot_layout_window(owf_pivotdef *def, int editing)
         f->data = pv_data_labels[k] ? k : 1;
         f->data_order = next++;
     }
+    for (i = 0; i < def->ndata; ++i)
+        fields[def->data[i].field].show = def->data[i].show;
     for (i = 0; i < n; ++i) {
+        char utf8[400];
+        fields[i].subtotal = owf_pivot_subtotal_of(def, i);
+        fields[i].sort = owf_pivot_sort_of(def, i);
+        if (oc_core_pivot_field_words(def, i, OC_PIVOT_WORDS_GROUP, utf8, sizeof utf8))
+            to_latin1(utf8, strlen(utf8), fields[i].group, sizeof fields[i].group);
+        if (oc_core_pivot_field_words(def, i, OC_PIVOT_WORDS_HIDDEN, utf8, sizeof utf8))
+            to_latin1(utf8, strlen(utf8), fields[i].hidden, sizeof fields[i].hidden);
         pv_label(&fields[i]);
         AddTail(&items, &fields[i].node);
     }
@@ -4781,10 +4879,15 @@ static int pivot_layout_window(owf_pivotdef *def, int editing)
     listw = 250;
     rx = 10 + listw + 16;
     ww = rx + 190;
+    /* the right column: Use, Data, Page item, Subtotal, then Sort, Show data as, Group and Hidden items */
+    ytop = 8 + fh + 4;
+    ysort = ytop + 2 * (2 * fh + 14) + (fh + 12) + (fh + 4) + (fh + 10);
+    listh = ysort + 3 * (2 * fh + 14) + fh + 6 - ytop;
+    if (listh < lh * 8 + 4) listh = lh * 8 + 4;
     memset(&ng, 0, sizeof ng);
     ng.ng_TextAttr = &font_attr; ng.ng_VisualInfo = vi;
     last = CreateContext(&glist);
-    ng.ng_LeftEdge = 10; ng.ng_TopEdge = 8 + fh + 4; ng.ng_Width = listw; ng.ng_Height = lh * 8 + 4;
+    ng.ng_LeftEdge = 10; ng.ng_TopEdge = ytop; ng.ng_Width = listw; ng.ng_Height = listh;
     ng.ng_GadgetText = (STRPTR)"Fields"; ng.ng_GadgetID = 1; ng.ng_Flags = PLACETEXT_ABOVE;
     last = gfields = CreateGadget(LISTVIEW_KIND, last, &ng, GTLV_Labels, (ULONG)&items, GTLV_ShowSelected, 0,
                                   GTLV_Selected, 0, TAG_DONE);
@@ -4798,7 +4901,23 @@ static int pivot_layout_window(owf_pivotdef *def, int editing)
     ng.ng_TopEdge += 2 * fh + 14; ng.ng_GadgetText = (STRPTR)"Page item (empty: all)"; ng.ng_GadgetID = 4;
     last = gitem = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)fields[0].item,
                                 GTST_MaxChars, (ULONG)(sizeof fields[0].item - 1), GA_TabCycle, TRUE, TAG_DONE);
-    ng.ng_Flags = PLACETEXT_RIGHT; ng.ng_LeftEdge = 10; ng.ng_TopEdge = 8 + fh + 4 + lh * 8 + 12;
+    ng.ng_TopEdge += fh + 12; ng.ng_Width = 22; ng.ng_Height = fh + 4; ng.ng_Flags = PLACETEXT_RIGHT;
+    ng.ng_GadgetText = (STRPTR)"Subtotal per item"; ng.ng_GadgetID = 9;
+    last = gsub = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, fields[0].subtotal ? TRUE : FALSE, TAG_DONE);
+    ng.ng_Width = 180; ng.ng_Height = fh + 6; ng.ng_Flags = PLACETEXT_ABOVE;
+    ng.ng_TopEdge = ysort; ng.ng_GadgetText = (STRPTR)"Sort items"; ng.ng_GadgetID = 10;
+    last = gsort = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)pv_sort_labels,
+                                GTCY_Active, (ULONG)fields[0].sort, TAG_DONE);
+    ng.ng_TopEdge += 2 * fh + 14; ng.ng_GadgetText = (STRPTR)"Show data as"; ng.ng_GadgetID = 11;
+    last = gshow = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)pv_show_labels,
+                                GTCY_Active, (ULONG)fields[0].show, TAG_DONE);
+    ng.ng_TopEdge += 2 * fh + 14; ng.ng_GadgetText = (STRPTR)"Group (YEARS, 0 100 10...)"; ng.ng_GadgetID = 12;
+    last = ggroup = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)fields[0].group,
+                                 GTST_MaxChars, (ULONG)(sizeof fields[0].group - 1), GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge += 2 * fh + 14; ng.ng_GadgetText = (STRPTR)"Hidden items"; ng.ng_GadgetID = 13;
+    last = ghidden = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)fields[0].hidden,
+                                  GTST_MaxChars, (ULONG)(sizeof fields[0].hidden - 1), GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_Flags = PLACETEXT_RIGHT; ng.ng_LeftEdge = 10; ng.ng_TopEdge = ytop + listh + 8;
     ng.ng_Width = 22; ng.ng_Height = fh + 4; ng.ng_GadgetText = (STRPTR)"Grand total row"; ng.ng_GadgetID = 5;
     last = grow = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, def->row_grand ? TRUE : FALSE, TAG_DONE);
     ng.ng_LeftEdge = rx; ng.ng_GadgetText = (STRPTR)"Grand total column"; ng.ng_GadgetID = 6;
@@ -4808,7 +4927,8 @@ static int pivot_layout_window(owf_pivotdef *def, int editing)
     last = gok = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
     ng.ng_LeftEdge = ww - 100; ng.ng_GadgetText = (STRPTR)"Cancel"; ng.ng_GadgetID = 8;
     last = gcancel = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
-    if (!gfields || !guse || !gdata || !gitem || !grow || !gcol || !gok || !gcancel) goto out;
+    if (!gfields || !guse || !gdata || !gitem || !gsub || !gsort || !gshow || !ggroup || !ghidden || !grow || !gcol ||
+        !gok || !gcancel) goto out;
     wh = ng.ng_TopEdge + ng.ng_Height + 10;
     rw = OpenWindowTags(NULL,
         WA_Title, (ULONG)(editing ? "Pivot Table Layout" : "New Pivot Table"), WA_PubScreen, (ULONG)scr,
@@ -4833,10 +4953,16 @@ static int pivot_layout_window(owf_pivotdef *def, int editing)
             if (cls == IDCMP_CLOSEWINDOW || (cls == IDCMP_VANILLAKEY && code == 27)) { done = 1; break; }
             if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); continue; }
             if (cls != IDCMP_GADGETUP) continue;
-            if (id == 1 || id == 7) {               /* leaving a field: its typed item first */
+            if (id == 1 || id == 7) {               /* leaving a field: what was typed for it first */
                 STRPTR v = NULL;
                 GT_GetGadgetAttrs(gitem, rw, NULL, GTST_String, (ULONG)&v, TAG_DONE);
                 snprintf(fields[sel].item, sizeof fields[sel].item, "%s", v ? (char *)v : "");
+                v = NULL;
+                GT_GetGadgetAttrs(ggroup, rw, NULL, GTST_String, (ULONG)&v, TAG_DONE);
+                snprintf(fields[sel].group, sizeof fields[sel].group, "%s", v ? (char *)v : "");
+                v = NULL;
+                GT_GetGadgetAttrs(ghidden, rw, NULL, GTST_String, (ULONG)&v, TAG_DONE);
+                snprintf(fields[sel].hidden, sizeof fields[sel].hidden, "%s", v ? (char *)v : "");
                 relabel = 1;
             }
             if (id == 1 && code < n) {
@@ -4844,6 +4970,25 @@ static int pivot_layout_window(owf_pivotdef *def, int editing)
                 GT_SetGadgetAttrs(guse, rw, NULL, GTCY_Active, (ULONG)fields[sel].use, TAG_DONE);
                 GT_SetGadgetAttrs(gdata, rw, NULL, GTCY_Active, (ULONG)fields[sel].data, TAG_DONE);
                 GT_SetGadgetAttrs(gitem, rw, NULL, GTST_String, (ULONG)fields[sel].item, TAG_DONE);
+                GT_SetGadgetAttrs(gsub, rw, NULL, GTCB_Checked, fields[sel].subtotal ? TRUE : FALSE, TAG_DONE);
+                GT_SetGadgetAttrs(gsort, rw, NULL, GTCY_Active, (ULONG)fields[sel].sort, TAG_DONE);
+                GT_SetGadgetAttrs(gshow, rw, NULL, GTCY_Active, (ULONG)fields[sel].show, TAG_DONE);
+                GT_SetGadgetAttrs(ggroup, rw, NULL, GTST_String, (ULONG)fields[sel].group, TAG_DONE);
+                GT_SetGadgetAttrs(ghidden, rw, NULL, GTST_String, (ULONG)fields[sel].hidden, TAG_DONE);
+            } else if (id == 10 && code <= OWF_PIVOT_SORT_DESCENDING) {
+                fields[sel].sort = code;
+            } else if (id == 11 && code <= OWF_PIVOT_SHOW_LAST) {
+                fields[sel].show = code;
+            } else if (id == 12 || id == 13) {
+                STRPTR v = NULL;
+                GT_GetGadgetAttrs(id == 12 ? ggroup : ghidden, rw, NULL, GTST_String, (ULONG)&v, TAG_DONE);
+                if (id == 12) snprintf(fields[sel].group, sizeof fields[sel].group, "%s", v ? (char *)v : "");
+                else snprintf(fields[sel].hidden, sizeof fields[sel].hidden, "%s", v ? (char *)v : "");
+            } else if (id == 9) {
+                LONG checked = 0;
+                GT_GetGadgetAttrs(gsub, rw, NULL, GTCB_Checked, (ULONG)&checked, TAG_DONE);
+                fields[sel].subtotal = checked != 0;
+                relabel = 1;
             } else if (id == 2 && code <= 3) {
                 if (fields[sel].use != code) fields[sel].order = next++;
                 fields[sel].use = code;
@@ -4863,7 +5008,7 @@ static int pivot_layout_window(owf_pivotdef *def, int editing)
                 def->row_grand = checked != 0;
                 GT_GetGadgetAttrs(gcol, rw, NULL, GTCB_Checked, (ULONG)&checked, TAG_DONE);
                 def->col_grand = checked != 0;
-                if (pv_collect(fields, n, def)) { ok = 1; done = 1; }
+                if (pv_collect(fields, n, def) && pv_choices(fields, n, def)) { ok = 1; done = 1; }
             } else if (id == 8) {
                 done = 1;
             }
@@ -5847,7 +5992,7 @@ static void menu_action(ULONG id)
         if (oc_core_insert(core, 1) == OWF_ERR_FORMAT) set_status("Columns can't go in: cells would fall off the sheet.");
         else set_status("Columns inserted.");
         break;
-    case M_INS_SHEET: if (oc_core_add_sheet(core, NULL) < 0) result(OWF_ERR_MEMORY, NULL); else set_status("Sheet added."); break;
+    case M_INS_SHEET: add_sheet_here(); break;
     case M_COMMENT: do_comment(); break;
     case M_CHART: do_insert_chart(); break;
     case M_CHART_FORMAT: do_format_chart(); break;
@@ -5900,6 +6045,16 @@ static void menu_action(ULONG id)
     case M_SOLVER: do_solver(); break;
     case M_SCENARIOS: do_scenarios(); break;
     case M_CONSOLIDATE: do_consolidate(); break;
+    case M_CONSOLIDATE_REFRESH:
+        {
+            static oc_consolidate_spec probe;
+            int rc = oc_core_consolidate_refresh(core);
+            if (rc == OWF_ERR_UNSUPPORTED && !oc_core_consolidate_settings(core, &probe))
+                set_status("The active sheet has not been consolidated (Data > Consolidate...).");
+            else if (cs_result(rc))
+                refresh();
+        }
+        break;
     case M_MULTIPLE_OPS: do_multiple_operations(); break;
     case M_MULTIPLE_REFRESH:
         {
@@ -5916,6 +6071,8 @@ static void menu_action(ULONG id)
     case M_TEXT_COLUMNS: do_text_columns(); break;
     case M_REMOVE_DUPS: do_remove_duplicates(); break;
     case M_PROTECT_SHEET: do_protect_sheet(); break;
+    case M_PROTECT_BOOK: do_protect_book(); break;
+    case M_UNPROTECT_BOOK: do_unprotect_book(); break;
     case M_UNPROTECT_SHEET: do_unprotect_sheet(); break;
     case M_CELL_PROTECT: do_cell_protection(); break;
     case M_PIVOT_SUMMARY: do_pivot_table(); break;
@@ -5928,6 +6085,22 @@ static void menu_action(ULONG id)
                 set_status("The pivot table's source or fields no longer fit (Data > Pivot Table... lays it out afresh).");
             else
                 result(rc, "Pivot table refreshed from its source; Undo restores the previous one.");
+        }
+        break;
+    case M_PIVOT_DETAILS:
+        {
+            unsigned r, c;
+            int rc;
+            oc_core_active(core, &r, &c);
+            rc = oc_core_pivot_details(core, r, c);
+            if (rc == OWF_ERR_UNSUPPORTED)
+                set_status("The active sheet has no pivot table (or the details would not fit).");
+            else if (rc == OWF_ERR_FORMAT)
+                set_status("Put the cursor on one of the pivot table's values or totals first.");
+            else if (rc == OC_PIVOT_STALE)
+                set_status("The source has changed since the table was drawn: Data > Refresh Pivot Table first.");
+            else
+                result(rc, "The rows behind that value are on a new sheet; Undo removes it.");
         }
         break;
     case M_VALIDITY: do_validity(); break;
@@ -5945,15 +6118,17 @@ static void menu_action(ULONG id)
     case M_SHEET_DUPLICATE: do_duplicate_sheet(); break;
     case M_SHEET_LEFT:
         if (!oc_core_sheet(core)) set_status("This sheet is already first.");
-        else result(oc_core_move_sheet(core, oc_core_sheet(core), oc_core_sheet(core) - 1), "Sheet moved left.");
+        else sheet_result(oc_core_move_sheet(core, oc_core_sheet(core), oc_core_sheet(core) - 1), "Sheet moved left.");
         break;
     case M_SHEET_RIGHT:
         if (oc_core_sheet(core) + 1 >= oc_core_sheet_count(core)) set_status("This sheet is already last.");
-        else result(oc_core_move_sheet(core, oc_core_sheet(core), oc_core_sheet(core) + 1), "Sheet moved right.");
+        else sheet_result(oc_core_move_sheet(core, oc_core_sheet(core), oc_core_sheet(core) + 1), "Sheet moved right.");
         break;
     case M_SHEET_HIDE:
         if (oc_core_set_sheet_hidden(core, oc_core_sheet(core), 1) == OWF_ERR_UNSUPPORTED)
             set_status("A workbook keeps at least one visible sheet.");
+        else if (oc_core_book_protection(core, NULL) && !sheet_hidden(oc_core_sheet(core)))
+            set_status(BOOK_LOCKED_TEXT);
         else set_status("Sheet hidden.");
         break;
     case M_SHEET_SHOW: do_show_sheet(); break;
@@ -6114,8 +6289,9 @@ static int valid_check(char *out, size_t size)
     return 1;
 }
 
-/* PIVOT range ROWS cols [COLUMNS cols] DATA col:function[,...] [PAGE col=item[,...]] [NOROWTOTAL] [NOCOLUMNTOTAL]:
- * a new pivot table, as Data > Pivot Table... makes one (columns as letters). 1 when made. */
+/* PIVOT range ROWS cols [COLUMNS cols] DATA col:function[,...] [PAGE col=item[,...]] [SUBTOTALS cols]
+ * [NOROWTOTAL] [NOCOLUMNTOTAL]: a new pivot table, as Data > Pivot Table... makes one (columns as
+ * letters); SUBTOTALS gives those row fields a subtotal row under each item. 1 when made. */
 static int rexx_pivot(const char *arg, char *out, size_t size)
 {
     char word[160];
@@ -6137,6 +6313,7 @@ static int rexx_pivot(const char *arg, char *out, size_t size)
         if (!strcasecmp(word, "COLUMNS")) { mode = 2; continue; }
         if (!strcasecmp(word, "DATA")) { mode = 3; continue; }
         if (!strcasecmp(word, "PAGE")) { mode = 4; continue; }
+        if (!strcasecmp(word, "SUBTOTALS")) { mode = 5; continue; }
         if (!strcasecmp(word, "NOROWTOTAL")) { def.row_grand = 0; continue; }
         if (!strcasecmp(word, "NOCOLUMNTOTAL")) { def.col_grand = 0; continue; }
         for (; item && *item; item = next) {
@@ -6160,6 +6337,8 @@ static int rexx_pivot(const char *arg, char *out, size_t size)
                 def.data[def.ndata++].function = subtotal_function(sep + 1);
             } else if (mode == 4 && def.npage < OWF_PIVOT_PAGES)
                 pv_item(&def, col, sep + 1, &def.page[def.npage++]);
+            else if (mode == 5 && owf_pivot_set_subtotal(&def, col, 1))
+                ;                                    /* a row field with subtotals */
             else {
                 snprintf(out, size, "PIVOT: too many fields, or an unknown function in %s", item);
                 return 0;
@@ -6343,7 +6522,8 @@ static int rexx_scenario(const char *arg, char *out, size_t size, int *now)
 }
 
 /* CONSOLIDATE function range [range ...] TO cell [ROWLABELS] [COLUMNLABELS] [LINK]: Data > Consolidate. A range
- * with spaces (a sheet's name) in double quotes. 1 done. */
+ * with spaces (a sheet's name) in double quotes. CONSOLIDATE REFRESH: the active sheet's last one again, over its
+ * sources as they are now. 1 done. */
 static int rexx_consolidate(const char *arg, char *out, size_t size)
 {
     static oc_consolidate_spec spec;
@@ -6351,6 +6531,15 @@ static int rexx_consolidate(const char *arg, char *out, size_t size)
     const char *p = rexx_word(arg, word, sizeof word);
     int to = 0, rc;
     oc_consolidate_init(&spec);
+    if (!strcasecmp(word, "REFRESH")) {
+        rc = oc_core_consolidate_refresh(core);
+        if (rc == OWF_ERR_UNSUPPORTED && !oc_core_consolidate_settings(core, &spec))
+            snprintf(status, sizeof status, "The active sheet has not been consolidated");
+        else
+            cs_result(rc);
+        snprintf(out, size, "%s", rc == OWF_OK ? "OK" : status);
+        return rc == OWF_OK;
+    }
     if (!(spec.function = subtotal_function(word))) {
         snprintf(out, size, "CONSOLIDATE: SUM, COUNT, AVERAGE, MAX, MIN, PRODUCT, COUNTA, STDEV, STDEVP, VAR or VARP first");
         return 0;
@@ -6524,7 +6713,7 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
                  "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK CHARTSELECT CHARTMOVE "
-                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER MULTIOP TEXTTOCOLUMNS REMOVEDUPS CONDFMT PROTECT UNPROTECT CELLPROTECT ISPROTECTED QUIT");
+                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO PIVOTDETAILS PIVOTSET SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER MULTIOP TEXTTOCOLUMNS REMOVEDUPS CONDFMT PROTECT UNPROTECT CELLPROTECT ISPROTECTED PROTECTBOOK UNPROTECTBOOK ISBOOKPROTECTED QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {   /* a DOS error code's text, as every Open app's port */
         if (!*arg) { ok = 0; snprintf(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -6581,6 +6770,27 @@ static int rexx_do_command(const char *command, char **result_out)
         if (rc == OWF_ERR_UNSUPPORTED) rc_fail = RX_NOW;
         snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc == OWF_ERR_UNSUPPORTED ? "No pivot table on this sheet"
                                                          : "The pivot table's source or fields no longer fit");
+    } else if (starts_word_ci(command, "PIVOTDETAILS", &arg)) {  /* PIVOTDETAILS cell: Show Pivot Details there */
+        const char *rest;
+        if (!rexx_cell(arg, &row, &col, &rest)) { ok = 0; snprintf(result_text, sizeof result_text, "Not a cell"); }
+        else {
+            int rc = oc_core_pivot_details(core, row, col);
+            ok = rc == OWF_OK;
+            if (rc == OWF_ERR_UNSUPPORTED) rc_fail = RX_NOW;
+            snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc == OWF_ERR_UNSUPPORTED ? "No pivot table on this sheet"
+                                                             : rc == OWF_ERR_FORMAT ? "Not a value cell of the pivot table"
+                                                             : rc == OC_PIVOT_STALE ? "The source has changed: PIVOTREFRESH first"
+                                                             : owf_error_text(rc));
+        }
+    } else if (starts_word_ci(command, "PIVOTSET", &arg)) {      /* PIVOTSET SORT|HIDE|SHOW|GROUP|NAME|UNNAME|SHOWAS ... */
+        char *utf8 = from_latin1(arg), why[200];
+        int rc = utf8 ? oc_core_pivot_command(core, utf8, why, sizeof why) : OWF_ERR_MEMORY;
+        owf_free(utf8);
+        ok = rc == OWF_OK;
+        if (rc == OWF_ERR_UNSUPPORTED) rc_fail = RX_NOW;
+        if (ok) snprintf(result_text, sizeof result_text, "OK");
+        else if (rc == OWF_ERR_MEMORY) snprintf(result_text, sizeof result_text, "%s", owf_error_text(rc));
+        else to_latin1(why, strlen(why), result_text, sizeof result_text);
     } else if (starts_word_ci(command, "PIVOTINFO", &arg)) {     /* the active sheet's pivot table, as its definition */
         owf_pivotdef d;
         char t[OWF_PIVOT_TEXT_MAX];
@@ -6635,6 +6845,20 @@ static int rexx_do_command(const char *command, char **result_out)
                      textcols_run(&opt, result_text, sizeof result_text);
             }
         }
+    } else if (starts_word_ci(command, "PROTECTBOOK", &arg) || starts_word_ci(command, "UNPROTECTBOOK", &arg)) {
+        /* PROTECTBOOK [password] | UNPROTECTBOOK [password]: the workbook's structure */
+        char password[64];
+        int on = toupper((unsigned char)command[0]) == 'P', rc;
+        rexx_word(arg, password, sizeof password);
+        rc = on ? oc_core_protect_book(core, password) : oc_core_unprotect_book(core, password);
+        ok = rc == OWF_OK;
+        if (rc == OWF_ERR_UNSUPPORTED) rc_fail = RX_NOW;
+        snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc == OC_WRONG_PASSWORD ? "Wrong password"
+                 : rc == OWF_ERR_UNSUPPORTED ? (on ? "The workbook is protected already" : "The workbook is not protected")
+                 : owf_error_text(rc));
+    } else if (starts_word_ci(command, "ISBOOKPROTECTED", &arg)) {
+        int has = 0, on = oc_core_book_protection(core, &has);
+        snprintf(result_text, sizeof result_text, "%d %d", on, has);
     } else if (starts_word_ci(command, "PROTECT", &arg)) {
         int rc = protect_words(arg, result_text, sizeof result_text);
         ok = rc == OWF_OK;
@@ -6729,13 +6953,14 @@ static int rexx_do_command(const char *command, char **result_out)
         char *utf8 = *arg ? from_latin1(arg) : NULL;
         ok = oc_core_add_sheet(core, utf8) >= 0;
         owf_free(utf8);
-        snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : "Failed");
+        snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : oc_core_book_protection(core, NULL) ? "Protected" : "Failed");
     } else if (starts_word_ci(command, "RENAMESHEET", &arg)) {   /* the sheet showing, as Rename... does */
         char *utf8 = *arg ? from_latin1(arg) : NULL;
         int rc = utf8 ? oc_core_rename_sheet(core, oc_core_sheet(core), utf8) : OWF_ERR_FORMAT;
         owf_free(utf8);
         ok = rc == OWF_OK;
-        snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc == OWF_ERR_FORMAT ? "Not a sheet name" : "Failed");
+        snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc == OWF_ERR_FORMAT ? "Not a sheet name"
+                                                         : rc == OC_PROTECTED ? "Protected" : "Failed");
     } else if (starts_word_ci(command, "RECALC", &arg)) {
         ok = owf_calc_recalc_all(oc_core_calc(core)) == OWF_OK;
         snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : "Out of memory");
@@ -7072,6 +7297,32 @@ static void pick_from_list(int bx, int by, int bw, int bh)
     refresh();
 }
 
+/* The shown scenario's tab: the sheet's scenarios in a list under it; the one chosen is shown. */
+static void pick_scenario(int bx, int by, int bw, int bh)
+{
+    char **items;
+    int n = oc_core_scenario_count(core), i, got = 0, chosen, now = oc_core_scenario_active(core);
+    if (n <= 0) return;
+    items = calloc((size_t)n, sizeof *items);
+    if (!items) { set_status("Not enough memory for the list."); return; }
+    for (i = 0; i < n; ++i) {
+        owf_scenario sc;
+        if (!oc_core_scenario_get(core, i, &sc)) break;
+        items[i] = malloc(strlen(sc.name) + 1);
+        if (items[i]) strcpy(items[i], sc.name);
+        owf_scenario_free(&sc);
+        if (!items[i]) break;
+        got++;
+    }
+    chosen = got == n ? choice_popup(bx, by, bw, bh, items, n, now >= 0 ? items[now] : "") : -1;
+    if (got != n) set_status("Not enough memory for the list.");
+    if (chosen >= 0 && chosen != now && result(oc_core_scenario_show(core, chosen), NULL))
+        set_status("Scenario shown; Undo puts the old values back.");
+    for (i = 0; i < got; ++i) free(items[i]);
+    free(items);
+    refresh();
+}
+
 static int filter_condition_text(const char *text, int *op, const char **value)
 {
     while (*text == ' ' || *text == '\t') text++;
@@ -7272,6 +7523,10 @@ static void grid_press(int mx, int my, UWORD qual, ULONG secs, ULONG micros)
         pick_from_list(grid_box.x + hit.x, grid_box.y + hit.y, hit.w, hit.h);
         return;
     }
+    if (hit.kind == OC_HIT_SCENARIO) {               /* the shown scenario's tab: the sheet's scenarios */
+        pick_scenario(grid_box.x + hit.x, grid_box.y + hit.y, hit.w, hit.h);
+        return;
+    }
     if (hit.kind == OC_HIT_FILTER) {                 /* an AutoFilter heading's distinct values */
         pick_filter(hit.col, grid_box.x + hit.x, grid_box.y + hit.y, hit.w, hit.h);
         return;
@@ -7442,8 +7697,7 @@ static void tabs_press(int mx, int my, ULONG secs, ULONG micros)
         return;
     }
     if (tab_sheet[t] == TAB_PLUS) {
-        if (oc_core_add_sheet(core, NULL) < 0) result(OWF_ERR_MEMORY, NULL);
-        else set_status("Sheet added.");
+        add_sheet_here();
     } else {
         oc_core_set_sheet(core, tab_sheet[t]);
         if (t == last_tab && DoubleClick(last_secs, last_micros, secs, micros)) {

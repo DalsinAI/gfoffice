@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.12.0"
+#define OB_CORE_VERSION "0.14.3"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -139,6 +139,9 @@ void ob_close(ob_project *p);
 
 /* The last error, in plain words; "" after a call that succeeded. */
 const char *ob_error(const ob_project *p);
+/* Sets it (core 0.14, sheets #326), for GFOpenBase's parts outside the core (sheets): 0
+ * with text as the reason ("" or NULL clears it). */
+int ob_set_error(ob_project *p, const char *text);
 
 /* The project's title (oadb_meta "title"); "" when it has none. */
 const char *ob_title(ob_project *p);
@@ -210,6 +213,21 @@ int ob_table_sql(const ob_table *t, const char *as_name, char *out, size_t size)
  * (which may be more than max), -1 on error. */
 int ob_relations(ob_project *p, ob_relation *out, int max);
 
+/* Drawn in the relationships view (core 0.11.0), each one table change
+ * (ob_table_change: rows kept, refused with the reason if a row would look
+ * up a row that isn't there):
+ * ob_relation_add: table.field, an Integer or a Lookup, now looks up
+ * lookup's key (a Counter), rule on delete. field NULL or "": a new Lookup
+ * field, named lookup (or "lookup 2" when that is taken), its name in made
+ * (when not NULL). A table's Counter or key can't look up.
+ * ob_relation_set_rule: what deleting a looked-up row does to its rows.
+ * ob_relation_remove: no longer a relationship; the field is an Integer
+ * holding the same keys. */
+int ob_relation_add(ob_project *p, const char *table, const char *field, const char *lookup,
+                    ob_on_delete rule, char *made, size_t size);
+int ob_relation_set_rule(ob_project *p, const char *table, const char *field, ob_on_delete rule);
+int ob_relation_remove(ob_project *p, const char *table, const char *field);
+
 /* ---- Rows ----
  * Values are text in the field's own form, as a datasheet cell or a form's
  * gadget holds them: "1,234.50" for Currency, "Yes"/"No" for Yes/No,
@@ -254,6 +272,12 @@ int ob_rows_at(ob_project *p, const char *table, ob_int first, int max, ob_row_f
  * about, 0 when none. */
 int ob_rexx_rows(ob_project *p, const char *table, ob_int current, const char *command,
                  char *out, size_t size, ob_int *row);
+
+/* 1 when command must be refused while a form window is open (core 0.14.3):
+ * OPEN, QUIT, TABLE t, ROW n, FIRSTROW NEXTROW PREVROW LASTROW, ADDROW,
+ * CHANGEROW and DELETEROW. TABLE and ROW on their own, COUNTROWS, GETROW,
+ * GETFIELDS and the rest only read, so they still answer. */
+int ob_rexx_form_refuses(const char *command);
 
 /* ---- Views: a datasheet sorted and filtered (design 5.4) ----
  * sort: a field to sort by ("" keeps key order), desc for Z to A; ties keep
@@ -414,6 +438,35 @@ ob_int ob_csv_export_with(ob_project *p, const char *table, const ob_view *v, co
  * time, else Text (Memo past 255 characters). The caller may change it, then
  * ob_table_create and ob_csv_import_with. o's found_* say what was found. */
 int ob_csv_guess(ob_project *p, const char *path, const char *name, ob_csv_opts *o, ob_table *out);
+
+/* ---- Rows from a grid (core 0.14, sheets #326) ----
+ * What CSV import and New Table from CSV do, for rows another part of the
+ * program has already read: a spreadsheet's sheet (include/openbase_sheet.h)
+ * or anything else laid out in rows and columns. The rows are asked for one
+ * at a time, so nothing holds them all. row() puts up to max cells of row r
+ * (from 0) into cells (ISO-8859-1 text; NULL or "" is empty) and returns how
+ * many cells the row has (more than max when it has more than a table can
+ * take), -1 when memory ran out; the cells need last only until the next
+ * call. A row with nothing in it is left out, as a blank line is.
+ *
+ * Import and guess are ob_csv_import_with's and ob_csv_guess's, header,
+ * skip_bad and the report included (o's sep and charset are not used; o may
+ * be NULL), with "Row 4" for "Line 4": a row's number is first_row + r, so a
+ * sheet whose data start in its third row says "Row 3". An import is one
+ * step of Undo, as a CSV import is. name says what the rows are in messages
+ * ("Sheet1 is empty"); guess names the new table name, else name. */
+typedef int (*ob_grid_row_fn)(void *user, long row, const char **cells, int max);
+
+typedef struct ob_grid {
+    const char *name;
+    long nrows;
+    long first_row;
+    ob_grid_row_fn row;
+    void *user;
+} ob_grid;
+
+ob_int ob_grid_import(ob_project *p, const char *table, const ob_grid *grid, ob_csv_opts *o);
+int ob_grid_guess(ob_project *p, const ob_grid *grid, const char *name, ob_csv_opts *o, ob_table *out);
 
 /* ---- dBASE files (core 0.9, design 8) ----
  * The .dbf of dBASE III, which most database and spreadsheet programs read
@@ -607,6 +660,155 @@ int ob_query_get(ob_project *p, const char *name, ob_query *out);
 int ob_query_save(ob_project *p, const ob_query *q);
 int ob_query_rename(ob_project *p, const char *old_name, const char *new_name);
 int ob_query_delete(ob_project *p, const char *name);
+
+/* ---- A query's rows as CSV, a query as a view (core 0.13.1) ----
+ * CSV: a header of the result's headings, then every row the query gives,
+ * as ob_csv_export_with writes a table's (o: separator and charset; NULL is
+ * a comma and ISO-8859-1). Datatype object columns are left out. The answers
+ * (params) are checked before the file is made. Rows written, -1 on error.
+ *
+ * A view: the query's SELECT kept in the project as an SQL VIEW, so other
+ * SQLite programs (and typed SQL) can read it. Its name is a table's kind of
+ * name and no table or saved query has it; saving a name that is there
+ * replaces that view. A query that asks [questions] can't be a view.
+ * Renaming a table rewrites the views that name it (SQLite does), also when
+ * a design change renames it; a design change or a delete that would leave a
+ * view unable to read is refused.
+ * Saving or deleting a view is not on the Undo list.
+ *
+ * Renaming a table (ob_table_rename, or a design change that renames it) also
+ * renames it in saved queries made in the grid: their tables, their columns'
+ * tables, and "Orders". in an expression (as the designer writes a field).
+ * SQL typed as SQL is kept as it was typed. */
+ob_int ob_query_csv_export(ob_project *p, const ob_query *q, const char *const *params, const char *path,
+                           const ob_csv_opts *o);
+int ob_query_save_view(ob_project *p, const ob_query *q, const char *name);
+/* The project's views, in name order; a name is good until the next call. */
+int ob_sqlview_count(ob_project *p);
+const char *ob_sqlview_name(ob_project *p, int i);
+int ob_sqlview_drop(ob_project *p, const char *name);
+
+/* ---- Designed forms (core 0.7, design 6.2) ----
+ * A form places items on a grid counted in the font's character width and
+ * line height, not pixels, so it survives a change of font: x 0 to
+ * OB_FORM_COLS - 1 across, y 0 to OB_FORM_ROWS - 1 down. Kept as text in
+ * oadb_forms. A form's name is its own: it may be its table's name. */
+#define OB_FORM_ITEMS 200       /* items on one form (an auto form of 96 fields: 192) */
+#define OB_FORM_COLS 160
+#define OB_FORM_ROWS 100
+
+typedef enum ob_fitem_kind {
+    OB_FI_FIELD,    /* a field's gadget; field names it */
+    OB_FI_LABEL,    /* text */
+    OB_FI_LINE,     /* across (h 1) or down (w 1) */
+    OB_FI_BOX,      /* a frame round other items; text is its title, may be "" */
+    OB_FI_BUTTON,   /* text on it; action and arg say what it does (core 0.7.3) */
+    OB_FI_KINDS
+} ob_fitem_kind;
+
+/* What a button does (core 0.7.3). The record ones act on the form's
+ * record as its record bar does; Open Form opens the form arg names (at the
+ * rows of its table), Run Query runs the saved query arg names, ARexx runs
+ * arg as an ARexx macro (a file, or a line of ARexx in quotes). */
+#define OB_ARG_MAX 128
+typedef enum ob_faction {
+    OB_FA_NONE,
+    OB_FA_FIRST, OB_FA_PREVIOUS, OB_FA_NEXT, OB_FA_LAST,
+    OB_FA_NEW, OB_FA_SAVE, OB_FA_DELETE, OB_FA_FIND, OB_FA_CLOSE,
+    OB_FA_OPENFORM, OB_FA_RUNQUERY, OB_FA_AREXX,
+    OB_FA_COUNT
+} ob_faction;
+
+/* A form's events: an ARexx macro run when the form opens, when it moves
+ * to a record, before and after a record is saved, and when it closes. ""
+ * is none. Before Save's macro can refuse the save by giving a return code
+ * of 5 or more. */
+typedef enum ob_fevent {
+    OB_FE_OPEN, OB_FE_CURRENT, OB_FE_BEFORE_SAVE, OB_FE_AFTER_SAVE, OB_FE_CLOSE,
+    OB_FE_COUNT
+} ob_fevent;
+
+typedef struct ob_fitem {
+    ob_fitem_kind kind;
+    char field[OB_NAME_MAX];
+    char text[OB_LABEL_MAX];
+    int x, y, w, h;
+    ob_faction action;              /* a button's */
+    char arg[OB_ARG_MAX];           /* its form, query or macro */
+} ob_fitem;
+
+typedef struct ob_form {
+    char name[OB_NAME_MAX];
+    char table[OB_NAME_MAX];
+    int nitems;
+    ob_fitem items[OB_FORM_ITEMS];
+    char events[OB_FE_COUNT][OB_ARG_MAX];
+} ob_form;
+
+/* "First Record"...; "" for none or out of range. */
+const char *ob_faction_name(ob_faction a);
+/* What a button's arg names: 0 nothing, 1 a form, 2 a query, 3 a macro. */
+int ob_faction_arg(ob_faction a);
+const char *ob_fevent_name(ob_fevent e);     /* "On Open"... */
+/* Adds a button with text doing action (arg its form, query or macro);
+ * NULL as ob_form_add. */
+ob_fitem *ob_form_add_button(ob_form *f, const char *text, ob_faction action, const char *arg, int x, int y);
+
+void ob_form_init(ob_form *f, const char *name, const char *table);
+/* Adds an item, kept inside the grid (w and h at least 1); NULL when the
+ * form is full or x, y is off the grid. */
+ob_fitem *ob_form_add(ob_form *f, ob_fitem_kind kind, int x, int y, int w, int h);
+/* Removes item i; the ones after it move up. 0 when there is none. */
+int ob_form_remove(ob_form *f, int i);
+/* The item at cell x, y: the last added that covers it (a box only by its
+ * edge, so what is inside it can be chosen), -1 when none. */
+int ob_form_at(const ob_form *f, int x, int y);
+/* Moves item i to x, y and sizes it w, h, all kept inside the grid. 0 when
+ * there is no item i. */
+int ob_form_place(ob_form *f, int i, int x, int y, int w, int h);
+/* The auto form of a table as a designed one: a label and its field a row,
+ * labels right-aligned to the longest (at most 24), fields 40 wide (a Memo
+ * 4 lines). */
+int ob_form_auto(ob_project *p, const char *table, const char *name, ob_form *out);
+/* Whether the form can be shown: its table is there, each field item names
+ * one of its fields, a line is 1 thick, a button does something and has the
+ * form, query or macro it needs named (one that is gone since shows as a
+ * button that says so when pressed). 0 with the reason. */
+int ob_form_check(ob_project *p, const ob_form *f);
+/* The cells the items use: cols across (the furthest x + w), rows down. */
+void ob_form_extent(const ob_form *f, int *cols, int *rows);
+/* The first row under every item, for a new one; -1 when that is off the
+ * grid. */
+int ob_form_free_row(const ob_form *f);
+/* Moves item i by dx, dy and sizes it by dw, dh (cursor keys in the
+ * designer): it keeps its size while it moves, stops at the grid's edge,
+ * and a line stays one cell thick. 0 when there is no item i. */
+int ob_form_nudge(ob_form *f, int i, int dx, int dy, int dw, int dh);
+/* The fields of the form's table it doesn't show yet, in the table's
+ * order, up to max; how many there are, -1 on error. */
+int ob_form_unplaced(ob_project *p, const ob_form *f, char (*names)[OB_NAME_MAX], int max);
+/* Puts field on the form at x, y as the auto form would: its label, then
+ * its gadget 40 wide (a Memo 4 lines). The field item's index; -1 with the
+ * reason when the table has no such field, it is on the form already, or
+ * there is no room. */
+int ob_form_add_field(ob_project *p, ob_form *f, const char *field, int x, int y);
+/* The names of the forms on table, in name order, up to max; how many
+ * there are, -1 on error. */
+int ob_forms_of(ob_project *p, const char *table, char (*names)[OB_NAME_MAX], int max);
+/* Forms kept in the project (oadb_forms), in name order. Saving a name that
+ * is there replaces it. A table's rename, on its own or in a design change,
+ * renames it in its forms, and a design change's field renames (from[])
+ * rename their items. A table or field a form shows can't be dropped
+ * ("The form Card shows Email: take it off the form first"). Renaming a
+ * form or a saved query renames it in the buttons that open or run it. A
+ * button's caption, action and macro, and a form's events, are kept as
+ * "button" and "event" lines an older GFOpenBase passes over. */
+int ob_form_count(ob_project *p);
+const char *ob_form_name(ob_project *p, int i);
+int ob_form_get(ob_project *p, const char *name, ob_form *out);
+int ob_form_save(ob_project *p, const ob_form *f);
+int ob_form_rename(ob_project *p, const char *old_name, const char *new_name);
+int ob_form_delete(ob_project *p, const char *name);
 
 /* ---- Values ---- */
 

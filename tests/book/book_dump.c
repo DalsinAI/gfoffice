@@ -60,6 +60,11 @@ int main(int argc, char **argv)
         return 10;
     }
     printf("book format=%s sheets=%d active=%d date1904=%d\n", used->name, book->nsheets, book->active, book->date1904);
+    if (book->protect_structure) {
+        printf("bookprotect hash=%s kept=", book->protect_hash ? book->protect_hash : "-");
+        put_string(book->protect_kept ? book->protect_kept : "");
+        putchar('\n');
+    }
     for (i = 0; i < book->nfonts; i++) {
         printf("font %d ", i);
         put_string(book->fonts[i].name);
