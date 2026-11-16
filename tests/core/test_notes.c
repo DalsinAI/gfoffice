@@ -3,7 +3,8 @@
  * the other kind and deleted in the editor (and undone); through DOCX and ODT; RTF, HTML and plain text keep
  * their text; and on the pages, each footnote at the foot of its mark's page and the endnotes after the
  * text. Word's and OpenOffice's forms are made here by hand from the formats' specifications (ECMA-376 part
- * 1, 17.11; ODF 1.3 part 3, 6.3), so no document from either program goes into the repository.
+ * 1, 17.11; ODF 1.3 part 3, 6.3), so no document from either program goes into the repository. libowf 1.12.2:
+ * notes with formats (bold and the rest) read from DOCX, written back, laid out and kept by the editor.
  * make notes-test, make notes-check (ASan).
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
@@ -600,6 +601,215 @@ static void test_numbering(void)
     owf_doc_free(doc);
 }
 
+/* libowf 1.12.2: notes with formats (owf_doc.note_stories) */
+
+/* The text op in a laid-out document whose text starts with s, NULL: none */
+static const ol_display_op *op_with(const ol_document *od, const char *s)
+{
+    size_t i, n = ol_display_count(od);
+    for (i = 0; i < n; ++i) {
+        const ol_display_op *op = ol_display_get(od, i);
+        const char *t;
+        if (op->type != OL_OP_TEXT) continue;
+        t = ol_node_text(ol_node_by_id(od, op->u.text.node_id));
+        if (t && !strncmp(t + op->u.text.text_offset, s, strlen(s))) return op;
+    }
+    return NULL;
+}
+
+/* The run of a story whose text is s, NULL: none */
+static const owf_run *story_run(const owf_story *st, const char *s)
+{
+    int i, j;
+    for (i = 0; st && i < st->nparas; ++i)
+        for (j = 0; j < st->paras[i].nruns; ++j)
+            if (st->paras[i].runs[j].kind == OWF_RUN_TEXT && st->paras[i].runs[j].text &&
+                !strcmp(st->paras[i].runs[j].text, s))
+                return &st->paras[i].runs[j];
+    return NULL;
+}
+
+/* How many times s is in a DOCX's part */
+static int part_count(const unsigned char *data, size_t length, const char *part, const char *s)
+{
+    owf_unzip zip;
+    unsigned char *xml = NULL;
+    size_t n = 0;
+    int count = 0;
+    const char *at;
+    if (!owf_unzip_open(&zip, data, length) || owf_unzip_read(&zip, part, &xml, &n) != OWF_OK) return -1;
+    for (at = (const char *)xml; (at = strstr(at, s)) != NULL; at += strlen(s)) ++count;
+    owf_free(xml);
+    return count;
+}
+
+/* The formatted note's checks: its plain copy, the runs' formats, the plain note left plain */
+static void check_formatted(const owf_doc *doc, const char *where)
+{
+    const owf_story *st;
+    const owf_run *r;
+    char what[96];
+    snprintf(what, sizeof what, "%s: two notes, the one in the note none", where);
+    CHECK(doc->nnotes == 2, what);
+    if (doc->nnotes < 2) return;
+    snprintf(what, sizeof what, "%s: plain copy", where);
+    CHECK(!strcmp(doc->notes[0].text, "See bold and italic\nUnder"), doc->notes[0].text);
+    st = OWF_DOC_NOTE_STORY(doc, 0);
+    snprintf(what, sizeof what, "%s: formatted", where);
+    CHECK(st && st->nparas == 2, what);
+    if (!st) return;
+    r = story_run(st, "See ");
+    snprintf(what, sizeof what, "%s: leading space gone, plain run", where);
+    CHECK(r && !(r->fmt.flags & (OWF_BOLD | OWF_ITALIC)), what);
+    r = story_run(st, "bold");
+    snprintf(what, sizeof what, "%s: bold", where);
+    CHECK(r && (r->fmt.flags & OWF_BOLD) && !(r->fmt.flags & OWF_ITALIC), what);
+    r = story_run(st, " and italic");
+    snprintf(what, sizeof what, "%s: italic", where);
+    CHECK(r && (r->fmt.flags & OWF_ITALIC), what);
+    r = story_run(st, "Under");
+    snprintf(what, sizeof what, "%s: underlined, second paragraph", where);
+    CHECK(r && (r->fmt.flags & OWF_UNDERLINE) && st->paras[1].nruns >= 1, what);
+    snprintf(what, sizeof what, "%s: no mark or comment runs", where);
+    {
+        int i, j, bad = 0;
+        for (i = 0; i < st->nparas; ++i)
+            for (j = 0; j < st->paras[i].nruns; ++j)
+                if (st->paras[i].runs[j].note || st->paras[i].runs[j].comment) bad = 1;
+        CHECK(!bad, what);
+    }
+    snprintf(what, sizeof what, "%s: the plain note stays plain", where);
+    CHECK(!OWF_DOC_NOTE_STORY(doc, 1) && !strcmp(doc->notes[1].text, "Plain."), what);
+}
+
+static void test_formatted(void)
+{
+    static const char *const names[] = { "[Content_Types].xml", "_rels/.rels", "word/_rels/document.xml.rels",
+                                         "word/document.xml", "word/footnotes.xml" };
+    static const char *const parts[] = {
+        "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+        "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+        "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+        "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>"
+        "</Types>",
+        "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+        "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>"
+        "</Relationships>",
+        "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+        "<Relationship Id=\"rId4\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes\" Target=\"footnotes.xml\"/>"
+        "</Relationships>",
+        "<?xml version=\"1.0\"?><w:document " W " " R "><w:body>"
+        "<w:p><w:r><w:t>Lamps</w:t></w:r><w:r><w:footnoteReference w:id=\"2\"/></w:r>"
+        "<w:r><w:t xml:space=\"preserve\"> glow</w:t></w:r><w:r><w:footnoteReference w:id=\"3\"/></w:r></w:p>"
+        "</w:body></w:document>",
+        "<?xml version=\"1.0\"?><w:footnotes " W ">"
+        "<w:footnote w:type=\"separator\" w:id=\"-1\"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>"
+        "<w:footnote w:type=\"continuationSeparator\" w:id=\"0\"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>"
+        "<w:footnote w:id=\"2\"><w:p><w:r><w:footnoteRef/></w:r><w:r><w:t xml:space=\"preserve\"> See </w:t></w:r>"
+        "<w:r><w:rPr><w:b/></w:rPr><w:t>bold</w:t></w:r><w:r><w:footnoteReference w:id=\"3\"/></w:r>"
+        "<w:r><w:rPr><w:i/></w:rPr><w:t xml:space=\"preserve\"> and italic</w:t></w:r></w:p>"
+        "<w:p><w:r><w:rPr><w:u w:val=\"single\"/></w:rPr><w:t>Under</w:t></w:r></w:p><w:p/></w:footnote>"
+        "<w:footnote w:id=\"3\"><w:p><w:r><w:footnoteRef/></w:r><w:r><w:t xml:space=\"preserve\"> Plain.</w:t></w:r></w:p></w:footnote>"
+        "</w:footnotes>" };
+    owf_doc *doc = NULL, *back = NULL;
+    unsigned char *data = NULL;
+    size_t length = 0;
+    const owf_format *docx = owf_format_named("docx");
+    CHECK(zip_import(names, parts, 5, &doc) == OWF_OK && doc, "formatted note read");
+    if (!doc) return;
+    CHECK(!strcmp(dump(doc), "Lamps[F:See bold and italic\nUnder] glow[F:Plain.]"), dump(doc));
+    check_formatted(doc, "read");
+
+    /* out and back in: the runs' formats in footnotes.xml, the mark once in each note */
+    CHECK(docx && docx->export && docx->export(doc, &data, &length, NULL) == OWF_OK && data, "formatted note written");
+    if (data) {
+        CHECK(part_count(data, length, "word/footnotes.xml", "<w:footnoteRef/>") == 2, "one mark each");
+        CHECK(part_count(data, length, "word/footnotes.xml", "<w:b/>") == 1, "bold written");
+        CHECK(part_count(data, length, "word/footnotes.xml", "<w:i/>") == 1, "italic written");
+        CHECK(owf_import_memory(data, length, NULL, &back, NULL, NULL) == OWF_OK && back, "read back");
+        if (back) {
+            check_formatted(back, "back");
+            owf_doc_free(back);
+        }
+        free(data);
+    }
+
+    /* owf_note_copy copies the formats; a story with none is dropped (the note is plain) */
+    {
+        int c = owf_note_copy(doc, 0);
+        owf_story plain;
+        owf_parafmt pf;
+        owf_charfmt cf;
+        CHECK(c == 2 && OWF_DOC_NOTE_STORY(doc, 2) && story_run(OWF_DOC_NOTE_STORY(doc, 2), "bold"), "copied with formats");
+        memset(&plain, 0, sizeof plain);
+        owf_parafmt_init(&pf);
+        owf_charfmt_init(&cf);
+        owf_para_add_text(owf_story_add(&plain, &pf), &cf, " just text", 10);
+        CHECK(owf_note_set_story(doc, 2, &plain) == 0 && !OWF_DOC_NOTE_STORY(doc, 2) && plain.nparas == 0,
+              "a story with no formats: plain");
+        CHECK(owf_note_set_story(doc, 99, NULL) == -1, "no such note");
+    }
+
+    /* laid out with the formats, sized as a plain note */
+    {
+        ow_layout *l = ow_layout_new(doc, measure, NULL);
+        ol_unit x = 0, y = 0;
+        ol_document *feet = l ? ow_layout_footnotes(l, 0, &x, &y) : NULL;
+        const ol_display_op *b = feet ? op_with(feet, "bold") : NULL, *p = feet ? op_with(feet, "See") : NULL;
+        const ol_display_op *pl = feet ? op_with(feet, "Plain.") : NULL;
+        CHECK(feet != NULL, "footnotes on page 1");
+        CHECK(b && (b->u.text.style.text_flags & OL_TEXT_BOLD), "bold on the page");
+        CHECK(p && !(p->u.text.style.text_flags & OL_TEXT_BOLD), "plain run not bold");
+        CHECK(op_with(feet ? feet : NULL, "Under") != NULL, "second paragraph laid out");
+        CHECK(p && pl && p->u.text.style.font_size == pl->u.text.style.font_size, "same size as a plain note");
+        if (feet) ol_document_free(feet);
+        ow_layout_free(l);
+    }
+
+    /* the editor: made the other kind keeps them; new text is plain; undo brings them back */
+    {
+        ow_editor *ed = ow_editor_new(doc);
+        ow_selection sel;
+        ow_note_info info;
+        int j, at = -1;
+        CHECK(ed != NULL, "editor");
+        if (ed) {
+            owf_doc *d = ow_editor_document(ed);
+            for (j = 0; j < d->body.paras[0].nruns; ++j)
+                if (d->body.paras[0].runs[j].note == 1) at = j;
+            memset(&sel, 0, sizeof sel);
+            sel.anchor.paragraph = 0;
+            sel.anchor.run = at;
+            sel.focus = sel.anchor;
+            ow_editor_set_selection(ed, &sel);
+            CHECK(at >= 0 && ow_editor_current_note(ed, &info), "caret at the note");
+            CHECK(ow_editor_convert_note(ed) == OWF_OK, "made an endnote");
+            d = ow_editor_document(ed);
+            {
+                int m = d->body.paras[0].runs[at].note;
+                CHECK(m > 0 && d->notes[m - 1].endnote && OWF_DOC_NOTE_STORY(d, m - 1) &&
+                      story_run(OWF_DOC_NOTE_STORY(d, m - 1), "bold"), "the endnote keeps its formats");
+            }
+            CHECK(ow_editor_set_note_text(ed, "New words.") == OWF_OK, "new text");
+            d = ow_editor_document(ed);
+            {
+                int m = d->body.paras[0].runs[at].note;
+                CHECK(m > 0 && !OWF_DOC_NOTE_STORY(d, m - 1) && !strcmp(d->notes[m - 1].text, "New words."),
+                      "new text is plain");
+            }
+            ow_editor_undo(ed);
+            ow_editor_undo(ed);
+            d = ow_editor_document(ed);
+            {
+                int m = d->body.paras[0].runs[at].note;
+                CHECK(m == 1 && !d->notes[0].endnote && OWF_DOC_NOTE_STORY(d, 0), "back as it was, with its formats");
+            }
+            ow_editor_free(ed);
+        }
+    }
+    owf_doc_free(doc);
+}
+
 int main(void)
 {
     static const char *const rtf[] = { "{\\footnote", "\\ftnalt", "See the manual.", "\\par Page 4.", "Ends & notes." };
@@ -619,6 +829,7 @@ int main(void)
     test_odf_form();
     test_pages();
     test_numbering();
+    test_formatted();
     printf("notes: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

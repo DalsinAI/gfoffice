@@ -82,6 +82,7 @@ typedef struct {
     int break_next;          /* a page break waits for the next paragraph */
     owf_buf notes, scratch;
     int nnotes, failed;
+    int in_note;             /* 1.12.2: reading a note's own text: a reference in it is no note of its own */
     const char *current_href;
     int next_table_id;
     const rels *rels_now;    /* the relationships of the part being read (a header's own); NULL: the document's */
@@ -779,19 +780,25 @@ static void note_text(docx *d, const owf_xml_node *n, owf_buf *out)
     }
 }
 
-/* 1.8: a footnote's or endnote's reference: the note from its part, and its mark here */
+static void text_box_story(docx *d, const owf_xml_node *content, owf_story *into);
+
+/* 1.8: a footnote's or endnote's reference: the note from its part, and its mark here. 1.12.2: its text with
+ * its formats too (owf_doc.note_stories), read as a text box's is, when it has any */
 static void note(docx *d, const owf_xml_node *ref, owf_xml *part, const char *element, const owf_charfmt *fmt)
 {
     const char *id = owf_xml_attr(ref, d->w, "id");
-    const owf_xml_node *n;
+    const owf_xml_node *n, *found = NULL;
     int index;
 
+    if (d->in_note)
+        return;
     d->notes.length = 0;
     if (part && id)
         for (n = owf_xml_root(part)->first; n; n = n->next) {
             const char *nid = owf_xml_attr(n, d->w, "id");
             if (is_w(d, n, element) && nid && !strcmp(nid, id)) {
                 note_text(d, n, &d->notes);
+                found = n;
                 break;
             }
         }
@@ -810,6 +817,15 @@ static void note(docx *d, const owf_xml_node *ref, owf_xml *part, const char *el
     if (index < 0) {
         d->failed = 1;
         return;
+    }
+    if (found) {
+        owf_story st;
+        memset(&st, 0, sizeof st);
+        d->in_note = 1;
+        text_box_story(d, found, &st);
+        d->in_note = 0;
+        if (owf_note_set_story(d->doc, index, &st) < 0)
+            d->failed = 1;
     }
     d->nnotes++;
     set_fmt(d, fmt);

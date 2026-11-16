@@ -2417,7 +2417,7 @@ int ob_children(ob_project *p, const char *table, ob_relation *out, int max)
 }
 
 /* A subform's rows: r's table filtered on its Lookup Equals the record. */
-static void child_view(ob_view *v, const ob_relation *r, ob_int parent)
+void ob_child_view(ob_view *v, const ob_relation *r, ob_int parent)
 {
     ob_view_init(v);
     snprintf(v->field, sizeof v->field, "%s", r->field);
@@ -2439,7 +2439,7 @@ ob_int ob_child_key(ob_project *p, const ob_relation *r, ob_int parent, ob_int p
     ob_int key = -1;
     if (!r || !r->table[0] || !r->field[0]) { fail(p, "No subform"); return -2; }
     if (parent <= 0 || pos < 0) return -1;
-    child_view(&v, r, parent);
+    ob_child_view(&v, r, parent);
     if (ob_view_rows(p, r->table, &v, pos, 1, child_key_cb, &key) < 0) return -2;
     return key;
 }

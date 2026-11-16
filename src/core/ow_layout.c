@@ -421,11 +421,16 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
 
 /* A note's text as paragraphs appended to parent (NULL: the root), smaller than the text, the first with the
  * note's mark raised. 1, or 0 when memory runs out. */
+static int add_note_story(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *parent, int note,
+                          const owf_story *st);
+
 static int add_note_text(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *parent, int note)
 {
     const char *t = doc->notes[note].text ? doc->notes[note].text : "";
     const char *nl;
     int first = 1;
+    const owf_story *st = OWF_DOC_NOTE_STORY(doc, note);
+    if (st) return add_note_story(l, doc, od, parent, note, st);   /* libowf 1.12.2: with its formats */
     for (;; t = nl + 1, first = 0) {
         owf_para np;
         owf_run runs[2];
@@ -456,6 +461,66 @@ static int add_note_text(ow_layout *l, const owf_doc *doc, ol_document *od, ol_n
         free(piece);
         if (!ok) return 0;
         if (!nl) break;
+    }
+    return 1;
+}
+
+/* libowf 1.12.2: a formatted note's paragraphs (owf_doc.note_stories), its runs' formats kept and sized as a
+ * plain note is: its text's size (the first text run's) at five sixths of the document's, the others in
+ * proportion; the first paragraph starts with the mark raised and a space. 1, or 0 when memory runs out. */
+static int add_note_story(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *parent, int note,
+                          const owf_story *st)
+{
+    int base = (doc->base.size > 0 ? doc->base.size : DEFAULT_SIZE), small = base * 5 / 6, own = 0, i, j;
+    for (i = 0; i < st->nparas && !own; ++i)
+        for (j = 0; j < st->paras[i].nruns && !own; ++j)
+            if (st->paras[i].runs[j].kind == OWF_RUN_TEXT && st->paras[i].runs[j].text && st->paras[i].runs[j].text[0])
+                own = st->paras[i].runs[j].fmt.size > 0 ? st->paras[i].runs[j].fmt.size : base;
+    if (own <= 0) own = base;
+    for (i = 0; i < st->nparas; ++i) {
+        const owf_para *sp = &st->paras[i];
+        owf_para np;
+        owf_run *runs;
+        int n = 0, lead = i == 0 ? 2 : 0;
+        ol_node *ok;
+        runs = (owf_run *)calloc((size_t)(sp->nruns + lead + 1), sizeof(*runs));
+        if (!runs) return 0;
+        np = *sp;
+        np.table_id = -1;
+        np.section_columns = np.section_gap = 0;
+        np.style = np.bookmarks = NULL;
+        np.mark_revision = 0;
+        if (lead) {
+            runs[0].kind = runs[1].kind = OWF_RUN_TEXT;
+            runs[0].fmt = doc->base;
+            runs[0].fmt.size = small;
+            runs[1].fmt = runs[0].fmt;
+            runs[0].fmt.flags |= OWF_SUPER;
+            runs[0].text = (char *)(l && l->note_marks ? l->note_marks[note] : "");
+            runs[1].text = (char *)" ";
+            n = 2;
+        }
+        for (j = 0; j < sp->nruns; ++j) {
+            owf_run r = sp->runs[j];
+            if (r.note || r.comment) continue;
+            r.fmt.size = (int)((long)(r.fmt.size > 0 ? r.fmt.size : base) * small / own);
+            if (r.fmt.size <= 0) r.fmt.size = small;
+            r.href = NULL;
+            r.revision = r.format_change = 0;
+            runs[n++] = r;
+        }
+        if (!n) {                                    /* an empty paragraph keeps its line */
+            runs[0].kind = OWF_RUN_TEXT;
+            runs[0].fmt = doc->base;
+            runs[0].fmt.size = small;
+            runs[0].text = (char *)"";
+            n = 1;
+        }
+        np.runs = runs;
+        np.nruns = np.capruns = n;
+        ok = add_paragraph(l, 0, doc, od, parent, &np, -1, NULL);
+        free(runs);
+        if (!ok) return 0;
     }
     return 1;
 }
