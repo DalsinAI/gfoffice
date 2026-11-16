@@ -127,6 +127,9 @@ int owf_pivot_set_group(owf_pivotdef *def, const owf_pivot_group *group)
     unsigned i;
     if (!def || !group || !pivot_group_ok(group))
         return 0;
+    for (i = 0; group->by != OWF_PIVOT_GROUP_NONE && i < def->nnamed && i < OWF_PIVOT_NAMES; i++)
+        if (def->named[i].field == group->field)
+            return 0;                        /* grouped by hand already */
     for (i = 0; i < def->ngroup && i < OWF_PIVOT_GROUPS; i++)
         if (def->group[i].field == group->field) {
             if (group->by != OWF_PIVOT_GROUP_NONE) {
@@ -143,6 +146,78 @@ int owf_pivot_set_group(owf_pivotdef *def, const owf_pivot_group *group)
     if (def->ngroup >= OWF_PIVOT_GROUPS)
         return 0;
     def->group[def->ngroup++] = *group;
+    return 1;
+}
+
+const char *owf_pivot_named_of(const owf_pivotdef *def, unsigned field, const owf_cell *cell)
+{
+    unsigned i;
+    for (i = 0; def && i < def->nmember && i < OWF_PIVOT_MEMBERS; i++)
+        if (def->member[i].field == field && def->member_of[i] < def->nnamed &&
+            def->member_of[i] < OWF_PIVOT_NAMES && owf_pivot_item_matches(&def->member[i], cell))
+            return def->named[def->member_of[i]].name;
+    return NULL;
+}
+
+/* Drops the groups made by hand that have no items left, renumbering the rest. */
+static void pivot_named_tidy(owf_pivotdef *def)
+{
+    unsigned g = 0, i, k;
+    while (g < def->nnamed) {
+        for (i = 0; i < def->nmember && def->member_of[i] != g; i++)
+            ;
+        if (i < def->nmember) {
+            g++;
+            continue;
+        }
+        for (k = g; k + 1u < def->nnamed; k++)
+            def->named[k] = def->named[k + 1u];
+        def->nnamed--;
+        for (i = 0; i < def->nmember; i++)
+            if (def->member_of[i] > g)
+                def->member_of[i]--;
+    }
+}
+
+int owf_pivot_set_named(owf_pivotdef *def, const owf_pivot_page *item, const char *name)
+{
+    unsigned i, g;
+    if (!def || !item || item->kind < OWF_PIVOT_TEXT || item->kind > OWF_PIVOT_BLANK ||
+        def->nmember > OWF_PIVOT_MEMBERS || def->nnamed > OWF_PIVOT_NAMES)
+        return 0;
+    if (name && *name && (strlen(name) >= OWF_PIVOT_NAME || owf_pivot_group_of(def, item->field)))
+        return 0;
+    for (i = 0; i < def->nmember; i++)
+        if (pivot_same_item(&def->member[i], item))
+            break;
+    if (!name || !*name) {                   /* out of its group */
+        if (i < def->nmember) {
+            for (; i + 1u < def->nmember; i++) {
+                def->member[i] = def->member[i + 1u];
+                def->member_of[i] = def->member_of[i + 1u];
+            }
+            def->nmember--;
+            pivot_named_tidy(def);
+        }
+        return 1;
+    }
+    for (g = 0; g < def->nnamed; g++)
+        if (def->named[g].field == item->field && !strcmp(def->named[g].name, name))
+            break;
+    if (g == def->nnamed) {
+        if (def->nnamed == OWF_PIVOT_NAMES || (i == def->nmember && def->nmember == OWF_PIVOT_MEMBERS))
+            return 0;
+        def->named[g].field = item->field;
+        snprintf(def->named[g].name, sizeof def->named[g].name, "%s", name);
+        def->nnamed++;
+    }
+    if (i == def->nmember) {
+        if (def->nmember == OWF_PIVOT_MEMBERS)
+            return 0;
+        def->member[def->nmember++] = *item;
+    }
+    def->member_of[i] = (unsigned char)g;
+    pivot_named_tidy(def);                   /* the group it left may now be empty */
     return 1;
 }
 
@@ -574,6 +649,16 @@ int owf_pivot_config_text(const owf_pivotdef *def, char *out, size_t size)
             pt_put(&t, number);
         }
     }
+    if (def->nmember) {                      /* the same: name:field:value for each item */
+        pt_put(&t, ";m=");
+        for (i = 0; i < def->nmember && i < OWF_PIVOT_MEMBERS; i++) {
+            if (i) pt_put(&t, ",");
+            pt_item(&t, def->member_of[i] < def->nnamed && def->member_of[i] < OWF_PIVOT_NAMES
+                            ? def->named[def->member_of[i]].name : "?");
+            pt_put(&t, ":");
+            pt_page(&t, &def->member[i]);
+        }
+    }
     if (def->nhide) {                        /* the same: only when used */
         pt_put(&t, ";h=");
         for (i = 0; i < def->nhide && i < OWF_PIVOT_HIDES; i++) {
@@ -630,6 +715,55 @@ static int pivot_item_at(const char **p, char *out, size_t size)
     return 1;
 }
 
+/* A hand group's name up to its ':', %XX decoded (pt_item writes ':' as %3A). */
+static int pivot_name_at(const char **p, char *out, size_t size)
+{
+    const char *end = *p;
+    char part[OWF_PIVOT_ITEM * 3];
+    size_t n;
+    while (*end && *end != ':' && *end != ',' && *end != ';' && *end != '"')
+        end++;
+    n = (size_t)(end - *p);
+    if (*end != ':' || !n || n >= sizeof part)
+        return 0;
+    memcpy(part, *p, n);
+    part[n] = 0;
+    {
+        const char *q = part;
+        if (!pivot_item_at(&q, out, size) || !*out)
+            return 0;
+    }
+    *p = end + 1;
+    return 1;
+}
+
+/* A hidden or grouped item after its field: "tEast", "n12.5", "b1", "e". */
+static int pivot_value_at(const char **p, owf_pivot_page *pg)
+{
+    char kind = *(*p)++;
+    if (kind == 't') {
+        pg->kind = OWF_PIVOT_TEXT;
+        return pivot_item_at(p, pg->text, sizeof pg->text);
+    }
+    if (kind == 'n') {
+        if (!pivot_item_at(p, pg->text, sizeof pg->text) || !OWF_PIVOT_NUMBER(pg->text, strlen(pg->text), &pg->number))
+            return 0;
+        pg->kind = OWF_PIVOT_NUMBER;
+        pg->text[0] = 0;
+        return 1;
+    }
+    if (kind == 'b' && (**p == '0' || **p == '1')) {
+        pg->kind = OWF_PIVOT_BOOL;
+        pg->number = *(*p)++ == '1';
+        return 1;
+    }
+    if (kind == 'e') {
+        pg->kind = OWF_PIVOT_BLANK;
+        return 1;
+    }
+    return 0;
+}
+
 static int parse_old_config(const char *p, owf_pivotdef *def)
 {
     unsigned row, value, function;
@@ -676,6 +810,7 @@ int owf_pivot_parse_config(const char *formula, owf_pivotdef *def)
     if (*p++ != '"')
         return 0;
     def->nrow = def->ncol = def->ndata = def->npage = def->nsort = def->nhide = def->ngroup = 0;
+    def->nnamed = def->nmember = 0;
     if (p[0] != '2' || p[1] != ';')
         return parse_old_config(p, def);
     p += 2;
@@ -795,6 +930,18 @@ int owf_pivot_parse_config(const char *formula, owf_pivotdef *def)
                     p++;
             }
             break;
+        case 'm':
+            while (*p && *p != ';' && *p != '"') {
+                char name[OWF_PIVOT_NAME];
+                owf_pivot_page pg;
+                memset(&pg, 0, sizeof pg);
+                if (!pivot_name_at(&p, name, sizeof name) || !pivot_number_at(&p, &pg.field) || *p++ != ':' ||
+                    !pivot_value_at(&p, &pg) || !owf_pivot_set_named(def, &pg, name))
+                    return 0;
+                if (*p == ',')
+                    p++;
+            }
+            break;
         case 'v':
             while (*p >= '0' && *p <= '9') {
                 int show;
@@ -857,6 +1004,16 @@ int owf_pivot_check(const owf_book *book, const owf_pivotdef *def)
     }
     for (i = 0; i < def->ngroup; i++)
         if (def->group[i].field >= width || !pivot_group_ok(&def->group[i]))
+            return 0;
+    if (def->nnamed > OWF_PIVOT_NAMES || def->nmember > OWF_PIVOT_MEMBERS)
+        return 0;
+    for (i = 0; i < def->nnamed; i++)
+        if (def->named[i].field >= width || !def->named[i].name[0] ||
+            !memchr(def->named[i].name, 0, sizeof def->named[i].name) || owf_pivot_group_of(def, def->named[i].field))
+            return 0;
+    for (i = 0; i < def->nmember; i++)
+        if (def->member_of[i] >= def->nnamed || def->member[i].field != def->named[def->member_of[i]].field ||
+            def->member[i].kind < OWF_PIVOT_TEXT || def->member[i].kind > OWF_PIVOT_BLANK)
             return 0;
     for (i = 0; i < def->nsort; i++)
         if (def->sort_field[i] >= width)

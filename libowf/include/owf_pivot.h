@@ -41,6 +41,9 @@ extern "C" {
 #define OWF_PIVOT_HIDES 32           /* hidden items, all fields together */
 #define OWF_PIVOT_GROUPS 8           /* grouped row and column fields */
 #define OWF_PIVOT_ITEM 96            /* a page field's chosen item, bytes */
+#define OWF_PIVOT_NAMES 8            /* groups made by hand, all fields together */
+#define OWF_PIVOT_NAME 48            /* such a group's name, bytes */
+#define OWF_PIVOT_MEMBERS 24         /* items put in them, all fields together */
 #define OWF_PIVOT_TEXT_MAX 2048      /* _GF_PIVOT_CONFIG's text, at most */
 
 enum { OWF_PIVOT_FN_FIRST = 1, OWF_PIVOT_FN_COUNT = 2, OWF_PIVOT_FN_COUNTA = 3, OWF_PIVOT_FN_SUM = 9,
@@ -65,6 +68,15 @@ typedef struct {
     int by;                          /* OWF_PIVOT_GROUP_... */
     double start, end, step;         /* RANGE only: step > 0, end >= start */
 } owf_pivot_group;
+
+/* A group made by hand: a row or column field's items put together under a
+ * name ("North" for "East" and "West"), as Data Pilot's Group and Excel's
+ * Group Selection make. Items in none stay items of their own. A field has
+ * groups by hand or an owf_pivot_group, not both. */
+typedef struct {
+    unsigned field;
+    char name[OWF_PIVOT_NAME];       /* UTF-8, not empty */
+} owf_pivot_named;
 
 /* A page field's chosen item: every item, or one value. */
 enum { OWF_PIVOT_ALL, OWF_PIVOT_TEXT, OWF_PIVOT_NUMBER, OWF_PIVOT_BOOL, OWF_PIVOT_BLANK };
@@ -109,6 +121,11 @@ typedef struct {
     owf_pivot_page hide[OWF_PIVOT_HIDES];   /* (kind is never OWF_PIVOT_ALL) */
     unsigned ngroup;                 /* grouped fields, kept by field as sorts are */
     owf_pivot_group group[OWF_PIVOT_GROUPS];
+    unsigned nnamed;                 /* groups made by hand */
+    owf_pivot_named named[OWF_PIVOT_NAMES];
+    unsigned nmember;                /* their items: each a field's value (kind never ALL) */
+    owf_pivot_page member[OWF_PIVOT_MEMBERS];
+    unsigned char member_of[OWF_PIVOT_MEMBERS];   /* which of named[] it is in */
 } owf_pivotdef;
 
 /* An empty definition: no fields, both grand totals, output at A1. */
@@ -170,6 +187,14 @@ int owf_pivot_set_group(owf_pivotdef *def, const owf_pivot_group *group);
 double owf_pivot_group_key(const owf_pivot_group *group, double number, int date1904);
 void owf_pivot_group_label(const owf_pivot_group *group, double key, char *out, size_t size);
 int owf_pivot_set_hidden(owf_pivotdef *def, const owf_pivot_page *item, int hidden);
+/* The name of the group made by hand that a cell of field is in, or NULL.
+ * owf_pivot_set_named puts item (its field and value) in the group of that
+ * name on its field, making the group when it is new and taking the item
+ * out of any other; a NULL or empty name takes it out of its group. A group
+ * left with no items goes. 0 when there is no room, the name is too long,
+ * item is OWF_PIVOT_ALL or the field is grouped by an owf_pivot_group. */
+const char *owf_pivot_named_of(const owf_pivotdef *def, unsigned field, const owf_cell *cell);
+int owf_pivot_set_named(owf_pivotdef *def, const owf_pivot_page *item, const char *name);
 
 /* A field's heading: its heading cell's text or number, or "Column N"
  * when that is blank. */
