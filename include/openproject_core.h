@@ -270,6 +270,23 @@ void opj_usage_cell_text(const opj_doc *doc, int row, int column, char *out, siz
  * opj_view_time, opj_chart_left and opj_row_y give the usage view's places. */
 void opj_usage_view(const opj_view *v, opj_view *usage);
 void opj_usage_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area);
+
+/* ---- The Task Usage view (MS Project's): Resource Usage turned round. Each task's row (indented by its
+ * outline level, a summary's name bold), its assignments' rows under it, and the work of each in every
+ * period; a task's row holds its own and its subtasks' work and is shaded. Its table: ID, Task Name and
+ * Work, as wide as Resource Usage's; it uses the same view fields (opj_usage_view gives its places).
+ * Read only. ---- */
+int opj_task_usage_rows(const opj_doc *doc);
+/* Row's task, and its assignment (-1: the task's own row). 0 when there is no such row. */
+int opj_task_usage_row(const opj_doc *doc, int row, int *task, int *assign);
+const char *opj_task_usage_column_title(int column);
+/* A table cell: the task's ID, name and work, or for an assignment "", its resource's name and its work. */
+void opj_task_usage_cell_text(const opj_doc *doc, int row, int column, char *out, size_t size);
+/* Work of a task (assign -1: its own assignments' and its subtasks') or of one of its assignments in
+ * [from, to), as opj_work_text puts it, "" when none. */
+void opj_task_usage_text(const opj_doc *doc, int task, int assign, owf_ptime from, owf_ptime to, char *out,
+                         size_t size);
+void opj_task_usage_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area);
 /* ---- The Network Diagram view (MS Project's, src/project/opj_network.c): a box for every task that
  * isn't a summary, holding its name, ID and duration, start and finish, four rows of the view's row height
  * high. A box stands in the column one past its furthest predecessor's (the first column: no
@@ -315,8 +332,9 @@ enum { OPJ_EDIT_NONE = -1, OPJ_EDIT_CELL, OPJ_EDIT_INSERT, OPJ_EDIT_DELETE, OPJ_
 /* The edit a key in the window asks for: Return the cell, Del the task's deletion, Tab indent (shift:
  * outdent). OPJ_EDIT_NONE for any other key. */
 int opj_edit_for_key(int key, int shift);
-/* Why edit can't run with usage (1: Resource Usage shows, 0: the Gantt chart), as the status line says it;
- * NULL when it may run (OPJ_EDIT_NONE always may). */
+/* Why edit can't run with usage showing (OPJ_VIEW_: the usage views are read only), as the status line
+ * says it; NULL when it may run (OPJ_EDIT_NONE always may). */
+enum { OPJ_VIEW_GANTT, OPJ_VIEW_USAGE, OPJ_VIEW_TASK_USAGE };
 const char *opj_edit_refused(int usage, int edit);
 
 /* ---- Printing the Gantt view: pages down, then across, as MS Project prints ----
