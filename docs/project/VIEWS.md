@@ -82,6 +82,18 @@ the next PR and only wires windows, menus and requesters to these calls.
   height and font (`opj_usage_view` gives its places). `opj_usage_rows`, `opj_usage_row` and
   `opj_usage_cell_text` give its rows and cells. The app's View menu switches between Gantt Chart
   and Resource Usage (ARexx `VIEW`); the usage view is read only, and Resources... edits.
+- **The Network Diagram** (`src/project/opj_network.c`), MS Project's: a box for every task that isn't
+  a summary, 160 pixels wide and four rows high, holding its name (bold), its ID and duration, its start
+  and its finish. A box stands in the column one past its furthest predecessor's (tasks with none in
+  the first), and down its column in the sheet's order (`opj_network_layout`). Each link is a line with
+  an arrow from the predecessor's box's right side to the successor's left side, turning in the gap
+  before the successor's column; it is red when both tasks are critical. A critical task's box is edged
+  in red; a milestone's edge is doubled; a task under way is struck through once and a finished one
+  crossed. View > Network Diagram (D, or ARexx `VIEW NETWORK`) shows it in place of the Gantt chart:
+  it keeps the same selected task, a click on a box selects it, a double-click opens Task Information,
+  up and down move through the tasks (scrolled to show the box), and left and right (with Shift, a
+  page) scroll. Every edit works on the selected task as in the Gantt chart, and the boxes are laid out
+  again at each redraw.
 
 ## Baseline
 
