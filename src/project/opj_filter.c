@@ -208,6 +208,44 @@ static void free_texts(char **text, int n)
     free(text);
 }
 
+/* What a grouping sort compares by. */
+typedef struct {
+    const opj_doc *doc;
+    int column, descending;
+    char **text;                         /* each kept task's cell, whole */
+    const int *head;                     /* each group's first task */
+} group_ctx;
+
+/* Tasks a and b by their cells' text, case ignored. */
+static int by_text(const group_ctx *c, int a, int b)
+{
+    return opj_text_cmp(c->text[a], c->text[b]);
+}
+
+/* Groups a and b in the column's order (descending: the other way), ties by their heads' rows. */
+static int by_group(const group_ctx *c, int a, int b)
+{
+    int d = group_cmp(c->doc, c->column, c->text, c->head[a], c->head[b]);
+    if (c->descending) d = -d;
+    return d ? d : c->head[a] - c->head[b];
+}
+
+/* a[0..n-1] sorted by cmp, stably (equal ones keep their order); tmp as long as a. */
+static void merge_sort(int *a, int *tmp, int n, int (*cmp)(const group_ctx *, int, int), const group_ctx *c)
+{
+    int width, i;
+    for (width = 1; width < n; width *= 2) {
+        for (i = 0; i < n; i += 2 * width) {
+            int lo = i, mid = i + width < n ? i + width : n, hi = i + 2 * width < n ? i + 2 * width : n;
+            int x = lo, y = mid, k = lo;
+            while (x < mid && y < hi) tmp[k++] = cmp(c, a[y], a[x]) < 0 ? a[y++] : a[x++];
+            while (x < mid) tmp[k++] = a[x++];
+            while (y < hi) tmp[k++] = a[y++];
+        }
+        memcpy(a, tmp, (size_t)n * sizeof *a);
+    }
+}
+
 int opj_lines_update(opj_lines *lines, const opj_doc *doc)
 {
     const owf_project *p;
@@ -256,42 +294,62 @@ int opj_lines_update(opj_lines *lines, const opj_doc *doc)
                 line_of[i] = n++;
             }
     } else {
-        /* the groups: each kept task that isn't a summary joins the first group whose head's cell shows the
-         * same text, or heads a new one */
+        /* the groups (Budgie's #403 nit: n log n, not n^2 on a plan of distinct values): the kept tasks that
+         * aren't summaries sorted by their cell's text, stably, so each run of one text is a group in sheet
+         * order headed by its first; then the groups sorted by the column's order, ties by their heads */
+        int m = 0, r, g, *tmp = malloc(((size_t)nt + 1) * sizeof *tmp), *start = malloc(((size_t)nt + 2) * sizeof *start);
+        int *members = group_of;
+        group_ctx ctx;
+        if (!tmp || !start) {
+            free(tmp), free(start), free_texts(text, nt);
+            free(task), free(heading), free(line_of), free(keep), free(head), free(group_of);
+            return OWF_ERR_MEMORY;
+        }
         for (i = 0; i < nt; i++) {
-            if (!keep[i] || p->tasks[i].summary) {
-                group_of[i] = -1;
-                continue;
-            }
+            if (!keep[i] || p->tasks[i].summary) continue;
             if (!(text[i] = opj_cell_text_dup(doc, i, lines->group))) {
-                free_texts(text, nt);
+                free(tmp), free(start), free_texts(text, nt);
                 free(task), free(heading), free(line_of), free(keep), free(head), free(group_of);
                 return OWF_ERR_MEMORY;
             }
-            for (j = 0; j < ng && opj_text_cmp(text[i], text[head[j]]); j++)
-                ;
-            if (j == ng) head[ng++] = i;
-            group_of[i] = head[j];
+            members[m++] = i;
         }
-        for (i = 1; i < ng; i++) {                /* the heads in the column's order; ties keep theirs */
-            int h = head[i], d;
-            for (j = i; j > 0; j--) {
-                d = group_cmp(doc, lines->group, text, head[j - 1], h);
-                if (lines->group_descending ? d >= 0 : d <= 0) break;
-                head[j] = head[j - 1];
+        ctx.doc = doc;
+        ctx.column = lines->group;
+        ctx.text = text;
+        ctx.head = head;
+        ctx.descending = lines->group_descending;
+        merge_sort(members, tmp, m, by_text, &ctx);
+        for (r = 0; r < m; r++)
+            if (!r || opj_text_cmp(text[members[r]], text[members[r - 1]])) {
+                head[ng] = members[r];
+                start[ng++] = r;
             }
-            head[j] = h;
-        }
-        for (j = 0; j < ng; j++) {
-            task[n] = -1;
-            heading[n++] = head[j];
-            for (i = 0; i < nt; i++)
-                if (group_of[i] == head[j]) {
-                    task[n] = i;
-                    heading[n] = head[j];
-                    line_of[i] = n++;
+        start[ng] = m;
+        {
+            int *order = malloc(((size_t)ng + 1) * sizeof *order), *spare = malloc(((size_t)ng + 1) * sizeof *spare);
+            if (!order || !spare) {
+                free(order), free(spare), free(tmp), free(start), free_texts(text, nt);
+                free(task), free(heading), free(line_of), free(keep), free(head), free(group_of);
+                return OWF_ERR_MEMORY;
+            }
+            for (g = 0; g < ng; g++) order[g] = g;
+            merge_sort(order, spare, ng, by_group, &ctx);
+            for (j = 0; j < ng; j++) {
+                g = order[j];
+                task[n] = -1;
+                heading[n++] = head[g];
+                for (r = start[g]; r < start[g + 1]; r++) {
+                    task[n] = members[r];
+                    heading[n] = head[g];
+                    line_of[members[r]] = n++;
                 }
+            }
+            free(order);
+            free(spare);
         }
+        free(tmp);
+        free(start);
     }
     free(keep);
     free(head);
