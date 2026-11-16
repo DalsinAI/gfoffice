@@ -302,9 +302,11 @@ where it began.
 - In GFOpenBase: Query > New Query..., Open Query... (Run, Design...,
   Delete...), Design Query... and Run Again. A query's rows show in the
   datasheet, read only, and a click on a table goes back to it.
-- Not yet: drawing the tables and joins as boxes (5.2's picture), saving
-  a query as a `VIEW`, a query's rows as CSV, and following a table's
-  rename into the saved queries.
+- Core 0.13.1 (GFOpenBase 0.13.1): Query > Save as View... keeps a query
+  as a `VIEW` (no `[questions]`; a change that would break a view is
+  refused), Export Results as CSV... writes a query's rows, and a table's
+  rename follows into the saved grid queries.
+- Not yet: drawing the tables and joins as boxes (5.2's picture).
 
 ### 5.5 Tests
 
@@ -388,8 +390,28 @@ print) needs no script.
   at a time (Look for, Or, Or); Apply Filter makes them the view's, on top
   of Sort and Filter's one test, so the datasheet shows the same rows.
   `ob_view_form_set` keeps up to 16 of them in the `ob_view`.
-- Not yet: the form designer (6.2), rows added or changed
-  in the subform, Return on a subform row to open its table's form, buttons
+- Subform rows (core 0.6.3, GFOpenBase 0.6.3): under the subform's list,
+  Add Row... opens the row editor for its table with the Lookup set to
+  the record and shown, not typed (`ob_child_add`); choose a row, then
+  Edit Row... or Delete Row... (`ob_child_key` gives its key). The
+  record is saved first, so a new record has its key.
+- A subform row's own form (core 0.6.4, GFOpenBase 0.6.4): Open Form,
+  Return, or a double-click on the chosen row closes the form and opens
+  the subform table's, at that row, in the view of the record's rows
+  (`ob_child_view`); Table > Show All Rows goes back to every row.
+- Designed forms, step 1 (core 0.14.0): the model and its keeping. An
+  `ob_form` holds up to 200 items (field, label, line, box) on a 160 by
+  100 grid of character cells; `ob_form_auto` makes a table's auto form as
+  one; `ob_form_at` finds the item under a cell (a box by its edge) and
+  `ob_form_place` moves and sizes one inside the grid; forms are kept as
+  text in `oadb_forms` (name, table, a tab-separated line an item; a word a
+  newer GFOpenBase writes is passed over). Forms follow their table: a
+  rename, on its own or in a design change, renames it in the forms on it,
+  and a design change's field renames rename their items. A table or
+  field a form shows can't be dropped ("The form Card shows Email: take
+  it off the form first"), as a table another looks up can't. The designer
+  window and showing a designed form come next.
+- Not yet: the form designer's window (6.2), buttons
   and events (6.5), forms kept in `oadb_forms`.
 
 ## 7. Reports
@@ -441,7 +463,7 @@ whole document, is a later step if the limit bites.
 | Format | Import | Export | Phase | Notes |
 | --- | --- | --- | --- | --- |
 | CSV (RFC 4180) | Yes | Yes | B1 | Core 0.3-0.4 (`ob_csv_import_with`, `ob_csv_export_with`, `ob_csv_guess`): into an existing table or a new one (Table > New Table from CSV...), whose fields are named from the header (an odd header kept as the label, so the import still finds it) and typed from the first 200 rows (Yes/No, Integer, Currency, Number, Date, Time, Date and time, Text, Memo past 255 characters), each type changeable before it is made; a column called id holding whole numbers becomes the Counter and keeps its keys. Separator, character set (UTF-8 found by its mark or its bytes and turned into ISO-8859-1) and header found or chosen. All or none, or bad rows left out and listed ("Line 4: Price must be a number"). Export writes the datasheet as shown, in ISO-8859-1 or UTF-8 with its mark, CR LF. The table and its rows are made together or not at all |
-| Sheets: XLS today; ODS and XLSX when W106 lands | Yes, through `owf_book` | Yes, through `owf_book` | B3 | Each sheet becomes a table, its first row the field names, its cells' types the fields' types. A table or a query's result becomes a one-sheet book, saved by libowf's book formats |
+| Sheets: ODS and XLSX (XLS read too) | Yes, through `owf_book` | Yes, ODS and XLSX | B3 | Core 0.14 (#326) and `include/openbase_sheet.h` 0.1 (`ob_sheet_import`, `ob_sheet_guess`, `ob_sheet_export`, `ob_query_sheet_export`, `ob_sheet_list`; in `src/base/sheet/`, so the core's tests need no libowf). A sheet (by name, by number, or the one the file opens at) is read by libowf and handed to the core's CSV import a row at a time (`ob_grid_import`, `ob_grid_guess`): the same header, field-order, all-or-none and skip-bad rules, one step of Undo, messages by the sheet's own row ("Row 4: Price must be a number"). Cells become the fields' text: dates, times and date-times by their number format, money with two decimals, TRUE/FALSE as Yes/No, errors by name, text made ISO-8859-1; a title over a gap is passed over. A table (or a view of it) or a query's rows become a one-sheet book: a bold header row kept in view, numbers, money shown 1,234.50, dates and times the spreadsheet counts with, TRUE/FALSE, text, columns as wide as their values. GFOpenBase 0.15.0: Table > New Table from Sheet..., Import Sheet... (a list of the book's sheets when it has more than one; a bad row offers the others, as CSV's does), Export Sheet... (the datasheet as shown), Query > Export Results as Sheet...; .ods or .xlsx asked for when the name has neither. With OWF=library the sheet code opens owfcalc.library itself |
 | DBF (dBase III and IV, FoxPro) | Yes | No | B3 | Worth it: a simple fixed-record format, and the one old Amiga and DOS databases most often exported. Memo files (`.dbt`, `.fpt`) later |
 | SQL text | Yes | Yes | B4 | `CREATE` and `INSERT` statements, our own writer |
 | Superbase and other Amiga database programs | No | No | Later | No specification we know of; only with samples from the format lab |

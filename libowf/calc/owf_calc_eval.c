@@ -189,6 +189,48 @@ void calc_value_of_cell(const owf_cell *c, calc_value *out)
     }
 }
 
+static unsigned get_u16(const unsigned char *p);
+static unsigned long get_u32(const unsigned char *p);
+
+/* OP_XREF's cells, from the other book's last values: one cell's value, or an array of the area's (cut at
+ * the last row and column the values reach, so that a whole column stays small). */
+static void xref_value(calc_ctx *ctx, const unsigned char *p, calc_value *out)
+{
+    unsigned b = get_u16(p), s = get_u16(p + 2), r0 = (unsigned)get_u32(p + 4), c0 = get_u16(p + 8);
+    unsigned r1 = (unsigned)get_u32(p + 10), c1 = get_u16(p + 14), maxr = 0, maxc = 0, rows, cols, k;
+    const owf_sheet *sh;
+    calc_array *arr;
+    if (b >= (unsigned)ctx->book->nextbooks || s >= (unsigned)ctx->book->extbooks[b].nsheets) {
+        cv_err(out, OWF_ERROR_REF);
+        return;
+    }
+    sh = &ctx->book->extbooks[b].sheets[s];
+    if (r0 == r1 && c0 == c1) {
+        calc_value_of_cell(owf_sheet_find(sh, r0, c0), out);
+        return;
+    }
+    for (k = 0; k < (unsigned)sh->ncells; k++) {
+        if (sh->cells[k].row > maxr)
+            maxr = sh->cells[k].row;
+        if (sh->cells[k].col > maxc)
+            maxc = sh->cells[k].col;
+    }
+    if (r1 > maxr)                       /* cut at the values; an area wholly past them keeps one row or column */
+        r1 = maxr >= r0 ? maxr : r0;
+    if (c1 > maxc)
+        c1 = maxc >= c0 ? maxc : c0;
+    rows = r1 - r0 + 1;
+    cols = c1 - c0 + 1;
+    if (!rows || !cols || rows > 1048576u / cols || !(arr = calc_array_new(ctx, rows, cols))) {
+        cv_err(out, OWF_ERROR_NUM);
+        return;
+    }
+    for (k = 0; k < rows * cols; k++)
+        calc_value_of_cell(owf_sheet_find(sh, r0 + k / cols, c0 + k % cols), &arr->v[k]);
+    out->type = CV_ARRAY;
+    out->u.arr = arr;
+}
+
 void calc_cell_value(calc_ctx *ctx, int sheet, unsigned row, unsigned col, calc_value *out)
 {
     if (sheet < 0 || sheet >= ctx->book->nsheets) {
@@ -336,8 +378,14 @@ void calc_scalar(calc_ctx *ctx, const calc_value *in, calc_value *out)
 calc_array *calc_array_new(calc_ctx *ctx, unsigned rows, unsigned cols)
 {
     calc_array *arr;
-    unsigned long n = (unsigned long)rows * cols, i;
-    if (!rows || !cols || n > (unsigned long)(CALC_ARENA_MAX / sizeof(calc_value))) {
+    unsigned long n, i;
+    /* each side tested, not their product: on the Amiga unsigned long is 32 bits and the product could wrap */
+    if (!rows || !cols || rows > (unsigned long)(CALC_ARENA_MAX / sizeof(calc_value)) / cols) {
+        ctx->too_big = 1;
+        return NULL;
+    }
+    n = (unsigned long)rows * cols;
+    if (n > (unsigned long)(CALC_ARENA_MAX / sizeof(calc_value))) {
         ctx->too_big = 1;
         return NULL;
     }
@@ -1123,6 +1171,10 @@ void calc_run(calc_ctx *ctx, const calc_prog *prog, calc_value *result)
             break;
         case OP_EXTERN:
             cv_err(&stack[sp++], OWF_ERROR_REF);
+            break;
+        case OP_XREF:
+            xref_value(ctx, p, &stack[sp++]);
+            p += 16;
             break;
         case OP_REF:
         case OP_AREA:
