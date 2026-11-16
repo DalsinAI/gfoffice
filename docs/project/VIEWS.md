@@ -40,6 +40,32 @@ the next PR and only wires windows, menus and requesters to these calls.
   between the halves, a task's bar (its middle, its right end for stretching, its done part) or the
   chart.
 
+- **Dragging on the Gantt chart** (`opj_drag.c`), as MS Project's mouse does it. The middle of a task's
+  bar moves the task by whole days: it gets Start No Earlier Than the first working time of the day dropped
+  on. The right end stretches it: its duration becomes the working time to the end of the day dropped on
+  (elapsed time for an elapsed duration). The done part, or the first 3 pixels of the bar, sets % Complete
+  to where it is dropped. A bar dropped on another task's bar links the two, finish to start (refused when
+  they are linked already or it would make a loop). The status line says what the drop will do while the
+  mouse moves; a drop off the bar's row does nothing. Summaries and milestones only link. Each drop is one
+  edit and one Undo step. Resource Usage refuses drags, as it refuses other edits.
+- **Task Information** (Edit > Task Information..., T, or a double-click on a bar): the task's Name,
+  Duration, % Complete, Predecessors, Resource Names, Constraint (a cycle of the eight types, as MS
+  Project names them), its Date and Notes in one window. OK types only the fields changed, the
+  constraint's type before its date, as one edit and one Undo step (`opj_set_cells`); a field refused
+  leaves the plan as it was, names itself in the window's title and keeps the window open to be put right.
+  Fields hold 399 bytes; a longer note is shown cut and left alone unless it is changed.
+- **Constraint Type, Constraint Date and Notes** are task sheet columns too (typed as cells, by ARexx
+  SETCELL, or shown by the column chooser). A type with a date and no date yet takes the task's start
+  (its finish for the finish types); NA as the date makes it As Soon As Possible; a date on an As Soon or
+  As Late As Possible task makes it Start No Earlier Than. A summary takes only As Soon As Possible, Start
+  No Earlier Than and Finish No Later Than.
+- **The column chooser** (View > Columns in the window, ARexx `COLUMN`): any of the 16 task sheet
+  columns is shown or hidden, staying in the sheet's order (`opj_view_show_column`); a column shown gets
+  its width (`opj_column_width`: 140 for Resource Names, 64 for % Complete), one with a width of its own
+  keeps it, and the table always keeps one column. The selected cell moves to the next column shown when
+  its own is hidden (`opj_view_near_column`). Showing Resource Names lets resources be typed onto tasks in
+  the window.
+
 ## Resources
 
 - **Resource Names** is a task sheet column (hidden in the Gantt view's table by default). Typing
@@ -55,6 +81,47 @@ the next PR and only wires windows, menus and requesters to these calls.
   (`opj_period_start`/`opj_period_next`: a day, a week from Monday, a month, a quarter). A period is
   marked over when the resource's work in it passes its calendar's working time there times its max
   units.
+- **The Resource Usage view** (`opj_usage_draw`), MS Project's: a row for each resource (its name
+  bold, its ID with "!" when over-allocated, its total work), then a row for each of its assignments
+  (the task's name, indented, and the assignment's work), in the order they were made. The chart
+  holds each row's work in every period of the timescale's lower tier, right-aligned, in red where
+  the resource is over its max units; a resource's row is shaded. Its table is its own (ID, Resource
+  Name, Work: 32, 180 and 72 pixels), and it shares the Gantt view's zoom, timescale place, row
+  height and font (`opj_usage_view` gives its places). `opj_usage_rows`, `opj_usage_row` and
+  `opj_usage_cell_text` give its rows and cells. The app's View menu switches between Gantt Chart
+  and Resource Usage (ARexx `VIEW`); the usage view is read only, and Resources... edits.
+- **The Tracking Gantt** (`opj_view.tracking`), MS Project's: the Gantt chart with each task's bar in
+  the upper half of its row and its baseline bar (grey) as high in the lower half, so a slip shows at a
+  glance; the done part is solid, and each bar has its % Complete beside it in place of the resource
+  names (`opj_label_text`). Baselines show whatever Show Baseline says. View > Tracking Gantt (J, or
+  ARexx `VIEW TRACKING`) shows it; everything else is the Gantt chart's, edits included.
+- **The Task Usage view** (`opj_task_usage_draw`), MS Project's: Resource Usage turned round. A row
+  for each task (indented by its outline level, a summary's name bold, its ID and its work), then a row
+  for each of its assignments (the resource's name, indented, and the assignment's work). The chart
+  holds each row's work in every period of the timescale's lower tier; a task's row adds up its own
+  assignments' and its subtasks' work and is shaded. Its table (ID, Task Name, Work) is as wide as
+  Resource Usage's and it shares the same view fields. View > Task Usage (K, or ARexx `VIEW TASKUSAGE`)
+  shows it; it is read only, as Resource Usage is (`opj_edit_refused` with `OPJ_VIEW_TASK_USAGE`).
+- **The Resource Graph** (`opj_graph_draw`), MS Project's: one work resource's allocation in each
+  period of the timescale's lower tier, as a bar of percent (its work there over its calendar's working
+  time there, `opj_graph_percent`): blue up to its max units, red above, with its percent over the bar
+  where the period is wide enough. A dark line marks its max units; the scale runs from 0 to
+  `opj_graph_scale` (its peak in the periods shown or its max units, at least 100%, rounded up to 50).
+  The table's place holds the resource's name, its peak and its max units, with the scale's ends beside
+  the chart. View > Resource Graph (H, or ARexx `VIEW GRAPH`) shows it; up and down choose the resource.
+  It is read only.
+- **The Network Diagram** (`src/project/opj_network.c`), MS Project's: a box for every task that isn't
+  a summary, 160 pixels wide and four rows high, holding its name (bold), its ID and duration, its start
+  and its finish. A box stands in the column one past its furthest predecessor's (tasks with none in
+  the first), and down its column in the sheet's order (`opj_network_layout`). Each link is a line with
+  an arrow from the predecessor's box's right side to the successor's left side, turning in the gap
+  before the successor's column; it is red when both tasks are critical. A critical task's box is edged
+  in red; a milestone's edge is doubled; a task under way is struck through once and a finished one
+  crossed. View > Network Diagram (D, or ARexx `VIEW NETWORK`) shows it in place of the Gantt chart:
+  it keeps the same selected task, a click on a box selects it, a double-click opens Task Information,
+  up and down move through the tasks (scrolled to show the box), and left and right (with Shift, a
+  page) scroll. Every edit works on the selected task as in the Gantt chart, and the boxes are laid out
+  again at each redraw.
 
 ## Baseline
 
@@ -74,6 +141,14 @@ The first page across holds the table and the start of the chart; later pages ac
 chart, whole days each, to a day past the plan's finish. `opj_print_page_view` gives the view for a
 page, and `opj_print_draw` draws it with the footer (the plan's title, and "Page n of m") onto any
 `oldraw` target. The Amiga app's PRINT gives it a printer.device target.
+
+`opj_pdf_write` (src/project/opj_pdf.c) prints the same pages to a PDF: A4 landscape with a 1 cm
+margin, 12 twips (0.6 pt) a pixel, so 1308 by 897 pixels a page. It draws through an `oldraw` target
+on libowf's page PDF writer (owf_pdf.h): fills become rectangles, text is Helvetica at 7.2 pt in rows
+17 pixels high, whatever the screen's font, so the PDF is small and its text searchable. It is
+printed black on white; white fills are left out, as the paper is white already. The window's columns
+and zoom are kept. The app's Project menu has Export PDF..., and ARexx has EXPORT with FORMAT PDF or a
+.pdf name.
 
 ## Checked
 

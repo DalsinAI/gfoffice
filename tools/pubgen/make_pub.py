@@ -8,7 +8,8 @@ Each file sets out to reach one part of the reader (libowf/src/in_pub.c):
   gen-2007-plain.pub     the 2007 form at its simplest: one text box, the
                          default style (Times New Roman 10 pt), a master
   gen-2007-runs.pub      character runs (bold, italic, sizes, typefaces), a
-                         table, a PNG picture, two pages and a scratch frame
+                         table, a PNG picture, two pages, a scratch frame,
+                         and links: a web address, an e-mail, a page
   gen-2010-styles.pub    the 2010 mark; paragraph styles, centred, right and
                          left alignment over a style's
   gen-2013-look.pub      the 2013 mark; the colour scheme, fills, outlines,
@@ -20,6 +21,8 @@ Each file sets out to reach one part of the reader (libowf/src/in_pub.c):
                          tabs and line breaks
   gen-98.pub, gen-2000.pub  the 98/2000 form: text frames, a table, a shape
   gen-cut.pub            a 2010 file cut short: what is left is read
+  gen-colours.pub        260 runs, each its own text colour: more than the
+                         writer's 255 (tests/pub/test_pub_save.py)
   gen-notpub.pub         a compound file that is not a publication
   gen-damaged.pub        Publisher's storages around a Contents that isn't one
 
@@ -166,12 +169,16 @@ def qf(fid, typ, value=None):
     return fv(fid, typ, value, wide=True)
 
 
-def char_props(bold=None, italic=None, size=None, font=None, old=False):
+def char_props(bold=None, italic=None, size=None, font=None, old=False, underline=None, colour=None):
     out = b''
     if bold is not None:
         out += qf(0x202, 0x08 if bold else 0x10, None if bold else 0)
     if italic is not None:
         out += qf(0x203, 0x08 if italic else 0x10, None if italic else 0)
+    if colour is not None:                   # a place in the text's PL list of colours
+        out += qf(0x244, 0x88, qf(0x200, 0x20, colour))
+    if underline is not None:                # low byte 1: single (Publisher writes 0x801 on its links)
+        out += qf(0x21E, 0x10, 0x801 if underline else 0)
     if size is not None:
         out += qf(0x20C, 0x20, int(size * 12700))
     if font is not None:
@@ -228,14 +235,59 @@ class Text:
         self.styles = styles                 # [(char props, para props)]
         self.old = old
         self.stories = []                    # [(text id, [(para props, [(text, char props)])])]
+        self.links = {}                      # story: [(from, length, kind, target)]
+        self.cells = {}                      # story: paragraphs in each cell
+        self.spare = {}                      # story: links of a second TOKN, which readers ignore
+        self.colours = None                  # PL: each 0x00BBGGRR, or 0x08 in the top byte and a scheme place
 
-    def story(self, text_id, paras):
+    def story(self, text_id, paras, links=None, cells=None):
         self.stories.append((text_id, paras))
+        if links:
+            self.links[len(self.stories) - 1] = links
+        if cells:
+            self.cells[len(self.stories) - 1] = cells
         return len(self.stories) - 1
+
+    def tcd(self, k, marks, length):
+        """Story k's cells as TCD (PUB-FORMAT.md 6.8): each cell's last
+        paragraph mark, the last cell's the story's length."""
+        ends, at = [], 0
+        for n in self.cells[k]:
+            at += n
+            ends.append(marks[at - 1])
+        ends[-1] = length
+        return struct.pack('<III', len(ends) - 1, 0, 0xFF00) + b''.join(struct.pack('<I', e) for e in ends)
+
+    def tokn(self, k, length):
+        """Story k's links as TOKN (PUB-FORMAT.md 6.7): places, each link's
+        changed properties, each link's target, then the targets' table."""
+        links = self.links[k]
+        out = struct.pack('<III', len(links), 12, 0x1FFFF)
+        out += b''.join(struct.pack('<I', f) for f, _, _, _ in links) + struct.pack('<I', length)
+        last = (None, None)
+        for i, (f, n, kind, _) in enumerate(links):
+            fields = b''
+            if i == 0:
+                fields += qf(0x200, 0x20, 0x8C0)
+            if n != last[0]:
+                fields += qf(0x201, 0x20, n)
+            if kind != last[1]:
+                fields += qf(0x202, 0x20, kind)
+            last = (n, kind)
+            out += block(fields)
+        for i in range(len(links)):
+            out += block(qf(0x200, 0x20, i))
+        strs = [struct.pack('<H', len(t.encode('utf-16-le')) // 2) + t.encode('utf-16-le') for _, _, _, t in links]
+        offs, at = [], 4 * len(strs)
+        for x in strs:
+            offs.append(at)
+            at += len(x)
+        body = b''.join(struct.pack('<I', o) for o in offs) + b''.join(strs)
+        return out + struct.pack('<II', len(body), len(strs)) + bytes(12) + body
 
     def build(self):
         text = ''
-        cruns, pruns, lengths = [], [], []
+        cruns, pruns, lengths, marks = [], [], [], []
 
         def units():
             return len(text.encode('utf-16-le')) // 2
@@ -245,6 +297,7 @@ class Text:
                 for s, cprops in runs:
                     text += s
                     cruns.append((units(), cprops))
+                marks.append(units() - start)
                 text += '\r'
                 if cruns and cruns[-1][0] == units() - 1:
                     cruns[-1] = (units(), cruns[-1][1])     # the paragraph's mark takes its last run's look
@@ -252,6 +305,20 @@ class Text:
                     cruns.append((units(), None))
                 pruns.append((units(), pprops))
             lengths.append(units() - start)
+            marks.append(None)                # a story's end: marks restart
+        tokns = [('TOKN', k, self.tokn(k, lengths[k])) for k in sorted(self.links)]
+        for k in sorted(self.spare):                 # a later copy of story k's links
+            first, self.links[k] = self.links[k], self.spare[k]
+            tokns.append(('TOKN', k, self.tokn(k, lengths[k])))
+            self.links[k] = first
+        per_story, cur = [], []
+        for m in marks:
+            if m is None:
+                per_story.append(cur)
+                cur = []
+            else:
+                cur.append(m)
+        tokns += [('TCD ', k, self.tcd(k, per_story[k], lengths[k])) for k in sorted(self.cells)]
         tbytes = text.encode('utf-16-le')
         strs = struct.pack('<III', len(lengths), 8, 0xFF) + b''.join(struct.pack('<I', n) for n in lengths)
         syid = struct.pack('<II', 0, len(self.stories)) + b''.join(struct.pack('<I', t) for t, _ in self.stories)
@@ -274,7 +341,10 @@ class Text:
         stsh0 = struct.pack('<II', 0, 0)
         # chunks: name, index, data; TEXT at 0x200 as the files have it
         chunks = [('TEXT', 0, tbytes), ('STRS', 0, strs), ('SYID', 0, syid), ('FONT', 0, font),
-                  ('STSH', 0, stsh0), ('STSH', 1, stsh1), ('FDPC', 0, None), ('FDPP', 0, None)]
+                  ('STSH', 0, stsh0), ('STSH', 1, stsh1), ('FDPC', 0, None), ('FDPP', 0, None)] + tokns
+        if self.colours is not None:         # PL (PUB-FORMAT.md 6.9): n, 0x1C, 0, then a block a colour
+            chunks.append(('PL  ', 0, struct.pack('<III', len(self.colours), 0x1C, 0) +
+                           b''.join(block(qf(0x201, 0x20, v)) for v in self.colours)))
         out = bytearray(0x200)
         out[0:8] = b'CHNKINK '
         struct.pack_into('<HH', out, 0x0C, len(chunks), 0)
@@ -578,20 +648,29 @@ def runs():
                         ('bold alone', char_props(bold=True))]),
                 (None, [('A second paragraph, italic', char_props(italic=True))])])
     t.story(3, [(None, [('Cell one', None)]), (None, [('Cell two', None)]), (None, [('Cell three', None)]),
-                (None, [('Cell four', None)]), (None, [('Cell five', None)]), (None, [('Cell six', None)])])
+                (None, [('Cell three, its second paragraph', None)]),
+                (None, [('Cell four', None)]), (None, [('Cell five', None)]), (None, [('Cell six', None)])],
+            cells=[1, 1, 2, 1, 1, 1])
     t.story(4, [(None, [('On the second page', None)])])
     t.story(5, [(None, [('Left on the scratch area', None)])])
+    s6 = t.story(6, [(None, [('See ', None), ('our site', char_props(underline=True)), (', ', None),
+                             ('write to us', char_props(underline=True)), (', or turn to page 1.', None)])],
+            links=[(4, 8, 1, 'https://example.org/gfoffice/'), (14, 11, 4, 'mailto:team@example.org?subject=Hello'),
+                   (30, 14, 3, '\u010a')])
+    t.spare[s6] = [(0, 3, 1, 'https://example.org/not-this-one/')]
     f1 = frame_chunk(c, p1, text_id=1)
     f2 = frame_chunk(c, p1, text_id=2)
     tb = frame_chunk(c, p1, kind=0x10, text_id=3, extra=[fv(0x66, 0x20, 3), fv(0x67, 0x20, 2)])
     pic = frame_chunk(c, p1)
     f4 = frame_chunk(c, p2, text_id=4)
     f5 = frame_chunk(c, scratch, text_id=5)
+    f6 = frame_chunk(c, p2, text_id=6)
     page1 = [Shape(f1, box_mm(pw, ph, 20, 20, 170, 20), text_id=1),
              Shape(f2, box_mm(pw, ph, 20, 50, 170, 40), text_id=2),
              Shape(tb, box_mm(pw, ph, 20, 100, 120, 40), stype=1),
              Shape(pic, box_mm(pw, ph, 150, 100, 30, 30), stype=75, blip=1)]
-    page2 = [Shape(f4, box_mm(pw, ph, 20, 20, 170, 20), text_id=4)]
+    page2 = [Shape(f4, box_mm(pw, ph, 20, 20, 170, 20), text_id=4),
+             Shape(f6, box_mm(pw, ph, 20, 50, 170, 20), text_id=6)]
     page3 = [Shape(f5, box_mm(pw, ph, 20, -60, 80, 20), text_id=5)]
     return publication(c.build(doc_fields(c, pw, ph, [m, p1, p2, scratch])), t, [[], page1, page2, page3],
                        [(0xF01E, blip_bitmap(png(4, 3, (0x20, 0x80, 0x40))))], (12, 0))
@@ -632,8 +711,13 @@ def look():
     c.add(0x5C, 0x100, fv(0x01, 0x18, 8), fv(0x02, 0xA0, items), fv(0x06, 0xC0, u16text('Ours')))
     m = page_chunk(c, name='Master Page A')
     p = page_chunk(c, master=m)
-    t = Text(['Times New Roman'], [DEFAULT_STYLE])
-    t.story(1, [(None, [('A headline over a bar', None)])])
+    # style 1's colour is the scheme's place 3, which the reader resolves too
+    t = Text(['Times New Roman'], [DEFAULT_STYLE, (TIMES + char_props(colour=4), para_props())])
+    # text colours: red as 0x00BBGGRR, the scheme's place 2, then one not known (left as it is)
+    t.colours = [0x08000000, 0x000000FF, 0x08000002, 0xFFFFFFFE, 0x08000003]
+    t.story(1, [(None, [('A ', None), ('headline', char_props(colour=1)), (' over', char_props(colour=2)),
+                        (' a bar', char_props(colour=3))]),
+                (para_props(style=1), [('Styled ', None), ('red', char_props(colour=1))])])
     bar = frame_chunk(c, p, text_id=1)
     corner = frame_chunk(c, p)
     border = frame_chunk(c, p)
@@ -663,7 +747,11 @@ def columns():
     m = page_chunk(c, name='Master Page A')
     p1 = page_chunk(c, master=m)
     p2 = page_chunk(c, master=m)
-    t = Text(['Times New Roman', 'Franklin Gothic Book'], [DEFAULT_STYLE, (char_props(size=8.5, font=1), para_props())])
+    # the default style is dark blue (PL place 1), so WordArt's text, which takes it, has a colour too;
+    # the body style is dark green, so every run has its own colour
+    t = Text(['Times New Roman', 'Franklin Gothic Book'], [(TIMES + char_props(colour=1), para_props()),
+                                                           (char_props(size=8.5, font=1, colour=2), para_props())])
+    t.colours = [0x08000000, 0x00800000, 0x00008000]
     words = ' '.join('word%d' % i for i in range(40))
     t.story(1, [(para_props(style=1), [('Column story, part %s: %s' % (n, words), None)]) for n in ('one', 'two', 'three')])
     t.story(2, [(para_props(style=1), [('The second story runs on to page two. ' + words, None)])])
@@ -714,7 +802,8 @@ def old(mark, owner_bytes):
     pw, ph = 210 * EMU_MM, 297 * EMU_MM
     t = Text(['Times New Roman', 'Arial'], [(char_props(size=10, font=0, old=True), para_props())], old=True)
     t.story(1, [(None, [('Old form text, ', None), ('bold Arial', char_props(True, None, 12, 1, old=True))])])
-    t.story(2, [(None, [('One', None)]), (None, [('Two', None)]), (None, [('Three', None)]), (None, [('Four', None)])])
+    t.story(2, [(None, [('One', None)]), (None, [('Two', None)]), (None, [('Three', None)]), (None, [('Four', None)])],
+            cells=[1, 1, 1, 1])
     chunks = []                              # (id, parent, bytes)
 
     def frame(typ, box, text_id=None, rows=0, cols=0):
@@ -781,6 +870,19 @@ def notpub():
     return cfb({'WordDocument': b'\0' * 600, '\x01CompObj': b'\1\0\xfe\xff' + bytes(60)})
 
 
+def colours():
+    pw, ph = 210 * EMU_MM, 297 * EMU_MM
+    c = Contents(0x15, pw, ph)
+    m = page_chunk(c, name='Master Page A')
+    p = page_chunk(c, master=m)
+    t = Text(['Times New Roman'], [DEFAULT_STYLE])
+    t.colours = [0x08000000] + [k * 0x0301 for k in range(1, 261)]
+    t.story(1, [(None, [('%c' % (0x41 + k % 26), char_props(colour=k + 1)) for k in range(260)])])
+    fc = frame_chunk(c, p, text_id=1)
+    shapes = [Shape(fc, box_mm(pw, ph, 20, 22, 166, 20), text_id=1, look=NO_FILL_LINE + INSET)]
+    return publication(c.build(doc_fields(c, pw, ph, [m, p])), t, [[], shapes], [], (12, 0))
+
+
 def damaged():
     t = Text(['Times New Roman'], [DEFAULT_STYLE])
     t.story(1, [(None, [('text without a publication', None)])])
@@ -791,7 +893,7 @@ FILES = {
     'gen-2007-plain.pub': plain, 'gen-2007-runs.pub': runs, 'gen-2010-styles.pub': styles,
     'gen-2013-look.pub': look, 'gen-2003-columns.pub': columns, 'gen-2003-names.pub': names,
     'gen-98.pub': lambda: old(0xB2D2, 2), 'gen-2000.pub': lambda: old(0xB2E8, 4),
-    'gen-cut.pub': cut, 'gen-notpub.pub': notpub, 'gen-damaged.pub': damaged,
+    'gen-cut.pub': cut, 'gen-colours.pub': colours, 'gen-notpub.pub': notpub, 'gen-damaged.pub': damaged,
 }
 
 

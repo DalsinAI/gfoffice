@@ -116,7 +116,8 @@ unsigned long oc_core_changes(const oc_core *core);
 int oc_core_sheet(const oc_core *core);             /* the sheet showing */
 int oc_core_set_sheet(oc_core *core, int sheet);    /* OWF_OK or OWF_ERR_UNSUPPORTED */
 /* Adds a sheet after the one showing and shows it; name NULL: "SheetN".
- * The new sheet's index, or -1 when memory runs out. Undoable. */
+ * The new sheet's index, or -1 when memory runs out or the workbook's
+ * structure is protected. Undoable. */
 int oc_core_add_sheet(oc_core *core, const char *name);
 /* Renames a sheet; formulas and names that refer to it follow. OWF_OK,
  * OWF_ERR_FORMAT (an empty name, one with []:*?/\ or one another sheet
@@ -343,6 +344,32 @@ int oc_core_unprotect_sheet(oc_core *core, const char *password);
 /* 1 when the active sheet is protected; what it allows and whether it has a password. */
 int oc_core_sheet_protection(const oc_core *core, unsigned *allow, int *has_password);
 int oc_core_set_cell_protection(oc_core *core, int locked, int formula_hidden);
+/* The workbook's structure: while it is protected no sheet is added,
+ * duplicated, deleted, renamed, moved, hidden or shown, nor a pivot table
+ * made on a new sheet (OC_PROTECTED, and -1 from oc_core_add_sheet). The password is kept and checked as a sheet's.
+ * Not an Undo step, and Undo leaves it as it is; protecting clears Undo
+ * and Redo, so none brings back what it keeps out. OWF_ERR_UNSUPPORTED:
+ * already protected (not protected). */
+int oc_core_protect_book(oc_core *core, const char *password);
+int oc_core_unprotect_book(oc_core *core, const char *password);
+/* 1 when the workbook's structure is protected; whether it has a password. */
+int oc_core_book_protection(const oc_core *core, int *has_password);
+
+/* Links to other workbooks (Edit Links): each other book the formulas use, kept with the values it last had,
+ * which the formulas work from. A link's name (as the formulas give it), its target (where it is, as the file
+ * wrote it) and how many of its sheets the book keeps. */
+int oc_core_link_count(const oc_core *core);
+int oc_core_link(const oc_core *core, int index, const char **name, const char **target, int *sheets);
+/* The file a link's target names, for a book in folder base (NULL or "": none): "file:///C:/x.xlsx" is
+ * "C:/x.xlsx", "file:///home/x.ods" "/home/x.ods", "Rates.xlsx" beside the book, "%20" decoded. 0 when it is
+ * not a file here (http:, file://server/...), holds "%00" or does not fit. */
+int oc_link_path(const char *target, const char *base, char *out, size_t size);
+/* A link's values read again from the file at path, as an Undo step, and the formulas worked out again:
+ * each sheet the book keeps takes the values the file's sheet has now (one the file no longer has keeps its
+ * last values; *sheets says how many were updated). A file that cannot be read returns its error and changes
+ * nothing, so the formulas keep showing the last values. Memory running out part-way returns OWF_ERR_MEMORY
+ * with the sheets before it updated (as *sheets says), as one Undo step. */
+int oc_core_update_link(oc_core *core, int index, const char *path, owf_report *report, int *sheets);
 /* Excel's 16-bit hash of a password (0 for none). */
 unsigned oc_password_hash(const char *password);
 
@@ -392,12 +419,22 @@ int oc_core_scenario_show(oc_core *core, int index);
 int oc_core_scenario_delete(oc_core *core, int index);
 /* A scenario's ranges as one types them: "B2:C4,E7". 0 when they do not fit. */
 int oc_core_scenario_cells_text(const oc_core *core, const owf_scenario *sc, char *out, size_t size);
+/* The scenario shown last on the active sheet (from 0), or -1. The grid
+ * draws a frame round each of its ranges (OC_DRAW_FRAME, OC_ROLE_SCENARIO,
+ * 1 pixel) and its name in a tab (OC_DRAW_FILL, OC_ROLE_SCENARIO, then its
+ * text in white, then a list button, OC_DRAW_DROPDOWN) on the first range's
+ * top left corner: above the range when there is room in its pane, else
+ * just inside it. Over the cells and charts, under the selection's outline
+ * and the active cell's frame. A click on the tab is OC_HIT_SCENARIO: the
+ * window offers the sheet's scenarios, and shows the one chosen. */
+int oc_core_scenario_active(const oc_core *core);
 
 /* Data > Solver: make a target cell as large or as small as it can be, or
- * equal to a value, by changing variable cells, under constraints. Models
- * must be linear (the target and constraints change in proportion to the
- * variables); whole-number and binary variables are solved by branch and
- * bound. Cells are written as one types them ("B10", "'Plan'!$B$2:$C$4"),
+ * equal to a value, by changing variable cells, under constraints. With the
+ * Simplex LP engine models must be linear (the target and constraints change
+ * in proportion to the variables); whole-number and binary variables are
+ * solved by branch and bound. The Nonlinear engine takes smooth models
+ * (OC_SOLVER_NONLINEAR below). Cells are written as one types them ("B10", "'Plan'!$B$2:$C$4"),
  * on the active sheet unless they name another. The model is kept in the
  * active sheet's hidden names as Excel keeps its own (solver_opt ...). */
 #define OC_SOLVER_CONSTRAINTS 32
@@ -420,7 +457,14 @@ typedef struct {
     oc_solver_constraint constraints[OC_SOLVER_CONSTRAINTS];
     int nonnegative;              /* variables with no lower limit are kept >= 0 */
     unsigned max_nodes;           /* branch and bound's limit; 0: 5000 */
+    int engine;                   /* OC_SOLVER_SIMPLEX (linear models) or OC_SOLVER_NONLINEAR */
+    unsigned max_trials;          /* the nonlinear engine's limit on points worked out; 0: 4000 */
 } oc_solver_model;
+/* Engines, as Excel's Solving Method: Simplex LP for linear models; Nonlinear for smooth ones, by Nelder and
+ * Mead's simplex search from the variables' values, the constraints as growing penalties (a local answer:
+ * other starting values may find a better one; no whole or binary variables). Excel's solver_eng 1 (GRG
+ * Nonlinear) and 3 (Evolutionary) read as Nonlinear, 2 as Simplex LP. */
+enum { OC_SOLVER_SIMPLEX = 0, OC_SOLVER_NONLINEAR = 1 };
 enum { OC_SOLVED,                 /* the best values */
        OC_SOLVED_LIMIT,           /* the best found before the limit: maybe not the best there is */
        OC_SOLVER_INFEASIBLE, OC_SOLVER_UNBOUNDED, OC_SOLVER_NOT_LINEAR,
@@ -444,6 +488,9 @@ int oc_core_solver_model(const oc_core *core, oc_solver_model *model);
  * says how it went; OWF_ERR_FORMAT: the model does not make sense (why says
  * how); OWF_ERR_UNSUPPORTED: too big; OWF_ERR_MEMORY. */
 int oc_core_solve(const oc_core *core, const oc_solver_model *model, oc_solver_result *result);
+/* The first sentence the Solver window says of a solved result (OC_SOLVED or OC_SOLVED_LIMIT), by engine:
+ * Simplex LP's answers are the best there is; the Nonlinear engine's the best near the starting values. */
+const char *oc_solver_summary(const oc_solver_model *model, const oc_solver_result *result);
 /* Keeps the model in the active sheet's names and, with a result, puts its
  * values in the variable cells: one Undo step. OWF_ERR_FORMAT: a cell of the
  * model is not one (bad names it). */
@@ -601,7 +648,7 @@ int oc_core_remove_duplicates(oc_core *core, const unsigned *cols, unsigned ncol
                               int has_header, unsigned *removed_out);
 
 /* ---- Data > Consolidate ----
- * Several source ranges (on any sheets, up to OC_CONSOLIDATE_SOURCES) are
+ * Several source ranges or names of ranges (on any sheets, up to OC_CONSOLIDATE_SOURCES) are
  * put together with one of the OC_SUBTOTAL_ functions into one table whose
  * top left cell is dest: cell by cell where they sit, or matched by the
  * labels in their first column (row_labels), their first row
@@ -621,12 +668,27 @@ typedef struct {
 } oc_consolidate_spec;
 /* SUM, no labels, no link, no sources. */
 void oc_consolidate_init(oc_consolidate_spec *spec);
+/* The defined names a source can be, for the window to offer: those the
+ * active sheet sees (its own, and the workbook's that no name of its own
+ * hides), not hidden, whose formula is one range. Their indexes for
+ * oc_core_name_at into index, in the book's order: the count (at most
+ * max). A source typed as a name (case aside) reads as its range. */
+#define OC_CONSOLIDATE_NAMES 32
+int oc_core_consolidate_names(const oc_core *core, int *index, int max);
 /* The active sheet's last settings: 1 when it has some. */
 int oc_core_consolidate_settings(const oc_core *core, oc_consolidate_spec *spec);
 /* OWF_OK (the table is selected when it is on the active sheet),
  * OWF_ERR_FORMAT (a range, the function or the destination is wrong),
  * OWF_ERR_UNSUPPORTED (too many cells or labels), OWF_ERR_MEMORY. */
 int oc_core_consolidate(oc_core *core, const oc_consolidate_spec *spec);
+/* Data > Refresh Consolidation: runs the active sheet's last consolidation
+ * again over its sources as they are now, the old table emptied first. A
+ * source typed as a range, and the destination, follow rows and columns
+ * put in or taken out (the settings then give them where they are now), so
+ * the table grows and shrinks with them; one typed as a name reads its
+ * range afresh. OWF_ERR_UNSUPPORTED when the sheet has none; otherwise as
+ * oc_core_consolidate. One Undo step. */
+int oc_core_consolidate_refresh(oc_core *core);
 
 /* ---- Pivot tables (DataPilot) ----
  * A pivot table summarises a headed source table by row, column, data and
@@ -661,6 +723,17 @@ int oc_core_pivot_set_layout(oc_core *core, const owf_pivotdef *layout);
  * defined name. OWF_ERR_UNSUPPORTED means the active sheet has no pivot
  * table; OWF_ERR_FORMAT that its source or fields no longer fit. */
 int oc_core_refresh_pivot(oc_core *core);
+/* Show Details (drill-down): the source rows behind one value cell of the
+ * active sheet's pivot table, copied as values with their heading row onto
+ * a new sheet ("Details", "Details2"...), which becomes active; one Undo
+ * step removes it. A subtotal or total cell gives every row it sums; page
+ * fields and hidden items apply. OWF_ERR_UNSUPPORTED: the active sheet has
+ * no pivot table; OWF_ERR_FORMAT: (row, col) is not one of its value cells;
+ * OC_PIVOT_STALE: the table as drawn is not what its source makes now (the
+ * source changed since the last Refresh), so the cell's rows are not known:
+ * refresh it first. */
+#define OC_PIVOT_STALE 170
+int oc_core_pivot_details(oc_core *core, unsigned row, unsigned col);
 
 /* ---- AutoFilter ----
  * Turns the selection into a table with filter buttons. A one-cell
@@ -873,7 +946,8 @@ enum {
     OC_HIT_COL_EDGE,        /* a column letter's right edge: drag to size it */
     OC_HIT_ROW_EDGE,
     OC_HIT_DROPDOWN,        /* the active cell's list's dropdown button (row, col: the cell) */
-    OC_HIT_FILTER           /* an AutoFilter button (row: heading, col: filtered column) */
+    OC_HIT_FILTER,          /* an AutoFilter button (row: heading, col: filtered column) */
+    OC_HIT_SCENARIO         /* the shown scenario's tab (row, col: its first cell): the list of scenarios to show */
 };
 typedef struct {
     int kind;
@@ -924,7 +998,8 @@ enum {
     OC_ROLE_NOTE,           /* behind the active cell's comment (pale yellow) */
     OC_ROLE_NOTE_LINE,      /* its frame */
     OC_ROLE_FILTER,         /* an AutoFilter's button */
-    OC_ROLE_CHART           /* a chart's area, bars and lines (its text is OC_ROLE_TEXT): rgb */
+    OC_ROLE_CHART,          /* a chart's area, bars and lines (its text is OC_ROLE_TEXT): rgb */
+    OC_ROLE_SCENARIO        /* the shown scenario's frame and its name's tab (its text is OC_ROLE_TEXT) */
 };
 enum { OC_ALIGN_LEFT, OC_ALIGN_CENTRE, OC_ALIGN_RIGHT };
 
@@ -1208,6 +1283,42 @@ void oc_core_pivot_heading(const oc_core *core, const owf_pivotdef *def, unsigne
  * "East" a text, "TRUE" a truth), else the text itself. */
 void oc_core_pivot_item(const oc_core *core, const owf_pivotdef *def, unsigned field, const char *utf8,
                         owf_pivot_page *page);
+/* A field of the pivot table's source by its heading (case aside), or by its
+ * number ("1" the source's first column; a heading that is a number comes
+ * first, "#1" is always the number): from 0, or -1. */
+int oc_core_pivot_field(const oc_core *core, const owf_pivotdef *def, const char *name);
+/* The active sheet's pivot table changed by one line of words, as ARexx's
+ * PIVOTSET takes it (a word with spaces in "double quotes"; fields as
+ * oc_core_pivot_field names them; an item as oc_core_pivot_item reads it,
+ * "(blank)" the empty one):
+ *   SORT field ASCENDING | DESCENDING | SOURCE
+ *   HIDE field item [item...]          SHOW field item [item...] | ALL
+ *   GROUP field YEARS | QUARTERS | MONTHS | NONE | start end step
+ *   NAME field group item [item...]    UNNAME field item [item...]
+ *   SHOWAS data NORMAL | ROW | COLUMN | TOTAL | INDEX
+ * (data: the data field's place, 1 the first, or its source field). The
+ * table is laid out again as one Undo step. OWF_OK; OWF_ERR_UNSUPPORTED: no
+ * pivot table here, no room (16 sorts, 32 hidden items, 8 groups, 8 groups
+ * by hand of 24 items), a field grouped one way and asked the other, or a
+ * table too large; OWF_ERR_FORMAT: words that are not one of these. out
+ * gets why, for the status line (may be NULL). */
+int oc_core_pivot_command(oc_core *core, const char *text, char *out, size_t size);
+/* The same words applied to def only (it is not laid out; all or nothing),
+ * as the layout window does before Create or Apply. */
+int oc_core_pivot_words(const oc_core *core, owf_pivotdef *def, const char *text, char *out, size_t size);
+/* A field's group (OC_PIVOT_WORDS_GROUP: "YEARS", "0 100 10"... or "" for
+ * none) or hidden items (OC_PIVOT_WORDS_HIDDEN: as HIDE takes them, "East
+ * \"New York\" (blank)", or "") as the window shows them, into out. 0 when
+ * they did not fit. */
+enum { OC_PIVOT_WORDS_GROUP, OC_PIVOT_WORDS_HIDDEN };
+int oc_core_pivot_field_words(const owf_pivotdef *def, unsigned field, int what, char *out, size_t size);
+/* The layout window's choices for one field (from 0) put on def: sort
+ * (OWF_PIVOT_SORT_..., -1 to keep it), show (OWF_PIVOT_SHOW_... for each of
+ * the field's data entries, -1 to keep), group and hidden as
+ * oc_core_pivot_field_words writes them (NULL to keep; "" for none). Only
+ * what changed is applied; on a refusal def is unchanged and out says why. */
+int oc_core_pivot_field_choices(const oc_core *core, owf_pivotdef *def, unsigned field, int sort, int show,
+                                const char *group, const char *hidden, char *out, size_t size);
 
 /* The book as it is, written to path (a copy: the edit line, the sheet saved as
  * active and the dirty mark are left as they are; owf_export_book_file). */

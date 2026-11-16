@@ -108,7 +108,7 @@ remain later P1 work.
 
 # GFOpenWrite
 
-GFOpenWrite 2.0.35 is a native word processor for AmigaOS 3.2.
+GFOpenWrite 2.0.45 is a native word processor for AmigaOS 3.2.
 
 ![GFOpenWrite on AmigaOS 3.2.3: a Word document written in Word, opened as it is](docs/screenshot.png)
 
@@ -565,8 +565,10 @@ and -) show the slide up to four times the window's fit, with scrollers; the
 window's zoom gadget fills the screen. Object > Position and Size provides
 exact slide-unit geometry for one top-level object. Object > Appearance edits a selected
 top-level text box or shape's solid fill, stroke colour and width, line style
-and arrowheads as one undoable operation, with ODP persistence. An optional
-own screen, richer fills and the rest of the editor come next.
+and arrowheads as one undoable operation, with ODP persistence. The show
+opens a screen of its own on AGA or a small or palette Workbench screen
+(Show > Show On chooses), with the show's menu on the right button. Richer
+fills and the rest of the editor come next.
 
 ## Licence
 
