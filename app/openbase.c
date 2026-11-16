@@ -28,6 +28,7 @@
 #include <libraries/asl.h>
 #include <workbench/startup.h>
 #include <dos/dos.h>
+#include <dos/dostags.h>
 #include <graphics/text.h>
 #include <graphics/gfxmacros.h>
 #include <utility/tagitem.h>
@@ -54,7 +55,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenBase 0.14.2 (16.11.2026)"
+#define VERSION_TEXT "GFOpenBase 0.14.3 (16.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenBase, the database of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -3395,6 +3396,7 @@ enum {
     F_BACK, F_ON, F_SUBPICK, F_SUBLIST, F_SUBCOUNT,
     F_FILTER, F_FROW, F_FHINT, F_FCLEAR, F_FCANCEL,     /* Filter by Form */
     F_SUBADD, F_SUBEDIT, F_SUBDEL, F_SUBOPEN,           /* the subform's rows */
+    F_DBUTTON,                                          /* a designed form's button */
     F_FIELD0
 };
 
@@ -3421,6 +3423,94 @@ static ob_form *f_design;                    /* the designed form shown, NULL: t
 #define FG_MAX 64                            /* field gadgets on one designed form */
 static ob_int f_go_parent, f_go_key;
 static int f_go;
+static char f_go_form[OB_NAME_MAX];          /* a button's form to open next */
+static char f_run_query[OB_NAME_MAX];        /* a button's query to run when the form closes */
+#define FB_MAX 24                            /* buttons on one designed form */
+
+static struct MsgPort *rexx_port;            /* GFOpenBase's own ARexx port (below) */
+static char rexx_name[16];
+static void rexx_messages(void);
+static int form_up;                          /* a form window is open: ARexx can't change what it shows */
+
+/* A macro the form waits for: sent to ARexx's REXX port with GFOpenBase's
+ * port as its host, so its commands come here by themselves; GFOpenBase's
+ * port is answered while it runs (a macro that sends ROW or TABLE gets its
+ * answer), and its return code is what comes back. -1 when ARexx isn't
+ * there or the message can't be made. */
+static LONG form_macro_wait(const char *text, int is_string)
+{
+    struct MsgPort *reply, *rexx;
+    struct RexxMsg *rm;
+    LONG rc;
+    if (!RexxSysBase || !(reply = CreateMsgPort())) return -1;
+    rm = CreateRexxMsg(reply, (STRPTR)"rexx", rexx_port ? (STRPTR)rexx_name : NULL);
+    if (rm && !(rm->rm_Args[0] = (STRPTR)CreateArgstring((STRPTR)text, (LONG)strlen(text)))) { DeleteRexxMsg(rm); rm = NULL; }
+    if (!rm) { DeleteMsgPort(reply); return -1; }
+    rm->rm_Action = RXCOMM | (is_string ? RXFF_STRING : 0);
+    Forbid();
+    if ((rexx = FindPort((STRPTR)"REXX")) != NULL) PutMsg(rexx, (struct Message *)rm);
+    Permit();
+    if (rexx) {
+        while (!GetMsg(reply)) {
+            ULONG rsig = rexx_port ? (1UL << rexx_port->mp_SigBit) : 0;
+            if (Wait((1UL << reply->mp_SigBit) | rsig) & rsig) rexx_messages();
+        }
+        rc = rm->rm_Result1;
+    } else rc = -1;
+    DeleteArgstring((UBYTE *)rm->rm_Args[0]);
+    DeleteRexxMsg(rm);
+    DeleteMsgPort(reply);
+    return rc;
+}
+
+/* Runs an ARexx macro for the form: a file, given the form, its table and
+ * the record's key, or ARexx in quotes. wait: the macro's return code, the
+ * form answering GFOpenBase's port meanwhile (form_macro_wait), -1 (and
+ * nothing said) when it can't be started; else it runs on its own and 0 is
+ * returned, or -1 with the reason told. */
+static LONG form_macro(const char *macro, int wait)
+{
+    char cmd[OB_ARG_MAX + 3 * OB_NAME_MAX + 48];
+    BPTR in, out;
+    LONG rc;
+    if (!macro || !macro[0]) return 0;
+    if (wait) {
+        if (macro[0] == '\'' || macro[0] == '"') {          /* ARexx in quotes: the text between them */
+            size_t n = strlen(macro);
+            put_text(cmd, sizeof cmd, macro + 1);
+            if (n >= 2 && macro[n - 1] == macro[0]) cmd[n - 2 < sizeof cmd - 1 ? n - 2 : sizeof cmd - 1] = 0;
+            return form_macro_wait(cmd, 1);
+        }
+        snprintf(cmd, sizeof cmd, "\"%s\" \"%s\" \"%s\" %lld", macro,
+                 f_design ? f_design->name : cur.name, cur.name, (long long)f_key);
+        return form_macro_wait(cmd, 0);
+    }
+    if (macro[0] == '\'' || macro[0] == '"') snprintf(cmd, sizeof cmd, "SYS:Rexxc/RX %s", macro);
+    else snprintf(cmd, sizeof cmd, "SYS:Rexxc/RX \"%s\" \"%s\" \"%s\" %lld", macro,
+                  f_design ? f_design->name : cur.name, cur.name, (long long)f_key);
+    in = Open((STRPTR)"NIL:", MODE_OLDFILE);
+    out = Open((STRPTR)"NIL:", MODE_NEWFILE);
+    if (!in || !out) {
+        if (in) Close(in);
+        if (out) Close(out);
+        return -1;
+    }
+    rc = SystemTags((STRPTR)cmd, SYS_Input, (ULONG)in, SYS_Output, (ULONG)out, SYS_Asynch, TRUE, TAG_DONE);
+    if (rc == -1) {                                        /* on its own, it closes them itself */
+        char msg[OB_ARG_MAX + 40];
+        Close(in);
+        Close(out);
+        snprintf(msg, sizeof msg, "The macro %.100s couldn't be started.", macro);
+        tell(msg);
+        return -1;
+    }
+    return 0;
+}
+
+static void form_event(ob_fevent e)
+{
+    if (f_design && f_design->events[e][0] && e != OB_FE_BEFORE_SAVE) form_macro(f_design->events[e], 0);
+}
 
 /* Filter by Form (design 6.3): the form's fields take what to look for, a
  * row at a time (Look for, Or, Or); Apply Filter makes it the view's. */
@@ -3518,6 +3608,16 @@ static int form_save(struct Window *fw_)
     int i, n = 0, good;
     ob_int key = f_key;
     if (f_key > 0 && !form_changed()) return 1;
+    if (f_design && f_design->events[OB_FE_BEFORE_SAVE][0]) {
+        LONG rc = form_macro(f_design->events[OB_FE_BEFORE_SAVE], 1);
+        if (rc == -1 || rc >= 5) {
+            struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"GFOpenBase", (UBYTE *)"%s", (UBYTE *)"OK" };
+            EasyRequest(fw_, &es, NULL, (ULONG)(rc == -1
+                ? "The form's Before Save macro couldn't be started (is ARexx running?), so the record wasn't saved."
+                : "The form's Before Save macro refused to save the record."));
+            return 0;
+        }
+    }
     for (i = 0; i < cur.nfields; i++) {
         const ob_field *f = &cur.fields[i];
         if (f->type == OB_COUNTER || f->type == OB_OBJECT) continue;
@@ -3541,6 +3641,7 @@ static int form_save(struct Window *fw_)
     } else {
         set_status("Record saved");
     }
+    form_event(OB_FE_AFTER_SAVE);
     return 1;
 }
 
@@ -3670,14 +3771,19 @@ static void form_draw_clip(struct Window *w_, const ob_form *f, int x0, int y0, 
         int cx1 = x < minx ? minx : x, cy1 = y < miny ? miny : y;
         int cx2 = x + w > maxx ? maxx : x + w, cy2 = y + h > maxy ? maxy : y + h;
         if (cx1 >= cx2 || cy1 >= cy2) continue;
-        if (it->kind == OB_FI_FIELD) {
+        if (it->kind == OB_FI_FIELD || it->kind == OB_FI_BUTTON) {
+            const char *t = it->kind == OB_FI_BUTTON ? it->text : it->field;
+            int tx = x + fw / 2;
             if (!fields) continue;
             if (cx2 - cx1 > 2 && cy2 - cy1 > 2)
                 DrawBevelBox(rp, cx1, cy1, cx2 - cx1, cy2 - cy1, GT_VisualInfo, (ULONG)vi, TAG_DONE);
-            SetAPen(rp, pen(TEXTPEN));
+            SetAPen(rp, pen(it->kind == OB_FI_BUTTON ? HIGHLIGHTTEXTPEN : TEXTPEN));
+            if (it->kind == OB_FI_BUTTON) {
+                int tw = TextLength(rp, (STRPTR)t, strlen(t));
+                if (tw < w - fw) tx = x + (w - tw) / 2;          /* in the middle, as a gadget's */
+            }
             if (y + (row_h - fh) / 2 >= miny && y + (row_h + fh) / 2 <= maxy)
-                text_clip(rp, x + fw / 2, y + (row_h - fh) / 2 + font->tf_Baseline, it->field,
-                          (int)strlen(it->field), minx, cx2 - fw / 2);
+                text_clip(rp, tx, y + (row_h - fh) / 2 + font->tf_Baseline, t, (int)strlen(t), minx, cx2 - fw / 2);
         } else if (it->kind == OB_FI_LABEL || (it->kind == OB_FI_BOX && it->text[0])) {
             int len = (int)strlen(it->text), room = (w - (it->kind == OB_FI_BOX ? 2 * fw : 0)) / fw;
             int ty = it->kind == OB_FI_BOX ? y + font->tf_Baseline / 2 : y + (row_h - fh) / 2 + font->tf_Baseline;
@@ -3724,6 +3830,24 @@ static void open_form(void)
 {
     while (form_window()) {
         ob_int at;
+        if (f_go_form[0]) {
+            static ob_form *other;             /* the forms buttons open (kept for the next) */
+            char nm[OB_NAME_MAX];
+            put_text(nm, sizeof nm, f_go_form);
+            f_go_form[0] = 0;
+            if (!other && !(other = malloc(sizeof *other))) { tell("Out of memory"); break; }
+            if (!ob_form_get(proj, nm, other) || !ob_form_check(proj, other)) { tell(ob_error(proj)); break; }
+            load_tables(other->table);
+            if (!have_cur || !same_name(cur.name, other->table)) { tell("The form's table isn't there any more."); break; }
+            f_design = other;
+            ob_view_init(&view);
+            put_text(view_table, sizeof view_table, cur.name);
+            top_row = 0;
+            sel_row = 0;
+            load_page();
+            refresh();
+            continue;
+        }
         f_design = NULL;                       /* its table's auto form (the caller frees its own) */
         load_tables(f_go_rel.table);
         if (!have_cur || strcmp(cur.name, f_go_rel.table)) { tell("The subform's table isn't there any more."); break; }
@@ -3836,6 +3960,10 @@ static void open_designed(void)
     }
 }
 
+/* What a designed form's buttons are, by gadget: their items. */
+static int f_nbtn, f_btn[FB_MAX];
+#define F_BTN0 (F_FIELD0 + FG_MAX)
+
 /* ---- The form designer (Table > Design Form...) ---- */
 
 static ob_form *d_form;         /* the form being designed */
@@ -3845,7 +3973,7 @@ static int d_cols, d_rows;      /* the cells the canvas shows */
 static int d_changed;
 static int d_cx, d_cy, d_cw, d_ch, d_rowh, d_sty;   /* the canvas, a cell's height, the status line */
 
-static const char *const d_kinds[OB_FI_KINDS] = { "Field", "Label", "Line", "Box" };
+static const char *const d_kinds[OB_FI_KINDS] = { "Field", "Label", "Line", "Box", "Button" };
 
 /* Scrolls the canvas so the chosen item's top left is in sight. */
 static void design_follow(void)
@@ -3930,7 +4058,71 @@ static int form_taken(const char *name)
     return 0;
 }
 
-enum { FD_FIELD = 1, FD_LABEL, FD_LINE, FD_BOX, FD_TEXT, FD_REMOVE, FD_SAVE, FD_SAVEAS, FD_CLOSE, FD_NBUTTONS = FD_CLOSE };
+enum { FD_FIELD = 1, FD_LABEL, FD_LINE, FD_BOX, FD_BUTTON, FD_TEXT, FD_EVENTS, FD_REMOVE, FD_SAVE, FD_SAVEAS, FD_CLOSE,
+       FD_NBUTTONS = FD_CLOSE };
+#define FD_PER_ROW 6
+
+/* A button's words, what it does, and the form, query or macro it needs;
+ * a new one (it NULL) on row. 0 when cancelled. */
+static int design_button_dialog(ob_fitem *it, int row)
+{
+    static char names[PICK_MAX][OB_NAME_MAX];
+    const char *labels[PICK_MAX];
+    char cap[OB_LABEL_MAX], arg[OB_ARG_MAX];
+    int a, i, n;
+    put_text(cap, sizeof cap, it ? it->text : "");
+    if (!ask_text("Button", "Words on it:", cap, sizeof cap) || !cap[0]) return 0;
+    for (i = 1; i < OB_FA_COUNT; i++) labels[i - 1] = ob_faction_name((ob_faction)i);
+    if ((a = pick_list("What It Does", labels, OB_FA_COUNT - 1, "Choose")) < 0) return 0;
+    a++;
+    arg[0] = 0;
+    if (ob_faction_arg((ob_faction)a) == 1 || ob_faction_arg((ob_faction)a) == 2) {
+        n = a == OB_FA_OPENFORM ? ob_form_count(proj) : ob_query_count(proj);
+        if (n > PICK_MAX) n = PICK_MAX;
+        if (n <= 0) { tell(a == OB_FA_OPENFORM ? "There are no saved forms yet." : "There are no saved queries yet."); return 0; }
+        for (i = 0; i < n; i++) {
+            put_text(names[i], OB_NAME_MAX, a == OB_FA_OPENFORM ? ob_form_name(proj, i) : ob_query_name(proj, i));
+            labels[i] = names[i];
+        }
+        if ((i = pick_list(a == OB_FA_OPENFORM ? "Form to Open" : "Query to Run", labels, n, "Choose")) < 0) return 0;
+        put_text(arg, sizeof arg, names[i]);
+    } else if (a == OB_FA_AREXX) {
+        put_text(arg, sizeof arg, it && it->action == OB_FA_AREXX ? it->arg : "");
+        if (!ask_text("ARexx Macro", "A file, or 'ARexx' in quotes:", arg, sizeof arg) || !arg[0]) return 0;
+    }
+    if (!it) {
+        if (!ob_form_add_button(d_form, cap, (ob_faction)a, arg, 0, row)) { tell("The form is full."); return 0; }
+        d_sel = d_form->nitems - 1;
+    } else {
+        put_text(it->text, sizeof it->text, cap);
+        it->action = (ob_faction)a;
+        put_text(it->arg, sizeof it->arg, arg);
+    }
+    d_changed = 1;
+    return 1;
+}
+
+/* The form's events: choose one, then type its macro ("" for none). */
+static void design_events(void)
+{
+    static char ev[OB_FE_COUNT][OB_ARG_MAX + 24];
+    const char *labels[OB_FE_COUNT];
+    char macro[OB_ARG_MAX];
+    int e;
+    for (;;) {
+        for (e = 0; e < OB_FE_COUNT; e++) {
+            snprintf(ev[e], sizeof ev[e], "%s: %s", ob_fevent_name((ob_fevent)e),
+                     d_form->events[e][0] ? d_form->events[e] : "(none)");
+            labels[e] = ev[e];
+        }
+        if ((e = pick_list("Form Events", labels, OB_FE_COUNT, "Change...")) < 0) return;
+        put_text(macro, sizeof macro, d_form->events[e]);
+        if (ask_text(ob_fevent_name((ob_fevent)e), "Macro (empty: none):", macro, sizeof macro)) {
+            put_text(d_form->events[e], sizeof d_form->events[e], macro);
+            d_changed = 1;
+        }
+    }
+}
 
 static void design_button(struct Window *dw, int id)
 {
@@ -3972,9 +4164,16 @@ static void design_button(struct Window *dw, int id)
         d_sel = d_form->nitems - 1;
         d_changed = 1;
         break;
+    case FD_BUTTON:
+        if ((r = design_row()) >= 0) design_button_dialog(NULL, r);
+        break;
+    case FD_EVENTS:
+        design_events();
+        break;
     case FD_TEXT:
-        if (d_sel < 0) { tell("Choose a label or a box first."); break; }
+        if (d_sel < 0) { tell("Choose a label, a box or a button first."); break; }
         it = &d_form->items[d_sel];
+        if (it->kind == OB_FI_BUTTON) { design_button_dialog(it, 0); break; }
         if (it->kind != OB_FI_LABEL && it->kind != OB_FI_BOX) {
             tell(it->kind == OB_FI_FIELD ? "A field's words are the label beside it: choose that." : "A line has no words.");
             break;
@@ -4010,7 +4209,7 @@ static void design_button(struct Window *dw, int id)
 static void design_window(ob_form *f, int changed)
 {
     static const char *const btext[FD_NBUTTONS] = {
-        "Field...", "Label...", "Line", "Box...", "Words...", "Remove", "Save", "Save As...", "Close"
+        "Field...", "Label...", "Line", "Box...", "Button...", "Words...", "Events...", "Remove", "Save", "Save As...", "Close"
     };
     struct Window *dw;
     struct Gadget *eg = NULL, *g;
@@ -4025,7 +4224,7 @@ static void design_window(ob_form *f, int changed)
     ob_form_extent(f, &cols, &rows);
     bw = fw * 10 + 12;
     iw = (cols + 4) * fw + 16;
-    if (iw < 5 * (bw + 4) + 12) iw = 5 * (bw + 4) + 12;
+    if (iw < FD_PER_ROW * (bw + 4) + 12) iw = FD_PER_ROW * (bw + 4) + 12;
     if (iw > scr->Width - 40) iw = scr->Width - 40;
     bottom = (fh + 4) + 2 * (bh + 4) + 8;
     ih = 6 + (rows + 3) * d_rowh + bottom;
@@ -4056,10 +4255,10 @@ static void design_window(ob_form *f, int changed)
     ng.ng_TextAttr = &font_attr;
     ng.ng_Flags = PLACETEXT_IN;
     ng.ng_Height = bh;
-    bw = (d_cw - 4 * 4) / 5;
+    bw = (d_cw - (FD_PER_ROW - 1) * 4) / FD_PER_ROW;
     for (i = 0; i < FD_NBUTTONS && g; i++) {
-        ng.ng_LeftEdge = d_cx + (i % 5) * (bw + 4);
-        ng.ng_TopEdge = d_sty + fh + 4 + (i / 5) * (bh + 4);
+        ng.ng_LeftEdge = d_cx + (i % FD_PER_ROW) * (bw + 4);
+        ng.ng_TopEdge = d_sty + fh + 4 + (i / FD_PER_ROW) * (bh + 4);
         ng.ng_Width = bw;
         ng.ng_GadgetText = (UBYTE *)btext[i];
         ng.ng_GadgetID = i + 1;
@@ -4174,7 +4373,17 @@ static void design_forms(void)
 }
 
 /* The form; 1 when it closed to open a subform row in its own form. */
+static int form_window_in(void);
 static int form_window(void)
+{
+    int r;
+    form_up = 1;
+    r = form_window_in();
+    form_up = 0;
+    return r;
+}
+
+static int form_window_in(void)
 {
     struct Window *w_;
     struct Gadget *eg = NULL, *g, *fg[FG_MAX];
@@ -4183,6 +4392,7 @@ static int form_window(void)
     int i, page = 0, pages, per, lw = 0, vw, row_h = fh + 8, nshow, first, done = 0, bw, sub_h, top, x, iw, ih, full, wt, oh;
     int last = 0;                              /* the action before, for a double-click */
     ULONG l_secs = 0, l_mics = 0;
+    ob_int fired = -3;                         /* the record On Record last ran for */
     if (q_on) { set_status("Forms show a table: choose one in the list"); return 0; }
     if (!proj || !have_cur) { set_status("Choose a table first"); return 0; }
     f_go = 0;
@@ -4252,9 +4462,13 @@ static int form_window(void)
         TAG_DONE);
     if (!w_) return 0;
     SetFont(w_->RPort, font);
+    f_run_query[0] = 0;
+    f_go_form[0] = 0;
+    form_event(OB_FE_OPEN);
     while (!done) {
         int action = 0;
         ULONG acode = 0;
+        if (f_key != fired && !f_filtering) { fired = f_key; form_event(OB_FE_CURRENT); }
         first = page * per;
         nshow = cur.nfields - first < per ? cur.nfields - first : per;
         if (nshow < 0) nshow = 0;
@@ -4310,6 +4524,20 @@ static int form_window(void)
             else
                 g = fg[i] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)f_vals[fidx[i]],
                                          GTST_MaxChars, 1023, GA_TabCycle, TRUE, TAG_DONE);
+        }
+        f_nbtn = 0;
+        for (i = 0; f_design && i < f_design->nitems && f_nbtn < FB_MAX && g; i++) {
+            const ob_fitem *it = &f_design->items[i];
+            if (it->kind != OB_FI_BUTTON) continue;
+            ng.ng_LeftEdge = w_->BorderLeft + 10 + it->x * fw;
+            ng.ng_TopEdge = top + it->y * row_h;
+            ng.ng_Width = it->w * fw;
+            ng.ng_Height = fh + 6;
+            ng.ng_GadgetText = (UBYTE *)it->text;
+            ng.ng_Flags = PLACETEXT_IN;
+            ng.ng_GadgetID = F_BTN0 + f_nbtn;
+            f_btn[f_nbtn++] = i;
+            g = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, f_filtering, TAG_DONE);
         }
         top += f_design ? drows * row_h : nshow * row_h;
         ng.ng_Flags = PLACETEXT_IN;
@@ -4450,7 +4678,10 @@ static int form_window(void)
             }
         while (!action) {
             struct IntuiMessage *m;
-            WaitPort(w_->UserPort);
+            {
+                ULONG rsig = rexx_port ? (1UL << rexx_port->mp_SigBit) : 0;
+                if (Wait((1UL << w_->UserPort->mp_SigBit) | rsig) & rsig) rexx_messages();   /* the form's macros get answers */
+            }
             while (!action && (m = GT_GetIMsg(w_->UserPort)) != NULL) {
                 ULONG class = m->Class;
                 UWORD code = m->Code;
@@ -4467,6 +4698,10 @@ static int form_window(void)
                 else if (class == IDCMP_VANILLAKEY && code == 13 && !f_filtering && f_ssel >= 0) action = F_SUBOPEN;
                 else if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(w_); GT_EndRefresh(w_, TRUE); }
                 else if (class == IDCMP_VANILLAKEY && code == 27) action = f_filtering ? F_FCANCEL : F_UNDO;
+                else if (class == IDCMP_GADGETUP && gad->GadgetID >= F_BTN0 && gad->GadgetID < F_BTN0 + f_nbtn) {
+                    action = F_DBUTTON;
+                    acode = gad->GadgetID - F_BTN0;
+                }
                 else if (class == IDCMP_GADGETUP && gad->GadgetID >= F_FIRST && gad->GadgetID < F_FIELD0
                          && gad->GadgetID != F_POS && gad->GadgetID != F_SUBCOUNT
                          && gad->GadgetID != F_FHINT) {
@@ -4494,8 +4729,47 @@ static int form_window(void)
         eg = NULL;
         if (full) tell("Filter by Form looks at 16 fields at most: what was typed past that is left out");
         if (f_filtering && action == F_CLOSE) action = F_FCANCEL;
+        if (action == F_DBUTTON && f_design && (int)acode < f_nbtn) {
+            /* a designed button: the record ones as the bar's */
+            static const int bar[OB_FA_CLOSE + 1] = { 0, F_FIRST, F_PREV, F_NEXT, F_LAST, F_NEW, F_SAVE, F_DELETE, F_FIND, F_CLOSE };
+            const ob_fitem *bt = &f_design->items[f_btn[acode]];
+            if (bt->action > OB_FA_NONE && bt->action <= OB_FA_CLOSE) action = bar[bt->action];
+            if (action == F_DELETE && f_pos < 0) action = 0;
+            if ((action == F_NEXT || action == F_LAST) && (f_pos < 0 || f_pos >= f_total - 1)) action = 0;
+            if ((action == F_FIRST || action == F_PREV) && (f_pos == 0 || !f_total)) action = 0;
+        }
         last = action;
         switch (action) {
+        case F_DBUTTON: {
+            const ob_fitem *bt = (int)acode < f_nbtn ? &f_design->items[f_btn[acode]] : NULL;
+            char msg[OB_ARG_MAX + 64];
+            if (!bt || !form_save(w_)) break;
+            form_read();
+            if (bt->action == OB_FA_OPENFORM) {
+                static ob_form probe;
+                if (!ob_form_get(proj, bt->arg, &probe)) {
+                    snprintf(msg, sizeof msg, "The form %.63s isn't there any more: change the button in Design Form.", bt->arg);
+                    tell(msg);
+                    break;
+                }
+                put_text(f_go_form, sizeof f_go_form, bt->arg);
+                f_go = 1;
+                done = 1;
+            } else if (bt->action == OB_FA_RUNQUERY) {
+                int k, found = 0, n = ob_query_count(proj);
+                for (k = 0; k < n && !found; k++) found = same_name(ob_query_name(proj, k), bt->arg);
+                if (!found) {
+                    snprintf(msg, sizeof msg, "The query %.63s isn't there any more: change the button in Design Form.", bt->arg);
+                    tell(msg);
+                    break;
+                }
+                put_text(f_run_query, sizeof f_run_query, bt->arg);
+                done = 1;
+            } else if (bt->action == OB_FA_AREXX) {
+                if (form_macro(bt->arg, 0) == 0) set_status("Macro started");
+            }
+            break;
+        }
         case F_FROW: f_frow = (int)acode < OB_FORM_OR ? (int)acode : 0; break;
         case F_FCLEAR: ob_view_form_clear(&f_fview); break;
         case F_FCANCEL: f_filtering = 0; set_status("Filter by Form cancelled"); break;
@@ -4612,6 +4886,7 @@ static int form_window(void)
         }
     }
     if (eg) FreeGadgets(eg);
+    form_event(OB_FE_CLOSE);
     CloseWindow(w_);
     /* the datasheet shows where the form was */
     load_page();
@@ -4622,6 +4897,16 @@ static int form_window(void)
     }
     ActivateWindow(win);
     refresh();
+    if (f_run_query[0]) {                      /* a button's query: its rows in the datasheet */
+        int k;
+        if (!ob_query_get(proj, f_run_query, &qy)) tell(ob_error(proj));
+        else {
+            for (k = 0; k < OB_QUERY_PARAMS; k++) q_answers[k][0] = 0;
+            run_query(1);
+            refresh();
+        }
+        f_run_query[0] = 0;
+    }
     return f_go;
 }
 
@@ -4866,7 +5151,6 @@ static void events(void)
 #define RX_ERROR 10
 #define RX_UNKNOWN 20
 #define REXX_PORT_NAME "GFOPENBASE"
-static struct MsgPort *rexx_port;
 static char rexx_name[16];
 
 static int is_space(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
@@ -5037,7 +5321,10 @@ static int rexx_do_command(const char *command, char **result_out)
     int rc = RX_OK, r;
     result_text[0] = 0;
     command = skip_space(command);
-    if (starts_word_ci(command, "VERSION", &arg)) put_text(result_text, sizeof result_text, VERSION_TEXT);
+    if (form_up && ob_rexx_form_refuses(command)) {
+        rc = RX_NOW;
+        put_text(result_text, sizeof result_text, "A form is open: close it first (TABLE, ROW, COUNTROWS, GETROW and GETFIELDS still answer)");
+    } else if (starts_word_ci(command, "VERSION", &arg)) put_text(result_text, sizeof result_text, VERSION_TEXT);
     else if (starts_word_ci(command, "LASTERROR", &arg)) put_text(result_text, sizeof result_text, rexx_lasterror);
     else if (starts_word_ci(command, "HELP", &arg))
         put_text(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE "
