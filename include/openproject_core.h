@@ -74,6 +74,16 @@ int opj_set_notes(opj_doc *doc, int row, const char *notes);
  * first..first+count-1, count -1: the whole plan. */
 int opj_set_baseline(opj_doc *doc, int first, int count);
 int opj_clear_baseline(opj_doc *doc, int first, int count);
+/* The same for Baseline n, 0..10 (0 is the one above, MS Project's Baseline; 1..10 Baseline 1 to 10);
+ * n out of range: OWF_ERR_FORMAT. */
+int opj_set_baseline_n(opj_doc *doc, int n, int first, int count);
+int opj_clear_baseline_n(opj_doc *doc, int n, int first, int count);
+/* Which baselines some task has saved: bit n for Baseline n. */
+unsigned opj_baselines_saved(const opj_doc *doc);
+/* "3", "Baseline 3", "baseline3", "Baseline" or "" (Baseline 0) to n, 0..10; -1 when it is none of these. */
+int opj_baseline_parse(const char *text);
+/* The saved ones as "0 3 10" ("none" with none) into out. */
+void opj_baselines_text(const opj_doc *doc, char *out, size_t size);
 /* Tools > Tracking > Update Project: work complete through status (owf_project_update; whole: 0% or 100%
  * only), as one edit; how many tasks changed in *changed (when not NULL). */
 int opj_update_project(opj_doc *doc, owf_ptime status, int whole, int *changed);

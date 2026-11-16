@@ -48,7 +48,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenProject 0.1.14 (16.11.2026)"
+#define VERSION_TEXT "GFOpenProject 0.1.15 (16.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenProject, the project planner of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -139,8 +139,8 @@ static struct NewMenu menus[] = {
     { NM_SUB, "SV", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_SV) },
     { NM_SUB, "CV", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_CV) },
     { NM_TITLE, "Tools", NULL, 0, 0, NULL },
-    { NM_ITEM, "Set Baseline", NULL, 0, 0, (APTR)M_SET_BASELINE },
-    { NM_ITEM, "Clear Baseline", NULL, 0, 0, (APTR)M_CLEAR_BASELINE },
+    { NM_ITEM, "Set Baseline...", NULL, 0, 0, (APTR)M_SET_BASELINE },
+    { NM_ITEM, "Clear Baseline...", NULL, 0, 0, (APTR)M_CLEAR_BASELINE },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Update Project...", NULL, 0, 0, (APTR)M_UPDATE_PROJECT },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -1073,6 +1073,28 @@ static const char *cal_name(int cal)
 
 /* A calendar by the name typed (default: def's); one not in the plan is made, a copy of the plan's, when
  * the user says so (make set). -1 when cancelled. */
+/* Tools > Set Baseline... and Clear Baseline...: which one, Baseline (0) or Baseline 1 to 10, for the whole plan. */
+static void baseline_n(int clear)
+{
+    const char *title = clear ? "Clear Baseline" : "Set Baseline";
+    char saved[40], prompt[80], which[24] = "0", done[64];
+    int n, rc;
+    opj_baselines_text(DOC, saved, sizeof saved);
+    snprintf(prompt, sizeof prompt, "Baseline, 0 to 10 (saved: %s)", saved);
+    for (;;) {
+        if (!ask_text(title, prompt, which, sizeof which)) return;
+        if ((n = opj_baseline_parse(which)) >= 0) break;
+        tell("The baseline is 0 (Baseline) or 1 to 10.");
+    }
+    rc = clear ? opj_clear_baseline_n(DOC, n, 0, -1) : opj_set_baseline_n(DOC, n, 0, -1);
+    edit_failed(rc, title);
+    if (rc != OWF_OK) return;
+    if (!clear && n == 0) view.show_baseline = 1;
+    if (n) snprintf(done, sizeof done, clear ? "Baseline %d cleared" : "Baseline %d set", n);
+    else snprintf(done, sizeof done, clear ? "Baseline cleared" : "Baseline set");
+    set_status(done);
+}
+
 static int ask_calendar(const char *title, int def, int make)
 {
     char name[64], msg[160];
@@ -1245,8 +1267,8 @@ static void menu_action(ULONG id, struct MenuItem *item)
         show_usage(OPJ_VIEW_USAGE);
         if (!DOC->plan->nresources) set_status("No resources yet: Resources... adds them");
         break;
-    case M_SET_BASELINE: edit_failed(opj_set_baseline(DOC, 0, -1), "Set Baseline"); view.show_baseline = 1; break;
-    case M_CLEAR_BASELINE: edit_failed(opj_clear_baseline(DOC, 0, -1), "Clear Baseline"); break;
+    case M_SET_BASELINE: baseline_n(0); break;
+    case M_CLEAR_BASELINE: baseline_n(1); break;
     case M_UPDATE_PROJECT: update_project(); break;
     case M_WORKTIME: change_working_time(); break;
     case M_PLAN_CALENDAR: plan_calendar(); break;

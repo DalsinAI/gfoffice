@@ -51,7 +51,8 @@ Amiga (start GFOpenProject, then `rx project.rexx RAM:`).
 | LINK | `ROW/A/N,COUNT/N` | links COUNT rows (2 when not given) one to the next, finish to start |
 | UNLINK | `ROW/A/N,COUNT/N` | |
 | UNDO, REDO | | |
-| BASELINE | `ROW/N,COUNT/N,CLEAR/S` | sets (or with CLEAR clears) the baseline; no ROW: the whole plan |
+| BASELINE | `ROW/N,COUNT/N,CLEAR/S,NUMBER/K/N` | sets (or with CLEAR clears) the baseline; no ROW: the whole plan. NUMBER=1 to 10: Baseline 1 to 10 (0, the default, is Baseline) |
+| BASELINES | | the baselines some task has saved, as `0 3 10`, or `none` |
 | RESOURCES | | how many resources |
 | ADDRESOURCE | `NAME/A` | the new resource's number |
 | DELETERESOURCE | `ROW/A/N,COUNT/N` | |

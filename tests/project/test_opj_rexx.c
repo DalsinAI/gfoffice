@@ -453,6 +453,32 @@ static void test_update(void)
     CHECK_N(rx_do("SETCELL 2 ActualDuration 1d"), OPJ_RX_ERROR);
 }
 
+/* Baselines 1 to 10: BASELINE NUMBER=n and BASELINES. */
+static void test_baselines(void)
+{
+    opj_doc_free(rx.doc);
+    rx.doc = opj_doc_new(NULL, AT(16, 8, 0));
+    CHECK(rx.doc != NULL);
+    if (!rx.doc) return;
+    ok("ADDTASK Dig DURATION 2d");
+    ok("ADDTASK Fill DURATION 2d");
+    CHECK_S(ok("BASELINES"), "none");
+    ok("BASELINE NUMBER=3");
+    CHECK_S(ok("BASELINES"), "3");
+    CHECK_S(ok("GETCELL 1 \"Baseline Start\""), "NA");                    /* Baseline 0 untouched */
+    ok("BASELINE");
+    ok("BASELINE 2 NUMBER 10");
+    CHECK_S(ok("BASELINES"), "0 3 10");
+    ok("BASELINE NUMBER=3 CLEAR");
+    CHECK_S(ok("BASELINES"), "0 10");
+    ok("UNDO");
+    CHECK_S(ok("BASELINES"), "0 3 10");
+    CHECK_N(rx_do("BASELINE NUMBER=11"), OPJ_RX_ERROR);
+    CHECK_S(rx.lasterror, "BASELINE: NUMBER is 0 to 10");
+    CHECK_N(rx_do("BASELINE NUMBER=-1"), OPJ_RX_ERROR);
+    CHECK_S(ok("BASELINES"), "0 3 10");
+}
+
 int main(void)
 {
     if (!own_folder()) {
@@ -470,6 +496,7 @@ int main(void)
     test_columns();
     test_calendars();
     test_update();
+    test_baselines();
     if (!rx.doc) return 1;
     CHECK_N(opj_rexx_format("A.XML"), OWF_PFILE_MSPDI);
     CHECK_N(opj_rexx_format("plan.Csv"), OWF_PFILE_CSV);
