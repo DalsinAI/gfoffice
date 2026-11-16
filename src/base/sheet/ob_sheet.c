@@ -18,6 +18,7 @@
 #include <string.h>
 #include "openbase_sheet.h"
 #include "owf.h"
+#include "owf_open.h"
 
 static int failf(ob_project *p, const char *fmt, ...)
 #if defined(__GNUC__)
@@ -32,6 +33,25 @@ static int failf(ob_project *p, const char *fmt, ...)
     vsnprintf(text, sizeof text, fmt, ap);
     va_end(ap);
     return ob_set_error(p, text);
+}
+
+/* owfcalc.library, opened by the first call that needs it (OWF=library
+ * builds; with libowf linked in there is nothing to open). */
+static int lib_open;
+
+static int lib(ob_project *p)
+{
+    if (!lib_open) lib_open = owf_open();
+    if (!lib_open)
+        return failf(p, "Sheets need %s %d or newer in LIBS: (part of the GFOffice Suite)", OWF_LIBRARY_NAME,
+                     OWF_LIBRARY_VERSION);
+    return 1;
+}
+
+void ob_sheet_close(void)
+{
+    if (lib_open) owf_close();
+    lib_open = 0;
 }
 
 void ob_sheet_opts_init(ob_sheet_opts *o)
@@ -291,8 +311,10 @@ static int rd_row(void *user, long row, const char **cells, int max)
 static owf_book *load(ob_project *p, const char *path)
 {
     owf_book *book = NULL;
-    owf_report *notes = owf_report_new();
+    owf_report *notes;
     const owf_book_format *used = NULL;
+    if (!lib(p)) return NULL;
+    notes = owf_report_new();
     int rc = owf_import_book_file(path, NULL, &book, notes, &used);
     if (notes) owf_report_free(notes);
     /* workbooks only: a text file is CSV's, which the core reads itself */
@@ -696,6 +718,7 @@ ob_int ob_sheet_export(ob_project *p, const char *table, const ob_view *v, const
     const char *format;
     int i, ncols = 0;
     ob_int n = -1;
+    if (!lib(p)) return -1;
     if (!(t = malloc(sizeof *t))) { failf(p, "Not enough memory"); return -1; }
     if (!(w = calloc(1, sizeof *w))) { free(t); failf(p, "Not enough memory"); return -1; }
     if (!ob_table_get(p, table, t)) {
@@ -730,6 +753,7 @@ ob_int ob_query_sheet_export(ob_project *p, const ob_query *q, const char *const
     const char *format;
     int i, nres, ncols = 0;
     ob_int n = -1;
+    if (!lib(p)) return -1;
     if (!(res = malloc(sizeof *res * OB_QUERY_OUT))) { failf(p, "Not enough memory"); return -1; }
     if (!(w = calloc(1, sizeof *w))) { free(res); failf(p, "Not enough memory"); return -1; }
     nres = ob_query_columns(p, q, res, OB_QUERY_OUT);

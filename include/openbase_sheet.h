@@ -30,8 +30,9 @@
  * are numbers, else text.
  *
  * In its own drawer (src/base/sheet/), as reports are, so that the core's
- * tests don't need libowf. With owf.library (OWF=library) the workbook
- * calls are owfcalc.library's.
+ * tests don't need libowf. Built with OWF_USE_CALC_LIBRARY (OWF=library) the
+ * workbook calls are owfcalc.library's: the first call that needs it opens
+ * it (a call says so when it isn't in LIBS:), and ob_sheet_close closes it.
  *
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
@@ -44,7 +45,7 @@
 extern "C" {
 #endif
 
-#define OB_SHEET_VERSION "0.1.0"
+#define OB_SHEET_VERSION "0.1.1"
 #define OB_SHEET_NAME_MAX 128      /* a sheet's name, with its 0 (ISO-8859-1) */
 #define OB_SHEET_MAX_ROWS 1048576L /* the most rows read or written: Excel's */
 
@@ -92,6 +93,9 @@ ob_int ob_sheet_export(ob_project *p, const char *table, const ob_view *v, const
  * answers (params) are checked before the file is made. */
 ob_int ob_query_sheet_export(ob_project *p, const ob_query *q, const char *const *params, const char *path,
                              const ob_sheet_opts *o);
+
+/* Closes owfcalc.library if a call opened it; at the program's end. */
+void ob_sheet_close(void);
 
 #ifdef __cplusplus
 }

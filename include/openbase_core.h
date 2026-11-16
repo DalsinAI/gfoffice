@@ -139,7 +139,7 @@ void ob_close(ob_project *p);
 
 /* The last error, in plain words; "" after a call that succeeded. */
 const char *ob_error(const ob_project *p);
-/* Sets it (core 0.14.0), for GFOpenBase's parts outside the core (sheets): 0
+/* Sets it (core 0.14, sheets #326), for GFOpenBase's parts outside the core (sheets): 0
  * with text as the reason ("" or NULL clears it). */
 int ob_set_error(ob_project *p, const char *text);
 
@@ -439,7 +439,7 @@ ob_int ob_csv_export_with(ob_project *p, const char *table, const ob_view *v, co
  * ob_table_create and ob_csv_import_with. o's found_* say what was found. */
 int ob_csv_guess(ob_project *p, const char *path, const char *name, ob_csv_opts *o, ob_table *out);
 
-/* ---- Rows from a grid (core 0.14.0) ----
+/* ---- Rows from a grid (core 0.14, sheets #326) ----
  * What CSV import and New Table from CSV do, for rows another part of the
  * program has already read: a spreadsheet's sheet (include/openbase_sheet.h)
  * or anything else laid out in rows and columns. The rows are asked for one

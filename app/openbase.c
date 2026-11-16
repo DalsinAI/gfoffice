@@ -49,13 +49,14 @@
 #include <string.h>
 
 #include "openbase_core.h"
+#include "openbase_sheet.h"
 #include "ob_reportwin.h"
 #include "ow_stack.h"
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenBase 0.14.3 (16.11.2026)"
+#define VERSION_TEXT "GFOpenBase 0.15.0 (16.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenBase, the database of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -65,7 +66,8 @@ enum {
     M_NEW = 1, M_OPEN, M_CLOSE, M_COPY, M_COMPACT, M_CHECK, M_ABOUT, M_QUIT,
     M_T_NEW, M_T_DESIGN, M_T_DELETE, M_T_RELATIONS, M_R_ADD, M_R_EDIT, M_R_DELETE, M_R_FIRST, M_R_LAST,
     M_T_VIEW, M_T_ALL, M_T_IMPORT, M_T_EXPORT, M_UNDO, M_T_FROMCSV,
-    M_Q_NEW, M_Q_OPEN, M_Q_DESIGN, M_Q_AGAIN, M_T_FORM, M_T_FORMS, M_T_FROMDBF, M_T_IMPORTDBF, M_T_EXPORTDBF, M_T_FDESIGN, M_Q_VIEW
+    M_Q_NEW, M_Q_OPEN, M_Q_DESIGN, M_Q_AGAIN, M_T_FORM, M_T_FORMS, M_T_FROMDBF, M_T_IMPORTDBF, M_T_EXPORTDBF, M_T_FDESIGN, M_Q_VIEW,
+    M_T_FROMSHEET, M_T_IMPORTSHEET, M_T_EXPORTSHEET
 };
 
 /* 4.3: the Report window (app/ob_reportwin.c) */
@@ -105,6 +107,10 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "New Table from dBASE...", NULL, 0, 0, (APTR)M_T_FROMDBF },
     { NM_ITEM, "Import dBASE...", NULL, 0, 0, (APTR)M_T_IMPORTDBF },
     { NM_ITEM, "Export dBASE...", NULL, 0, 0, (APTR)M_T_EXPORTDBF },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "New Table from Sheet...", NULL, 0, 0, (APTR)M_T_FROMSHEET },
+    { NM_ITEM, "Import Sheet...", NULL, 0, 0, (APTR)M_T_IMPORTSHEET },
+    { NM_ITEM, "Export Sheet...", NULL, 0, 0, (APTR)M_T_EXPORTSHEET },
     { NM_TITLE, "Query", NULL, 0, 0, NULL },
     { NM_ITEM, "New Query...", "Y", 0, 0, (APTR)M_Q_NEW },
     { NM_ITEM, "Open Query...", "U", 0, 0, (APTR)M_Q_OPEN },
@@ -112,6 +118,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Run Again", NULL, 0, 0, (APTR)M_Q_AGAIN },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Export Results as CSV...", NULL, 0, 0, (APTR)M_T_EXPORT },
+    { NM_ITEM, "Export Results as Sheet...", NULL, 0, 0, (APTR)M_T_EXPORTSHEET },
     { NM_ITEM, "Save as View...", NULL, 0, 0, (APTR)M_Q_VIEW },
     { NM_TITLE, "Row", NULL, 0, 0, NULL },
     { NM_ITEM, "Add Row...", "A", 0, 0, (APTR)M_R_ADD },
@@ -2222,6 +2229,269 @@ static void new_table_from_dbf(void)
     top_row = 0;
     sel_row = -1;
     dbf_done(n, path);
+}
+
+/* ---- Table > New Table from Sheet..., Import Sheet..., Export Sheet...;
+ * Query > Export Results as Sheet... (include/openbase_sheet.h) ----
+ * A sheet of an OpenDocument (.ods) or Excel (.xlsx) workbook in, a table
+ * (as the datasheet shows it) or a query's rows out as a one-sheet book. */
+
+#define SHEETS_LISTED 64
+static ob_sheet_opts sheet_o;
+static char sheet_names[SHEETS_LISTED][OB_SHEET_NAME_MAX];
+static struct List sheet_list;
+static struct Node sheet_nodes[SHEETS_LISTED];
+
+enum { SH_LIST = 1, SH_OK, SH_CANCEL };
+
+/* The sheet of path to read into sheet_o: the only one, or the one chosen
+ * from a list (the one the file opens at first). 0 when cancelled or told. */
+static int choose_sheet(const char *path)
+{
+    struct Window *sw;
+    struct Gadget *eg = NULL, *g;
+    struct NewGadget ng;
+    int n, i, sel = 0, done = 0, okd = 0, w = fw * 40, h = (fh + 8) * 10 + 12, bw;
+    ob_sheet_opts_init(&sheet_o);
+    SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
+    n = ob_sheet_list(proj, path, sheet_names, SHEETS_LISTED);
+    SetWindowPointer(win, TAG_DONE);
+    if (n < 0) { tell(ob_error(proj)); return 0; }
+    if (n <= 1) return 1;                   /* one sheet: no question */
+    if (n > SHEETS_LISTED) n = SHEETS_LISTED;
+    NewList(&sheet_list);
+    for (i = 0; i < n; i++) {
+        sheet_nodes[i].ln_Name = sheet_names[i];
+        AddTail(&sheet_list, &sheet_nodes[i]);
+    }
+    sw = OpenWindowTags(NULL, WA_Title, (ULONG)"Which sheet?", WA_PubScreen, (ULONG)scr,
+        WA_Left, win->LeftEdge + 50, WA_Top, win->TopEdge + 40, WA_InnerWidth, w, WA_InnerHeight, h,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SmartRefresh, TRUE,
+        WA_AutoAdjust, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | LISTVIEWIDCMP | BUTTONIDCMP,
+        TAG_DONE);
+    if (!sw) return 0;
+    if ((g = CreateContext(&eg)) != NULL) {
+        memset(&ng, 0, sizeof ng);
+        ng.ng_VisualInfo = vi;
+        ng.ng_TextAttr = &font_attr;
+        ng.ng_LeftEdge = sw->BorderLeft + 8;
+        ng.ng_TopEdge = sw->BorderTop + 6;
+        ng.ng_Width = w - 16;
+        ng.ng_Height = h - (fh + 6) - 24;
+        ng.ng_GadgetID = SH_LIST;
+        g = CreateGadget(LISTVIEW_KIND, g, &ng, GTLV_Labels, (ULONG)&sheet_list, GTLV_ShowSelected, 0,
+                         GTLV_Selected, (ULONG)sel, TAG_DONE);
+        bw = (w - 16 - 6) / 2;
+        ng.ng_Flags = PLACETEXT_IN;
+        ng.ng_TopEdge = sw->Height - sw->BorderBottom - 6 - (fh + 6);
+        ng.ng_Height = fh + 6;
+        ng.ng_Width = bw;
+        ng.ng_GadgetText = (UBYTE *)"Read";
+        ng.ng_GadgetID = SH_OK;
+        g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+        ng.ng_LeftEdge += bw + 6;
+        ng.ng_GadgetText = (UBYTE *)"Cancel";
+        ng.ng_GadgetID = SH_CANCEL;
+        g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+    }
+    if (!g) {
+        if (eg) FreeGadgets(eg);
+        CloseWindow(sw);
+        return 0;
+    }
+    AddGList(sw, eg, ~0, -1, NULL);
+    RefreshGList(eg, sw, NULL, -1);
+    GT_RefreshWindow(sw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        WaitPort(sw->UserPort);
+        while (!done && (m = GT_GetIMsg(sw->UserPort)) != NULL) {
+            ULONG class = m->Class;
+            UWORD code = m->Code;
+            struct Gadget *gg = (struct Gadget *)m->IAddress;
+            GT_ReplyIMsg(m);
+            if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) done = 1;
+            else if (class == IDCMP_VANILLAKEY && code == 13) okd = done = 1;
+            else if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(sw); GT_EndRefresh(sw, TRUE); }
+            else if (class == IDCMP_GADGETUP) {
+                if (gg->GadgetID == SH_LIST) sel = code;
+                else if (gg->GadgetID == SH_OK) okd = done = 1;
+                else if (gg->GadgetID == SH_CANCEL) done = 1;
+            }
+        }
+    }
+    RemoveGList(sw, eg, -1);
+    FreeGadgets(eg);
+    CloseWindow(sw);
+    if (win) ActivateWindow(win);
+    if (!okd || sel < 0 || sel >= n) return 0;
+    sheet_o.sheet = sel;
+    return 1;
+}
+
+/* Whether the reason is about one row (so the others could go in), not the
+ * header or the file. */
+static int one_bad_row(const char *why)
+{
+    return !strncmp(why, "Row ", 4) && strstr(why, ": ") && !strstr(why, " is not a field of ")
+        && !strstr(why, " names ") && !strstr(why, " more than ");
+}
+
+/* The chosen sheet's rows into the table: all or none, and if a row is bad,
+ * the others on request with the bad ones listed. -1 with the reason told. */
+static ob_int sheet_rows_in(const char *table, const char *path)
+{
+    ob_sheet_opts again;
+    ob_int n;
+    SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
+    n = ob_sheet_import(proj, table, path, &sheet_o);
+    SetWindowPointer(win, TAG_DONE);
+    if (n < 0) {
+        char q[OB_ERR_MAX + 120];
+        if (!one_bad_row(ob_error(proj))) { tell(ob_error(proj)); return -1; }
+        snprintf(q, sizeof q, "%s\n\nNothing was added. Add the other rows and list the bad ones?", ob_error(proj));
+        if (!ask(q, "Add the Others|Cancel")) return -1;
+        again = sheet_o;
+        again.skip_bad = 1;
+        sheet_o = again;
+        SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
+        n = ob_sheet_import(proj, table, path, &sheet_o);
+        SetWindowPointer(win, TAG_DONE);
+        if (n < 0) { tell(ob_error(proj)); return -1; }
+    }
+    return n;
+}
+
+static void sheet_done(ob_int n, const char *path)
+{
+    char msg[220];
+    snprintf(msg, sizeof msg, "Added %lld rows from %.60s (%.60s)", (long long)n, leaf(path), sheet_o.found_sheet);
+    load_page();
+    set_status(msg);
+    if (sheet_o.bad) {
+        ob_csv_opts_init(&csv_o);
+        csv_o.bad = sheet_o.bad;
+        put_text(csv_o.report, sizeof csv_o.report, sheet_o.report);
+        show_report(n, &csv_o);
+    }
+}
+
+#define SHEET_PATTERN "#?.(ods|xlsx|xlsm|xls|fods)"
+
+static void import_sheet(void)
+{
+    char path[512], msg[160];
+    ob_int n;
+    if (q_on) { set_status("A query's rows are read only: choose a table to change its rows"); return; }
+    if (!proj || !have_cur) return;
+    snprintf(msg, sizeof msg, "Import a sheet into %.60s", cur.name);
+    if (!ask_file(msg, FALSE, SHEET_PATTERN, path, sizeof path)) return;
+    if (!choose_sheet(path)) return;
+    if ((n = sheet_rows_in(cur.name, path)) >= 0) sheet_done(n, path);
+}
+
+static ob_table sheet_t;    /* the new table's design (too big for the stack) */
+
+static void new_table_from_sheet(void)
+{
+    char path[512], msg[600];
+    size_t k;
+    ob_int n;
+    int i, made = 0;
+    if (!proj) return;
+    if (!ask_file("New table from a sheet", FALSE, SHEET_PATTERN, path, sizeof path)) return;
+    if (!choose_sheet(path)) return;
+    SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
+    i = ob_sheet_guess(proj, path, NULL, &sheet_o, &sheet_t);
+    SetWindowPointer(win, TAG_DONE);
+    if (!i) { tell(ob_error(proj)); return; }
+    if (table_named(sheet_t.name) >= 0) {   /* Sales there already: Sales 2 */
+        char base[OB_NAME_MAX];
+        put_text(base, sizeof base, sheet_t.name);
+        for (i = 2; i < 100; i++) {
+            snprintf(sheet_t.name, sizeof sheet_t.name, "%.*s %d", (int)sizeof base - 5, base, i);
+            if (table_named(sheet_t.name) < 0) break;
+        }
+    }
+    snprintf(msg, sizeof msg, "Make the table %.60s from %.60s (%.40s), with these fields?\n\n", sheet_t.name,
+             leaf(path), sheet_o.found_sheet);
+    for (i = 0; i < sheet_t.nfields; i++) {
+        k = strlen(msg);
+        if (k + 60 >= sizeof msg) { put_text(msg + k, sizeof msg - k, "..."); break; }
+        snprintf(msg + k, sizeof msg - k, "%s%.30s %.12s", i ? (i % 3 ? ", " : ",\n") : "", sheet_t.fields[i].name,
+                 ob_type_name(sheet_t.fields[i].type));
+    }
+    if (!ask(msg, "Make|Cancel")) return;
+    /* the table and its rows together, or neither */
+    if (!ob_begin(proj)) { tell(ob_error(proj)); return; }
+    if (!ob_table_create(proj, &sheet_t)) { char e[OB_ERR_MAX]; put_text(e, sizeof e, ob_error(proj)); ob_rollback(proj); tell(e); return; }
+    if ((n = sheet_rows_in(sheet_t.name, path)) >= 0 && ob_commit(proj)) made = 1;
+    else {
+        if (n >= 0) tell(ob_error(proj));
+        ob_rollback(proj);
+    }
+    if (!made) return;
+    load_tables(sheet_t.name);
+    top_row = 0;
+    sel_row = -1;
+    sheet_done(n, path);
+}
+
+static int ends_with(const char *s, const char *end)
+{
+    size_t n = strlen(s), k = strlen(end), i;
+    if (n < k) return 0;
+    for (i = 0; i < k; i++) {
+        char a = s[n - k + i], b = end[i];
+        if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+        if (a != b) return 0;
+    }
+    return 1;
+}
+
+/* path ends in .ods or .xlsx (any case): its format; NULL otherwise. */
+static const char *sheet_format_of(const char *path)
+{
+    if (ends_with(path, ".ods")) return "ods";
+    if (ends_with(path, ".xlsx")) return "xlsx";
+    return NULL;
+}
+
+static void export_sheet(void)
+{
+    char path[512], msg[200];
+    ob_int n;
+    BPTR l;
+    if (!proj || (!q_on && !have_cur)) return;
+    if (q_on) snprintf(msg, sizeof msg, "Export %.60s's results as a sheet", qy.name[0] ? qy.name : "the query");
+    else snprintf(msg, sizeof msg, "Export %.60s as a sheet", cur.name);
+    if (!ask_file(msg, TRUE, "#?.(ods|xlsx)", path, sizeof path)) return;
+    if (!sheet_format_of(path)) {
+        /* no .ods or .xlsx on the end: ask which, and put it there */
+        int c = ask("Save the sheet as OpenDocument (.ods, for GFOpenCalc and LibreOffice)\nor Excel (.xlsx)?",
+                    "ODS|XLSX|Cancel");
+        size_t k = strlen(path);
+        if (!c) return;
+        if (k + 6 >= sizeof path) { tell("The file's name is too long"); return; }
+        put_text(path + k, sizeof path - k, c == 1 ? ".ods" : ".xlsx");
+    }
+    if ((l = Lock((STRPTR)path, ACCESS_READ)) != 0) {
+        UnLock(l);
+        snprintf(msg, sizeof msg, "%.100s is already there.\nReplace it?", leaf(path));
+        if (!ask(msg, "Replace|Cancel")) return;
+    }
+    ob_sheet_opts_init(&sheet_o);
+    sheet_o.format = sheet_format_of(path);
+    SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
+    /* a query's rows with the answers it was run with */
+    if (q_on) n = ob_query_sheet_export(proj, &qy, q_pv, path, &sheet_o);
+    else n = ob_sheet_export(proj, cur.name, &view, path, &sheet_o);
+    SetWindowPointer(win, TAG_DONE);
+    if (n < 0) { tell(ob_error(proj)); return; }
+    snprintf(msg, sizeof msg, "Wrote %lld rows to %.60s%s", (long long)n, leaf(path),
+             !q_on && ob_view_filtered(&view) ? " (the filtered rows)" : "");
+    set_status(msg);
 }
 
 /* ---- Table > New Table from CSV... ---- */
@@ -5018,6 +5288,9 @@ static void menu_action(ULONG id)
     case M_T_FROMDBF: new_table_from_dbf(); break;
     case M_T_IMPORTDBF: import_dbf(); break;
     case M_T_EXPORTDBF: export_dbf(); break;
+    case M_T_FROMSHEET: new_table_from_sheet(); break;
+    case M_T_IMPORTSHEET: import_sheet(); break;
+    case M_T_EXPORTSHEET: export_sheet(); break;
     case M_UNDO: undo_last(); break;
     case M_REPORTS: report_window(); break;
     case M_Q_NEW: design_query(1); break;
@@ -5555,6 +5828,7 @@ static int window_main(int argc, char **argv)
     }
 out:
     rexx_close();
+    ob_sheet_close();
     if (RexxSysBase) { CloseLibrary((struct Library *)RexxSysBase); RexxSysBase = NULL; }
     close_project();
     close_window();

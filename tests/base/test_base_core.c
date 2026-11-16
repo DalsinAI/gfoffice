@@ -3120,7 +3120,7 @@ static void test_change_rename_looked_up(void)
     ob_close(p);
 }
 
-/* ---- Rows from a grid (core 0.14.0) ---- */
+/* ---- Rows from a grid (core 0.14, sheets #326) ---- */
 
 typedef struct grid_rows {
     const char *const *cells;   /* nrows x ncols */
