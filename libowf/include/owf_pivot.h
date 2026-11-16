@@ -40,6 +40,7 @@ extern "C" {
 #define OWF_PIVOT_SORTS 16           /* sorted fields (rows and columns) */
 #define OWF_PIVOT_HIDES 32           /* hidden items, all fields together */
 #define OWF_PIVOT_GROUPS 8           /* grouped row and column fields */
+#define OWF_PIVOT_SUBTOTALS 16       /* row and column fields with a subtotal per item */
 #define OWF_PIVOT_ITEM 96            /* a page field's chosen item, bytes */
 #define OWF_PIVOT_NAMES 8            /* groups made by hand, all fields together */
 #define OWF_PIVOT_NAME 48            /* such a group's name, bytes */
@@ -121,6 +122,8 @@ typedef struct {
     owf_pivot_page hide[OWF_PIVOT_HIDES];   /* (kind is never OWF_PIVOT_ALL) */
     unsigned ngroup;                 /* grouped fields, kept by field as sorts are */
     owf_pivot_group group[OWF_PIVOT_GROUPS];
+    unsigned nsubtotal;              /* fields with a subtotal per item, kept by field as sorts are */
+    unsigned subtotal_field[OWF_PIVOT_SUBTOTALS];
     unsigned nnamed;                 /* groups made by hand */
     owf_pivot_named named[OWF_PIVOT_NAMES];
     unsigned nmember;                /* their items: each a field's value (kind never ALL) */
@@ -187,6 +190,13 @@ int owf_pivot_set_group(owf_pivotdef *def, const owf_pivot_group *group);
 double owf_pivot_group_key(const owf_pivot_group *group, double number, int date1904);
 void owf_pivot_group_label(const owf_pivot_group *group, double key, char *out, size_t size);
 int owf_pivot_set_hidden(owf_pivotdef *def, const owf_pivot_page *item, int hidden);
+/* Whether a row or column field's items each get a subtotal under them (an
+ * "East Total" row after East's rows, or column after its columns), made
+ * with each data field's own function; and setting it (on 1) or taking it
+ * away (0). The innermost row or column field has none (its rows or columns
+ * are its items). 0 when there is no room for another field. */
+int owf_pivot_subtotal_of(const owf_pivotdef *def, unsigned field);
+int owf_pivot_set_subtotal(owf_pivotdef *def, unsigned field, int on);
 /* The name of the group made by hand that a cell of field is in, or NULL.
  * owf_pivot_set_named puts item (its field and value) in the group of that
  * name on its field, making the group when it is new and taking the item

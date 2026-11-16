@@ -691,6 +691,7 @@ static int special_field(const char *instr, owf_field *field, char *arg, size_t 
     else if (!strcmp(word, "PAGEREF") && *arg) *field = OWF_FIELD_REF_PAGE;
     else if (!strcmp(word, "MERGEFIELD") && *arg) *field = OWF_FIELD_MERGE;      /* 1.9 */
     else if (!strcmp(word, "XE") && *arg) *field = OWF_FIELD_INDEX;               /* 1.10 */
+    else if (!strcmp(word, "SEQ") && *arg) *field = OWF_FIELD_SEQ;                /* 1.12.6: its switches go */
     else return 0;
     if (*field <= OWF_FIELD_TIME || *field == OWF_FIELD_CHAPTER) arg[0] = 0;
     return 1;
@@ -1962,8 +1963,16 @@ static void table(docx *d, const owf_xml_node *t)
                 table(d, wchild(d, row, "sdtContent") ? wchild(d, row, "sdtContent") : row);
             continue;
         }
+        int row_rev = 0;
         for (cell=row->first;cell;cell=cell->next) if(is_w(d,cell,"tc")) ++cols;
         if(!cols)continue;
+        {   /* 1.12: the row put in or deleted as a tracked change (w:trPr/w:ins, w:del) */
+            const owf_xml_node *trpr = wchild(d, row, "trPr"), *ins = wchild(d, trpr, "ins"), *del = wchild(d, trpr, "del");
+            const owf_xml_node *chg = del ? del : ins;
+            if (chg && !(row_rev = owf_track_add(d->doc, del ? OWF_REV_DELETE : OWF_REV_INSERT,
+                                                 owf_xml_attr(chg, d->w, "author"), owf_xml_attr(chg, d->w, "date"))))
+                d->failed = 1;
+        }
         for (cell = row->first; cell; cell = cell->next) {
             int first = 1, before;
             owf_para *p;
@@ -1984,7 +1993,7 @@ static void table(docx *d, const owf_xml_node *t)
                 para_names(d, ps ? wval(d, ps) : NULL);
             }
             p=&d->b->story->paras[d->b->story->nparas-1];
-            p->table_id=table_id;p->table_row=row_index;p->table_col=col;p->table_cols=cols;
+            p->table_id=table_id;p->table_row=row_index;p->table_col=col;p->table_cols=cols;p->row_revision=row_rev;
             { const owf_xml_node *shd = wchild(d, wchild(d, cell, "tcPr"), "shd");
               p->cell_shading = shd ? docx_fill(d, shd) : cell_style_shading(d); }
             ++col;
@@ -2078,7 +2087,7 @@ static void section(docx *d, const owf_xml_node *sect)
         default: pg->pagenum_style = OWF_PAGENUM_ARABIC; break;
         }
     }
-    {   /* 1.12.1: how footnotes and endnotes are numbered: w:numFmt and w:numStart */
+    {   /* 1.12.1: how footnotes and endnotes are numbered: w:numFmt and w:numStart; 1.12.3: w:numRestart */
         static const char *const pr[2] = { "footnotePr", "endnotePr" };
         int k;
         for (k = 0; k < 2; ++k) {
@@ -2098,6 +2107,11 @@ static void section(docx *d, const owf_xml_node *sect)
             }
             if ((f = wchild(d, np, "numStart")) && wint(d, f, "val", &v) && v >= 1)
                 pg->note_start[k] = v;
+            if ((f = wchild(d, np, "numRestart")) && (fmt = wval(d, f)) != NULL) {   /* 1.12.3 */
+                if (!strcmp(fmt, "eachSect")) pg->note_restart[k] = OWF_NOTE_RESTART_SECTION;
+                else if (!strcmp(fmt, "eachPage") && !k) pg->note_restart[k] = OWF_NOTE_RESTART_PAGE;
+                else pg->note_restart[k] = OWF_NOTE_RESTART_CONTINUOUS;
+            }
         }
     }
     if ((n = wchild(d, sect, "titlePg")))

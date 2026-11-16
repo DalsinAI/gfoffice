@@ -334,6 +334,8 @@ void owf_book_free(owf_book *book)
         free(book->parts[i].data);
     }
     free(book->parts);
+    free(book->protect_hash);
+    free(book->protect_kept);
     free(book);
 }
 
