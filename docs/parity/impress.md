@@ -21,6 +21,7 @@ docs/gfoffice/Impress-Parity.md.
 | 12 Nov 2026 | 0.6.32 | 84% | P9: Export as Pictures (PNG, IFF ILBM); Phase 2 done |
 | 16 Nov 2026 | 0.6.32 | 85% | WMF and EMF pictures drawn on the slide and in the PDF (#232, #267, #278, #279): charts' and objects' replacement pictures and clip art from PPTX and ODP show as drawn, not left out |
 | 16 Nov 2026 (2) | 0.6.33 | 88% | Spelling: Tools > Spelling..., underlining as you type and ARexx SPELL (#337, #342, #344, #352); slide charts kept as charts with their data, saved to PPTX and ODP, with an editing core and Undo (#348, #354, #355, #356, #358); the show on a screen of its own (#281) |
+| 16 Nov 2026 (3) | 0.6.34 | 89% | Gradient fills (linear and radial) read, saved, printed and shown (gap 2.8) |
 
 Phase 1 target: 76% after P1 to P5. Phase 2 (P6 to P9) aims at 84%.
 

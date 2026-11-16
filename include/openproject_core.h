@@ -96,6 +96,17 @@ int opj_set_week_hours(opj_doc *doc, int cal, int weekday, const char *hours);
 /* The hours of the days first..last (days since 1 Jan 2000, at most 3660 of them): hours, "off" for
  * holidays, or NULL to give them back the week's hours. */
 int opj_set_day_hours(opj_doc *doc, int cal, long first, long last, const char *hours);
+/* The days a Change Working Time line names: a weekday ("Mon", "friday": 1, *weekday 0 Sunday..6), or a
+ * date or two ("24/12/26", "24/12/26 - 1/1/27", "24/12/26 to 1/1/27": 2, *first and *last in days since
+ * 1 Jan 2000, at most 3660 days). 0 when it is neither. */
+int opj_days_parse(const char *text, int *weekday, long *first, long *last);
+/* What a Change Working Time line's days work now: a weekday's hours, or the first day's (out at least
+ * 80 bytes, "" when text names no days or cal is out of range). */
+void opj_days_hours_text(const owf_project *p, int cal, const char *text, char *out);
+/* Sets the hours of the days text names (as opj_days_parse) on calendar cal: hours as opj_hours_parse,
+ * or "default" for dates to have the week's hours again. One Undo step; OWF_ERR_FORMAT for days or hours
+ * that aren't. */
+int opj_set_days_hours(opj_doc *doc, int cal, const char *days, const char *hours);
 /* The plan's calendar (Project > Project Information's), or a task's own (-1: the plan's). */
 int opj_set_plan_calendar(opj_doc *doc, int cal);
 int opj_set_task_calendar(opj_doc *doc, int row, int cal);
