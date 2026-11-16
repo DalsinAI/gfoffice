@@ -272,7 +272,7 @@ stories, table column counts, fonts and pictures. The source `owf_pub` remains
 independently owned. `app/openpresent.c` builds a separately branded
 GFOpenPressmaster 0.1.0 with page menus; it opens `.pub` directly and inherits
 the shared screen renderer, page strip, PDF export, GFOpenPrint path and ODP
-save. `make publisher-core-test` and `publisher-core-check` verify conversion
+save. `make pressmaster-core-test` and `pressmaster-core-check` verify conversion
 and real PDF output on both text-only and picture-rich publications.
 
 GFOpenPressmaster 0.1.2 inherits OpenLayout 0.14's shared shape display operations

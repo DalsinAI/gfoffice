@@ -49,6 +49,14 @@ for name in ('catalog', 'merge', 'print', 'template'):
     rx = read('tests/arexx/pressmaster-%s.rexx' % name)
     check("port = 'GFOPENPRESSMASTER'" in rx, 'tests/arexx/pressmaster-%s.rexx addresses GFOPENPRESSMASTER' % name)
 
+mk = read('Makefile')
+for t in ('core', 'merge', 'merge-show', 'template'):
+    for k in ('check', 'test'):
+        new = 'pressmaster-%s-%s' % (t, k)
+        check(re.search(r'(?m)^' + re.escape(new) + r':', mk) is not None, 'make target ' + new)
+        check(re.search(r'(?m)^' + k + ': ' + re.escape(new) + r'$', mk) is not None, new + ' is part of make ' + k)
+        check(('publisher-%s-%s: %s\n' % (t, k, new)) in mk, 'old target publisher-%s-%s still runs %s' % (t, k, new))
+
 # the old name is left only in the alias, the notes that say it was renamed, and the team-notes plan path
 ALLOWED = ('REXX_OLD_PORT_NAME', 'called GFOpenPublisher before', 'GFOPENPUBLISHER-PARITY-PLAN',
            'renamed from GFOpenPublisher', 'Renamed from GFOpenPublisher', 'test_pressmaster_name.py', 'GFOPENPUBLISHER still answers',
