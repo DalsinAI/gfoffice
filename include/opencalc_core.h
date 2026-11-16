@@ -1241,6 +1241,12 @@ int oc_core_accept_change(oc_core *core, int index);
 int oc_core_reject_change(oc_core *core, int index);
 int oc_core_accept_all_changes(oc_core *core);
 int oc_core_reject_all_changes(oc_core *core);
+/* The change's place shown: its sheet made the active one and its cell (a row's or column's first) selected.
+ * OWF_ERR_UNSUPPORTED: no such change, or its sheet is gone. */
+int oc_core_change_go(oc_core *core, int index);
+/* A change as the Manage Changes list shows it: oc_core_change_text, then its author and time
+ * ("... (Dale, 2026-11-16 06:30)"; no author: "Unknown Author"): as snprintf */
+int oc_core_change_line(const oc_core *core, int index, char *out, size_t size);
 
 /* ---- What the window reads of the book: copies only ----
  * The window reads the book through these calls and oc_view_draw's display list,

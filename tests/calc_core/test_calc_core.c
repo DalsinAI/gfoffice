@@ -8181,6 +8181,43 @@ static void test_solver_nonlinear(void)
     remove(ods);
 }
 
+/* What the Manage Changes window and ARexx use: a change's line with its author and time, and going to it. */
+static void test_change_window_helpers(void)
+{
+    oc_core *core = fresh();
+    char line[400];
+    unsigned row = 9, col = 9;
+    int two;
+    if (!core) return;
+    oc_core_set_track_clock(core, track_clock, NULL);
+    CHECK(oc_core_set_track_author(core, "Kill Crazy") == OWF_OK);
+    two = oc_core_add_sheet(core, "Two");
+    CHECK(two == 1 && oc_core_set_sheet(core, 0) == OWF_OK);
+    CHECK(oc_core_set_track_changes(core, 1) == OWF_OK);
+    enter_at(core, "C4", "12");
+    CHECK(oc_core_set_sheet(core, two) == OWF_OK);
+    go(core, "B1");
+    CHECK(oc_core_insert(core, 1) == OWF_OK && oc_core_change_count(core) == 2);   /* column B on Two */
+    CHECK(oc_core_change_line(core, 0, line, sizeof line) > 0);
+    CHECK_STR(line, "Cell Sheet1.C4 changed from (empty) to 12 (Kill Crazy, 2026-11-16 07:00)");
+    /* going to it: its sheet active, its cell selected */
+    CHECK(oc_core_change_go(core, 0) == OWF_OK && oc_core_sheet(core) == 0);
+    oc_core_active(core, &row, &col);
+    CHECK(row == 3 && col == 2);
+    CHECK(oc_core_change_go(core, 1) == OWF_OK && oc_core_sheet(core) == two);
+    oc_core_active(core, &row, &col);
+    CHECK(row == 0 && col == 1);
+    CHECK(oc_core_change_go(core, 2) == OWF_ERR_UNSUPPORTED && oc_core_change_go(core, -1) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_change_line(core, 5, line, sizeof line) == 0 && !line[0]);
+    /* no author, and a time in another form */
+    CHECK(oc_core_set_track_author(core, NULL) == OWF_OK);
+    enter_at(core, "A1", "x");
+    CHECK(oc_core_change_line(core, 2, line, sizeof line) > 0 && strstr(line, "(Unknown Author, 2026-11-16 07:00)"));
+    /* a short buffer is cut, as snprintf */
+    CHECK(oc_core_change_line(core, 0, line, 10) > 9 && strlen(line) == 9);
+    oc_core_free(core);
+}
+
 /* Consolidate's sources as defined names of ranges, and the names the window offers. */
 static void test_consolidate_names(void)
 {
@@ -8705,6 +8742,7 @@ int main(void)
     test_book_protection();
     test_external_books();
     test_track_changes();
+    test_change_window_helpers();
     test_edit_links();
     test_pivot_summary();
     test_pivot_layout();
