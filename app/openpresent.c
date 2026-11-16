@@ -8346,7 +8346,7 @@ static int rexx_do_command(const char *command, char **result_out)
         rexx_copy(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE "
                   "SAVEAS EXPORT PRINT " UNIT_UPPER "S " UNIT_UPPER " NEW" UNIT_UPPER " DELETE" UNIT_UPPER " VIEW OUTLINE GETNOTES SETNOTES PICK PICKED MOVEPICKED COPYPICKED DELETEPICKED HIDEPICKED "
                   "SHOWPICKED OBJECTS PICKOBJECTS PICKEDOBJECTS OBJECTBOX MOVEOBJECTS ALIGN DISTRIBUTE GROUP UNGROUP DELETEOBJECTS GETTEXT "
-                  "SETTEXT UNDO REDO QUIT");
+                  "SETTEXT SPELL UNDO REDO QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {
         if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -8527,6 +8527,16 @@ static int rexx_do_command(const char *command, char **result_out)
                 if (opr_outline_build(deck, &outline_rows) < 0) outline_rows.count = 0;
                 snprintf(result_text, sizeof result_text, "%d", outline_rows.count);
             }
+        }
+    } else if (starts_word_ci(command, "SPELL", &arg)) {    /* SPELL [COUNT|LIST|CHECK w|SUGGEST w|ADD w|IGNORE w] */
+        int r;
+        if (!spell_ready(0)) {
+            ok = 0; rc_fail = RX_NOW;
+            rexx_copy(result_text, sizeof result_text, "No dictionary: en_GB.words goes in PROGDIR:Dictionaries/");
+        } else if ((r = opr_spell_rexx(deck, spell, arg, result_text, sizeof result_text)) != 0) {
+            ok = 0; rc_fail = r;
+        } else if (starts_word_ci(arg, "ADD", NULL) || starts_word_ci(arg, "IGNORE", NULL)) {
+            draw_slide();                                  /* the underline changes */
         }
     } else if (starts_word_ci(command, "GETNOTES", &arg)) {  /* this slide's speaker notes, paragraphs as \n */
         char *t = deck ? opr_notes_get(deck, current) : NULL, *o = result_text;
