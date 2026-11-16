@@ -632,6 +632,94 @@ static void test_peak_cap(void)
     owf_project_free(p);
 }
 
+/* Levelling: Dale on A (2d) and B (1d, then C) at once, Ann on E and F (1d each) at once, Bob alone. */
+static void test_leveling(void)
+{
+    owf_project *p = plan();
+    int a = owf_project_add_task(p, "A", 2 * D), b = owf_project_add_task(p, "B", D), c = owf_project_add_task(p, "C", D);
+    int e = owf_project_add_task(p, "E", D), f = owf_project_add_task(p, "F", D), g = owf_project_add_task(p, "G", D);
+    int dale = owf_project_add_resource(p, "Dale"), ann = owf_project_add_resource(p, "Ann");
+    int bob = owf_project_add_resource(p, "Bob");
+    owf_project_link(p, b, c, OWF_LINK_FS, 0, 0);
+    owf_project_assign(p, a, dale, 100);
+    owf_project_assign(p, b, dale, 100);
+    owf_project_assign(p, e, ann, 100);
+    owf_project_assign(p, f, ann, 100);
+    owf_project_assign(p, g, bob, 100);
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK(p->resources[dale].overallocated && p->resources[ann].overallocated);
+
+    /* within slack: A and B have none (B, C end with A on Tuesday), so only F moves, to Tuesday */
+    CHECK_N(owf_project_level(p, 1), 1);
+    CHECK_N(TASK(p, f)->level_delay, D);
+    CHECK_T(TASK(p, f)->early_start, AT(17, 8, 0));
+    CHECK_T(TASK(p, e)->early_start, AT(16, 8, 0));
+    CHECK_N(TASK(p, b)->level_delay, 0);
+    CHECK(p->resources[dale].overallocated && !p->resources[ann].overallocated);
+
+    /* everywhere: B waits for A (Wednesday) and C after it (Thursday); Bob's G stays */
+    CHECK_N(owf_project_level(p, 0), 2);
+    CHECK_N(TASK(p, b)->level_delay, 2 * D);
+    CHECK_T(TASK(p, b)->early_start, AT(18, 8, 0));
+    CHECK_T(TASK(p, c)->early_start, AT(19, 8, 0));
+    CHECK_T(TASK(p, a)->early_start, AT(16, 8, 0));
+    CHECK_T(TASK(p, g)->early_start, AT(16, 8, 0));
+    CHECK_T(TASK(p, f)->early_start, AT(17, 8, 0));
+    CHECK(!p->resources[dale].overallocated && !p->resources[ann].overallocated);
+    CHECK_N(p->resources[dale].peak, 100);
+    CHECK_T(p->finish, AT(19, 17, 0));
+    /* levelling again starts from no delays: the same answer */
+    CHECK_N(owf_project_level(p, 0), 2);
+    CHECK_T(TASK(p, c)->early_start, AT(19, 8, 0));
+
+    /* Clear Leveling */
+    CHECK_N(owf_project_clear_leveling(p), OWF_OK);
+    CHECK_N(TASK(p, b)->level_delay + TASK(p, f)->level_delay, 0);
+    CHECK_T(TASK(p, b)->early_start, AT(16, 8, 0));
+    CHECK(p->resources[dale].overallocated);
+
+    /* a task that must start on a date keeps it: A moves after B instead */
+    TASK(p, b)->constraint = OWF_CON_MSO;
+    TASK(p, b)->constraint_date = AT(16, 8, 0);
+    CHECK_N(owf_project_level(p, 0), 2);
+    CHECK_N(TASK(p, b)->level_delay, 0);
+    CHECK_T(TASK(p, a)->early_start, AT(17, 8, 0));
+    CHECK(!p->resources[dale].overallocated);
+    /* a delay on a task that must start on a date is not used */
+    TASK(p, b)->level_delay = D;
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_T(TASK(p, b)->early_start, AT(16, 8, 0));
+
+    /* what no move mends: Bob at 200% on G alone; levelling ends and leaves it */
+    owf_project_assign(p, g, bob, 200);
+    CHECK_N(owf_project_level(p, 0), 2);
+    CHECK(p->resources[bob].overallocated);
+    CHECK_T(TASK(p, g)->early_start, AT(16, 8, 0));
+    CHECK_N(owf_project_level(NULL, 0), -1);
+    CHECK_N(owf_project_clear_leveling(NULL), OWF_ERR_FORMAT);
+    owf_project_free(p);
+}
+
+/* A leveling delay in elapsed time (MSPDI's "edays") counts every minute: a day from Monday 08:00 is
+ * Tuesday 08:00 whatever the calendar. */
+static void test_leveling_elapsed(void)
+{
+    owf_project *p = plan();
+    int a = owf_project_add_task(p, "A", D);
+    TASK(p, a)->level_delay = 3 * 1440;
+    TASK(p, a)->level_delay_elapsed = 1;
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_T(TASK(p, a)->early_start, AT(19, 8, 0));
+    TASK(p, a)->level_delay_elapsed = 0;
+    TASK(p, a)->level_delay = 3 * D;
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_T(TASK(p, a)->early_start, AT(19, 8, 0));
+    TASK(p, a)->level_delay = 5 * D;                                       /* over the weekend */
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_T(TASK(p, a)->early_start, AT(23, 8, 0));
+    owf_project_free(p);
+}
+
 static void test_summary_back_to_task(void)
 {
     owf_project *p = plan();
@@ -666,6 +754,8 @@ int main(void)
     test_earned_value();
     test_more_baselines();
     test_actuals();
+    test_leveling();
+    test_leveling_elapsed();
     test_summary_back_to_task();
     test_peak_cap();
     if (fails) {
