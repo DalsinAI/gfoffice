@@ -6065,6 +6065,107 @@ static void test_pivot_sort(void)
 
 /* Hidden items (owf_pivot_set_hidden): a row item and a column item left out with their totals,
  * kept through a new layout, XLSX and ODS, idle while their field is not on the rows or columns. */
+/* The pivot table changed by PIVOTSET's words (oc_core_pivot_command): sorts, hidden items, groups, groups by
+   hand and "show data as", each one Undo step. */
+static void test_pivot_command(void)
+{
+    static const char *const rows[][5] = {
+        { "Region", "Product", "Year", "Sales", "Units" },
+        { "East", "A", "2025", "10", "1" }, { "East", "B", "2025", "20", "2" },
+        { "West", "A", "2025", "5", "3" }, { "West", "A", "2026", "15", "4" },
+        { "West", "B", "2026", "25", "5" }, { "North", "B", "2026", "30", "6" }
+    };
+    oc_core *core = fresh();
+    owf_range selected;
+    owf_pivotdef def, got;
+    char why[160];
+    if (!core)
+        return;
+    pivot_table_at(core, rows, 7);
+    CHECK(oc_core_pivot_command(core, "SORT Region ASCENDING", why, sizeof why) == OWF_ERR_UNSUPPORTED && why[0]);
+    CHECK(oc_parse_range("A1:E7", &selected));
+    oc_core_select_range(core, &selected);
+    owf_pivot_init(&def);
+    def.nrow = 1; def.row[0] = 0;
+    def.ndata = 1; def.data[0].field = 3; def.data[0].function = OC_SUBTOTAL_SUM;
+    CHECK(oc_core_pivot_create(core, &def) == OWF_OK);
+    CHECK_STR(text(core, "A2"), "East");
+    CHECK_STR(text(core, "A4"), "North");
+    CHECK(oc_core_pivot_get(core, &got));
+    CHECK(oc_core_pivot_field(core, &got, "region") == 0 && oc_core_pivot_field(core, &got, "UNITS") == 4 &&
+          oc_core_pivot_field(core, &got, "3") == 2 && oc_core_pivot_field(core, &got, "6") == -1 &&
+          oc_core_pivot_field(core, &got, "Nowhere") == -1);
+
+    /* sorts, by heading or number, case aside; Undo takes one back */
+    CHECK(oc_core_pivot_command(core, "sort region ascending", why, sizeof why) == OWF_OK);
+    CHECK_STR(text(core, "A2"), "East");
+    CHECK_STR(text(core, "A3"), "North");
+    CHECK_STR(text(core, "A4"), "West");
+    CHECK(oc_core_pivot_command(core, "SORT 1 DESCENDING", why, sizeof why) == OWF_OK);
+    CHECK_STR(text(core, "A2"), "West");
+    CHECK(oc_core_pivot_get(core, &got) && owf_pivot_sort_of(&got, 0) == OWF_PIVOT_SORT_DESCENDING);
+    CHECK(oc_core_undo(core) == OWF_OK);
+    CHECK_STR(text(core, "A4"), "West");
+    CHECK(oc_core_pivot_command(core, "SORT Region SOURCE", why, sizeof why) == OWF_OK);
+    CHECK(oc_core_pivot_get(core, &got) && got.nsort == 0);
+    CHECK_STR(text(core, "A3"), "West");
+
+    /* hidden items, out of the totals; quoted; shown again one by one or all at once */
+    CHECK(oc_core_pivot_command(core, "HIDE Region \"West\" North", why, sizeof why) == OWF_OK);
+    CHECK_STR(text(core, "A2"), "East");
+    CHECK_STR(text(core, "A3"), "Grand Total");
+    CHECK(fabs(num(core, "B3") - 30.0) < 1e-12);
+    CHECK(oc_core_pivot_command(core, "SHOW Region North", why, sizeof why) == OWF_OK);
+    CHECK(oc_core_pivot_get(core, &got) && got.nhide == 1);
+    CHECK(oc_core_pivot_command(core, "SHOW Region ALL", why, sizeof why) == OWF_OK);
+    CHECK(oc_core_pivot_get(core, &got) && got.nhide == 0);
+    CHECK(fabs(num(core, "B5") - 105.0) < 1e-12);
+
+    /* groups made by hand, then a group of a field that has them refused until they go */
+    CHECK(oc_core_pivot_command(core, "NAME Region Coast East West", why, sizeof why) == OWF_OK);
+    CHECK_STR(text(core, "A2"), "Coast");
+    CHECK_STR(text(core, "A3"), "North");
+    CHECK(fabs(num(core, "B2") - 75.0) < 1e-12);
+    CHECK(oc_core_pivot_command(core, "GROUP Region YEARS", why, sizeof why) == OWF_ERR_UNSUPPORTED && why[0]);
+    CHECK(oc_core_pivot_command(core, "UNNAME Region East West", why, sizeof why) == OWF_OK);
+    CHECK(oc_core_pivot_get(core, &got) && got.nnamed == 0);
+    CHECK_STR(text(core, "A2"), "East");
+
+    /* numbers grouped: Units as the row field, in ranges of 3 from 0 to 5 */
+    got.row[0] = 4;
+    CHECK(oc_core_pivot_set_layout(core, &got) == OWF_OK);
+    CHECK(oc_core_pivot_command(core, "GROUP Units 0 5 3", why, sizeof why) == OWF_OK);
+    CHECK(oc_core_pivot_get(core, &got) && owf_pivot_group_of(&got, 4) &&
+          owf_pivot_group_of(&got, 4)->by == OWF_PIVOT_GROUP_RANGE && owf_pivot_group_of(&got, 4)->step == 3.0);
+    CHECK(fabs(num(core, "B2") - 30.0) < 1e-12 && fabs(num(core, "B3") - 45.0) < 1e-12 &&
+          fabs(num(core, "B4") - 30.0) < 1e-12);  /* 0-2, 3-5, above 5 */
+    CHECK_STR(text(core, "A5"), "Grand Total");
+    CHECK(oc_core_pivot_command(core, "NAME Units Low 1 2", why, sizeof why) == OWF_ERR_UNSUPPORTED && why[0]);
+    CHECK(oc_core_pivot_command(core, "GROUP Units NONE", why, sizeof why) == OWF_OK);
+    CHECK(oc_core_pivot_get(core, &got) && !owf_pivot_group_of(&got, 4));
+    CHECK_STR(text(core, "A8"), "Grand Total");
+
+    /* how a data field shows, by its place or its field */
+    CHECK(oc_core_pivot_command(core, "SHOWAS 1 TOTAL", why, sizeof why) == OWF_OK);
+    CHECK(oc_core_pivot_get(core, &got) && got.data[0].show == OWF_PIVOT_SHOW_TOTAL);
+    CHECK(fabs(num(core, "B8") - 1.0) < 1e-12);
+    CHECK(oc_core_pivot_command(core, "SHOWAS Sales normal", why, sizeof why) == OWF_OK);
+    CHECK(oc_core_pivot_get(core, &got) && got.data[0].show == OWF_PIVOT_SHOW_NORMAL);
+
+    /* words that are not a change */
+    CHECK(oc_core_pivot_command(core, "SORT Nowhere ASCENDING", why, sizeof why) == OWF_ERR_FORMAT && why[0]);
+    CHECK(oc_core_pivot_command(core, "SORT Region UP", why, sizeof why) == OWF_ERR_FORMAT);
+    CHECK(oc_core_pivot_command(core, "FLY Region", why, sizeof why) == OWF_ERR_FORMAT);
+    CHECK(oc_core_pivot_command(core, "SHOWAS 5 ROW", why, sizeof why) == OWF_ERR_FORMAT);
+    CHECK(oc_core_pivot_command(core, "SHOWAS Region ROW", why, sizeof why) == OWF_ERR_FORMAT);
+    CHECK(oc_core_pivot_command(core, "GROUP Units 5 0 1", why, sizeof why) == OWF_ERR_FORMAT);
+    CHECK(oc_core_pivot_command(core, "GROUP Units 0 5 0", why, sizeof why) == OWF_ERR_FORMAT);
+    CHECK(oc_core_pivot_command(core, "HIDE Region \"West", why, sizeof why) == OWF_ERR_FORMAT);
+    CHECK(oc_core_pivot_command(core, "HIDE Region", why, sizeof why) == OWF_ERR_FORMAT);
+    CHECK(oc_core_pivot_command(core, "SORT", NULL, 0) == OWF_ERR_FORMAT);
+    oc_core_free(core);
+}
+
 static void test_pivot_hide(void)
 {
     static const char *const rows[][5] = {
@@ -7618,6 +7719,7 @@ int main(void)
     test_pivot_layout();
     test_pivot_sort();
     test_pivot_hide();
+    test_pivot_command();
     test_pivot_show_as();
     test_pivot_group();
     test_pivot_group_xlsx();
