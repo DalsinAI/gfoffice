@@ -481,17 +481,34 @@ static void record_delete(oc_core *core, const oc_trackhint *h, const oc_undo *u
     }
 }
 
+/* Sheet numbers through a list and its deletions' changes: a sheet moved (to >= 0), or one added at from (to < 0). */
+static void sheets_renumber(owf_change *list, int n, int from, int to)
+{
+    int i;
+    for (i = 0; i < n; i++) {
+        int s = list[i].sheet;
+        if (to < 0) {
+            if (s >= from)
+                s++;
+        } else if (s == from)
+            s = to;
+        else if (from < to && s > from && s <= to)
+            s--;
+        else if (to < from && s >= to && s < from)
+            s++;
+        list[i].sheet = s;
+        sheets_renumber(list[i].children, list[i].nchildren, from, to);
+    }
+}
+
 static void record_sheet(oc_core *core, const oc_trackhint *h)
 {
     owf_book *b = core->book;
     owf_change *c;
-    int i;
     if (h->sheet < 0 || h->sheet >= b->nsheets)
         return;
     if (h->kind == OC_HINT_ADD_SHEET) {
-        for (i = 0; i < b->nchanges; i++)
-            if (b->changes[i].sheet >= h->sheet)
-                b->changes[i].sheet++;
+        sheets_renumber(b->changes, b->nchanges, h->sheet, -1);
         if ((c = change_add(core, OWF_CHANGE_INSERT_SHEET, h->sheet)) && !(c->after = oc_strdup(b->sheets[h->sheet].name)))
             change_remove(b, b->nchanges - 1, 1);
     } else if (h->old_name && (c = change_add(core, OWF_CHANGE_RENAME_SHEET, h->sheet))) {
@@ -612,18 +629,7 @@ void oc_track_opened(oc_core *core)
 
 void oc_track_sheet_moved(oc_core *core, int from, int to)
 {
-    owf_book *b = core->book;
-    int i;
-    for (i = 0; i < b->nchanges; i++) {
-        int s = b->changes[i].sheet;
-        if (s == from)
-            s = to;
-        else if (from < to && s > from && s <= to)
-            s--;
-        else if (to < from && s >= to && s < from)
-            s++;
-        b->changes[i].sheet = s;
-    }
+    sheets_renumber(core->book->changes, core->book->nchanges, from, to);
 }
 
 /* ---- What the window reads ---- */
@@ -816,8 +822,10 @@ static int reject_lines(oc_core *core, int index)
         if (grown) {
             b->changes = grown;
             b->capchanges = b->nchanges + c.nchildren;
-            for (i = 0; i < c.nchildren; i++)
+            for (i = 0; i < c.nchildren; i++) {
                 *place(&c.children[i], axis) += p;
+                c.children[i].sheet = c.sheet;                  /* where the deletion is now */
+            }
             /* back where they were in the list: before the first change made after them */
             for (at = 0; at < b->nchanges && b->changes[at].id < c.children[0].id; at++)
                 ;

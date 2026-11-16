@@ -5906,6 +5906,32 @@ static void test_track_changes(void)
         }
     }
     oc_core_free(core);
+
+    /* a deletion's changes follow their sheet when sheets move or are added before it is rejected */
+    if ((core = fresh()) != NULL) {
+        int three, one = 1, two = 0;
+        oc_core_set_track_clock(core, track_clock, NULL);
+        CHECK(oc_core_add_sheet(core, "Two") == 1 && oc_core_set_sheet(core, 1) == OWF_OK);
+        enter_at(core, "B2", "7");
+        CHECK(oc_core_set_sheet(core, 0) == OWF_OK && oc_core_set_track_changes(core, 1) == OWF_OK);
+        enter_at(core, "B2", "42");
+        go(core, "B2");
+        CHECK(oc_core_delete(core, 0) == OWF_OK && oc_core_change_count(core) == 1);
+        CHECK(oc_core_move_sheet(core, 0, 1) == OWF_OK);          /* Sheet1 to the end */
+        three = oc_core_add_sheet(core, "Three");
+        CHECK(three >= 0 && oc_core_change_count(core) == 2);
+        if (three <= one) one++;
+        if (three <= two) two++;
+        c = oc_core_change_at(core, 0);
+        CHECK(c && c->kind == OWF_CHANGE_DELETE_ROWS && c->sheet == one && c->nchildren == 1 && c->children[0].sheet == one);
+        CHECK(oc_core_reject_change(core, 0) == OWF_OK && oc_core_change_count(core) == 2);
+        c = oc_core_change_at(core, 0);
+        CHECK(c && c->kind == OWF_CHANGE_CELL && c->sheet == one && c->row == 1 && c->col == 1);
+        CHECK(oc_core_reject_change(core, 0) == OWF_OK && oc_core_change_count(core) == 1);
+        CHECK(oc_core_set_sheet(core, two) == OWF_OK && fabs(num(core, "B2") - 7) < 1e-9);
+        CHECK(oc_core_set_sheet(core, one) == OWF_OK && empty_at(core, "B2"));
+        oc_core_free(core);
+    }
 }
 
 static void test_book_protection(void)
