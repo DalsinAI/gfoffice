@@ -1,7 +1,8 @@
 /*
- * The shapes' outlines on the PC (libowf/diagram/owf_dshape.c): every shape word gives an outline that fills its
- * box and stays inside it, turned and flipped shapes land where they should, and the names go both ways. The
- * places below were worked out by hand. Run under ASan and UBSan by make check.
+ * The shapes' outlines on the PC (libowf/diagram/owf_dshape.c): every shape word (basic, flowchart, UML and
+ * network) gives an outline that fills its box and stays inside it, turned and flipped shapes land where they
+ * should, and the names go both ways. The places below were worked out by hand. Run under ASan and UBSan by make
+ * check.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include <stdio.h>
@@ -44,6 +45,17 @@ static void test_every_shape(void)
         "shape=singleArrow;", "shape=doubleArrow;", "triangle;direction=south;", "shape=mxgraph.flowchart.delay;",
         "shape=mxgraph.flowchart.or;", "shape=mxgraph.flowchart.summing_function;",
         "shape=mxgraph.flowchart.off-page_reference;", "shape=mxgraph.flowchart.paper_tape;",
+        "shape=umlLifeline;perimeter=lifelinePerimeter;size=40;", "shape=umlBoundary;", "shape=umlEntity;",
+        "shape=umlControl;", "shape=umlDestroy;", "shape=component;", "shape=module;jettyWidth=10;",
+        "shape=folder;tabWidth=40;tabHeight=14;", "shape=umlFrame;width=60;height=20;", "shape=requiredInterface;",
+        "shape=providedRequiredInterface;", "shape=endState;", "shape=lollipop;",
+        "shape=mxgraph.networks.server;", "shape=mxgraph.networks.pc;", "shape=mxgraph.networks.monitor;",
+        "shape=mxgraph.networks.laptop;", "shape=mxgraph.networks.router;", "shape=mxgraph.networks.switch;",
+        "shape=mxgraph.networks.hub;", "shape=mxgraph.networks.firewall;", "shape=mxgraph.networks.printer;",
+        "shape=mxgraph.networks.mobile;", "shape=mxgraph.networks.tablet;", "shape=mxgraph.networks.modem;",
+        "shape=mxgraph.networks.storage;", "shape=mxgraph.networks.mainframe;", "shape=mxgraph.networks.rack;",
+        "shape=mxgraph.networks.patch_panel;", "shape=mxgraph.networks.user_male;",
+        "shape=mxgraph.networks.cloud;", "shape=mxgraph.networks.router;direction=south;",
     };
     owf_dnum box[4] = { PX(20), PX(30), PX(120), PX(80) };
     int i, k, j;
@@ -59,7 +71,8 @@ static void test_every_shape(void)
         for (k = 0; k < s.nparts; k++) {
             const owf_dshape_part *pt = &s.parts[k];
             checks++;
-            if (pt->n < ((pt->flags & OWF_DSHAPE_CLOSED) ? 3 : 2) || !(pt->flags & (OWF_DSHAPE_FILL | OWF_DSHAPE_LINE)) ||
+            if (pt->n < ((pt->flags & OWF_DSHAPE_CLOSED) ? 3 : 2) ||
+                !(pt->flags & (OWF_DSHAPE_FILL | OWF_DSHAPE_LINE | OWF_DSHAPE_INK)) ||
                 pt->first + pt->n > s.npoints) {
                 fails++;
                 printf("FAIL: %s part %d: %d points, flags %u\n", styles[i], k, pt->n, pt->flags);
@@ -160,6 +173,11 @@ static void test_names(void)
     CHECK(owf_dshape_name("rounded=1;whiteSpace=wrap;") == NULL);
     CHECK(owf_dshape_name("triangle;") == NULL);
     CHECK(owf_dshape_name("shape=mxgraph.cisco.router;") == NULL);
+    CHECK_S(owf_dshape_name("shape=module;"), "component");
+    CHECK_S(owf_dshape_name("shape=umlLifeline;size=40;"), "umlLifeline");
+    CHECK_S(owf_dshape_name("shape=mxgraph.networks.patch_panel;"), "mxgraph.networks.patch_panel");
+    CHECK_S(owf_dshape_name("shape=mxgraph.networks.cloud;"), "cloud");
+    CHECK(owf_dshape_name("shape=mxgraph.networks.toaster;") == NULL);
     CHECK(owf_dshape_name(NULL) == NULL);
     CHECK_N(owf_dshape_outline(NULL, box, &s), 0);
     CHECK_N(owf_dshape_outline("shape=rhombus;", box, &s), 0);
@@ -168,12 +186,60 @@ static void test_names(void)
     CHECK(has(0, 0) && has(10, 10));
 }
 
+/* UML and the network set: the places that make each what it is. */
+static void test_uml_network(void)
+{
+    owf_dnum box[4] = { PX(10), PX(10), PX(100), PX(60) };
+    CHECK_N(owf_dshape_outline("shape=umlLifeline;size=20;", box, &s), 1);   /* a box, a dashed line down */
+    CHECK_N(s.nparts, 2);
+    CHECK(has(10, 10) && has(110, 30) && has(60, 30) && has(60, 70));
+    CHECK_N(s.parts[1].flags, OWF_DSHAPE_LINE | OWF_DSHAPE_DASHED);
+    CHECK_N(owf_dshape_outline("shape=folder;tabWidth=30;tabHeight=10;", box, &s), 1);
+    CHECK(has(10, 10) && has(40, 10) && has(40, 20) && has(110, 20) && has(110, 70) && has(10, 70));
+    CHECK_N(owf_dshape_outline("shape=folder;tabWidth=500;", box, &s), 1);   /* the tab no wider than the box */
+    CHECK(has(110, 10) && has(110, 30));
+    CHECK_N(owf_dshape_outline("shape=umlFrame;width=40;height=20;", box, &s), 1);   /* the name's corner */
+    CHECK(has(10, 30) && has(40, 30) && has(50, 20) && has(50, 10));
+    CHECK_N(owf_dshape_outline("shape=component;jettyWidth=20;jettyHeight=10;", box, &s), 1);
+    CHECK_N(s.nparts, 3);
+    CHECK(has(20, 10) && has(110, 70) && has(10, 28) && has(30, 38) && has(10, 46) && has(30, 56));
+    CHECK_N(owf_dshape_outline("shape=umlDestroy;", box, &s), 1);
+    CHECK(has(10, 10) && has(110, 70) && has(110, 10) && has(10, 70));
+    CHECK_N(owf_dshape_outline("shape=endState;", box, &s), 1);       /* a ring round a dot in the line colour */
+    CHECK_N(s.nparts, 2);
+    CHECK_N(s.parts[1].flags, OWF_DSHAPE_CLOSED | OWF_DSHAPE_INK | OWF_DSHAPE_LINE);
+    CHECK(has(110, 40) && has(90, 40));
+    CHECK_N(owf_dshape_outline("shape=umlBoundary;", box, &s), 1);
+    CHECK(has(10, 10) && has(10, 70) && has(35, 40) && has(110, 40));
+    CHECK_N(owf_dshape_outline("shape=requiredInterface;", box, &s), 1);   /* a socket open to the left */
+    CHECK(has(10, 10) && has(110, 40) && has(10, 70));
+
+    CHECK_N(owf_dshape_outline("shape=mxgraph.networks.firewall;", box, &s), 1);   /* bricks, joints staggered */
+    CHECK_N(s.nparts, 7);
+    CHECK_N(s.points[s.parts[3].first].x, PX(60));
+    CHECK_N(s.points[s.parts[4].first].x, PX(35));
+    CHECK_N(owf_dshape_outline("shape=mxgraph.networks.switch;", box, &s), 1);   /* front, top, side, arrows */
+    CHECK_N(s.nparts, 5);
+    CHECK(has(10, 30) && has(30, 10) && has(110, 10) && has(90, 70) && has(110, 50));
+    CHECK_N(s.parts[3].n, 5);
+    CHECK_N(owf_dshape_outline("shape=mxgraph.networks.server;", box, &s), 1);
+    CHECK_N(s.parts[3].flags & OWF_DSHAPE_INK, OWF_DSHAPE_INK);       /* the button */
+    CHECK_N(owf_dshape_outline("shape=mxgraph.networks.patch_panel;", box, &s), 1);
+    CHECK_N(s.nparts, 7);
+    CHECK_N(owf_dshape_outline("shape=mxgraph.networks.storage;", box, &s), 1);   /* three disks, two parts each */
+    CHECK_N(s.nparts, 6);
+    CHECK(has(60, 10) && has(60, 70));
+    CHECK_N(owf_dshape_outline("shape=mxgraph.networks.laptop;", box, &s), 1);
+    CHECK(has(20, 10) && has(100, 55) && has(110, 70) && has(10, 70));
+}
+
 int main(void)
 {
     test_every_shape();
     test_places();
     test_turned();
     test_names();
+    test_uml_network();
     printf("diagram shapes: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

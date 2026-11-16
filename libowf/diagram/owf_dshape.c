@@ -1,7 +1,7 @@
 /*
  * owf_dshape.c: the outlines of GFOpenDiag's shapes beyond the first flowchart set (owf_diagram.h, "Shapes"),
  * worked out once for the canvas and every writer (SVG, PDF, EPS) to draw: closed outlines to fill and stroke,
- * and lines to stroke. Integer arithmetic only: curves are runs of short lines from a 64-step sine table.
+ * and lines to stroke. The basic and flowchart sets, UML's, and the network set as flat drawings of our own. Integer arithmetic only: curves are runs of short lines from a 64-step sine table.
  * The shapes are drawn in our own way from their plain geometric descriptions; only their names (draw.io's
  * style words, "shape=cylinder3", "shape=note", and its direction, flipH and flipV keys) are taken from the
  * .drawio format, so that a file made here opens in diagrams.net as the same shapes and one made there opens
@@ -40,7 +40,13 @@ static int cos64(int a)
 enum {
     S_NONE, S_CYLINDER, S_CLOUD, S_DOCUMENT, S_MULTIDOC, S_ACTOR, S_NOTE, S_CARD, S_CUBE, S_STEP, S_TRAPEZOID,
     S_TAPE, S_INTERNAL, S_CALLOUT, S_DATASTORAGE, S_MANUALINPUT, S_DELAY, S_DISPLAY, S_OFFPAGE, S_CROSS, S_SUM,
-    S_OR, S_LOOPLIMIT, S_SORT, S_COLLATE, S_TRIANGLE, S_ARROW, S_DOUBLEARROW
+    S_OR, S_LOOPLIMIT, S_SORT, S_COLLATE, S_TRIANGLE, S_ARROW, S_DOUBLEARROW,
+    /* UML */
+    S_LIFELINE, S_BOUNDARY, S_ENTITY, S_CONTROL, S_DESTROY, S_COMPONENT, S_FOLDER, S_FRAME, S_REQUIRED, S_PROVREQ,
+    S_ENDSTATE, S_LOLLIPOP,
+    /* network */
+    S_SERVER, S_PC, S_MONITOR, S_LAPTOP, S_ROUTER, S_SWITCH, S_HUB, S_FIREWALL, S_PRINTER, S_MOBILE, S_TABLET,
+    S_MODEM, S_STORAGE, S_MAINFRAME, S_RACK, S_PATCHPANEL, S_USER
 };
 
 typedef struct {
@@ -73,6 +79,19 @@ static const shape_word words[] = {
     { "sortShape", S_SORT }, { "mxgraph.flowchart.sort", S_SORT },
     { "collate", S_COLLATE }, { "mxgraph.flowchart.collate", S_COLLATE },
     { "singleArrow", S_ARROW }, { "doubleArrow", S_DOUBLEARROW },
+    { "umlLifeline", S_LIFELINE }, { "umlBoundary", S_BOUNDARY }, { "umlEntity", S_ENTITY },
+    { "umlControl", S_CONTROL }, { "umlDestroy", S_DESTROY }, { "component", S_COMPONENT }, { "module", S_COMPONENT },
+    { "folder", S_FOLDER }, { "umlFrame", S_FRAME }, { "requiredInterface", S_REQUIRED },
+    { "providedRequiredInterface", S_PROVREQ }, { "endState", S_ENDSTATE }, { "lollipop", S_LOLLIPOP },
+    { "mxgraph.networks.server", S_SERVER }, { "mxgraph.networks.pc", S_PC },
+    { "mxgraph.networks.monitor", S_MONITOR }, { "mxgraph.networks.laptop", S_LAPTOP },
+    { "mxgraph.networks.router", S_ROUTER }, { "mxgraph.networks.switch", S_SWITCH },
+    { "mxgraph.networks.hub", S_HUB }, { "mxgraph.networks.firewall", S_FIREWALL },
+    { "mxgraph.networks.printer", S_PRINTER }, { "mxgraph.networks.mobile", S_MOBILE },
+    { "mxgraph.networks.tablet", S_TABLET }, { "mxgraph.networks.modem", S_MODEM },
+    { "mxgraph.networks.storage", S_STORAGE }, { "mxgraph.networks.mainframe", S_MAINFRAME },
+    { "mxgraph.networks.rack", S_RACK }, { "mxgraph.networks.patch_panel", S_PATCHPANEL },
+    { "mxgraph.networks.user_male", S_USER }, { "mxgraph.networks.cloud", S_CLOUD },
 };
 
 #define NWORDS ((int)(sizeof words / sizeof words[0]))
@@ -210,6 +229,66 @@ static owf_dnum smaller(owf_dnum a, owf_dnum b)
 }
 
 #define BOTH (OWF_DSHAPE_CLOSED | OWF_DSHAPE_FILL | OWF_DSHAPE_LINE)
+#define INKED (OWF_DSHAPE_CLOSED | OWF_DSHAPE_INK | OWF_DSHAPE_LINE)
+
+/* A box from x0, y0 to x1, y1 as one part. */
+static void rect(build *b, unsigned flags, owf_dnum x0, owf_dnum y0, owf_dnum x1, owf_dnum y1)
+{
+    start(b, flags);
+    pt(b, x0, y0); pt(b, x1, y0); pt(b, x1, y1); pt(b, x0, y1);
+}
+
+/* A line from x0, y0 to x1, y1 as one part. */
+static void line(build *b, unsigned flags, owf_dnum x0, owf_dnum y0, owf_dnum x1, owf_dnum y1)
+{
+    start(b, OWF_DSHAPE_LINE | flags);
+    pt(b, x0, y0); pt(b, x1, y1);
+}
+
+/* A whole ellipse as one part, a point each step 64ths of a turn. */
+static void oval(build *b, unsigned flags, owf_dnum cx, owf_dnum cy, owf_dnum rx, owf_dnum ry, int step)
+{
+    start(b, flags);
+    arc(b, cx, cy, rx, ry, 0, 64 - step, step);
+}
+
+/* A short drum from y to y + h (the cylinder's, its ends a high): the side and bottom, then the top's near edge. */
+static void drum(build *b, owf_dnum y, owf_dnum w, owf_dnum h, owf_dnum a, int step)
+{
+    start(b, BOTH);
+    arc(b, w / 2, y + a, w / 2, a, 32, 64, step);
+    arc(b, w / 2, y + h - a, w / 2, a, 0, 32, step);
+    start(b, OWF_DSHAPE_LINE);
+    arc(b, w / 2, y + a, w / 2, a, 32, 0, step);
+}
+
+/* An arrow as one line: from x0, y0 to its point at x1, y1 (level), the head's two barbs d long. */
+static void arrow_line(build *b, owf_dnum x0, owf_dnum x1, owf_dnum y, owf_dnum d)
+{
+    owf_dnum back = x1 > x0 ? -d : d;
+    start(b, OWF_DSHAPE_LINE);
+    pt(b, x0, y); pt(b, x1, y); pt(b, x1 + back, y - d); pt(b, x1, y); pt(b, x1 + back, y + d);
+}
+
+/* A slab seen from above and to the right: its front, top and right side, the top d deep (the switch's and hub's). */
+static void slab(build *b, owf_dnum w, owf_dnum h, owf_dnum d)
+{
+    start(b, BOTH);
+    pt(b, 0, d); pt(b, w - d, d); pt(b, w - d, h); pt(b, 0, h);
+    start(b, BOTH);
+    pt(b, 0, d); pt(b, d, 0); pt(b, w, 0); pt(b, w - d, d);
+    start(b, BOTH);
+    pt(b, w - d, d); pt(b, w, 0); pt(b, w, h - d); pt(b, w - d, h);
+}
+
+/* A hand-held: its body, its screen inside m across and t from the top to f from the bottom, and a button. */
+static void handheld(build *b, owf_dnum w, owf_dnum h, owf_dnum m, owf_dnum t, owf_dnum f)
+{
+    owf_dnum r = smaller(w, f) / 4;
+    rect(b, BOTH, 0, 0, w, h);
+    rect(b, OWF_DSHAPE_CLOSED | OWF_DSHAPE_LINE, m, t, w - m, h - f);
+    oval(b, INKED, w / 2, h - f / 2, r, r, 8);
+}
 
 /* A page with a wavy bottom (the document's): x, y its corner, w by h, the wave a high. */
 static void document_at(build *b, owf_dnum x, owf_dnum y, owf_dnum w, owf_dnum h, owf_dnum a)
@@ -417,6 +496,185 @@ static void make(build *b, const char *style, int kind)
         }
         break;
     }
+    /* ---- UML ---- */
+    case S_LIFELINE:                     /* a box at the top, a dashed line down from it */
+        d = clamp(num(style, "size", OWF_DNUM(40)), 0, h);
+        rect(b, BOTH, 0, 0, w, d);
+        line(b, OWF_DSHAPE_DASHED, w / 2, d, w / 2, h);
+        break;
+    case S_BOUNDARY:                     /* a circle held off a bar on the left */
+        oval(b, BOTH, w * 5 / 8, h / 2, w * 3 / 8, h / 2, 2);
+        line(b, 0, 0, 0, 0, h);
+        line(b, 0, 0, h / 2, w / 4, h / 2);
+        break;
+    case S_ENTITY:                       /* a circle on a line */
+        oval(b, BOTH, w / 2, h * 15 / 32, w / 2, h * 15 / 32, 2);
+        line(b, 0, 0, h, w, h);
+        break;
+    case S_CONTROL:                      /* a circle with an arrowhead on its top */
+        d = h / 8;
+        oval(b, BOTH, w / 2, (h + d) / 2, w / 2, (h - d) / 2, 2);
+        start(b, OWF_DSHAPE_LINE);
+        pt(b, w / 2 + w / 8, 0); pt(b, w / 2, d); pt(b, w / 2 + w / 8, 2 * d);
+        break;
+    case S_DESTROY:                      /* a cross */
+        line(b, 0, 0, 0, w, h);
+        line(b, 0, w, 0, 0, h);
+        break;
+    case S_COMPONENT: {                  /* a box with two tabs across its left side */
+        owf_dnum jw = clamp(num(style, "jettyWidth", OWF_DNUM(20)), 0, w / 2);
+        owf_dnum jh = clamp(num(style, "jettyHeight", OWF_DNUM(10)), 0, h / 4);
+        rect(b, BOTH, jw / 2, 0, w, h);
+        rect(b, BOTH, 0, h * 3 / 10, jw, h * 3 / 10 + jh);
+        rect(b, BOTH, 0, h * 6 / 10, jw, h * 6 / 10 + jh);
+        break;
+    }
+    case S_FOLDER: {                     /* a box with a tab on its top left (a UML package) */
+        owf_dnum tw = clamp(num(style, "tabWidth", OWF_DNUM(50)), 0, w);
+        owf_dnum th = clamp(num(style, "tabHeight", OWF_DNUM(20)), 0, h);
+        start(b, BOTH);
+        pt(b, 0, 0); pt(b, tw, 0); pt(b, tw, th); pt(b, w, th); pt(b, w, h); pt(b, 0, h);
+        line(b, 0, 0, th, tw, th);
+        break;
+    }
+    case S_FRAME: {                      /* a box with its name's corner cut off at the top left */
+        owf_dnum fw = clamp(num(style, "width", OWF_DNUM(60)), 0, w);
+        owf_dnum fh = clamp(num(style, "height", OWF_DNUM(30)), 0, h);
+        d = smaller(fh / 2, fw);
+        rect(b, BOTH, 0, 0, w, h);
+        start(b, OWF_DSHAPE_LINE);
+        pt(b, 0, fh); pt(b, fw - d, fh); pt(b, fw, fh - d); pt(b, fw, 0);
+        break;
+    }
+    case S_REQUIRED:                     /* a socket: half a circle open to the left */
+        start(b, OWF_DSHAPE_LINE);
+        arc(b, 0, h / 2, w, h / 2, 48, 80, 2);
+        break;
+    case S_PROVREQ:                      /* a ball in a socket */
+        oval(b, BOTH, w / 4, h / 2, w / 4, h / 4, 2);
+        start(b, OWF_DSHAPE_LINE);
+        arc(b, w * 2 / 5, h / 2, w * 3 / 5, h / 2, 48, 80, 2);
+        break;
+    case S_ENDSTATE:                     /* a ring round a dot */
+        oval(b, BOTH, w / 2, h / 2, w / 2, h / 2, 2);
+        oval(b, INKED, w / 2, h / 2, w * 3 / 10, h * 3 / 10, 2);
+        break;
+    case S_LOLLIPOP:                     /* a ball on a stick from the left */
+        a = smaller(w / 2, h / 2);
+        line(b, 0, 0, h / 2, w - 2 * a, h / 2);
+        oval(b, BOTH, w - a, h / 2, a, h / 2, 2);
+        break;
+    /* ---- Network: flat drawings of our own ---- */
+    case S_SERVER:                       /* a tower with two drive slots and a button */
+        rect(b, BOTH, 0, 0, w, h);
+        line(b, 0, w / 5, h / 6, w * 4 / 5, h / 6);
+        line(b, 0, w / 5, h / 3, w * 4 / 5, h / 3);
+        a = smaller(w, h) / 10;
+        oval(b, INKED, w / 2, h * 3 / 4, a, a, 8);
+        break;
+    case S_PC:                           /* a screen and keyboard on the left, a tower on the right */
+        rect(b, BOTH, w * 7 / 10, 0, w, h);
+        rect(b, BOTH, 0, h / 20, w * 62 / 100, h * 6 / 10);
+        rect(b, OWF_DSHAPE_CLOSED | OWF_DSHAPE_LINE, w / 20, h * 3 / 20, w * 57 / 100, h * 5 / 10);
+        rect(b, BOTH, w * 26 / 100, h * 6 / 10, w * 36 / 100, h * 3 / 4);
+        rect(b, BOTH, 0, h * 85 / 100, w * 62 / 100, h);
+        line(b, 0, w * 75 / 100, h / 5, w * 95 / 100, h / 5);
+        break;
+    case S_MONITOR:                      /* a screen on a stand */
+        rect(b, BOTH, 0, 0, w, h * 7 / 10);
+        rect(b, OWF_DSHAPE_CLOSED | OWF_DSHAPE_LINE, w / 12, h / 12, w - w / 12, h * 62 / 100);
+        start(b, BOTH);
+        pt(b, w * 2 / 5, h * 7 / 10); pt(b, w * 3 / 5, h * 7 / 10); pt(b, w * 65 / 100, h * 85 / 100);
+        pt(b, w * 35 / 100, h * 85 / 100);
+        rect(b, BOTH, w / 5, h * 85 / 100, w * 4 / 5, h);
+        break;
+    case S_LAPTOP:                       /* a lid and its screen over a base seen from the front */
+        rect(b, BOTH, w / 10, 0, w * 9 / 10, h * 3 / 4);
+        rect(b, OWF_DSHAPE_CLOSED | OWF_DSHAPE_LINE, w * 3 / 20, h / 15, w * 17 / 20, h * 2 / 3);
+        start(b, BOTH);
+        pt(b, w / 10, h * 3 / 4); pt(b, w * 9 / 10, h * 3 / 4); pt(b, w, h); pt(b, 0, h);
+        break;
+    case S_ROUTER:                       /* a puck with two crossed arrows on its top */
+        a = h / 4;
+        drum(b, 0, w, h, a, 2);
+        arrow_line(b, w * 3 / 10, w * 7 / 10, a * 2 / 3, a / 3);
+        arrow_line(b, w * 7 / 10, w * 3 / 10, a * 4 / 3, a / 3);
+        break;
+    case S_SWITCH:                       /* a slab with two arrows on its top, one each way */
+        d = h / 3;
+        slab(b, w, h, d);
+        arrow_line(b, w / 4, w * 3 / 4, d / 3, d / 4);
+        arrow_line(b, w * 3 / 4, w / 4, d * 2 / 3, d / 4);
+        break;
+    case S_HUB:                          /* a slab with a row of ports along its front */
+        d = h / 3;
+        slab(b, w, h, d);
+        start(b, OWF_DSHAPE_LINE);
+        for (i = 0; i < 6; i++) {        /* the ports as a battlement */
+            owf_dnum x = (w - d) * (2 * i + 1) / 13;
+            pt(b, x, h * 3 / 4); pt(b, x, h * 3 / 5); pt(b, x + (w - d) / 13, h * 3 / 5);
+            pt(b, x + (w - d) / 13, h * 3 / 4);
+        }
+        break;
+    case S_FIREWALL:                     /* a brick wall: three courses, the joints between bricks staggered */
+        rect(b, BOTH, 0, 0, w, h);
+        line(b, 0, 0, h / 3, w, h / 3);
+        line(b, 0, 0, h * 2 / 3, w, h * 2 / 3);
+        line(b, 0, w / 2, 0, w / 2, h / 3);
+        line(b, 0, w / 4, h / 3, w / 4, h * 2 / 3);
+        line(b, 0, w * 3 / 4, h / 3, w * 3 / 4, h * 2 / 3);
+        line(b, 0, w / 2, h * 2 / 3, w / 2, h);
+        break;
+    case S_PRINTER:                      /* paper in at the top, a body, a tray out at the bottom */
+        rect(b, BOTH, w / 5, 0, w * 4 / 5, h * 2 / 5);
+        rect(b, BOTH, w * 3 / 20, h * 7 / 10, w * 17 / 20, h);
+        rect(b, BOTH, 0, h * 3 / 10, w, h * 3 / 4);
+        line(b, 0, w / 5, h * 3 / 5, w * 4 / 5, h * 3 / 5);
+        break;
+    case S_MOBILE:
+        handheld(b, w, h, w / 10, h / 8, h / 6);
+        break;
+    case S_TABLET:
+        handheld(b, w, h, w / 16, h / 12, h / 10);
+        break;
+    case S_MODEM:                        /* a low box with an aerial and three lights */
+        rect(b, BOTH, 0, h / 3, w, h);
+        line(b, 0, w * 4 / 5, h / 3, w * 9 / 10, 0);
+        a = smaller(w / 16, h / 10);
+        for (i = 0; i < 3; i++)
+            oval(b, INKED, w * (2 + 2 * i) / 10, h * 2 / 3, a, a, 8);
+        break;
+    case S_STORAGE:                      /* three disks stacked */
+        k = h / 3;
+        a = k / 4;
+        for (i = 2; i >= 0; i--)
+            drum(b, k * i, w, i == 2 ? h - 2 * k : k, a, 4);
+        break;
+    case S_MAINFRAME:                    /* a cabinet with a panel along its top and three doors */
+        rect(b, BOTH, 0, 0, w, h);
+        line(b, 0, 0, h / 6, w, h / 6);
+        line(b, 0, w / 3, h / 6, w / 3, h);
+        line(b, 0, w * 2 / 3, h / 6, w * 2 / 3, h);
+        break;
+    case S_RACK:                         /* a frame with units across it */
+        d = smaller(w, h) / 12;
+        rect(b, BOTH, 0, 0, w, h);
+        rect(b, OWF_DSHAPE_CLOSED | OWF_DSHAPE_LINE, d, d, w - d, h - d);
+        for (i = 1; i <= 4; i++)
+            line(b, 0, d, d + (h - 2 * d) * i / 5, w - d, d + (h - 2 * d) * i / 5);
+        break;
+    case S_PATCHPANEL:                   /* a long strip with a row of sockets */
+        rect(b, BOTH, 0, 0, w, h);
+        for (i = 0; i < 6; i++) {
+            owf_dnum x = w * (2 * i + 1) / 13;
+            rect(b, INKED, x, h / 3, x + w / 13, h * 2 / 3);
+        }
+        break;
+    case S_USER:                         /* a head over shoulders */
+        oval(b, BOTH, w / 2, h / 4, w / 4, h / 4, 2);
+        start(b, BOTH);
+        arc(b, w / 2, h, w / 2, h / 2 - h / 20, 32, 64, 2);
+        break;
     default:
         break;
     }
