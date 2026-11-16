@@ -338,6 +338,7 @@ static int own_folder(void)
 static void test_columns(void)
 {
     opj_view v;
+    char line[96];
     int c;
     rx.view = NULL;
     CHECK_N(rx_do("COLUMN Resources"), OPJ_RX_NOW);                      /* no window */
@@ -360,6 +361,16 @@ static void test_columns(void)
     CHECK_N(rx_do("COLUMN Name HIDE"), OPJ_RX_NOW);                      /* the last one shown */
     CHECK_S(ok("COLUMN Name"), "1");
     CHECK(strstr(ok("HELP COLUMN"), "COLUMN/A,SHOW/S,HIDE/S") != NULL);
+    ok("ADDTASK Review");                                                 /* the new columns through SETCELL */
+    sprintf(line, "SETCELL %s Constraint FNET", ok("TASKS"));
+    ok(line);
+    sprintf(line, "GETCELL %s \"Constraint Type\"", ok("TASKS"));
+    CHECK_S(ok(line), "Finish No Earlier Than");
+    sprintf(line, "SETCELL %s Notes Ask Holly first", ok("TASKS"));
+    ok(line);
+    sprintf(line, "GETCELL %s Notes", ok("TASKS"));
+    CHECK_S(ok(line), "Ask Holly first");
+    CHECK_S(ok("COLUMN Notes SHOW"), "1");
     rx.view = NULL;
 }
 

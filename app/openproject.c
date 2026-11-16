@@ -48,7 +48,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenProject 0.1.3 (16.11.2026)"
+#define VERSION_TEXT "GFOpenProject 0.1.4 (16.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenProject, the project planner of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -59,6 +59,7 @@ enum {
     M_UNDO, M_REDO, M_EDIT, M_INSERT, M_DELETE, M_INDENT, M_OUTDENT, M_LINK, M_UNLINK,
     M_DAYS, M_WEEKS, M_MONTHS, M_QUARTERS, M_SHOW_BASELINE, M_RESOURCES, M_START, M_GANTT, M_USAGE,
     M_SET_BASELINE, M_CLEAR_BASELINE,
+    M_INFO,
     M_COLUMN                                 /* View > Columns: M_COLUMN + the column (OPJ_COL_) */
 };
 #define COLUMNS_ITEM 13                      /* View's item number of Columns */
@@ -83,6 +84,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Redo", "Y", 0, 0, (APTR)M_REDO },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Edit Cell...", "E", 0, 0, (APTR)M_EDIT },
+    { NM_ITEM, "Task Information...", "T", 0, 0, (APTR)M_INFO },
     { NM_ITEM, "Insert Task", "I", 0, 0, (APTR)M_INSERT },
     { NM_ITEM, "Delete Task", NULL, 0, 0, (APTR)M_DELETE },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -118,6 +120,9 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Baseline Finish", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_BASELINE_FINISH) },
     { NM_SUB, "Start Var.", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_START_VARIANCE) },
     { NM_SUB, "Finish Var.", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_FINISH_VARIANCE) },
+    { NM_SUB, "Constraint Type", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_CONSTRAINT_TYPE) },
+    { NM_SUB, "Constraint Date", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_CONSTRAINT_DATE) },
+    { NM_SUB, "Notes", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_NOTES) },
     { NM_TITLE, "Tools", NULL, 0, 0, NULL },
     { NM_ITEM, "Set Baseline", NULL, 0, 0, (APTR)M_SET_BASELINE },
     { NM_ITEM, "Clear Baseline", NULL, 0, 0, (APTR)M_CLEAR_BASELINE },
@@ -455,6 +460,125 @@ static int edit_allowed(int edit)
     set_status(why);
     redraw();
     return 0;
+}
+
+/* ---- Task Information (Edit > Task Information..., or a double-click on a bar) ---- */
+
+enum { TI_NAME, TI_DURATION, TI_PERCENT, TI_PREDECESSORS, TI_RESOURCES, TI_CONSTRAINT, TI_DATE, TI_NOTES, TI_N };
+
+static void task_info(void)
+{
+    static const int cols[TI_N] = { OPJ_COL_NAME, OPJ_COL_DURATION, OPJ_COL_PERCENT, OPJ_COL_PREDECESSORS,
+                                    OPJ_COL_RESOURCES, OPJ_COL_CONSTRAINT_TYPE, OPJ_COL_CONSTRAINT_DATE, OPJ_COL_NOTES };
+    static const char *const labels[TI_N] = { "Name", "Duration", "% Complete", "Predecessors", "Resources",
+                                              "Constraint", "Date", "Notes" };
+    static STRPTR kinds[9];
+    static char was[TI_N][400], now[TI_N][400];
+    struct Window *aw;
+    struct Gadget *eg = NULL, *g, *gad[TI_N];
+    struct NewGadget ng;
+    char title[80], why[160];
+    int i, done = 0, row = view.selected, lw = fw * 13 + 12, w = fw * 64, h, kind, kind_was;
+    if (rexx_busy || !edit_allowed(OPJ_EDIT_INFO)) return;
+    if (row < 0 || row >= DOC->plan->ntasks) { set_status("Task Information: choose a task first"); redraw(); return; }
+    for (i = 0; i < 8; i++) kinds[i] = (STRPTR)opj_constraint_name(i);
+    kinds[8] = NULL;
+    for (i = 0; i < TI_N; i++) opj_cell_text(DOC, row, cols[i], was[i], sizeof was[i]);
+    kind = kind_was = DOC->plan->tasks[row].constraint;
+    snprintf(title, sizeof title, "Task Information: %.50s", was[TI_NAME]);
+    h = (fh + 8) * (TI_N + 1) + 16;
+    aw = OpenWindowTags(NULL, WA_Title, (ULONG)title, WA_PubScreen, (ULONG)scr,
+        WA_Left, win->LeftEdge + 40, WA_Top, win->TopEdge + 30, WA_InnerWidth, w, WA_InnerHeight, h,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SmartRefresh, TRUE,
+        WA_AutoAdjust, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | STRINGIDCMP |
+                  BUTTONIDCMP | CYCLEIDCMP,
+        TAG_DONE);
+    if (!aw) return;
+    if (!(g = CreateContext(&eg))) { CloseWindow(aw); return; }
+    memset(&ng, 0, sizeof ng);
+    ng.ng_VisualInfo = vi;
+    ng.ng_TextAttr = &font_attr;
+    ng.ng_Height = fh + 6;
+    ng.ng_Flags = PLACETEXT_LEFT;
+    for (i = 0; i < TI_N; i++) {
+        ng.ng_LeftEdge = aw->BorderLeft + 8 + lw;
+        ng.ng_TopEdge = aw->BorderTop + 8 + i * (fh + 8);
+        ng.ng_Width = w - 16 - lw;
+        ng.ng_GadgetText = (UBYTE *)labels[i];
+        ng.ng_GadgetID = 10 + i;
+        if (i == TI_CONSTRAINT)
+            g = gad[i] = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)kinds, GTCY_Active, (ULONG)kind, TAG_DONE);
+        else
+            g = gad[i] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)was[i], GTST_MaxChars, 399, TAG_DONE);
+    }
+    ng.ng_Flags = PLACETEXT_IN;
+    ng.ng_TopEdge = aw->Height - aw->BorderBottom - 6 - (fh + 6);
+    ng.ng_LeftEdge = aw->BorderLeft + 8;
+    ng.ng_Width = fw * 10 + 16;
+    ng.ng_GadgetText = (UBYTE *)"OK";
+    ng.ng_GadgetID = 2;
+    g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+    ng.ng_LeftEdge = aw->Width - aw->BorderRight - 8 - ng.ng_Width;
+    ng.ng_GadgetText = (UBYTE *)"Cancel";
+    ng.ng_GadgetID = 3;
+    g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+    if (!g) { FreeGadgets(eg); CloseWindow(aw); return; }
+    AddGList(aw, eg, ~0, -1, NULL);
+    RefreshGList(eg, aw, NULL, -1);
+    GT_RefreshWindow(aw, NULL);
+    ActivateGadget(gad[TI_NAME], aw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        int ok = 0;
+        WaitPort(aw->UserPort);
+        while ((m = GT_GetIMsg(aw->UserPort)) != NULL) {
+            ULONG class = m->Class;
+            UWORD code = m->Code;
+            struct Gadget *gg = (struct Gadget *)m->IAddress;
+            GT_ReplyIMsg(m);
+            if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) done = 1;
+            else if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(aw); GT_EndRefresh(aw, TRUE); }
+            else if (class == IDCMP_GADGETUP && gg->GadgetID == 10 + TI_CONSTRAINT) kind = code;
+            else if (class == IDCMP_GADGETUP && gg->GadgetID == 2) ok = 1;
+            else if (class == IDCMP_GADGETUP && gg->GadgetID == 3) done = 1;
+        }
+        if (ok && !done) {
+            /* only the fields changed are typed, the constraint's type before its date, as one edit */
+            int use[TI_N], n = 0, bad = -1, rc;
+            const char *texts[TI_N];
+            for (i = 0; i < TI_N; i++) {
+                STRPTR str = NULL;
+                if (i == TI_CONSTRAINT) {
+                    if (kind == kind_was) continue;
+                    put_text(now[i], sizeof now[i], opj_constraint_name(kind));
+                } else {
+                    GT_GetGadgetAttrs(gad[i], aw, NULL, GTST_String, (ULONG)&str, TAG_DONE);
+                    put_text(now[i], sizeof now[i], str ? (const char *)str : "");
+                    if (!strcmp(now[i], was[i])) continue;
+                }
+                use[n] = cols[i];
+                texts[n++] = now[i];
+            }
+            if (!n) { done = 1; break; }
+            if ((rc = opj_set_cells(DOC, row, use, texts, n, &bad)) == OWF_OK) {
+                if (DOC->schedule_error) set_status("The links make a loop: the plan can't be scheduled");
+                done = 1;
+            } else {
+                for (i = 0; i < TI_N && bad >= 0; i++)
+                    if (cols[i] == use[bad]) break;
+                snprintf(why, sizeof why, rc == OWF_ERR_MEMORY ? "Task Information: out of memory"
+                                                                : "Task Information: %s was not taken",
+                         i < TI_N ? labels[i] : "a field");
+                SetWindowTitles(aw, (UBYTE *)why, (UBYTE *)~0);   /* stays open to put it right */
+                if (i < TI_N && i != TI_CONSTRAINT) ActivateGadget(gad[i], aw, NULL);
+            }
+        }
+    }
+    RemoveGList(aw, eg, -1);
+    FreeGadgets(eg);
+    CloseWindow(aw);
+    redraw();
 }
 
 static void edit_cell(void)
@@ -861,7 +985,7 @@ static void menu_action(ULONG id, struct MenuItem *item)
     {   /* the task edits act on the Gantt chart's selection, which the Resource Usage view hides */
         int edit = id == M_EDIT ? OPJ_EDIT_CELL : id == M_INSERT ? OPJ_EDIT_INSERT : id == M_DELETE ? OPJ_EDIT_DELETE
                  : id == M_INDENT ? OPJ_EDIT_INDENT : id == M_OUTDENT ? OPJ_EDIT_OUTDENT : id == M_LINK ? OPJ_EDIT_LINK
-                 : id == M_UNLINK ? OPJ_EDIT_UNLINK : OPJ_EDIT_NONE;
+                 : id == M_UNLINK ? OPJ_EDIT_UNLINK : id == M_INFO ? OPJ_EDIT_INFO : OPJ_EDIT_NONE;
         if (!edit_allowed(edit)) return;
     }
     if (id >= M_COLUMN && id < M_COLUMN + OPJ_NCOLS) {
@@ -899,6 +1023,7 @@ static void menu_action(ULONG id, struct MenuItem *item)
     case M_UNDO: undo_redo(0); return;
     case M_REDO: undo_redo(1); return;
     case M_EDIT: edit_cell(); return;
+    case M_INFO: task_info(); return;
     case M_INSERT: insert_task(); return;
     case M_DELETE: delete_task(); return;
     case M_INDENT:
@@ -975,8 +1100,15 @@ static void click(int x, int y, ULONG secs, ULONG micros)
         redraw();
         if (dbl) { last_row = -1; edit_cell(); }
     } else if ((hit.what == OPJ_HIT_BAR || hit.what == OPJ_HIT_CHART) && hit.row >= 0) {
+        int dbl = hit.what == OPJ_HIT_BAR && hit.row == last_row && last_col == -2 &&
+                  DoubleClick(last_s, last_m, secs, micros);
         view.selected = hit.row;
+        last_row = hit.row;
+        last_col = -2;                                  /* a bar, not a cell */
+        last_s = secs;
+        last_m = micros;
         redraw();
+        if (dbl) { last_row = -1; task_info(); }
     } else if (hit.what == OPJ_HIT_COLUMN_TITLE) {
         if (hit.column >= 0 && hit.column < OPJ_NCOLS) { sel_col = hit.column; redraw(); }
     }

@@ -263,6 +263,7 @@ static int find_column(const char *name, int resource_sheet)
         { "name", OPJ_COL_NAME }, { "percent", OPJ_COL_PERCENT }, { "complete", OPJ_COL_PERCENT },
         { "resources", OPJ_COL_RESOURCES }, { "startvariance", OPJ_COL_START_VARIANCE },
         { "finishvariance", OPJ_COL_FINISH_VARIANCE },
+        { "constraint", OPJ_COL_CONSTRAINT_TYPE },
     }, res[] = {
         { "maxunits", OPJ_RCOL_MAX }, { "max", OPJ_RCOL_MAX }, { "rate", OPJ_RCOL_RATE },
         { "stdrate", OPJ_RCOL_RATE }, { "name", OPJ_RCOL_NAME },

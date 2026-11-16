@@ -40,7 +40,18 @@ the next PR and only wires windows, menus and requesters to these calls.
   between the halves, a task's bar (its middle, its right end for stretching, its done part) or the
   chart.
 
-- **The column chooser** (View > Columns in the window, ARexx `COLUMN`): any of the 13 task sheet
+- **Task Information** (Edit > Task Information..., T, or a double-click on a bar): the task's Name,
+  Duration, % Complete, Predecessors, Resource Names, Constraint (a cycle of the eight types, as MS
+  Project names them), its Date and Notes in one window. OK types only the fields changed, the
+  constraint's type before its date, as one edit and one Undo step (`opj_set_cells`); a field refused
+  leaves the plan as it was, names itself in the window's title and keeps the window open to be put right.
+  Fields hold 399 bytes; a longer note is shown cut and left alone unless it is changed.
+- **Constraint Type, Constraint Date and Notes** are task sheet columns too (typed as cells, by ARexx
+  SETCELL, or shown by the column chooser). A type with a date and no date yet takes the task's start
+  (its finish for the finish types); NA as the date makes it As Soon As Possible; a date on an As Soon or
+  As Late As Possible task makes it Start No Earlier Than. A summary takes only As Soon As Possible, Start
+  No Earlier Than and Finish No Later Than.
+- **The column chooser** (View > Columns in the window, ARexx `COLUMN`): any of the 16 task sheet
   columns is shown or hidden, staying in the sheet's order (`opj_view_show_column`); a column shown gets
   its width (`opj_column_width`: 140 for Resource Names, 64 for % Complete), one with a width of its own
   keeps it, and the table always keeps one column. The selected cell moves to the next column shown when
