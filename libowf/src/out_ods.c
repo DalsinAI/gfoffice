@@ -2882,16 +2882,20 @@ static void put_pivot_level(ods_out *w, owf_buf *b, const owf_pivotdef *def, uns
     int sort = owf_pivot_sort_of(def, field), any = 0;
     const owf_pivot_group *group = owf_pivot_group_of(def, field);
     unsigned k;
+    int subtotal = owf_pivot_subtotal_of(def, field);
     for (k = 0; k < def->nhide && k < OWF_PIVOT_HIDES; k++)
         any |= def->hide[k].field == field;
-    if (sort == OWF_PIVOT_SORT_SOURCE && !any && !group) {
+    if (sort == OWF_PIVOT_SORT_SOURCE && !any && !group && !subtotal) {
         owf_buf_puts(b, "/>");
         return;
     }
     owf_buf_puts(b, ">");
-    if (sort == OWF_PIVOT_SORT_SOURCE && !any)
+    if (sort == OWF_PIVOT_SORT_SOURCE && !any && !subtotal)
         goto groups;
     owf_buf_puts(b, "<table:data-pilot-level>");
+    if (subtotal)                            /* a subtotal per item, each data field's own function */
+        owf_buf_puts(b, "<table:data-pilot-subtotals><table:data-pilot-subtotal table:function=\"auto\"/>"
+                        "</table:data-pilot-subtotals>");
     if (any) {
         owf_buf_puts(b, "<table:data-pilot-members>");
         for (k = 0; k < def->nhide && k < OWF_PIVOT_HIDES; k++) {

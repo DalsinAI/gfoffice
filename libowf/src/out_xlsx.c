@@ -1700,11 +1700,14 @@ static void pivot_table_xml(xlsx_out *w, owf_buf *b, const owf_pivotdef *def, in
         if (xp_is_data(def, f))
             owf_buf_puts(b, " dataField=\"1\"");
         owf_buf_puts(b, " showAll=\"0\"");
+        if (axis_field && strcmp(axis, "axisPage") && !owf_pivot_subtotal_of(def, f))
+            owf_buf_puts(b, " defaultSubtotal=\"0\"");     /* Excel's default is a subtotal per item */
         if (axis_field && owf_pivot_sort_of(def, f) != OWF_PIVOT_SORT_SOURCE)
             owf_buf_printf(b, " sortType=\"%s\"",
                            owf_pivot_sort_of(def, f) == OWF_PIVOT_SORT_DESCENDING ? "descending" : "ascending");
         if (axis_field) {
             xpivot_items it;
+            int with_default = !strcmp(axis, "axisPage") || owf_pivot_subtotal_of(def, f);
             xpivot_group xg;
             if (!xp_collect(w->book, def, f, &it)) {
                 free(it.items);
@@ -1712,7 +1715,7 @@ static void pivot_table_xml(xlsx_out *w, owf_buf *b, const owf_pivotdef *def, in
                 return;
             }
             if (xp_group(w->book, def, f, &it, &xg)) {  /* the items are the group items */
-                owf_buf_printf(b, "><items count=\"%d\">", xg.n + 1);
+                owf_buf_printf(b, "><items count=\"%d\">", xg.n + with_default);
                 for (i = 0; i < xg.n; i++) {
                     owf_cell key;
                     memset(&key, 0, sizeof key);
@@ -1722,13 +1725,13 @@ static void pivot_table_xml(xlsx_out *w, owf_buf *b, const owf_pivotdef *def, in
                     owf_buf_printf(b, "<item x=\"%d\"%s/>", i, owf_pivot_is_hidden(def, f, &key) ? " h=\"1\"" : "");
                 }
             } else {
-                owf_buf_printf(b, "><items count=\"%d\">", it.n + 1);
+                owf_buf_printf(b, "><items count=\"%d\">", it.n + with_default);
                 for (i = 0; i < it.n; i++)        /* a hidden row or column item: h="1" */
                     owf_buf_printf(b, "<item x=\"%d\"%s/>", i,
                                    strcmp(axis, "axisPage") && owf_pivot_is_hidden(def, f, it.items[i]) ? " h=\"1\""
                                                                                           : "");
             }
-            owf_buf_puts(b, "<item t=\"default\"/></items></pivotField>");
+            owf_buf_puts(b, with_default ? "<item t=\"default\"/></items></pivotField>" : "</items></pivotField>");
             free(it.items);
         } else
             owf_buf_puts(b, "/>");
