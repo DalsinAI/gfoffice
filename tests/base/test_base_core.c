@@ -975,6 +975,18 @@ static void test_views(void)
     CHECK(!strcmp(names_of(p, &v, 0, -1), "bob,Eve,Cy,dan,Ann"), "by money (empty first): %s", names_of(p, &v, 0, -1));
     view_set(&v, "Town", 0, "", OB_FILTER_NONE, "");
     CHECK(!strcmp(names_of(p, &v, 0, -1), "Cy,Ann,Eve,dan,bob"), "ties keep key order: %s", names_of(p, &v, 0, -1));
+    snprintf(v.then[0], sizeof v.then[0], "Name");
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "Cy,Ann,Eve,bob,dan"), "Town, then Name: %s", names_of(p, &v, 0, -1));
+    v.desc = 1;
+    CHECK(!strcmp(names_of(p, &v, 0, -1), "dan,bob,Eve,Ann,Cy"), "Z to A, both: %s", names_of(p, &v, 0, -1));
+    snprintf(v.then[1], sizeof v.then[1], "Postcode");
+    CHECK(!ob_view_check(p, "Customers", &v) && strstr(ob_error(p), "Postcode"), "then by a field that isn't: %s",
+          ob_error(p));
+    v.then[1][0] = 0;
+    v.desc = 0;
+    snprintf(v.sort, sizeof v.sort, "%s", "");
+    CHECK(!ob_view_check(p, "Customers", &v) && strstr(ob_error(p), "then by Name needs a sort"), "then with no sort: %s",
+          ob_error(p));
     view_set(&v, "Joined", 1, "", OB_FILTER_NONE, "");
     CHECK(!strcmp(names_of(p, &v, 0, -1), "bob,dan,Ann,Eve,Cy"), "dates newest first: %s", names_of(p, &v, 0, -1));
 

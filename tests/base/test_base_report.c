@@ -356,7 +356,7 @@ static void test_text_form(void)
     CHECK(!memcmp(&r, &back, sizeof r), "the same report back");
     CHECK(ob_report_to_text(&r, text, 20) == -1, "too small for the buffer");
 
-    CHECK(ob_report_from_text(&back, "X", "OADBREPORT 2\ntable=T\n", err, sizeof err) == -1 &&
+    CHECK(ob_report_from_text(&back, "X", "OADBREPORT 3\ntable=T\n", err, sizeof err) == -1 &&
           strstr(err, "a newer GFOpenBase"), "%s", err);
     CHECK(ob_report_from_text(&back, "X", "table=T\n", err, sizeof err) == -1 && strstr(err, "not a report"), "%s", err);
     CHECK(ob_report_from_text(&back, "X", "OADBREPORT 1\ncolumn=Qty|x|Median\n", err, sizeof err) == -1 &&
@@ -493,6 +493,307 @@ static void test_kept_reports(ob_project *p)
           "a report that can't be made isn't kept: %s", err);
 }
 
+/* ---- Report design 2: group levels and bands (core 0.2.0) ---- */
+
+static void sales_table(ob_project *p)
+{
+    static ob_table t;
+    static const char *const fields[] = { "Region", "Town", "Customer", "Amount" };
+    static const char *const rows[][4] = {
+        { "North", "Leeds", "Ann", "10" },
+        { "South", "Bath", "Di", "5" },
+        { "North", "York", "Bob", "20" },
+        { "North", "leeds", "Cy", "30" },
+        { "South", "Bath", "Ed", "7" },
+    };
+    ob_int key;
+    int i;
+    ob_table_init(&t, "Sales");
+    ob_table_add_field(&t, "Region", OB_TEXT);
+    ob_table_add_field(&t, "Town", OB_TEXT);
+    ob_table_add_field(&t, "Customer", OB_TEXT);
+    ob_table_add_field(&t, "Amount", OB_INTEGER);
+    CHECK(ob_table_create(p, &t), "Sales: %s", ob_error(p));
+    for (i = 0; i < 5; i++)
+        CHECK(ob_row_add(p, "Sales", 4, fields, rows[i], &key), "Sales row %d: %s", i, ob_error(p));
+}
+
+/* Two levels: a heading for each region and each town in it, the rows in a table per town with its
+ * totals, the region's totals after its towns, then the report's. Towns compare without case. */
+static void test_group_levels(ob_project *p)
+{
+    ob_report r;
+    owf_doc *doc = NULL;
+    char err[OB_ERR_MAX] = "";
+    char *text;
+    int i, h2 = 0, h3 = 0;
+
+    sales_table(p);
+    ob_report_init(&r, "Regions");
+    strcpy(r.title, "Sales by region");
+    strcpy(r.table, "Sales");
+    strcpy(r.group, "Region");
+    strcpy(r.subgroup[0], "Town");
+    ob_report_add_column(&r, "Customer", OB_TOTAL_COUNT);
+    ob_report_add_column(&r, "Amount", OB_TOTAL_SUM);
+    CHECK(ob_report_check(p, &r, err, sizeof err) == 0, "check: %s", err);
+    CHECK(ob_report_build(p, &r, NULL, &doc, err, sizeof err) == 0 && doc, "build: %s", err);
+    if (!doc) return;
+    text = as_text(doc, "levels.txt");
+    CHECK(text && !strcmp(text,
+        "Sales by region\n"
+        "Region: North\n"
+        "Town: Leeds\n"
+        "Customer\tAmount\n"
+        "Ann\t10\n"
+        "Cy\t30\n"
+        "Count 2\tSum 40\n"
+        "Town: York\n"
+        "Customer\tAmount\n"
+        "Bob\t20\n"
+        "Count 1\tSum 20\n"
+        "Totals for Region: North\n"
+        "Customer\tAmount\n"
+        "Count 3\tSum 60\n"
+        "Region: South\n"
+        "Town: Bath\n"
+        "Customer\tAmount\n"
+        "Di\t5\n"
+        "Ed\t7\n"
+        "Count 2\tSum 12\n"
+        "Totals for Region: South\n"
+        "Customer\tAmount\n"
+        "Count 2\tSum 12\n"
+        "Report totals\n"
+        "Customer\tAmount\n"
+        "Count 5\tSum 72\n"), "text:\n%s", text ? text : "(none)");
+    free(text);
+    for (i = 0; i < doc->body.nparas; i++) {
+        if (doc->body.paras[i].fmt.heading == 2) h2++;
+        if (doc->body.paras[i].fmt.heading == 3) h3++;
+    }
+    CHECK(h2 == 3 && h3 == 3, "regions (and the report totals) heading 2, towns heading 3: %d %d", h2, h3);
+    owf_doc_free(doc);
+
+    /* Z to A: every level */
+    r.desc = 1;
+    CHECK(ob_report_build(p, &r, NULL, &doc, err, sizeof err) == 0 && doc, "build desc: %s", err);
+    if (doc) {
+        text = as_text(doc, "levels-desc.txt");
+        CHECK(text && strstr(text, "Region: South\nTown: Bath\n") &&
+              strstr(text, "Region: North\nTown: York\n") && strstr(text, "Town: York\nCustomer\tAmount\nBob\t20\n") &&
+              strstr(text, "Town: Leeds\nCustomer\tAmount\nAnn\t10\nCy\t30\n") &&
+              strstr(text, "Region: South") < strstr(text, "Region: North"), "desc:\n%s", text ? text : "(none)");
+        free(text);
+        owf_doc_free(doc);
+        doc = NULL;
+    }
+    r.desc = 0;
+
+    /* a third level, and a level's totals left out */
+    strcpy(r.subgroup[1], "Customer");
+    r.no_totals = 4;                      /* bit 2: the customers' */
+    CHECK(ob_report_build(p, &r, NULL, &doc, err, sizeof err) == 0 && doc, "build 3 levels: %s", err);
+    if (doc) {
+        int h4 = 0;
+        text = as_text(doc, "levels3.txt");
+        CHECK(text && strstr(text, "Town: Leeds\nCustomer: Ann\nCustomer\tAmount\nAnn\t10\nCustomer: Cy\n") &&
+              strstr(text, "Customer: Cy\nCustomer\tAmount\nCy\t30\nTotals for Town: Leeds\nCustomer\tAmount\nCount 2\tSum 40\n"),
+              "three levels:\n%s", text ? text : "(none)");
+        free(text);
+        for (i = 0; i < doc->body.nparas; i++)
+            if (doc->body.paras[i].fmt.heading == 4) h4++;
+        CHECK(h4 == 5, "customers heading 4: %d", h4);
+        owf_doc_free(doc);
+        doc = NULL;
+    }
+
+    /* the ways it can't be made */
+    strcpy(r.subgroup[0], "");
+    CHECK(ob_report_check(p, &r, err, sizeof err) == -1 && strstr(err, "Regions: a third group needs a second"),
+          "gap in the levels: %s", err);
+    strcpy(r.subgroup[0], "Postcode");
+    strcpy(r.subgroup[1], "");
+    CHECK(ob_report_check(p, &r, err, sizeof err) == -1 && strstr(err, "group by Postcode: Sales has no field Postcode"),
+          "a level that isn't a field: %s", err);
+    strcpy(r.subgroup[0], "Town");
+    strcpy(r.group, "");
+    CHECK(ob_report_check(p, &r, err, sizeof err) == -1 && strstr(err, "Regions: a second group needs a first"),
+          "a subgroup with no group: %s", err);
+}
+
+/* A grid query's rows come in its own order: grouped on two levels, it must sort by both first. */
+static void test_query_levels(ob_project *p)
+{
+    static ob_query q;
+    ob_qcolumn *c;
+    ob_report r;
+    owf_doc *doc = NULL;
+    char err[OB_ERR_MAX] = "";
+    char *text;
+
+    ob_query_init(&q, "SalesByTown");
+    ob_query_add_table(&q, "Sales");
+    c = ob_query_add_column(&q, "Sales", "Region");
+    c->sort = OB_SORT_UP;
+    c = ob_query_add_column(&q, "Sales", "Customer");
+    c->sort = OB_SORT_UP;
+    ob_query_add_column(&q, "Sales", "Town");
+    ob_query_add_column(&q, "Sales", "Amount");
+    CHECK(ob_query_save(p, &q), "save: %s", ob_error(p));
+    ob_report_init(&r, "Q");
+    strcpy(r.query, "SalesByTown");
+    strcpy(r.group, "Region");
+    strcpy(r.subgroup[0], "Town");
+    ob_report_add_column(&r, "Amount", OB_TOTAL_SUM);
+    CHECK(ob_report_check(p, &r, err, sizeof err) == -1 &&
+          strstr(err, "group by Town: sort the query SalesByTown by Region, then Town, first"), "%s", err);
+    strcpy(r.subgroup[0], "Customer");
+    CHECK(ob_report_check(p, &r, err, sizeof err) == 0, "sorted by both: %s", err);
+    CHECK(ob_report_build(p, &r, NULL, &doc, err, sizeof err) == 0 && doc, "build: %s", err);
+    if (doc) {
+        text = as_text(doc, "qlevels.txt");
+        CHECK(text && strstr(text, "Region: North\nCustomer: Ann\nAmount\n10\nSum 10\nCustomer: Bob\n") &&
+              strstr(text, "Totals for Region: South\nAmount\nSum 12\nReport totals\nAmount\nSum 72\n"),
+              "query levels:\n%s", text ? text : "(none)");
+        free(text);
+        owf_doc_free(doc);
+    }
+}
+
+static int has_field(const owf_story *st, owf_field field)
+{
+    int i, j;
+    for (i = 0; i < st->nparas; i++)
+        for (j = 0; j < st->paras[i].nruns; j++)
+            if (st->paras[i].runs[j].kind == OWF_RUN_FIELD && st->paras[i].runs[j].field == field) return 1;
+    return 0;
+}
+
+/* The bands: the report's header and footer, a page header and footer, and each level's group header and
+ * footer, as text with [names] in it: [Title], [Date], [Page], [Pages], [Group], [Value], [Count] and the
+ * source's fields; "[[" is a '['. */
+static void test_bands(ob_project *p)
+{
+    ob_report r;
+    owf_doc *doc = NULL;
+    char err[OB_ERR_MAX] = "";
+    char *text;
+    int i, breaks = 0, first_break = -1, h2 = 0;
+
+    ob_report_init(&r, "Sales");
+    strcpy(r.title, "Sales by town");
+    strcpy(r.table, "Orders");
+    strcpy(r.group, "Town");
+    ob_report_add_column(&r, "Customer", OB_TOTAL_COUNT);
+    ob_report_add_column(&r, "Amount", OB_TOTAL_SUM);
+    strcpy(r.head, "All orders ([Title]) [[draft]");
+    strcpy(r.group_head[0], "[Value] ([Group]), first [Customer]");
+    strcpy(r.group_foot[0], "[Count] orders in [Value], last [Customer]");
+    strcpy(r.foot, "[Count] orders in all");
+    strcpy(r.page_head, "[Title], printed [Date]");
+    strcpy(r.page_foot, "Page [Page]");
+    r.new_page = 1;
+    CHECK(ob_report_check(p, &r, err, sizeof err) == 0, "check: %s", err);
+    CHECK(ob_report_build(p, &r, NULL, &doc, err, sizeof err) == 0 && doc, "build: %s", err);
+    if (!doc) return;
+    text = as_text(doc, "bands.txt");
+    CHECK(text && !strncmp(text,
+        "All orders (Sales by town) [draft]\n"
+        "Leeds (Town), first Ann\n"
+        "Customer\tAmount\n"
+        "Ann\t10.50\n"
+        "Cy\t1,000.00\n"
+        "Count 2\tSum 1,010.50\n"
+        "2 orders in Leeds, last Cy\n"
+        "York (Town), first Bob\n", 140) && strstr(text,
+        "Count 2\tSum 3.25\n"
+        "2 orders in York, last Di\n"
+        "Report totals\n"
+        "Customer\tAmount\n"
+        "Count 4\tSum 1,013.75\n"
+        "4 orders in all\n"), "text:\n%s", text ? text : "(none)");
+    free(text);
+    CHECK(doc->body.nparas > 0 && doc->body.paras[0].fmt.heading == 1, "the report header is heading 1");
+    CHECK(doc->title && !strcmp(doc->title, "Sales by town"), "document title is still the title: %s",
+          doc->title ? doc->title : "(none)");
+    for (i = 0; i < doc->body.nparas; i++) {
+        const owf_para *q = &doc->body.paras[i];
+        if (q->fmt.heading == 2 && h2++ < 2) {
+            if (q->fmt.page_break_before) { breaks++; if (first_break < 0) first_break = h2; }
+        }
+    }
+    CHECK(breaks == 1 && first_break == 2, "a new page before each town but the first: %d %d", breaks, first_break);
+    CHECK(doc->header.nparas == 1 && has_field(&doc->header, OWF_FIELD_DATE), "page header with the date");
+    CHECK(doc->footer.nparas == 1 && has_field(&doc->footer, OWF_FIELD_PAGE) && !has_field(&doc->footer, OWF_FIELD_PAGES),
+          "page footer: Page n");
+    owf_doc_free(doc);
+    doc = NULL;
+
+    /* a level's totals left out; the report's stay */
+    r.no_totals = 1;
+    r.new_page = 0;
+    CHECK(ob_report_build(p, &r, NULL, &doc, err, sizeof err) == 0 && doc, "build: %s", err);
+    if (doc) {
+        text = as_text(doc, "nototals.txt");
+        CHECK(text && strstr(text, "Cy\t1,000.00\n2 orders in Leeds, last Cy\n") &&
+              strstr(text, "Report totals\nCustomer\tAmount\nCount 4\tSum 1,013.75\n"), "no group totals:\n%s",
+              text ? text : "(none)");
+        free(text);
+        owf_doc_free(doc);
+        doc = NULL;
+    }
+
+    /* names that aren't */
+    strcpy(r.group_head[0], "[Price]");
+    CHECK(ob_report_check(p, &r, err, sizeof err) == -1 && strstr(err, "Sales: group header: Orders has no field Price"),
+          "%s", err);
+    strcpy(r.group_head[0], "");
+    strcpy(r.page_foot, "[Customer]");
+    CHECK(ob_report_check(p, &r, err, sizeof err) == -1 && strstr(err, "Sales: page footer: [Customer]: a page shows no row"),
+          "%s", err);
+    strcpy(r.page_foot, "");
+    strcpy(r.head, "[Count]");
+    CHECK(ob_report_check(p, &r, err, sizeof err) == -1 && strstr(err, "Sales: report header: [Count]"), "%s", err);
+    strcpy(r.head, "[Title");
+    CHECK(ob_report_check(p, &r, err, sizeof err) == -1 && strstr(err, "Sales: report header: no ] after [Title"),
+          "%s", err);
+}
+
+/* The new settings are kept, as report text version 2; a report that uses none of them is still version 1,
+ * so an older GFOpenBase reads it. */
+static void test_text_form_bands(void)
+{
+    ob_report r, back;
+    char text[8192], err[OB_ERR_MAX] = "";
+
+    ob_report_init(&r, "Levels");
+    strcpy(r.table, "Sales");
+    strcpy(r.group, "Region");
+    ob_report_add_column(&r, "Amount", OB_TOTAL_SUM);
+    CHECK(ob_report_to_text(&r, text, sizeof text) > 0 && !strncmp(text, "OADBREPORT 1\n", 13), "still 1:\n%s", text);
+    strcpy(r.subgroup[0], "Town");
+    strcpy(r.subgroup[1], "Customer");
+    strcpy(r.head, "[Title] | head\\");
+    strcpy(r.foot, "two\nlines");
+    strcpy(r.page_head, "ph");
+    strcpy(r.page_foot, "pf");
+    strcpy(r.group_head[0], "g0 | x");
+    strcpy(r.group_head[2], "g2");
+    strcpy(r.group_foot[1], "f1");
+    r.no_totals = 5;
+    r.new_page = 1;
+    CHECK(ob_report_to_text(&r, text, sizeof text) > 0 && !strncmp(text, "OADBREPORT 2\n", 13), "2:\n%s", text);
+    CHECK(strstr(text, "grouphead=1|g0 \\| x\n") && strstr(text, "groupfoot=2|f1\n") && strstr(text, "subgroup=Town\n"),
+          "settings:\n%s", text);
+    CHECK(ob_report_from_text(&back, "Levels", text, err, sizeof err) == 0, "from text: %s", err);
+    CHECK(!memcmp(&r, &back, sizeof r), "the same report back");
+    CHECK(ob_report_from_text(&back, "X", "OADBREPORT 2\ntable=T\ngrouphead=4|x\n", err, sizeof err) == -1 &&
+          strstr(err, "line 3"), "a level past 3: %s", err);
+    CHECK(ob_report_from_text(&back, "X", "OADBREPORT 2\ntable=T\nsubgroup=A\nsubgroup=B\nsubgroup=C\n", err, sizeof err) == -1 &&
+          strstr(err, "line 5"), "a fourth level: %s", err);
+}
+
 int main(int argc, char **argv)
 {
     ob_project *p;
@@ -513,6 +814,10 @@ int main(int argc, char **argv)
         test_kept_reports(p);
         test_query_params(p);
         test_errors_and_empty(p);
+        test_group_levels(p);
+        test_query_levels(p);
+        test_bands(p);
+        test_text_form_bands();
         ob_close(p);
     }
     printf("%s: %d checks, %d failed\n", fails ? "FAILED" : "base reports", checks, fails);
