@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.39.0"
+#define OPR_CORE_VERSION "0.40.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -162,6 +162,50 @@ typedef struct {
 int opr_text_find(const owf_deck *deck, int start_slide, int start_obj,
                   opr_pos start, const char *needle, int match_case,
                   opr_find_result *result);
+
+/* ---- Spelling (opr_spell.c) ----
+ *
+ * GFOpenWrite's dictionary and word rules (include/ow_spell_dict.h; the
+ * app opens one with ow_spell_open). The next misspelt word at or after
+ * (start_slide, start_obj, start): each slide's objects that can be typed
+ * in, in order, then its notes (obj OPR_NOTES), wrapping once to the first
+ * slide. A placeholder still showing its prompt is left alone. 1 with
+ * result's selection on the word and its text in word (cut to word_size),
+ * 0 when the deck is clean, -1 for bad input or no memory. */
+struct ow_spell;
+int opr_spell_next(const owf_deck *deck, struct ow_spell *spell, int start_slide, int start_obj,
+                   opr_pos start, opr_find_result *result, char *word, size_t word_size);
+/* The misspelt words of one paragraph's text (opr_para_text's), for the
+ * wavy underline as you type: up to max_ranges byte ranges written; the
+ * return is how many there are in all. */
+typedef struct {
+    size_t start, end;
+} opr_spell_range;
+int opr_spell_words(struct ow_spell *spell, const char *text, size_t length,
+                    opr_spell_range *ranges, int max_ranges);
+/* The misspelt words of one object's text (obj OPR_NOTES: the slide's
+ * notes), for the wavy underline as you type. With caret not NULL the word
+ * the caret is in, or just after, is left out: it is still being typed. A
+ * placeholder showing its prompt, a line or a hidden object has none. Up to
+ * max_marks written; the return is how many there are in all, -1 for bad
+ * input or no memory. */
+typedef struct {
+    int para;
+    size_t start, end;
+} opr_spell_mark;
+int opr_spell_marks(const owf_deck *deck, struct ow_spell *spell, int slide, int obj, const opr_pos *caret,
+                    opr_spell_mark *marks, int max_marks);
+/* ARexx SPELL, args being what follows the command word:
+ *   SPELL [COUNT]       how many misspelt words the deck has
+ *   SPELL LIST          one line each, "slide object word" counted from 1
+ *                       ("slide NOTES word" for the notes), as many as fit
+ *   SPELL CHECK word    1 when it is spelt right, else 0
+ *   SPELL SUGGEST word  the suggestions, a space between
+ *   SPELL ADD word      into the user's word list (saved)
+ *   SPELL IGNORE word   passed until the dictionary is closed
+ * The answer, or the reason, goes in out; the return is ARexx's code: 0,
+ * 5 with no dictionary, 10 for a bad command, 20 for no memory. */
+int opr_spell_rexx(const owf_deck *deck, struct ow_spell *spell, const char *args, char *out, size_t size);
 /* Delete exactly the selected characters and paragraph separators. Both ends
  * collapse to the start. The caller owns the Undo snapshot, as for typing. */
 int opr_text_delete_selection(owf_deck *deck, int slide, int obj,
@@ -368,6 +412,13 @@ int opr_obj_set_wrap(opr_undo *u, owf_deck *deck, int slide, int obj,
  * consume them. */
 int opr_obj_set_picture_crop(opr_undo *u, owf_deck *deck, int slide, int obj,
                              const int crop[4]);
+/* Replace one top-level chart object's chart (its data and look, as the
+ * chart editor gives it back) with a copy of chart, as one undo step; the
+ * caller keeps chart. A chart object with no data gets one. -2 when the
+ * object is not a top-level chart or chart is NULL, -1 for no undo or
+ * memory, 0 done. */
+int opr_obj_set_chart(opr_undo *u, owf_deck *deck, int slide, int obj,
+                      const owf_chart *chart);
 /* Link a top-level text frame to a later empty top-level text frame, or remove
  * any non-first frame from a flow. A target must not already belong to another
  * flow; an insertion before a source's existing successor closes into the
@@ -668,6 +719,23 @@ int opr_show_next_hidden(opr_show *show);
  * timing expires. 0 means it is still showing; 1 means it advanced; -1 means
  * the show ended or the input/state was invalid. */
 int opr_show_tick(opr_show *show, unsigned long milliseconds);
+
+/* Where a show goes (design 7.1). Prefs choose OPR_SHOW_OWN_SCREEN or
+ * OPR_SHOW_WORKBENCH, or OPR_SHOW_AUTO: the Workbench screen when it is an
+ * RTG screen of 16 bits or more and at least 640 x 480, else a screen of
+ * the show's own (AGA, fewer than 256 colours, or too small). */
+enum { OPR_SHOW_AUTO, OPR_SHOW_OWN_SCREEN, OPR_SHOW_WORKBENCH };
+int opr_show_place(int choice, int wb_depth, int wb_width, int wb_height);
+/* The words Prefs keep a choice as ("auto", "own", "workbench"), and back
+ * (any case; anything else is OPR_SHOW_AUTO). */
+const char *opr_show_place_word(int choice);
+int opr_show_place_from(const char *word);
+/* The show's own screen for a slide of slide_w x slide_h (any units): its
+ * shape, at least 640 x 480 (480 high, wider for a wide slide; 640 wide,
+ * taller for a tall one); depth 8 on a planar (AGA) display, else 16, or
+ * 24 when the Workbench screen is 24 bits or more. */
+void opr_show_screen_size(long slide_w, long slide_h, int *width, int *height);
+int opr_show_screen_depth(int rtg, int wb_depth);
 
 /* Backend-independent transition geometry. A frame describes which rectangle
  * of the old and new full-screen bitmap to copy and where. Wipe has only a

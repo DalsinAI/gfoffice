@@ -78,6 +78,23 @@ static int frame_for_object(const opr_slide *laid, const owf_obj *object)
     return -1;
 }
 
+/* The link of the first run in the deck that starts with word; NULL: none, or no link. */
+static const char *deck_href(const owf_deck *deck, const char *word)
+{
+    int i, j, k, m;
+    for (i = 0; deck && i < deck->nslides; i++)
+        for (j = 0; j < deck->slides[i].nobjs; j++) {
+            const owf_story *st = &deck->slides[i].objs[j].text;
+            for (k = 0; k < st->nparas; k++)
+                for (m = 0; m < st->paras[k].nruns; m++) {
+                    const owf_run *run = &st->paras[k].runs[m];
+                    if (run->text && !strncmp(run->text, word, strlen(word)))
+                        return run->href;
+                }
+        }
+    return NULL;
+}
+
 /* Every object of the deck whose story has a run starting with word: its paragraph's alignment, or -1. */
 static int align_of(const owf_deck *deck, const char *word)
 {
@@ -143,6 +160,16 @@ int main(void)
      * frame on the scratch area (left out). */
     CHECK(opp_import_pub_file(PUB("gen-2007-runs.pub"), &deck, report, &version) == OWF_OK);
     CHECK(deck && deck->nslides == 2 && deck->slides[0].nobjs == 4 && deck->res->nimages == 1);
+    /* P1d links (TOKN): a web address and an e-mail on their words; a link to a page is text for now;
+     * the file carries a second TOKN for the story (linking "See"), which is ignored */
+    CHECK(deck_href(deck, "our site") && !strcmp(deck_href(deck, "our site"), "https://example.org/gfoffice/"));
+    CHECK(deck_href(deck, "write to us") && !strcmp(deck_href(deck, "write to us"), "mailto:team@example.org?subject=Hello"));
+    CHECK(deck_href(deck, "See ") == NULL && deck_href(deck, ", or turn to page 1.") == NULL);
+    /* P1b underline (0x21E's low byte): on the two linked words only */
+    CHECK(deck_run(deck, "our site") && (deck_run(deck, "our site")->flags & OWF_UNDERLINE));
+    CHECK(deck_run(deck, "write to us") && (deck_run(deck, "write to us")->flags & OWF_UNDERLINE));
+    CHECK(deck_run(deck, "See ") && !(deck_run(deck, "See ")->flags & OWF_UNDERLINE));
+    CHECK(deck_run(deck, "Bold and italic") && !(deck_run(deck, "Bold and italic")->flags & OWF_UNDERLINE));
     if (deck && deck->nslides > 0 && deck->slides[0].nobjs > 3) {
         const owf_charfmt *bold = run_fmt(&deck->slides[0].objs[1].text, "Bold and italic");
         const owf_charfmt *plain = run_fmt(&deck->slides[0].objs[0].text, "Plain text");
@@ -156,6 +183,22 @@ int main(void)
         CHECK(plain && !(plain->flags & (OWF_BOLD | OWF_ITALIC)) && plain->size == 200);
         CHECK(!strcmp(font_name(deck->res, plain), "Times New Roman"));
         CHECK(deck->slides[0].objs[2].kind == OWF_OBJ_TABLE && deck->slides[0].objs[2].ncols == 2);
+        /* P1d table cells (TCD): six cells in three rows of two; the third cell has two paragraphs */
+        {
+            const owf_story *t = &deck->slides[0].objs[2].text;
+            CHECK(t->nparas == 7);
+            if (t->nparas == 7) {
+                CHECK(t->paras[0].table_id >= 0 && t->paras[0].table_row == 0 && t->paras[0].table_col == 0 &&
+                      t->paras[0].table_cols == 2);
+                CHECK(t->paras[1].table_row == 0 && t->paras[1].table_col == 1);
+                CHECK(t->paras[2].table_row == 1 && t->paras[2].table_col == 0);
+                CHECK(t->paras[3].table_row == 1 && t->paras[3].table_col == 0);
+                CHECK(t->paras[4].table_row == 1 && t->paras[4].table_col == 1);
+                CHECK(t->paras[6].table_row == 2 && t->paras[6].table_col == 1);
+            }
+            /* the plain text boxes' paragraphs are not cells */
+            CHECK(deck->slides[0].objs[0].text.nparas && deck->slides[0].objs[0].text.paras[0].table_id < 0);
+        }
         CHECK(deck->slides[0].objs[3].kind == OWF_OBJ_PICTURE && deck->slides[0].objs[3].image == 0);
         CHECK(format->export(deck, &odp, &odp_length, report) == OWF_OK);
         CHECK(owf_import_deck_memory(odp, odp_length, "odp", &roundtrip, report, &used) == OWF_OK && roundtrip);
@@ -165,6 +208,16 @@ int main(void)
             /* ODP saves Arial as Liberation Sans, the deck's own default face, which reads back as the
              * default (-1); the typeface itself is GFOffice's ODP round trip's, not the .pub reader's */
             CHECK(again && (again->font < 0 || !strcmp(font_name(roundtrip->res, again), "Liberation Sans")));
+            CHECK(deck_href(roundtrip, "our site") && !strcmp(deck_href(roundtrip, "our site"), "https://example.org/gfoffice/"));
+            CHECK(deck_run(roundtrip, "our site") && (deck_run(roundtrip, "our site")->flags & OWF_UNDERLINE));
+            if (roundtrip->slides[0].nobjs > 2) {
+                const owf_story *t = &roundtrip->slides[0].objs[2].text;
+                int k, last_row = -1, cells_ok = t->nparas >= 6;
+                for (k = 0; k < t->nparas; k++)
+                    if (t->paras[k].table_id < 0 || t->paras[k].table_row < last_row) cells_ok = 0;
+                    else last_row = t->paras[k].table_row;
+                CHECK(roundtrip->slides[0].objs[2].kind == OWF_OBJ_TABLE && cells_ok && last_row == 2);
+            }
         }
         free(odp); odp = NULL; odp_length = 0;
         owf_deck_free(roundtrip); roundtrip = NULL;
@@ -228,9 +281,15 @@ int main(void)
         CHECK(count_look(deck, OWF_SHADE(0xFFFFFF), 0, 0) == 1);
         CHECK(count_look(deck, OWF_SHADE(0x996633), OWF_SHADE(0x993300), 10) == 1);
         CHECK(deck->slides[0].objs[0].inset[0] == 144);
+        /* P1b text colour (0x244, a place in PL): red as 0x00BBGGRR, the scheme's place 2, and one not known */
+        CHECK(deck_run(deck, "headline") && deck_run(deck, "headline")->colour == 0xFF0000);
+        CHECK(deck_run(deck, " over") && deck_run(deck, " over")->colour == 0x000099);
+        CHECK(deck_run(deck, " a bar") && deck_run(deck, " a bar")->colour == OWF_COLOUR_AUTO);
+        CHECK(deck_run(deck, "A ") && deck_run(deck, "A ")->colour == OWF_COLOUR_AUTO);
         CHECK(format->export(deck, &odp, &odp_length, report) == OWF_OK);
         CHECK(owf_import_deck_memory(odp, odp_length, "odp", &roundtrip, report, &used) == OWF_OK && roundtrip);
         CHECK(count_look(roundtrip, OWF_SHADE(0xCCCCEB), OWF_SHADE(0x000000), 20) == 1);
+        CHECK(deck_run(roundtrip, "headline") && deck_run(roundtrip, "headline")->colour == 0xFF0000);
         free(odp); odp = NULL; odp_length = 0;
         owf_deck_free(roundtrip); roundtrip = NULL;
     }

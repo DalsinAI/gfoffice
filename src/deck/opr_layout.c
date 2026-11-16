@@ -226,10 +226,14 @@ static int prepare_text(const owf_deck *deck, const owf_master *m, const owf_obj
             if (r->fmt.colour == OWF_COLOUR_AUTO) r->fmt.colour = lv->chars.colour;
             if (r->fmt.colour == OWF_COLOUR_AUTO) r->fmt.colour = auto_colour;
             r->fmt.size = (int)((long long)r->fmt.size * scale / 100);
-            if (r->kind == OWF_RUN_FIELD) {
+            if (r->kind == OWF_RUN_FIELD && r->field > OWF_FIELD_TIME) {
+                /* a field the page does not work out (a merge field): the value it last showed */
                 r->kind = OWF_RUN_TEXT;
-                r->text = (char *)(fields && fields[r->field <= OWF_FIELD_TIME ? r->field : 0]
-                                   ? fields[r->field <= OWF_FIELD_TIME ? r->field : 0] : "");
+                if (!r->text) r->text = (char *)"";
+                r->href = NULL;
+            } else if (r->kind == OWF_RUN_FIELD) {
+                r->kind = OWF_RUN_TEXT;
+                r->text = (char *)(fields && fields[r->field] ? fields[r->field] : "");
                 r->href = NULL;
             }
             if (r->kind == OWF_RUN_IMAGE) {

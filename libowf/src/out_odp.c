@@ -528,7 +528,22 @@ static void put_para(odpw *w, owf_buf *out, const owf_para *p, const owf_textlev
         case OWF_RUN_TEXT: put_text(out, run->text ? run->text : "", &after_space); break;
         case OWF_RUN_TAB: owf_buf_puts(out, "<text:tab/>"); after_space = 1; break;
         case OWF_RUN_LINEBREAK: owf_buf_puts(out, "<text:line-break/>"); after_space = 1; break;
-        case OWF_RUN_FIELD: owf_buf_puts(out, fields[(unsigned)run->field < 4 ? run->field : 0]); after_space = 0; break;
+        case OWF_RUN_FIELD:
+            if (run->field == OWF_FIELD_MERGE) {     /* a mail merge field: its column and the value it shows */
+                owf_buf_puts(out, "<text:database-display text:table-name=\"\" text:table-type=\"table\" "
+                                  "text:database-name=\"\" text:column-name=\"");
+                owf_buf_puts_xml(out, run->href ? run->href : "");
+                owf_buf_puts(out, "\">");
+                owf_buf_puts_xml(out, run->text ? run->text : "");
+                owf_buf_puts(out, "</text:database-display>");
+                after_space = 0;
+            } else if ((unsigned)run->field > OWF_FIELD_TIME) {
+                put_text(out, run->text ? run->text : "", &after_space);   /* the value it last showed */
+            } else {
+                owf_buf_puts(out, fields[run->field]);
+                after_space = 0;
+            }
+            break;
         case OWF_RUN_IMAGE:
         case OWF_RUN_FRAME:
             owf_report_add(w->report, OWF_NOTE_LOST, "Pictures inside slide text were left out");

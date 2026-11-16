@@ -69,10 +69,11 @@ esac
 OWFSRC_DOCS=""
 for f in $OWFSRC; do
     case "$f" in
-    */owf_book.c | */owf_cfb.c | */owf_xlfunc.c | */in_xls.c | */out_csv.c | */owf_chart.c) ;;
+    */owf_book.c | */owf_cfb.c | */owf_xlfunc.c | */in_xls.c | */out_csv.c | */owf_chart.c | */owf_chartbook.c) ;;
     */owf_booknum.c | */owf_xlformula.c | */in_xlsx.c | */out_xlsx.c | */in_ods.c | */out_ods.c | */in_csv.c) ;;
     */owf_deck.c | */in_odp.c | */out_odp.c | */in_pptx.c | */owf_pdf.c | */owf_pdffonts.c) ;;
     */in_pub.c) ;;   # GFOpenPublisher's .pub reader: it needs owf_cfb.c
+    */owf_cfbw.c) ;;   # the compound file writer, for GFOpenPublisher's .pub save
     */owf_kind.c) ;;   # owf_file_kind: it reads the workbook and .pub detectors
     *) OWFSRC_DOCS="$OWFSRC_DOCS $f" ;;
     esac
@@ -168,13 +169,15 @@ if [ "$OWF" = library ]; then
     echo "build-os3.sh: GFOpenPresentation is built with libowf linked in only (OWF=linked): owf.library has no deck calls yet"
 else
 OWFSRC_DECK="$OWFSRC_DOCS"
-for f in owf_deck.c in_odp.c out_odp.c in_pptx.c owf_pdf.c owf_pdffonts.c; do
+# owf_chart.c: a slide's charts are read and written as chart parts (Presentation gap 2); owf_booknum.c reads
+# and writes their numbers
+for f in owf_deck.c in_odp.c out_odp.c in_pptx.c owf_pdf.c owf_pdffonts.c owf_chart.c owf_booknum.c; do
     OWFSRC_DECK="$OWFSRC_DECK $HERE/libowf/src/$f"
 done
 # shellcheck disable=SC2086
 "$CC" $CFLAGS_COMMON -DOW_CLIPBOARD_OBJECTS -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
-    $OWFSRC_DECK "$HERE"/src/deck/*.c "$HERE/src/core/ow_layout.c" $OL_C \
+    $OWFSRC_DECK "$HERE"/src/deck/*.c "$HERE/src/core/ow_spell_dict.c" "$HERE/src/core/ow_layout.c" $OL_C \
     "$HERE/app/openpresent.c" "$HERE/app/ow_stack.c" "$HERE/app/ow_clipboard.c" "$HERE"/third_party/opengadtools/*.c -lamiga \
     -o "$OUT/GFOpenPresentation"
 echo "$OUT/GFOpenPresentation ($(wc -c < "$OUT/GFOpenPresentation") bytes)"
@@ -186,7 +189,7 @@ OWFSRC_PUB="$OWFSRC_DECK $HERE/libowf/src/owf_cfb.c $HERE/libowf/src/in_pub.c"
 # shellcheck disable=SC2086
 "$CC" $CFLAGS_COMMON -DOPENPUBLISHER -DOW_CLIPBOARD_OBJECTS -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
-    $OWFSRC_PUB "$HERE"/src/deck/*.c "$HERE/src/pub/opp_import.c" "$HERE/src/core/ow_layout.c" $OL_C \
+    $OWFSRC_PUB "$HERE"/src/deck/*.c "$HERE/src/core/ow_spell_dict.c" "$HERE/src/pub/opp_import.c" "$HERE/src/pub/opp_merge.c" "$HERE/src/pub/opp_template.c" "$HERE/src/core/ow_merge.c" "$HERE/src/core/ow_layout.c" $OL_C \
     "$HERE/app/openpresent.c" "$HERE/app/ow_stack.c" "$HERE/app/ow_clipboard.c" "$HERE"/third_party/opengadtools/*.c -lamiga \
     -o "$OUT/GFOpenPublisher"
 echo "$OUT/GFOpenPublisher ($(wc -c < "$OUT/GFOpenPublisher") bytes)"

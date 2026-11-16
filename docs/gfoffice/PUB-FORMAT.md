@@ -326,7 +326,9 @@ one page and chunk to the next. The fields seen:
 | 0x237, 0x238, 0x239 | beside 0x202, 0x203 and 0x20C with the same values in the 2002-or-later files; not in the 98/2000 files | [V 6]; [H]: complex-script bold, italic and size |
 | 0x212, 0x23E | 0x809 (English, UK), 0x409, 0xC09 | [H]: languages (Windows LCIDs) |
 | 0x22D | set on SampleBrochure's en dashes | unknown |
-| 0x21E, 0x244, 0x248, 0x22E, 0x200 | on Sample's hyperlinks | [H]: underline and colour; not read yet |
+| 0x21E | underline: type 0x10, its low byte 1 for a single line (0: none); the high byte 8 or 4, unknown. Only 1 has been seen: the reader takes any low byte but 0 as a single line, so other kinds (double, dotted), if Publisher has them, read as single | [V 2: every hyperlink's text in Sample (2007, 2010, 2000, 98) and the Link files has 0x801, as Publisher underlines its links; govdocs1-923566's e-mail addresses and its "New Positions" headings have 0x401]; read as underline from 0.3.29 |
+| 0x244 | the colour: a block whose 0x200 is a place in the text's colour list, `PL` (6.9) | [V 3: christmas's "C", "Toy" (place 2, red 0xFF) and "Drive" (place 4, 0x6600 green) as its thumbnail shows them; Sample's hyperlinks (place 1, scheme place 5, #0066FF blue); halloween-flyer's "..." (0xC0, dark red)]; 0xFFFFFFFE seen too: not known, left as the default; read from 0.3.30 |
+| 0x248, 0x22E, 0x200 | on Sample's hyperlinks (0x248 a block holding 0x200 = 1; the 2000 form 0x22E = 0xE0E40005) | unknown ([H]: 0x248 a followed link's colour; 0x22E the 98/2000 colour) |
 
 A run's fields are laid over its paragraph style's (6.6): Sample's plain
 text says it is Times New Roman 10 point, has no fields of its own, and its
@@ -364,6 +366,77 @@ u32 the style's number [V 8].
 - No style seems to name another as its parent [H: the `STSH` 2 i32 that
   could is -1 in all 8]. A style without a size or typeface takes style 0's
   [H].
+
+### 6.7 Hyperlinks: `TOKN` [V 7: Sample's stories 4 and 5, and POI's six LinkAt files, whose names say where their links are]
+
+`TOKN` n (a `PLC` chunk) holds story n's links. The six LinkAt files settle
+the places: `LinkAt10` has one link at character 10, `LinkAt0And10` two at
+0 and 10, and so on, and each file's text shows "LINK" there.
+
+| Offset | What |
+|---|---|
+| 0x00 | u32 n, the number of links |
+| 0x04, 0x08 | u32 12, u32 0x1FFFF [unknown] |
+| 0x0C | n + 1 u32: each link's first character in the story, then the story's length |
+
+Then n blocks (u32 length counting itself, then fields with 11-bit ids,
+6.3), one per link. Each holds only what changed from the link before it,
+so an empty block (length 4) is a link like the one before:
+
+| Field | What | Mark |
+|---|---|---|
+| 0x200 | 0x8C0, in the first block only | unknown |
+| 0x201 | the link's length in characters | [V 7: "LINK" 4, "LINK2" 5, "Link to a file" 14, "email link" 10, "Within doc to page 1" 20] |
+| 0x202 | the kind: 1 a web address or a file, 3 a place in the publication, 4 an e-mail address | [V 3; the e-mail one is a `mailto:`] |
+
+Then n more blocks, one per link, each with 0x200, the link's place in the
+table that follows [V 3: `LinkAt10And20And30`'s three links go to its
+three addresses in order; Sample's story 5 goes 1, 0, 2].
+
+The table: u32 the size of the offsets and strings, u32 the count, 12 bytes
+(a u32 that changes from file to file, then 8 zero bytes) [unknown], then
+count u32 offsets counted from the first offset, and at each a u16 length
+and that many UTF-16 characters [V 7: all their addresses]. A place in the
+publication is one character (0x010A in Sample) [H: the page's chunk
+number]; the reader keeps those links' words as plain text for now.
+
+### 6.8 Table cells: `TCD ` [V 4: Sample, Sample98 and Sample2000's 3 x 2 table, govdocs1-923566's 4 x 2 contents table]
+
+`TCD ` n (a `PLC` chunk, its name ending in a space) says which of story n's
+paragraphs go in which cell of the table whose text it is:
+
+| Offset | What |
+|---|---|
+| 0x00 | u32 n: the cells less one |
+| 0x04, 0x08 | u32 0, u32 0xFF00 [unknown] |
+| 0x0C | n + 1 u32: each cell's last character in the story, its last paragraph's mark; the last cell's is the story's length |
+
+A paragraph is in the cell whose end is the first at or after its start.
+Cells go across a row, then down: Sample's six paragraphs are "Table on
+page 2" and "Top right", then "P2 table left" and "P2 table right", then
+"Bottom Left" and "Bottom Right", the 2 x 3 its thumbnail shows; the
+table's chunk (0x67, 5.3) gives the columns. The 98 and 2000 forms have the
+same chunk. Merged cells: not seen yet.
+
+### 6.9 Text colours: `PL  ` [V 3: christmas, Sample, halloween-flyer, as 6.4 says]
+
+`PL  ` number 0 (in a later directory block in christmas and govdocs1-923566,
+5 and 8 entries; Sample has 2) lists the colours the text uses; a character
+run's 0x244 names one by its place:
+
+| Offset | What |
+|---|---|
+| 0x00 | u32 n: the colours |
+| 0x04, 0x08 | u32 0x1C (0x28 in easter-egg-hunt-flyer), u32 0 [unknown] |
+| 0x0C | n blocks, one after another, each a u32 length counting itself and fields |
+
+A block's 0x201 is the colour: 0x00BBGGRR (red in the low byte), or 0x08 in
+the top byte and a place in the colour scheme (5.5), as the drawing's
+colours are. Block 0 is the same in every sample (0x201 = scheme place 0,
+0x202 and 0x204-0x205 = 0xFFFFFFFF, 0x203 = 0x20000000); govdocs1-923566's
+block 1 has 0x202 and 0x203 as well [unknown: tints or a second colour].
+Each block ends with an empty 0x206 block. The 98 and 2000 forms have no
+`PL`: their colour (0x22E, 6.4) is not read yet.
 
 ## 7. The drawing: `Escher/EscherStm`
 
@@ -509,15 +582,15 @@ path in section 5.1.
 ## 12. Not known yet (phase 1's work)
 
 - Paragraph spacing, indents and the alignments other than left, right and
-  centred (6.5, 6.6; justified not seen yet, SampleBrochure's 6 unknown); style names; colour schemes (`Contents` kinds 0x46-0x8C); underline
-  and colour in `FDPC` (6.4).
+  centred (6.5, 6.6; justified not seen yet, SampleBrochure's 6 unknown); style names; colour schemes (`Contents` kinds 0x46-0x8C); the
+  98/2000 text colour (0x22E) and underline kinds other than single in `FDPC` (6.4).
 - A frame's own text columns (none of the samples has one: their columns
   are linked frames, 5.3), text wrap (5.3's 0x47 is a guess), layering beyond the back-to-front order, rotation and flips.
-- Tables' cell borders, merged cells, and which paragraph goes in which cell
-  (`TCD `).
+- Tables' cell borders and merged cells.
 - Master pages' own frames (the samples' masters are empty), headers and
   footers, page numbers.
-- Hyperlinks and fields (`TOKN`), catalog and mail-merge data.
+- Links to places in the publication (6.7), fields, catalog and mail-merge
+  data.
 - Shape numbers beyond those in 7.3, gradients, picture crops and fills;
   rotation and flips (not looked for yet); columns and wrap.
 - The 98/2000 form's masters and pictures; the older form (section 10).

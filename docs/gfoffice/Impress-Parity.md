@@ -37,7 +37,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Save as PowerPoint 2007-365 | P4 | Yes (0.6.27): Save and Save As .pptx (`src/deck/opr_pptx.c`); tables saved as text boxes, groups ungrouped, animations not written (ODP keeps them), all reported |
 | PowerPoint 97-2003 (`.ppt`, `.pps`, `.pot`) open and save | Later | No |
 | OpenOffice.org 1.x (`.sxi`), StarImpress | Later, if samples appear | No |
-| Export as PDF (Export as PDF..., Export Directly as PDF) | P1 | Yes: a page a slide, searchable text, JPEG and PNG pictures, hidden slides left out |
+| Export as PDF (Export as PDF..., Export Directly as PDF) | P1 | Yes: a page a slide, searchable text, JPEG and PNG pictures, WMF and EMF pictures as vectors (16 Nov, libowf #232, #267, #278, #279), hidden slides left out |
 | PDF options: page range, notes pages, handouts, hidden slides, bookmarks, tagged PDF, image compression | P2-P4 | Notes pages and handouts: Yes (0.6.25); the rest No |
 | Export slides as pictures (PNG, JPEG, GIF, BMP, SVG...) | P9 | Yes in 0.6.32: File > Export as Pictures..., this slide or all, PNG or IFF ILBM; JPEG, GIF, BMP, SVG: No |
 | Export as HTML (Web Page wizard), Flash | Not planned | No |
@@ -171,7 +171,7 @@ Undo and ODP persistence.
 | Colour modes (greyscale, black and white, watermark), filters, transparency | Later | No |
 | Linked pictures | Later | No (reported) |
 | A picture in several versions (SVG with a PNG) | P1 | Approx.: the one the PDF can draw is kept |
-| Pictures other than JPEG and PNG in the PDF | P2 (datatypes) | No (left out, reported) |
+| Pictures other than JPEG and PNG in the PDF | P2 (datatypes) | Partly (16 Nov): WMF and EMF are drawn as vectors, and on screen as pixels (`owf_metafile.c`), with arcs, chords, pies and ArcTo; clipping, world transforms and pictures inside them are left out and reported. Other formats: No (left out, reported) |
 | Image map | Not planned | No |
 
 ## 7. Tables
@@ -189,7 +189,7 @@ Undo and ODP persistence.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
-| Charts (column, bar, line, area, pie, XY and others), their data | P2-P4 (Shared, section 4) | Kept, with their parts; drawn as their replacement picture |
+| Charts (column, bar, line, area, pie, XY and others), their data | P2-P4 (Shared, section 4) | Kept, with their parts; drawn as their replacement picture, which since 16 Nov includes WMF and EMF ones; not edited |
 | Spreadsheet, formula, drawing objects (OLE) | Later | Kept, as charts are |
 | Sound and video | Later | Kept, shown as a box |
 | Floating frames, plug-ins, applets | Not planned | Kept |
@@ -250,7 +250,7 @@ Undo and ODP persistence.
 | Undo and redo | P3 (per slide) | Text editing, slide insertion/deletion/movement, and object insertion/duplication/deletion/position/size/shape rotation/drawing order/alignment/appearance: Yes (`opr_edit.c`); other object edits: No |
 | Clipboard: objects and slides | P3 (Shared E10) | Top-level supported objects: system Cut/Copy/Paste Yes in 0.6.15; slide clipboard Yes in 0.6.31 (the sorter's own); groups/charts/opaque objects: No |
 | Macros (Basic) | Not planned: ARexx instead (Design 9) | No |
-| ARexx port `GFOPENPRESENTATION` | P4 | No |
+| ARexx port `GFOPENPRESENTATION` | P4 | Yes: VERSION, OPEN, SAVE and the view, slide, object, notes, outline, animation, master, clipboard and export commands named in docs/parity/impress.md |
 
 ## Sources
 

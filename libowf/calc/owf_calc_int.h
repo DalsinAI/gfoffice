@@ -150,7 +150,9 @@ enum {
     OP_ARRAY,                    /* u16 rows, u16 cols: pops rows * cols constants */
     OP_FUNC,                     /* u16 function, u8 count of arguments */
     OP_UNKNOWN,                  /* u8 count: a function the engine lacks: #NAME? */
-    OP_EXTERN,                   /* another book's reference: #REF! */
+    OP_EXTERN,                   /* another book's reference not in owf_book.extbooks: #REF! */
+    OP_XREF,                     /* u16 book, u16 sheet, u32 r0, u16 c0, u32 r1, u16 c1: another book's cells,
+                                    the values it last had (owf_book.extbooks) */
     OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_POW, OP_CAT,
     OP_EQ, OP_NE, OP_LT, OP_LE, OP_GT, OP_GE,
     OP_NEG, OP_PLUS, OP_PCT,
