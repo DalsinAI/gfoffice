@@ -448,9 +448,9 @@ static void test_shapes_palette(void)
 {
     owf_dcell *c;
     int i;
-    CHECK_N(odg_stencil_count(), 8);
+    CHECK(odg_stencil_count() > 8);                       /* the sets: tests/diag/test_odg_stencil.c */
     CHECK_S(odg_stencil_at(0)->name, "Process");
-    CHECK(odg_stencil_at(8) == NULL);
+    CHECK(odg_stencil_at(odg_stencil_count()) == NULL);
     CHECK(odg_stencil_at(-1) == NULL);
     CHECK_N(odg_stencil_find("decision"), 1);
     CHECK_N(odg_stencil_find("PREDEFINED PROCESS"), 4);
