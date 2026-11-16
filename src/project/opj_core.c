@@ -740,10 +740,29 @@ static void squeeze(const char *s, char *out, size_t size)
     out[k] = 0;
 }
 
+/* n times percent / 100, kept from overflowing a 32-bit long. */
+static long percent_of(long n, int percent)
+{
+    return n / 100 * percent + n % 100 * percent / 100;
+}
+
+/* A task's actual work: its work times its % complete; a summary's, its subtasks' added up. */
+static long actual_work(const owf_project *p, int row)
+{
+    const owf_ptask *t = &p->tasks[row];
+    long sum = 0;
+    int j;
+    if (!t->summary) return percent_of(t->work, t->percent);
+    for (j = row + 1; j < p->ntasks && p->tasks[j].level > t->level; j++)
+        if (!p->tasks[j].summary) sum += percent_of(p->tasks[j].work, p->tasks[j].percent);
+    return sum;
+}
+
 static const char *const column_titles[OPJ_NCOLS] = {
     "ID", "Task Name", "Duration", "Start", "Finish", "Predecessors", "% Complete", "WBS", "Resource Names",
     "Baseline Start", "Baseline Finish", "Start Var.", "Finish Var.", "Constraint Type", "Constraint Date", "Notes",
     "Actual Start", "Actual Finish", "Actual Duration", "Remaining Dur.", "BCWS", "BCWP", "ACWP", "SV", "CV", "Leveling Delay",
+    "Work", "Actual Work", "Remaining Work", "Cost", "Actual Cost",
 };
 
 static const char *const constraint_names[] = {   /* OWF_CON_ order */
@@ -869,6 +888,13 @@ void opj_cell_text(const opj_doc *doc, int row, int column, char *out, size_t si
     }
     case OPJ_COL_LEVELING_DELAY:
         if (!t->summary) owf_pduration_text(doc->plan, t->level_delay, t->level_delay_elapsed, 0, text);
+        break;
+    case OPJ_COL_WORK: opj_work_text(t->work, text); break;
+    case OPJ_COL_ACTUAL_WORK: opj_work_text(actual_work(doc->plan, row), text); break;
+    case OPJ_COL_REMAINING_WORK: opj_work_text(t->work - actual_work(doc->plan, row), text); break;
+    case OPJ_COL_COST: opj_money_text(t->cost, text); break;
+    case OPJ_COL_ACTUAL_COST:
+        opj_money_text(owf_ptask_earned(doc->plan, row, doc->plan->status_date, OWF_EV_ACWP), text);
         break;
     default: return;
     }
@@ -1138,6 +1164,49 @@ int opj_clear_leveling(opj_doc *doc)
     return commit(doc, work);
 }
 
+/* ---- Update Tasks (Tools > Tracking > Update Tasks...) ---- */
+
+static int given(const char *s)
+{
+    return s && *s;
+}
+
+int opj_update_task(opj_doc *doc, int row, const char *percent, const char *actual, const char *remaining,
+                    const char *actual_start, const char *actual_finish)
+{
+    int rc;
+    owf_project *work = begin(doc, row, &rc);
+    owf_ptask *t;
+    if (!work) return rc;
+    t = &work->tasks[row];
+    if (t->summary && (given(actual) || given(remaining) || given(actual_start) || given(actual_finish)))
+        return fail(work, OWF_ERR_FORMAT);       /* a summary's come from its subtasks */
+    if (given(actual_start) && (rc = set_field(work, row, OPJ_COL_ACTUAL_START, actual_start)) != OWF_OK)
+        return fail(work, rc);
+    if (given(actual) || given(remaining)) {
+        long a = 0, r = 0, d;
+        int el, es, pc;
+        char pct[8];
+        if (given(actual) && (owf_pduration_parse(work, actual, &a, &el, &es) != OWF_OK || a < 0)) return fail(work, OWF_ERR_FORMAT);
+        if (given(remaining) && (owf_pduration_parse(work, remaining, &r, &el, &es) != OWF_OK || r < 0))
+            return fail(work, OWF_ERR_FORMAT);
+        if (!given(actual)) a = owf_ptask_actual_duration(t);          /* the remaining changes the duration */
+        if (given(remaining)) d = a + r;
+        else d = a > t->duration ? a : t->duration;                     /* more done than planned: longer */
+        t->duration = d;
+        t->milestone = d == 0;
+        if (d == 0) pc = t->percent;                  /* a milestone: % Complete says whether it's done */
+        else if (a >= d) pc = 100;
+        else if ((pc = (int)((a * 100 + d / 2) / d)) > 99) pc = 99;      /* not all done: never 100% */
+        snprintf(pct, sizeof pct, "%d", pc);
+        if ((rc = set_field(work, row, OPJ_COL_PERCENT, pct)) != OWF_OK) return fail(work, rc);
+    }
+    if (given(percent) && (rc = set_field(work, row, OPJ_COL_PERCENT, percent)) != OWF_OK) return fail(work, rc);
+    if (given(actual_finish) && (rc = set_field(work, row, OPJ_COL_ACTUAL_FINISH, actual_finish)) != OWF_OK)
+        return fail(work, rc);
+    return commit(doc, work);
+}
+
 /* ---- Sort ---- */
 
 static char *cell_dup(const opj_doc *doc, int resources, int row, int column);
@@ -1193,6 +1262,11 @@ int opj_cell_value(const opj_doc *doc, int row, int column, long *v, int *na)
         return 1;
     }
     case OPJ_COL_LEVELING_DELAY: *v = t->level_delay; return 1;
+    case OPJ_COL_WORK: *v = t->work; return 1;
+    case OPJ_COL_ACTUAL_WORK: *v = actual_work(doc->plan, row); return 1;
+    case OPJ_COL_REMAINING_WORK: *v = t->work - actual_work(doc->plan, row); return 1;
+    case OPJ_COL_COST: *v = t->cost; return 1;
+    case OPJ_COL_ACTUAL_COST: *v = owf_ptask_earned(doc->plan, row, doc->plan->status_date, OWF_EV_ACWP); return 1;
     default: return 0;
     }
 }

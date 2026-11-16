@@ -53,7 +53,7 @@ void opj_view_init(opj_view *v, const opj_doc *doc, int width, int height, int r
 int opj_column_width(int column)
 {
     static const int widths[OPJ_NCOLS] = { 32, 180, 56, 96, 96, 84, 64, 48, 140, 96, 96, 72, 72, 140, 96, 160,
-                                                   96, 96, 96, 96, 80, 80, 80, 80, 80, 96 };
+                                                   96, 96, 96, 96, 80, 80, 80, 80, 80, 96, 64, 80, 96, 80, 80 };
     return column >= 0 && column < OPJ_NCOLS ? widths[column] : 0;
 }
 
@@ -212,6 +212,31 @@ int opj_bar_of(const opj_view *v, const opj_doc *doc, int row, opj_bar *bar)
     return 1;
 }
 
+int opj_status_x(const opj_view *v, const opj_doc *doc, long *x)
+{
+    if (!v || !v->progress_lines || !doc || !doc->plan || !doc->plan->has_status_date) return 0;
+    if (x) *x = opj_view_x(v, doc->plan->status_date);
+    return 1;
+}
+
+int opj_progress_point(const opj_view *v, const opj_doc *doc, int row, long *x)
+{
+    const owf_ptask *t;
+    owf_ptime status;
+    opj_bar b;
+    if (!opj_status_x(v, doc, NULL) || !opj_bar_of(v, doc, row, &b)) return 0;
+    t = &doc->plan->tasks[row];
+    status = doc->plan->status_date;
+    if (t->summary) return 0;
+    if (t->percent >= 100 && t->early_finish <= status) return 0;    /* done by then: nothing to show */
+    if (t->percent == 0 && t->early_start >= status) return 0;       /* not due to start yet */
+    if (x) {
+        if (b.kind == OPJ_BAR_MILESTONE) *x = b.bar.x + b.bar.w / 2;
+        else *x = b.bar.x + (long)b.bar.w * t->percent / 100;
+    }
+    return 1;
+}
+
 int opj_link_path(const opj_view *v, const opj_doc *doc, int row, int link, opj_path *path)
 {
     const owf_plink *l;
@@ -269,6 +294,21 @@ static void line(oldraw *d, int x0, int y0, int x1, int y1, oldraw_colour c)
 {
     if (y0 == y1) fill(d, x0 < x1 ? x0 : x1, y0, (x0 < x1 ? x1 - x0 : x0 - x1) + 1, 1, c);
     else if (x0 == x1) fill(d, x0, y0 < y1 ? y0 : y1, 1, (y0 < y1 ? y1 - y0 : y0 - y1) + 1, c);
+}
+
+/* A slanting line from x0, y0 down to x1, y1 (y1 > y0), as runs of a row each. */
+static void slant(oldraw *d, int x0, int y0, int x1, int y1, oldraw_colour c)
+{
+    int y, dy = y1 - y0, px = x0;
+    if (dy <= 0) {
+        line(d, x0, y0, x1, y0, c);
+        return;
+    }
+    for (y = 0; y <= dy; y++) {
+        int x = x0 + (int)((long)(x1 - x0) * y / dy);
+        line(d, px, y0 + y, x, y0 + y, c);
+        px = x;
+    }
 }
 
 static void draw_path(oldraw *d, const opj_path *p, oldraw_colour c)
@@ -598,6 +638,21 @@ void opj_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rec
                 }
                 if (crosses(area, x0 - 4, y0 - 4, x1 - x0 + 9, y1 - y0 + 9)) draw_path(d, &p, OPJ_COLOUR_LINK);
             }
+        {                                                        /* the progress line, over the bars */
+            long sx;
+            if (opj_status_x(v, doc, &sx) && sx >= cl && sx < v->width)
+                for (line = v->first_row; line < last; line++) {
+                    int y = 2 * rh + (line - v->first_row) * rh;
+                    long px;
+                    row = opj_view_line_task(v, doc, line);
+                    if (row >= 0 && opj_progress_point(v, doc, row, &px)) {
+                        if (px < cl) px = cl;
+                        if (px >= v->width) px = v->width - 1;
+                        slant(d, (int)sx, y, (int)px, y + rh / 2, OPJ_COLOUR_PROGRESS);
+                        slant(d, (int)px, y + rh / 2, (int)sx, y + rh - 1, OPJ_COLOUR_PROGRESS);
+                    } else slant(d, (int)sx, y, (int)sx, y + rh - 1, OPJ_COLOUR_PROGRESS);
+                }
+        }
         draw_timescale(d, v, area);
     }
     /* The bar between the two halves. */
