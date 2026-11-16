@@ -113,6 +113,7 @@ static void pdf_put_encoded(owf_buf *out, const char *s, size_t len)
         else if (c == 0x201c || c == 0x201d) v = c == 0x201c ? 0x93 : 0x94;
         else if (c == 0x2013) v = 0x96;
         else if (c == 0x2014) v = 0x97;
+        else if (c == 0x2020 || c == 0x2021) v = c == 0x2020 ? 0x86 : 0x87;   /* 1.12.1: notes' daggers */
         else if (c >= 160 && c <= 255) v = (unsigned)c;
         if (v == '(' || v == ')' || v == '\\') {
             owf_buf_putc(out, '\\'); owf_buf_putc(out, (int)v);
