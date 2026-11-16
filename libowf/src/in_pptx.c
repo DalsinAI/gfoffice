@@ -2017,7 +2017,7 @@ static unsigned long tint(unsigned long rgb, long long v)
 static void read_table(objctx *c, int index, const owf_xml_node *tbl)
 {
     const owf_xml_node *tblPr = achild(tbl, "tblPr"), *grid = achild(tbl, "tblGrid"), *g, *tr, *tc;
-    int widths[TABLE_MAX_COLS], ncols = 0, nrows = 0, merged = 0, i;
+    int widths[TABLE_MAX_COLS], ncols = 0, nrows = 0, i;
     int styled = achild(tblPr, "tableStyleId") != NULL;
     int first_row = same(att(tblPr, "firstRow"), "1"), bands = same(att(tblPr, "bandRow"), "1");
     const owf_xml_node *style_id = achild(tblPr, "tableStyleId");
@@ -2070,7 +2070,6 @@ static void read_table(objctx *c, int index, const owf_xml_node *tbl)
                     c->x->r.failed = 1;
                     return;
                 }
-                merged = 1;
             }
             tcPr = achild(tc, "tcPr");
             header = styled && first_row && nrows == 0;
@@ -2131,8 +2130,6 @@ static void read_table(objctx *c, int index, const owf_xml_node *tbl)
                 obj->col_widths[i] = i < TABLE_MAX_COLS && grid ? widths[i] : 0;
     }
     obj->inset[0] = obj->inset[1] = obj->inset[2] = obj->inset[3] = 0;
-    if (merged)
-        owf_report_add(c->x->r.report, OWF_NOTE_APPROX, "Merged table cells are shown apart");
     if (styled)
         owf_report_add(c->x->r.report, OWF_NOTE_APPROX, "Table styles are drawn as PowerPoint's default one");
 }
