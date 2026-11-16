@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.14.0"
+#define OB_CORE_VERSION "0.14.1"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -732,6 +732,11 @@ int ob_form_auto(ob_project *p, const char *table, const char *name, ob_form *ou
 /* Whether the form can be shown: its table is there, each field item names
  * one of its fields, a line is 1 thick. 0 with the reason. */
 int ob_form_check(ob_project *p, const ob_form *f);
+/* The cells the items use: cols across (the furthest x + w), rows down. */
+void ob_form_extent(const ob_form *f, int *cols, int *rows);
+/* The names of the forms on table, in name order, up to max; how many
+ * there are, -1 on error. */
+int ob_forms_of(ob_project *p, const char *table, char (*names)[OB_NAME_MAX], int max);
 /* Forms kept in the project (oadb_forms), in name order. Saving a name that
  * is there replaces it. A table's rename, on its own or in a design change,
  * renames it in its forms, and a design change's field renames (from[])
