@@ -2945,6 +2945,9 @@ static void put_pivots(ods_out *w, owf_buf *b)
         if (!owf_pivot_get(book, i, &def))
             continue;
         src_name = book->sheets[def.source_sheet].name;
+        if (def.nmember)                     /* Data Pilot keeps them as a field of their own: a later step */
+            owf_report_add(w->report, OWF_NOTE_APPROX,
+                           "Pivot table items grouped by hand are saved ungrouped; the table's cells keep the groups");
         if (!any)
             owf_buf_puts(b, "<table:data-pilot-tables>");
         any = 1;

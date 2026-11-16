@@ -1445,6 +1445,91 @@ static void test_relation_draw(void)
     ob_close(p);
 }
 
+/* ARexx row commands (ob_rexx_rows): what GFOpenBase's port does with rows */
+static int rexx(ob_project *p, ob_int current, const char *cmd, char *out, size_t size, ob_int *row)
+{
+    return ob_rexx_rows(p, "Customers", current, cmd, out, size, row);
+}
+
+static void test_rexx_rows(void)
+{
+    ob_project *p = fresh("rexxrows.oadb");
+    static ob_table t;
+    char out[400], cmd[200], small[8];
+    ob_int row, k, k2;
+    if (!p) return;
+    customers(&t);
+    CHECK(ob_table_create(p, &t), "Customers: %s", ob_error(p));
+
+    CHECK(rexx(p, 0, "GETFIELDS", out, sizeof out, NULL) == 0
+          && !strcmp(out, "\"id\" \"Name\" \"Town\" \"Email\" \"Joined\" \"Member\" \"Credit\""), "GETFIELDS: %s", out);
+    CHECK(rexx(p, 0, "addrow \"Name=Zoe Lee\" town=Hull Member=\"Yes\" 'Credit=12.50' Joined=2026-11-15", out, sizeof out, &row) == 0,
+          "ADDROW: %s", out);
+    k = (ob_int)atoll(out);
+    CHECK(k > 0 && row == k, "its key: %s", out);
+    snprintf(cmd, sizeof cmd, "GETROW KEY %lld", (long long)k);
+    CHECK(rexx(p, 0, cmd, out, sizeof out, &row) == 0 && row == k, "GETROW: %s", out);
+    {
+        char want[100];
+        snprintf(want, sizeof want, "%lld\tZoe Lee\tHull\t\t2026-11-15\tYes\t12.50", (long long)k);
+        CHECK(!strcmp(out, want), "every value, tabs between:\n%s\n%s", out, want);
+    }
+    snprintf(cmd, sizeof cmd, "GETROW KEY=%lld FIELD town", (long long)k);
+    CHECK(rexx(p, 0, cmd, out, sizeof out, NULL) == 0 && !strcmp(out, "Hull"), "one field, any case: %s", out);
+    snprintf(cmd, sizeof cmd, "GETROW FIELD Email KEY %lld", (long long)k);
+    CHECK(rexx(p, 0, cmd, out, sizeof out, NULL) == 0 && !out[0], "an empty one: %s", out);
+    CHECK(rexx(p, k, "GETROW FIELD Name", out, sizeof out, NULL) == 0 && !strcmp(out, "Zoe Lee"), "KEY left out: the row chosen");
+
+    /* the defaults fill what's left out */
+    CHECK(rexx(p, 0, "ADDROW Name=Al", out, sizeof out, NULL) == 0, "ADDROW Al: %s", out);
+    k2 = (ob_int)atoll(out);
+    snprintf(cmd, sizeof cmd, "GETROW KEY %lld FIELD Town", (long long)k2);
+    CHECK(rexx(p, 0, cmd, out, sizeof out, NULL) == 0 && !strcmp(out, "Leeds"), "Town's default: %s", out);
+
+    snprintf(cmd, sizeof cmd, "CHANGEROW KEY %lld Name=\"Zoe Ann\" \"Town\"=York", (long long)k);
+    CHECK(rexx(p, 0, cmd, out, sizeof out, &row) == 0 && !strcmp(out, "OK") && row == k, "CHANGEROW: %s", out);
+    CHECK(rexx(p, k, "GETROW FIELD Name", out, sizeof out, NULL) == 0 && !strcmp(out, "Zoe Ann"), "changed: %s", out);
+    CHECK(rexx(p, k, "CHANGEROW Email=", out, sizeof out, NULL) == 0, "emptied: %s", out);
+    CHECK(rexx(p, k, "CHANGEROW Credit=lots", out, sizeof out, NULL) == 10 && out[0], "a bad value: the core's reason: %s", out);
+    CHECK(rexx(p, k, "GETROW FIELD Credit", out, sizeof out, NULL) == 0 && !strcmp(out, "12.50"), "unchanged: %s", out);
+
+    /* refused, with the reason */
+    CHECK(rexx(p, 0, "ADDROW", out, sizeof out, NULL) == 10 && strstr(out, "Field=Value"), "nothing to add: %s", out);
+    CHECK(rexx(p, 0, "ADDROW Name", out, sizeof out, NULL) == 10 && strstr(out, "needs a value"), "no value: %s", out);
+    CHECK(rexx(p, 0, "ADDROW Nosuch=1", out, sizeof out, NULL) == 10 && strstr(out, "has no field Nosuch"), "no field: %s", out);
+    CHECK(rexx(p, 0, "ADDROW Town=Hull", out, sizeof out, NULL) == 10 && out[0], "Name is required: %s", out);
+    CHECK(rexx(p, 0, "GETROW", out, sizeof out, NULL) == 5 && strstr(out, "No row is chosen"), "no row: %s", out);
+    CHECK(rexx(p, 0, "GETROW KEY 99999", out, sizeof out, NULL) == 5 && strstr(out, "No row 99999"), "no such row: %s", out);
+    CHECK(rexx(p, 0, "GETROW KEY abc", out, sizeof out, NULL) == 10, "KEY abc: %s", out);
+    CHECK(rexx(p, k, "GETROW FIELD Nosuch", out, sizeof out, NULL) == 10, "FIELD Nosuch: %s", out);
+    CHECK(rexx(p, k, "GETROW Name=x", out, sizeof out, NULL) == 10 && strstr(out, "takes KEY and FIELD"), "GETROW pairs: %s", out);
+    CHECK(rexx(p, 0, "CHANGEROW KEY 99999 Name=x", out, sizeof out, NULL) == 5, "change no such row: %s", out);
+    CHECK(rexx(p, k, "CHANGEROW", out, sizeof out, NULL) == 10, "nothing to change: %s", out);
+    CHECK(rexx(p, k, "GETROW", small, sizeof small, NULL) == 5, "too long for the answer: %s", small);
+    CHECK(rexx(p, 0, "ROWS", out, sizeof out, NULL) == -1 && rexx(p, 0, "GETROWS", out, sizeof out, NULL) == -1, "not one of these");
+    CHECK(ob_rexx_rows(p, NULL, 0, "GETFIELDS", out, sizeof out, NULL) == 5 && strstr(out, "No table"), "no table: %s", out);
+    CHECK(ob_rexx_rows(p, "Nosuch", 0, "GETFIELDS", out, sizeof out, NULL) == 10, "no such table: %s", out);
+
+    /* a field named Key goes in quotes */
+    {
+        static ob_table kt;
+        ob_table_init(&kt, "Keys");
+        ob_table_add_field(&kt, "Key", OB_TEXT);
+        CHECK(ob_table_create(p, &kt), "Keys: %s", ob_error(p));
+        CHECK(ob_rexx_rows(p, "Keys", 0, "ADDROW \"Key=A1\"", out, sizeof out, &row) == 0, "Key in quotes: %s", out);
+        CHECK(ob_rexx_rows(p, "Keys", row, "GETROW FIELD key", out, sizeof out, NULL) == 0 && !strcmp(out, "A1"), "it's there: %s", out);
+    }
+
+    snprintf(cmd, sizeof cmd, "DELETEROW KEY %lld", (long long)k);
+    CHECK(rexx(p, 0, cmd, out, sizeof out, &row) == 0 && row == k, "DELETEROW: %s", out);
+    CHECK(rexx(p, k, "GETROW", out, sizeof out, NULL) == 5, "gone");
+    CHECK(rexx(p, k, "DELETEROW", out, sizeof out, NULL) == 5, "not twice: %s", out);
+    CHECK(rexx(p, k2, "DELETEROW FIELD x", out, sizeof out, NULL) == 10 && strstr(out, "takes KEY"), "DELETEROW FIELD: %s", out);
+    CHECK(ob_row_total(p, "Customers") == 1, "Al is left");
+    CHECK(ob_undo(p) && ob_row_total(p, "Customers") == 2, "the delete undoes: %s", ob_error(p));
+    ob_close(p);
+}
+
 static void test_csv_options(void)
 {
     ob_project *p = fresh("csvopt.oadb");
@@ -2178,6 +2263,7 @@ int main(int argc, char **argv)
     test_undo();
     test_csv_options();
     test_relation_draw();
+    test_rexx_rows();
     test_queries();
     test_query_joins();
     test_forms();

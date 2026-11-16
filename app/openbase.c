@@ -4222,18 +4222,67 @@ static int rexx_open_cmd(const char *arg, char *out, size_t size)
     return RX_OK;
 }
 
+/* FIRSTROW LASTROW NEXTROW PREVROW: the datasheet's row chosen moves, in
+ * its sort and filter (a query's rows too); RESULT the row's key. COUNTROWS:
+ * the rows it shows. */
+static int rexx_walk(const char *command, char *out, size_t size)
+{
+    ob_int to;
+    if (!proj || (!have_cur && !q_on)) { put_text(out, size, "No table is shown: TABLE chooses one"); return RX_NOW; }
+    load_page();
+    if (starts_word_ci(command, "COUNTROWS", NULL)) { snprintf(out, size, "%lld", (long long)total_rows); return RX_OK; }
+    if (total_rows <= 0) { put_text(out, size, "There are no rows"); return RX_NOW; }
+    if (starts_word_ci(command, "FIRSTROW", NULL)) to = 0;
+    else if (starts_word_ci(command, "LASTROW", NULL)) to = total_rows - 1;
+    else if (starts_word_ci(command, "NEXTROW", NULL)) to = sel_row < 0 ? 0 : sel_row + 1;
+    else to = sel_row < 0 ? total_rows - 1 : sel_row - 1;
+    if (to < 0 || to >= total_rows) { put_text(out, size, "No more rows"); return RX_NOW; }
+    sel_row = (int)to;
+    if (sel_row < top_row) top_row = sel_row;
+    if (sel_row >= top_row + ds_rows) top_row = sel_row - ds_rows + 1;
+    load_page();
+    if (sel_row - top_row < 0 || sel_row - top_row >= page_n) { put_text(out, size, "The row couldn't be read"); return RX_ERROR; }
+    snprintf(out, size, "%lld", (long long)page_keys[sel_row - top_row]);
+    return RX_OK;
+}
+
+/* ADDROW CHANGEROW DELETEROW GETROW GETFIELDS (ob_rexx_rows) on the table
+ * shown, KEY left out being the row chosen; a row added or changed is
+ * chosen. -1 when command isn't one of these. */
+static int rexx_rows(const char *command, char *out, size_t size)
+{
+    ob_int current = 0, row = 0;
+    int rc;
+    if (have_cur && !q_on && sel_row >= 0 && sel_row >= top_row && sel_row - top_row < page_n)
+        current = page_keys[sel_row - top_row];
+    rc = ob_rexx_rows(proj, have_cur && !q_on ? cur.name : NULL, current, command, out, size, &row);
+    if (rc < 0) return -1;
+    if (rc == 5 && q_on && !strncmp(out, "No table", 8)) put_text(out, size, "A query's rows are shown: TABLE chooses a table");
+    if (rc == 0 && (starts_word_ci(command, "ADDROW", NULL) || starts_word_ci(command, "CHANGEROW", NULL)
+                    || starts_word_ci(command, "DELETEROW", NULL))) {
+        ob_int at = starts_word_ci(command, "DELETEROW", NULL) ? -1 : ob_view_position(proj, cur.name, &view, row);
+        load_page();
+        if (at >= 0) {
+            sel_row = (int)at;
+            if (sel_row < top_row || sel_row >= top_row + ds_rows) top_row = sel_row - ds_rows / 2;
+            load_page();
+        }
+    }
+    return rc;
+}
+
 static int rexx_do_command(const char *command, char **result_out)
 {
     const char *arg = "";
-    char result_text[1024];
-    int rc = RX_OK;
+    static char result_text[4096];       /* a GETROW of a wide table */
+    int rc = RX_OK, r;
     result_text[0] = 0;
     command = skip_space(command);
     if (starts_word_ci(command, "VERSION", &arg)) put_text(result_text, sizeof result_text, VERSION_TEXT);
     else if (starts_word_ci(command, "LASTERROR", &arg)) put_text(result_text, sizeof result_text, rexx_lasterror);
     else if (starts_word_ci(command, "HELP", &arg))
         put_text(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE "
-                 "OPEN TABLES TABLE ROW QUIT");
+                 "OPEN TABLES TABLE ROW FIRSTROW NEXTROW PREVROW LASTROW COUNTROWS GETFIELDS GETROW ADDROW CHANGEROW DELETEROW QUIT");
     else if (starts_word_ci(command, "DEACTIVATE", &arg)) {
         rc = RX_NOW; put_text(result_text, sizeof result_text, "DEACTIVATE: GFOpenBase has no icon to go to");
     } else if (starts_word_ci(command, "FAULT", &arg)) {
@@ -4273,6 +4322,12 @@ static int rexx_do_command(const char *command, char **result_out)
         else put_text(result_text, sizeof result_text, "OK");
     } else if (starts_word_ci(command, "QUIT", &arg)) {
         quit_now = 1; put_text(result_text, sizeof result_text, "Quitting");
+    } else if (starts_word_ci(command, "FIRSTROW", NULL) || starts_word_ci(command, "LASTROW", NULL)
+               || starts_word_ci(command, "NEXTROW", NULL) || starts_word_ci(command, "PREVROW", NULL)
+               || starts_word_ci(command, "COUNTROWS", NULL)) {
+        rc = rexx_walk(command, result_text, sizeof result_text);
+    } else if ((r = rexx_rows(command, result_text, sizeof result_text)) >= 0) {
+        rc = r;
     } else { rc = RX_UNKNOWN; put_text(result_text, sizeof result_text, "Unknown GFOpenBase ARexx command; HELP lists them"); }
     if (rc != RX_OK) put_text(rexx_lasterror, sizeof rexx_lasterror, result_text);
     if (result_out) {

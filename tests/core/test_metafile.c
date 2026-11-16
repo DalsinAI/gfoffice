@@ -102,8 +102,8 @@ static void text_out(wmf *w, int x, int y, const char *s)
 /* ---- a sink that writes down what it is given ---- */
 
 typedef struct {
-    char log[4096];
-    char last[512];          /* the last path call, whole, however full log is */
+    char log[16384];
+    char last[2048];         /* the last path call, whole, however full log is */
     size_t used;
     int stop_after;          /* > 0: the sink says stop at that call */
     int calls;
@@ -121,7 +121,7 @@ static int rec_path(void *ctx, const int *xy, int n, int closed, unsigned long f
     recorder *r = (recorder *)ctx;
     char buf[64];
     int i;
-    char out[512];
+    char out[2048];
     size_t k = 0;
     if (r->stop_after && ++r->calls >= r->stop_after) return -1;
     out[k++] = closed ? 'P' : 'L';
@@ -660,6 +660,115 @@ static void test_emf_path_full(void)
     free(r);
 }
 
+/* ---- arcs, chords and pies ---- */
+
+/* the n-th path in the log: its points into xy (at most max), the count; *closed P or L */
+static int log_points(const char *log, int nth, int *xy, int max, int *closed)
+{
+    const char *q = log;
+    int n = 0;
+    while (nth-- > 0 && q) { q = strchr(q, ';'); if (q) q++; }
+    if (!q || !*q) return -1;
+    *closed = *q == 'P';
+    q++;
+    while (*q == ' ' && q[1] != 'f') {
+        int x, y, used;
+        if (sscanf(q, " %d,%d%n", &x, &y, &used) != 2) break;
+        if (n < max) { xy[n * 2] = x; xy[n * 2 + 1] = y; }
+        n++;
+        q += used;
+    }
+    return n;
+}
+
+static void arc_wmf(wmf *w, int fn, int l, int t, int r, int b, int xs, int ys, int xe, int ye)
+{
+    begin(w, fn); put16(w, ye); put16(w, xe); put16(w, ys); put16(w, xs);
+    put16(w, b); put16(w, r); put16(w, t); put16(w, l); end(w);
+}
+
+/* every point in the quarter right and up of cx, cy (y down) */
+static int upper_right(const int *xy, int n, int cx, int cy)
+{
+    int i;
+    for (i = 0; i < n; i++) if (xy[i * 2] < cx || xy[i * 2 + 1] > cy) return 0;
+    return 1;
+}
+
+static int has_point(const int *xy, int n, int x, int y)
+{
+    int i;
+    for (i = 0; i < n; i++) if (xy[i * 2] == x && xy[i * 2 + 1] == y) return 1;
+    return 0;
+}
+
+static void test_arcs(void)
+{
+    wmf w;
+    recorder r;
+    owf_mf_result res;
+    int xy[200], n, closed;
+    start(&w, 1, 0, 0, 1000, 1000, 0);
+    arc_wmf(&w, 0x0817, 0, 0, 1000, 1000, 1000, 500, 500, 0);      /* Arc: from the right up to the top */
+    arc_wmf(&w, 0x0817, 0, 0, 1000, 1000, 500, 0, 1000, 500);      /* and from the top round to the right */
+    arc_wmf(&w, 0x0830, 0, 0, 1000, 1000, 1000, 500, 500, 0);      /* Chord */
+    arc_wmf(&w, 0x081A, 0, 0, 1000, 1000, 1000, 500, 500, 0);      /* Pie */
+    arc_wmf(&w, 0x0817, 0, 0, 1000, 1000, 900, 500, 1000, 500);    /* the same ray twice: all the way round */
+    arc_wmf(&w, 0x0817, 10, 10, 10, 50, 0, 0, 50, 50);             /* no width: nothing */
+    finish(&w);
+    memset(&r, 0, sizeof r);
+    CHECK(owf_metafile_play(w.d, w.n, 0, 0, 1000, 1000, &sink, &r, &res) == OWF_OK, "a WMF of arcs plays");
+    CHECK(res.drawn == 5 && res.skipped == 0, "five drawn, none left out");
+    n = log_points(r.log, 0, xy, 100, &closed);
+    CHECK(n == 17 && !closed && xy[0] == 1000 && xy[1] == 500 && xy[32] == 500 && xy[33] == 0 &&
+          upper_right(xy, n, 500, 500) && has_point(xy, n, 853, 147),
+          "Arc: counterclockwise as seen, the short way from the right to the top, a line");
+    n = log_points(r.log, 1, xy, 100, &closed);
+    CHECK(n == 49 && xy[0] == 500 && xy[1] == 0 && xy[96] == 1000 && xy[97] == 500 && has_point(xy, n, 0, 500) &&
+          has_point(xy, n, 500, 1000), "the other way: three quarters, by the left and the bottom");
+    n = log_points(r.log, 2, xy, 100, &closed);
+    CHECK(n == 17 && closed && strstr(r.log, "P 1000,500 ") && upper_right(xy, n, 500, 500),
+          "Chord: the same points, closed and filled");
+    n = log_points(r.log, 3, xy, 100, &closed);
+    CHECK(n == 18 && closed && xy[34] == 500 && xy[35] == 500, "Pie: on to the centre");
+    n = log_points(r.log, 4, xy, 100, &closed);
+    CHECK(n == 65 && xy[0] == 1000 && xy[1] == 500 && has_point(xy, n, 0, 500), "one ray twice: the whole ellipse");
+
+    {
+        emf e;
+        estart(&e, 10000, 5000, 1);
+        eone(&e, 57, 2);                                    /* SetArcDirection AD_CLOCKWISE */
+        ebegin(&e, 45); e32(&e, 0); e32(&e, 0); e32(&e, 400); e32(&e, 400);
+        e32(&e, 400); e32(&e, 200); e32(&e, 200); e32(&e, 0); eend(&e);      /* Arc: right to top, clockwise */
+        eone(&e, 57, 1);
+        enone(&e, 33);                                      /* SaveDC */
+        eone(&e, 17, 3);                                    /* MM_HIMETRIC, y up */
+        ebegin(&e, 45); e32(&e, 0); e32(&e, 0); e32(&e, 4000); e32(&e, -4000);
+        e32(&e, 4000); e32(&e, -2000); e32(&e, 2000); e32(&e, 0); eend(&e);  /* right to top as seen */
+        eone(&e, 34, -1);
+        enone(&e, 59);                                      /* a Pie in a path, filled */
+        ebegin(&e, 47); e32(&e, 0); e32(&e, 0); e32(&e, 400); e32(&e, 400);
+        e32(&e, 400); e32(&e, 200); e32(&e, 200); e32(&e, 0); eend(&e);
+        enone(&e, 60);
+        ebegin(&e, 62); e32(&e, 0); e32(&e, 0); e32(&e, 0); e32(&e, 0); eend(&e);   /* FillPath */
+        ebegin(&e, 46); e32(&e, -2147483647L); e32(&e, -2147483647L); e32(&e, 2147483647L); e32(&e, 2147483647L);
+        e32(&e, 2147483647L); e32(&e, 0); e32(&e, 0); e32(&e, -2147483647L); eend(&e);   /* far: no overflow */
+        efinish(&e);
+        memset(&r, 0, sizeof r);
+        CHECK(owf_metafile_play(e.d, e.n, 0, 0, 1000, 500, &sink, &r, &res) == OWF_OK, "an EMF of arcs plays");
+        CHECK(res.skipped == 0 && res.drawn == 4, "the arcs drawn, none left out");
+        n = log_points(r.log, 0, xy, 100, &closed);
+        CHECK(n == 49 && !closed && xy[0] == 400 && xy[1] == 200 && xy[96] == 200 && xy[97] == 0 &&
+              has_point(xy, n, 200, 400) && has_point(xy, n, 0, 200), "AD_CLOCKWISE: right to top the long way");
+        n = log_points(r.log, 1, xy, 100, &closed);
+        CHECK(n == 17 && xy[0] == 400 && xy[1] == 200 && xy[32] == 200 && xy[33] == 0 && upper_right(xy, n, 200, 200),
+              "y up (MM_HIMETRIC): still counterclockwise as seen, the short way");
+        n = log_points(r.log, 2, xy, 100, &closed);
+        CHECK(n == 18 && closed && xy[34] == 200 && xy[35] == 200 && strstr(r.log, "P 400,200 "),
+              "a Pie in a path, filled: closed at the centre");
+    }
+}
+
 static void test_emf_damaged(void)
 {
     emf e;
@@ -744,6 +853,7 @@ int main(void)
     test_emf_mapping();
     test_emf_paths();
     test_emf_path_full();
+    test_arcs();
     test_emf_damaged();
     test_emf_render_and_pdf();
     printf("metafile: %d checks, %d failed\n", checks, failures);

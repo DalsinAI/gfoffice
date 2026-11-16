@@ -536,7 +536,12 @@ static int percent_of(owf_book *book, int style)
     int format = owf_book_numfmt(book, "0.00%");
     if (format < 0)
         return -1;
-    copy = book->styles[style >= 0 && style < book->nstyles ? style : 0];
+    if (style >= 0 && style < book->nstyles)
+        copy = book->styles[style];
+    else if (book->nstyles > 0)
+        copy = book->styles[0];
+    else
+        owf_cellstyle_init(&copy);           /* a book with no styles yet */
     copy.number_format = format;
     return owf_book_style(book, &copy);
 }
@@ -594,6 +599,14 @@ static const owf_cell *grouped(const owf_book *book, const owf_pivotdef *def, un
                                owf_cell *own)
 {
     const owf_pivot_group *group = owf_pivot_group_of(def, field);
+    const char *name = def->nmember ? owf_pivot_named_of(def, field, cell) : NULL;
+    if (name) {                              /* in a group made by hand: its name, as text */
+        memset(own, 0, sizeof *own);
+        own->type = OWF_VALUE_TEXT;
+        own->text = (char *)name;            /* def's, which outlives the table's making */
+        own->style = -1;
+        return own;
+    }
     if (!group || !cell || cell->type != OWF_VALUE_NUMBER)
         return cell;
     memset(own, 0, sizeof *own);
