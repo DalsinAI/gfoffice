@@ -221,6 +221,14 @@ int ow_spell_add(ow_spell *s, const char *word)
     return 1;
 }
 
+int ow_spell_ignore(ow_spell *s, const char *word)
+{
+    char lower[96];
+    if (!s || !word || !*word) return 0;
+    lower_word(lower, sizeof lower, word, strlen(word));
+    return spell_has(s, lower) || user_add_mem(s, lower);
+}
+
 static int edit_distance_le3(const char *a, const char *b)
 {
     int prev[48], cur[48], i, j, na=(int)strlen(a), nb=(int)strlen(b);
