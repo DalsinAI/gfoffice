@@ -241,7 +241,9 @@ static long book_bytes(const owf_book *b)
 
 oc_undo *oc_undo_new(oc_core *core, int kind)
 {
-    oc_undo *u = calloc(1, sizeof *u);
+    oc_undo *u;
+    oc_track_hint(core, OC_HINT_NONE, 0, 0, 0, 0, NULL);   /* a command begins: what one before said is gone */
+    u = calloc(1, sizeof *u);
     if (!u)
         return NULL;
     u->kind = kind;
@@ -249,6 +251,10 @@ oc_undo *oc_undo_new(oc_core *core, int kind)
     u->state = *oc_state(core);
     u->dirty = core->dirty;
     u->bytes = (long)sizeof *u;
+    if (oc_track_save(core, u) != OWF_OK) {             /* without them Undo would lose the changes' record */
+        free(u);
+        return NULL;
+    }
     return u;
 }
 
@@ -277,6 +283,7 @@ void oc_undo_free(oc_undo *u)
     free(u->states);
     owf_free(u->part_name);
     owf_free(u->part_data);
+    oc_track_free_list(u->changes, u->nchanges);
     free(u);
 }
 
@@ -475,6 +482,7 @@ static oc_undo *capture_like(oc_core *core, const oc_undo *u)
     int i;
     if (!r)
         return NULL;
+    r->track_pending = 0;                                /* going back is no new change */
     for (i = 0; i < u->nsaves; i++)
         if (oc_undo_save_range(core, r, u->saves[i].sheet, &u->saves[i].range, u->saves[i].has_cols) != OWF_OK)
             goto fail;
@@ -584,6 +592,15 @@ static void restore(oc_core *core, oc_undo *u, oc_undo *back)
         core->book->protect_structure = t.protect_structure;
         core->book->protect_hash = t.protect_hash;
         core->book->protect_kept = t.protect_kept;
+        /* nor are the tracked changes in it: they come back from the step's own copy, below */
+        u->book->track_changes = core->book->track_changes;
+        u->book->nchanges = core->book->nchanges;
+        u->book->capchanges = core->book->capchanges;
+        u->book->changes = core->book->changes;
+        core->book->track_changes = t.track_changes;
+        core->book->nchanges = t.nchanges;
+        core->book->capchanges = t.capchanges;
+        core->book->changes = t.changes;
         back->book = u->book;                            /* what was there goes to the other stack */
         back->bytes += book_bytes(back->book);
         u->book = NULL;
@@ -595,6 +612,7 @@ static void restore(oc_core *core, oc_undo *u, oc_undo *back)
             u->states = NULL;
         }
     }
+    oc_track_restore(core, u);
 }
 
 /* Undo (from undo to redo) or redo. */

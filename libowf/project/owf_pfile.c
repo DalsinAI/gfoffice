@@ -716,6 +716,12 @@ static int read_xml(const char *text, size_t length, owf_project **out)
         if (k->has_actual_start && child_text(&r, t, "ActualFinish") && parse_time(r.buf, &k->actual_finish) &&
             k->actual_finish >= k->actual_start)
             k->has_actual_finish = 1;
+        if (child_long(&r, t, "LevelingDelay", &v) && v > 0) {          /* tenths of a minute */
+            k->level_delay = v / 10;
+            f = 0;
+            child_long(&r, t, "LevelingDelayFormat", &f);
+            k->level_delay_elapsed = format_elapsed(f);
+        }
         read_baseline(&r, t, k);
         tasks[ntasks].uid = k->uid;
         tasks[ntasks].index = at;
@@ -911,6 +917,10 @@ static void write_xml(const owf_project *p, owf_buf *b, const char *ns)
         put_long(b, "ConstraintType", t->constraint);
         put_long(b, "CalendarUID", t->calendar < 0 ? -1 : t->calendar + 1);
         if (t->constraint != OWF_CON_ASAP && t->constraint != OWF_CON_ALAP) put_date(b, "ConstraintDate", t->constraint_date);
+        if (t->level_delay > 0) {                                        /* tenths of a minute, then its format */
+            put_long(b, "LevelingDelay", clamp(t->level_delay) * 10);
+            put_long(b, "LevelingDelayFormat", duration_format(p, t->level_delay, t->level_delay_elapsed));
+        }
         if (t->notes && t->notes[0]) put_text(b, "Notes", t->notes);
         for (j = 0; j < t->nlinks; j++) {
             const owf_plink *l = &t->links[j];

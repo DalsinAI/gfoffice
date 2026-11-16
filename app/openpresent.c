@@ -78,6 +78,7 @@
 #include "openpressmaster_core.h"
 #include "openpressmaster_merge.h"
 #include "openpressmaster_template.h"
+#include "openpressmaster_pagenum.h"
 #endif
 #include "ow_layout.h"
 #include "owf_pdf.h"
@@ -103,7 +104,7 @@ struct RxsLib *RexxSysBase = NULL;
 
 #ifdef OPENPRESSMASTER
 #define PROGRAM "GFOpenPressmaster"
-#define VERSION_TEXT "GFOpenPressmaster 0.3.31 (16.11.2026)"
+#define VERSION_TEXT "GFOpenPressmaster 0.3.32 (16.11.2026)"
 #define REXX_PORT_NAME "GFOPENPRESSMASTER"
 #define REXX_OLD_PORT_NAME "GFOPENPUBLISHER"         /* the name before 16 Nov 2026, kept so old scripts run */
 #define UNIT "Page"
@@ -163,7 +164,7 @@ enum {
     M_VIEW_MASTER, M_SLIDE_DESIGN, M_INSERT_FILE, M_PICTURES,
     M_SPELL_AS_YOU_TYPE, M_SPELLING,
     M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_PAGES, M_MERGE_CATALOG,
-    M_NEW_TEMPLATE, M_PDF_PRINTER
+    M_NEW_TEMPLATE, M_PDF_PRINTER, M_PAGE_NUMBER, M_PAGE_COUNT
 };
 
 static struct NewMenu menus[] = {
@@ -229,6 +230,10 @@ static struct NewMenu menus[] = {
 
     { NM_TITLE, "Insert", NULL, 0, 0, NULL },
     { NM_ITEM, "Text Box", NULL, 0, 0, (APTR)M_INSERT_TEXTBOX },
+#ifdef OPENPRESSMASTER
+    { NM_ITEM, "Page Number", NULL, 0, 0, (APTR)M_PAGE_NUMBER },
+    { NM_ITEM, "Number of Pages", NULL, 0, 0, (APTR)M_PAGE_COUNT },
+#endif
     { NM_ITEM, "Table...", NULL, 0, 0, (APTR)M_INSERT_TABLE },
     { NM_ITEM, "Picture...", NULL, 0, 0, (APTR)M_INSERT_PICTURE },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -298,7 +303,9 @@ static struct NewMenu menus[] = {
     { NM_ITEM, UNIT " Transition...", NULL, 0, 0, (APTR)M_TRANSITION },
 #ifndef OPENPRESSMASTER
     { NM_ITEM, "Custom Animation...", NULL, 0, 0, (APTR)M_CUSTOM_ANIMATION },
+#endif
     { NM_ITEM, UNIT " Design...", NULL, 0, 0, (APTR)M_SLIDE_DESIGN },
+#ifndef OPENPRESSMASTER
     { NM_ITEM, "Insert " UNIT "s from File...", NULL, 0, 0, (APTR)M_INSERT_FILE },
 #endif
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -310,9 +317,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Outline", NULL, CHECKIT, ~8 & 15, (APTR)M_VIEW_OUTLINE },
     { NM_ITEM, UNIT " Sorter", NULL, CHECKIT, ~2 & 15, (APTR)M_VIEW_SORTER },
     { NM_ITEM, "Notes", NULL, CHECKIT, ~4 & 15, (APTR)M_VIEW_NOTES },
-#ifndef OPENPRESSMASTER
     { NM_ITEM, "Master " UNIT "s", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)M_VIEW_MASTER },
-#endif
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "First " UNIT, NULL, 0, 0, (APTR)M_FIRST },
     { NM_ITEM, "Previous " UNIT, "[", 0, 0, (APTR)M_PREV },
@@ -7581,6 +7586,43 @@ static void open_deck(const char *path)
 }
 
 #ifdef OPENPRESSMASTER
+/* ---- Insert > Page Number and Number of Pages (src/pub/opp_pagenum.c) ----
+ * Typing in a text box: the field goes at the caret. Otherwise a small box holding it is put near the foot of
+ * the page, or of the master in the Master view, where every page of the master shows its own number. */
+static void insert_page_field(owf_field which)
+{
+    box b;
+    int sel = -1, rc;
+    if (!deck || current < 0 || current >= deck->nslides) return;
+    if (edit_obj >= 0 && edit_obj < deck->slides[current].nobjs) {
+        before_change(&b);
+        rc = opp_insert_page_field_at(&deck->slides[current].objs[edit_obj], caret.para, caret.offset, which);
+        if (rc != OWF_OK) { tell(PROGRAM, owf_error_text(rc)); return; }
+        edit_grouped = 0;                            /* the field is a step of its own */
+        laid_clear();
+        text_changed(NULL);
+    } else {
+        rc = opp_page_number_box(undo, deck, current, which, &sel);
+        if (rc < 0) {
+            set_status(rc == -2 ? "The " UNIT_LOWER " is too small for a page number." : "The page number could not be inserted.");
+            draw_status();
+            return;
+        }
+        stop_typing();
+        selected_obj = sel;
+        slide_changed(current);
+        dirty = 1;
+        update_window_title();
+        draw_slide();
+        if (strip) ogt_list_draw_row(strip, current);
+        update_edit_tools();
+        ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    }
+    set_status(mview ? "On the master: every " UNIT_LOWER " of it shows its own number."
+               : which == OWF_FIELD_PAGE ? "Page number inserted." : "Number of pages inserted.");
+    draw_status();
+}
+
 /* ---- Mailings: mail merge (src/pub/opp_merge.c) ----
  * The data source is a CSV file whose first line names the columns. Merge fields show the column's name in
  * guillemets, or the values of the record shown; Merge to New Publication makes the pages once for each record
@@ -8397,6 +8439,10 @@ static void menu_action(ULONG id)
     case M_TEXT_COLUMNS_3: set_selected_text_columns(3); break;
     case M_TEXT_FRAME: edit_selected_text_frame(); break;
     case M_INSERT_TEXTBOX: insert_textbox(); break;
+#ifdef OPENPRESSMASTER
+    case M_PAGE_NUMBER: insert_page_field(OWF_FIELD_PAGE); break;
+    case M_PAGE_COUNT: insert_page_field(OWF_FIELD_PAGES); break;
+#endif
     case M_INSERT_TABLE: insert_table(); break;
     case M_INSERT_PICTURE: insert_picture(); break;
     case M_INSERT_RECT: insert_shape(OWF_SHAPE_RECT); break;

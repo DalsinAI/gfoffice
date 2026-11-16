@@ -222,6 +222,33 @@ void opj_work_text(long minutes, char *out);
 /* "1234.50": hundredths of money. out >= 16 bytes. */
 void opj_money_text(long hundredths, char *out);
 
+/* ---- Assign Resources (MS Project's dialog): every resource against one task ---- */
+typedef struct {
+    int assigned;                        /* 1 when the task has the resource */
+    long units;                          /* the assignment's units, as opj_set_assignment takes them; 0 when none */
+    long work, cost;                     /* its work (minutes) and cost (hundredths), as scheduled */
+} opj_assign_info;
+/* The resource against the task into *out; 0 (and *out zeroed) when either is out of range. */
+int opj_assign_get(const opj_doc *doc, int task, int resource, opj_assign_info *out);
+/* Units as the dialog types them for the resource: a work resource "50%" or "50" (whole percent, 1 to
+ * 100000), a material "2.5" (units, to two places), a cost "120.00" (a currency sign before it is fine).
+ * OWF_OK with *units as opj_set_assignment takes them; OWF_ERR_FORMAT for 0, nothing, or text it doesn't take. */
+int opj_units_parse(const opj_doc *doc, int resource, const char *text, long *units);
+/* The other way: "50%", "2.5", "120.00"; "" for a resource out of range. out holds at least 24 bytes. */
+void opj_units_text(const opj_doc *doc, int resource, long units, char *out, size_t size);
+/* The dialog's line for the resource: "*" when assigned (else " "), the name, then for an assignment its
+ * units and cost, in columns. */
+void opj_assign_line(const opj_doc *doc, int task, int resource, char *out, size_t size);
+/* Assign: the resource on the task at units (NULL or "": the assignment's own units, else 100%, or one
+ * unit of a material; a cost resource needs its amount), as one edit. */
+int opj_assign_resource(opj_doc *doc, int task, int resource, const char *units);
+/* Remove: the resource's assignment on the task, as one edit; OWF_ERR_FORMAT when there is none. */
+int opj_remove_resource(opj_doc *doc, int task, int resource);
+/* Replace: the task's assignment of from goes to to, keeping its place and, with units NULL or "", its
+ * units (one unit of to's kind when the two kinds differ), as one edit. OWF_ERR_FORMAT when from isn't
+ * assigned, to already is, or they are the same. */
+int opj_replace_resource(opj_doc *doc, int task, int from, int to, const char *units);
+
 /* ---- Resource usage: each resource's work in each period ---- */
 
 /* The start of the period holding t, at a zoom (a day, a Monday, the 1st of a month or quarter); the next

@@ -25,7 +25,7 @@ enum {
     C_HELP, C_LASTERROR, C_ISDIRTY, C_GETFILE, C_NEW, C_OPEN, C_SAVE, C_SAVEAS, C_EXPORT, C_TASKS, C_ADDTASK,
     C_DELETETASK, C_GETCELL, C_SETCELL, C_INDENT, C_OUTDENT, C_LINK, C_UNLINK, C_UNDO, C_REDO, C_BASELINE,
     C_RESOURCES, C_ADDRESOURCE, C_DELETERESOURCE, C_GETRESOURCE, C_SETRESOURCE, C_ASSIGN, C_USAGE, C_FINISH,
-    C_CRITICAL, C_COLUMN, C_CALENDARS, C_ADDCALENDAR, C_WORKTIME, C_SETCALENDAR, C_UPDATE, C_BASELINES, NCOMMANDS
+    C_CRITICAL, C_COLUMN, C_CALENDARS, C_ADDCALENDAR, C_WORKTIME, C_SETCALENDAR, C_UPDATE, C_BASELINES, C_REPLACE, NCOMMANDS
 };
 
 static const command commands[NCOMMANDS] = {
@@ -66,6 +66,7 @@ static const command commands[NCOMMANDS] = {
     { "SETCALENDAR", "CALENDAR/A,ROW/K/N" },
     { "UPDATE", "STATUS/A,WHOLE/S" },
     { "BASELINES", "" },
+    { "REPLACE", "ROW/A/N,FROM/A,TO/A,UNITS/K" },
 };
 
 /* ---- Words ---- */
@@ -679,6 +680,15 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
             return OPJ_RX_ERROR;
         }
         return edit_rc(rx, opj_set_assignment(doc, (int)row, r, a->value[2] ? a->num[2] : 100), "ASSIGN");
+    case C_REPLACE: {
+        int to;
+        if ((r = find_resource(p, a->value[1])) < 0 || (to = find_resource(p, a->value[2])) < 0) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "REPLACE: no resource %.100s",
+                     r < 0 ? a->value[1] : a->value[2]);
+            return OPJ_RX_ERROR;
+        }
+        return edit_rc(rx, opj_replace_resource(doc, (int)row, r, to, a->value[3]), "REPLACE");
+    }
     case C_USAGE: {
         owf_ptime from, to;
         if ((r = find_resource(p, a->value[0])) < 0) {
