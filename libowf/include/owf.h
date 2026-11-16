@@ -913,6 +913,13 @@ typedef struct {
  * or OWF_ERR_MEMORY. */
 int owf_sheet_charts(const owf_book *book, int sheet, owf_chart **charts, int *count);
 void owf_charts_free(owf_chart *charts, int count);
+/* A chart on its own (a slide's), with no book: read from its chart part (DrawingML c:chartSpace), every field
+ * set, its points the values the part's caches (or literals) hold. OWF_OK, OWF_ERR_FORMAT when it holds no
+ * chart, or OWF_ERR_MEMORY; on an error the chart holds nothing. owf_chart_clear frees what it holds. */
+int owf_chart_from_part(const char *xml, size_t length, owf_chart *chart);
+/* A deep copy into to (which holds nothing yet): OWF_OK or OWF_ERR_MEMORY (to then holds nothing). */
+int owf_chart_copy(owf_chart *to, const owf_chart *from);
+void owf_chart_clear(owf_chart *chart);      /* frees what it holds and zeroes it; NULL: nothing */
 /* Keeps charts on a sheet as independent drawing/chart package parts. The
  * sheet must not already have a drawing. Used by sheet duplication and chart
  * authoring; OWF_OK or an OWF_ERR_*. */
