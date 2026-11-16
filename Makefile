@@ -524,17 +524,29 @@ $(OUT)/pub-dump-asan: $(PUB_DEPS)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
 		-Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/pub/pub_dump.c -lz -o $@
 
+# pub_resave: reads a .pub and writes it again (out_pub.c), for test_pub_save.py
+$(OUT)/pub-resave: $(PUB_DEPS) tests/pub/pub_resave.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/pub/pub_resave.c -lz -o $@
+
+$(OUT)/pub-resave-asan: $(PUB_DEPS) tests/pub/pub_resave.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(OWF_SRC) tests/pub/pub_resave.c -lz -o $@
+
 # the format lab's stream lister (tools/publab: docs/gfoffice/PUB-FORMAT.md)
 $(OUT)/pub-streams: $(OWF_SRC) tools/publab/pub_streams.c libowf/src/owf_internal.h
 	mkdir -p $(OUT)
 	$(CC) $(WARN) $(CFLAGS) -Wno-format-truncation -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) tools/publab/pub_streams.c -lz -o $@
 
-pub-test: $(OUT)/pub-dump $(PUB_MADE)
+pub-test: $(OUT)/pub-dump $(OUT)/pub-resave $(PUB_MADE)
 	python3 tests/pub/test_pubgen.py
 	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub.py $(OUT)/pub-dump 40
+	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub_save.py $(OUT)/pub-resave $(OUT)/pub-dump
 
-pub-check: $(OUT)/pub-dump-asan $(PUB_MADE)
+pub-check: $(OUT)/pub-dump-asan $(OUT)/pub-resave-asan $(PUB_MADE)
 	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub.py $(OUT)/pub-dump-asan 150
+	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub_save.py $(OUT)/pub-resave-asan $(OUT)/pub-dump-asan
 
 test: pub-test
 check: pub-check

@@ -579,6 +579,23 @@ and what kind each shape is. `tools/publab/thumbdib.py` writes it as a PNG.
 The author's name is property 4 [V 26]: personal data, like the temporary
 path in section 5.1.
 
+## 11b. Writing (out_pub.c, step 3)
+
+`owf_pub_write` (libowf/src/out_pub.c, owfpub.library 3.3) writes only the
+2007 form that sections 4-7 describe, from an `owf_pub` the reader made:
+`Contents` (header, index, document, pages, masters, frames, tables, scheme),
+`Escher/EscherStm` (one F004 per frame: shape number, look, anchor in EMU
+about the page centre, F011 chunk, F00D text id), `Quill/QuillSub/CONTENTS`
+(TEXT, FDPC/FDPP pages, STRS, SYID, FONT, an empty STSH 0/1, TOKN, TCD, PL)
+and a DocumentSummaryInformation that says 12.0. The compound file is
+libowf/src/owf_cfbw.c (MS-CFB v3, 512-byte sectors, deterministic). Not
+written yet, each named in the report: pictures (written as empty frames),
+WordArt, groups' own records (their frames are kept, flat) and the scratch
+area. PL holds 255 text colours; runs past them keep the automatic colour,
+with a note. tests/pub/test_pub_save.py reads every generated file back through
+our own reader; whether Publisher itself opens these files has not been
+checked yet.
+
 ## 12. Not known yet (phase 1's work)
 
 - Paragraph spacing, indents and the alignments other than left, right and

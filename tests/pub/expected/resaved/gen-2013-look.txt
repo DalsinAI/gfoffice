@@ -1,0 +1,38 @@
+page-size 210.0 x 297.0 mm (emu 7560000 x 10692000, twips 11906 x 16838)
+masters 1
+master 1 "Master Page A" frames 0
+pages 1
+page 1 master 1 frames 6
+  frame 0 text box 20.0 20.0 170.0 25.0 mm (emu 720000 720000 6840000 1620000) shape 202 text-id 1 story 0
+    look fill #cccceb line #000000 width 12700 margins 91440 45720 91440 45720
+    para "A headline over a bar"
+      run 0 "A " 10.0pt font "Times New Roman"
+      run 1 "headline" 10.0pt colour #ff0000 font "Times New Roman"
+      run 2 " over" 10.0pt colour #000099 font "Times New Roman"
+      run 3 " a bar" 10.0pt font "Times New Roman"
+    para "Styled red"
+      run 0 "Styled " 10.0pt colour #993300 font "Times New Roman"
+      run 1 "red" 10.0pt colour #ff0000 font "Times New Roman"
+  frame 1 shape box 10.0 10.0 10.0 10.0 mm (emu 360000 360000 720000 720000) shape 1
+    look fill #000099 no-line
+  frame 2 shape box 5.0 5.0 200.0 287.0 mm (emu 180000 180000 7380000 10512000) shape 1
+    look no-fill line #000000 width 38100
+  frame 3 shape box 150.0 250.0 40.0 40.0 mm (emu 5400000 9000000 6840000 10440000) shape 1
+    look fill #ffffff no-line
+  frame 4 shape box 160.0 260.0 20.0 20.0 mm (emu 5760000 9360000 6480000 10080000) shape 1
+    look fill #996633 line #993300 width 6350
+  frame 5 shape box 20.0 260.0 20.0 20.0 mm (emu 720000 9360000 1440000 10080000) shape 1
+stories 1
+story 0
+  para "A headline over a bar"
+    run 0 "A " 10.0pt font "Times New Roman"
+    run 1 "headline" 10.0pt colour #ff0000 font "Times New Roman"
+    run 2 " over" 10.0pt colour #000099 font "Times New Roman"
+    run 3 " a bar" 10.0pt font "Times New Roman"
+  para "Styled red"
+    run 0 "Styled " 10.0pt colour #993300 font "Times New Roman"
+    run 1 "red" 10.0pt colour #ff0000 font "Times New Roman"
+scheme #000000 #cccceb #000099 #993300 #ffffff
+fonts 1
+font "Times New Roman"
+pictures 0

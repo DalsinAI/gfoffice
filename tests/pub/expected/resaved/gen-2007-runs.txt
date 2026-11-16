@@ -1,0 +1,100 @@
+page-size 210.0 x 297.0 mm (emu 7560000 x 10692000, twips 11906 x 16838)
+masters 1
+master 1 "Master Page A" frames 0
+pages 2
+page 1 master 1 frames 4
+  frame 0 text box 20.0 20.0 170.0 20.0 mm (emu 720000 720000 6840000 1440000) shape 202 text-id 1 story 0
+    para "Plain text in the default style."
+      run 0 "Plain text in the defaul" 10.0pt font "Times New Roman"
+  frame 1 text box 20.0 50.0 170.0 40.0 mm (emu 720000 1800000 6840000 3240000) shape 202 text-id 2 story 1
+    para "Bold and italic in Arial, 20 point. Then Courier at 12, bold alone"
+      run 0 "Bold and italic in Arial" bold italic 20.0pt font "Arial"
+      run 1 "Then Courier at 12, " 12.0pt font "Courier New"
+      run 2 "bold alone" bold 10.0pt font "Times New Roman"
+    para "A second paragraph, italic"
+      run 0 "A second paragraph, ital" italic 10.0pt font "Times New Roman"
+  frame 2 table box 20.0 100.0 120.0 40.0 mm (emu 720000 3600000 5040000 5040000) shape 1 text-id 3 story 2 table 3x2
+    para "Cell one"
+      cell row 0 column 0 of 2
+      run 0 "Cell one" 10.0pt font "Times New Roman"
+    para "Cell two"
+      cell row 0 column 1 of 2
+      run 0 "Cell two" 10.0pt font "Times New Roman"
+    para "Cell three"
+      cell row 1 column 0 of 2
+      run 0 "Cell three" 10.0pt font "Times New Roman"
+    para "Cell three, its second paragraph"
+      cell row 1 column 0 of 2
+      run 0 "Cell three, its second p" 10.0pt font "Times New Roman"
+    para "Cell four"
+      cell row 1 column 1 of 2
+      run 0 "Cell four" 10.0pt font "Times New Roman"
+    para "Cell five"
+      cell row 2 column 0 of 2
+      run 0 "Cell five" 10.0pt font "Times New Roman"
+    para "Cell six"
+      cell row 2 column 1 of 2
+      run 0 "Cell six" 10.0pt font "Times New Roman"
+  frame 3 shape box 150.0 100.0 30.0 30.0 mm (emu 5400000 3600000 6480000 4680000) shape 75
+page 2 master 1 frames 2
+  frame 0 text box 20.0 20.0 170.0 20.0 mm (emu 720000 720000 6840000 1440000) shape 202 text-id 4 story 3
+    para "On the second page"
+      run 0 "On the second page" 10.0pt font "Times New Roman"
+  frame 1 text box 20.0 50.0 170.0 20.0 mm (emu 720000 1800000 6840000 2520000) shape 202 text-id 6 story 5
+    para "See our site, write to us, or turn to page 1."
+      run 0 "See " 10.0pt font "Times New Roman"
+      run 1 "our site" underline 10.0pt font "Times New Roman" link "https://example.org/gfoffice/"
+      run 2 ", " 10.0pt font "Times New Roman"
+      run 3 "write to us" underline 10.0pt font "Times New Roman" link "mailto:team@example.org?subject=Hello"
+      run 4 ", or turn to page 1." 10.0pt font "Times New Roman"
+stories 6
+story 0
+  para "Plain text in the default style."
+    run 0 "Plain text in the defaul" 10.0pt font "Times New Roman"
+story 1
+  para "Bold and italic in Arial, 20 point. Then Courier at 12, bold alone"
+    run 0 "Bold and italic in Arial" bold italic 20.0pt font "Arial"
+    run 1 "Then Courier at 12, " 12.0pt font "Courier New"
+    run 2 "bold alone" bold 10.0pt font "Times New Roman"
+  para "A second paragraph, italic"
+    run 0 "A second paragraph, ital" italic 10.0pt font "Times New Roman"
+story 2
+  para "Cell one"
+    cell row 0 column 0 of 2
+    run 0 "Cell one" 10.0pt font "Times New Roman"
+  para "Cell two"
+    cell row 0 column 1 of 2
+    run 0 "Cell two" 10.0pt font "Times New Roman"
+  para "Cell three"
+    cell row 1 column 0 of 2
+    run 0 "Cell three" 10.0pt font "Times New Roman"
+  para "Cell three, its second paragraph"
+    cell row 1 column 0 of 2
+    run 0 "Cell three, its second p" 10.0pt font "Times New Roman"
+  para "Cell four"
+    cell row 1 column 1 of 2
+    run 0 "Cell four" 10.0pt font "Times New Roman"
+  para "Cell five"
+    cell row 2 column 0 of 2
+    run 0 "Cell five" 10.0pt font "Times New Roman"
+  para "Cell six"
+    cell row 2 column 1 of 2
+    run 0 "Cell six" 10.0pt font "Times New Roman"
+story 3
+  para "On the second page"
+    run 0 "On the second page" 10.0pt font "Times New Roman"
+story 4
+  para "Left on the scratch area"
+    run 0 "Left on the scratch area" 10.0pt font "Times New Roman"
+story 5
+  para "See our site, write to us, or turn to page 1."
+    run 0 "See " 10.0pt font "Times New Roman"
+    run 1 "our site" underline 10.0pt font "Times New Roman" link "https://example.org/gfoffice/"
+    run 2 ", " 10.0pt font "Times New Roman"
+    run 3 "write to us" underline 10.0pt font "Times New Roman" link "mailto:team@example.org?subject=Hello"
+    run 4 ", or turn to page 1." 10.0pt font "Times New Roman"
+fonts 3
+font "Times New Roman"
+font "Arial"
+font "Courier New"
+pictures 0

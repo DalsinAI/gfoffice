@@ -1,0 +1,16 @@
+page-size 210.0 x 297.0 mm (emu 7560000 x 10692000, twips 11906 x 16838)
+masters 1
+master 1 "Master Page A" frames 0
+pages 1
+page 1 master 1 frames 1
+  frame 0 text box 20.0 22.0 166.0 20.0 mm (emu 720000 792000 6696000 1512000) shape 202 text-id 1 story 0
+    look no-fill no-line margins 91440 45720 91440 45720
+    para "A plain line of text, 0123456789"
+      run 0 "A plain line of text, 01" 10.0pt font "Times New Roman"
+stories 1
+story 0
+  para "A plain line of text, 0123456789"
+    run 0 "A plain line of text, 01" 10.0pt font "Times New Roman"
+fonts 1
+font "Times New Roman"
+pictures 0
