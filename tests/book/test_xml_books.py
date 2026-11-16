@@ -1161,6 +1161,15 @@ def test_external_books(work):
         'extcell "Q 1" 2,0 number 7', 'extcell "Q 1" 2,1 text "seven"'], b.get("ext"))
     check("external books: copy-all stays a sheet", [s["name"] for s in b["sheets"]][-1] == "Linked" and
           any("linked to other files" in n for n in b["notes"]), ([s["name"] for s in b["sheets"]], b["notes"]))
+    # a file cut off inside a value table (so the table never ends), with settings.xml's two ActiveTable items:
+    # read safely, nothing freed twice or left
+    cut = os.path.join(work, "ext-ods-cut")
+    shutil.copytree(src, cut)
+    end = link.index("/>") + 2
+    with open(os.path.join(cut, "content.xml"), "w", encoding="utf-8") as f:
+        f.write(text[:at] + link[:end])
+    rc, out, err = dump(zip_dir(cut, cut + ".ods", stored_first="mimetype"))
+    check("external books: cut off inside a value table", rc in (0, 10) and "Sanitizer" not in err, (rc, err[-800:]))
     xlsx = os.path.join(work, "ext-ods.xlsx")
     if convert(hand, xlsx):
         rc, out, err = dump(xlsx)

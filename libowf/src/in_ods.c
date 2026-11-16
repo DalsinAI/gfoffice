@@ -1707,8 +1707,6 @@ static void config_end(ods *o, const owf_xml_event *e)
             return;
         if (e->depth == o->cfg_view + 1 && !strcmp(name, "ActiveTable")) {
             free(o->active);
-    free(o->link_href);
-    free(o->link_sheet);
             o->active = copy(o, v);
         } else if (o->cfg_entry && e->depth == o->cfg_tables + 2) {
             ods_split *sp;
@@ -4501,6 +4499,8 @@ static void free_reader(ods *o)
     }
     free(o->scens);
     free(o->active);
+    free(o->link_href);
+    free(o->link_sheet);
     for (i = 0; i < o->nsplits; i++)
         free(o->splits[i].sheet);
     free(o->splits);
