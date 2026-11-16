@@ -2093,6 +2093,177 @@ static void shop_orders(ob_project *p)
         CHECK(ob_row_add(p, "Orders", 3, f, rows[i], NULL), "order %u: %s", i, ob_error(p));
 }
 
+static void copy_s(char *to, size_t n, const char *from)
+{
+    snprintf(to, n, "%s", from);
+}
+
+static void test_designed_forms(void)
+{
+    ob_project *p = fresh("dforms.oadb");
+    static ob_form f, g;
+    ob_fitem *it;
+    int i;
+    if (!p) return;
+    five_customers(p);
+    shop_orders(p);
+
+    /* the model: items kept on the grid */
+    ob_form_init(&f, "Card", "Customers");
+    it = ob_form_add(&f, OB_FI_LABEL, 2, 1, 10, 1);
+    CHECK(it && f.nitems == 1 && it->x == 2 && it->w == 10, "a label");
+    copy_s(it->text, sizeof it->text, "Name:");
+    it = ob_form_add(&f, OB_FI_FIELD, 14, 1, 500, 0);
+    CHECK(it && it->w == OB_FORM_COLS - 14 && it->h == 1, "kept inside: w %d h %d", it ? it->w : -1, it ? it->h : -1);
+    copy_s(it->field, sizeof it->field, "Name");
+    CHECK(!ob_form_add(&f, OB_FI_LABEL, -1, 0, 1, 1) && !ob_form_add(&f, OB_FI_LABEL, 0, OB_FORM_ROWS, 1, 1), "off the grid");
+    CHECK(!ob_form_add(&f, OB_FI_KINDS, 0, 0, 1, 1), "no such kind");
+    it = ob_form_add(&f, OB_FI_BOX, 0, 0, 40, 5);
+    CHECK(it != NULL, "a box");
+    CHECK(ob_form_at(&f, 3, 1) == 0, "the label, not the box round it: %d", ob_form_at(&f, 3, 1));
+    CHECK(ob_form_at(&f, 0, 2) == 2 && ob_form_at(&f, 39, 4) == 2, "the box by its edge");
+    CHECK(ob_form_at(&f, 5, 3) == -1, "inside the box, nothing");
+    CHECK(ob_form_at(&f, 100, 1) == 1, "the field");
+    CHECK(ob_form_place(&f, 0, OB_FORM_COLS - 2, 0, 10, 1) && f.items[0].x == OB_FORM_COLS - 2 && f.items[0].w == 2,
+          "placed and kept inside");
+    CHECK(!ob_form_place(&f, 9, 0, 0, 1, 1), "no item 9");
+    CHECK(ob_form_remove(&f, 2) && f.nitems == 2 && !ob_form_remove(&f, 2), "box removed");
+    for (i = f.nitems; i < OB_FORM_ITEMS; i++) ob_form_add(&f, OB_FI_LABEL, 0, 0, 1, 1);
+    CHECK(f.nitems == OB_FORM_ITEMS && !ob_form_add(&f, OB_FI_LABEL, 0, 0, 1, 1), "full at %d", OB_FORM_ITEMS);
+
+    /* the auto form as a designed one */
+    CHECK(ob_form_auto(p, "Customers", NULL, &f), "auto: %s", ob_error(p));
+    CHECK(!strcmp(f.name, "Customers") && !strcmp(f.table, "Customers"), "named for its table");
+    CHECK(f.nitems == 14, "7 fields, 14 items: %d", f.nitems);
+    CHECK(f.items[0].kind == OB_FI_LABEL && !strcmp(f.items[0].text, "id") && f.items[1].kind == OB_FI_FIELD
+          && !strcmp(f.items[1].field, "id"), "id first");
+    CHECK(f.items[13].y == 6 && f.items[13].x == f.items[12].w + 2 && f.items[13].w == 40, "a row each: y %d x %d",
+          f.items[13].y, f.items[13].x);
+    CHECK(!strcmp(f.items[12].text, "Credit limit"), "a label is the field's label: %s", f.items[12].text);
+    CHECK(ob_form_check(p, &f), "it checks: %s", ob_error(p));
+    CHECK(!ob_form_auto(p, "Nobody", NULL, &f), "no table");
+
+    /* kept in oadb_forms */
+    CHECK(ob_form_count(p) == 0 && !ob_form_name(p, 0), "none yet");
+    ob_form_auto(p, "Customers", "Customer card", &f);
+    it = ob_form_add(&f, OB_FI_LINE, 0, 8, 60, 1);
+    it = ob_form_add(&f, OB_FI_BOX, 0, 9, 30, 4);
+    copy_s(it->text, sizeof it->text, "Notes\tand \\ things\nhere");
+    CHECK(ob_form_save(p, &f), "save: %s", ob_error(p));
+    CHECK(ob_form_get(p, "customer CARD", &g), "get any case: %s", ob_error(p));
+    CHECK(!strcmp(g.name, "Customer card") && !strcmp(g.table, "Customers") && g.nitems == 16, "back: %d items", g.nitems);
+    CHECK(!memcmp(&g.items[0], &f.items[0], sizeof f.items[0]) && !strcmp(g.items[15].text, f.items[15].text)
+          && g.items[15].h == 4 && g.items[14].kind == OB_FI_LINE, "the same items");
+    ob_form_auto(p, "Orders", NULL, &g);
+    CHECK(ob_form_save(p, &g), "a form named as its table: %s", ob_error(p));
+    CHECK(ob_form_count(p) == 2 && !strcmp(ob_form_name(p, 0), "Customer card") && !strcmp(ob_form_name(p, 1), "Orders"),
+          "two, in name order");
+    g.nitems = 1;
+    CHECK(ob_form_save(p, &g) && ob_form_get(p, "Orders", &g) && g.nitems == 1 && ob_form_count(p) == 2, "replaced");
+
+    /* what can't be saved */
+    f.items[1].field[0] = 'X';
+    CHECK(!ob_form_save(p, &f), "a field that isn't");
+    CHECK_ERR(p, "has no field Xd");
+    f.items[1].field[0] = 'i';
+    copy_s(f.table, sizeof f.table, "Nobody");
+    CHECK(!ob_form_save(p, &f), "no table");
+    CHECK_ERR(p, "there is no table Nobody");
+    copy_s(f.table, sizeof f.table, "Customers");
+    f.items[14].h = 2;
+    CHECK(!ob_form_save(p, &f), "a fat line");
+    CHECK_ERR(p, "one cell thick");
+    f.items[14].h = 1;
+    copy_s(f.name, sizeof f.name, "oadb_x");
+    CHECK(!ob_form_save(p, &f), "a kept name");
+    copy_s(f.name, sizeof f.name, "Customer card");
+
+    /* rename, delete */
+    CHECK(ob_form_rename(p, "Customer card", "Card") && ob_form_get(p, "Card", &g), "renamed: %s", ob_error(p));
+    CHECK(!ob_form_rename(p, "Card", "orders"), "a name taken");
+    CHECK_ERR(p, "There is a form named orders already");
+    CHECK(ob_form_rename(p, "Card", "CARD"), "case only: %s", ob_error(p));
+    CHECK(!ob_form_rename(p, "Nope", "X"), "no form");
+    CHECK(ob_form_delete(p, "card") && ob_form_count(p) == 1 && !ob_form_get(p, "Card", &g), "deleted");
+    CHECK_ERR(p, "There is no form named Card");
+    CHECK(!ob_form_delete(p, "Card"), "gone");
+
+    /* forms follow their table: a rename, a design change's renames; drops refused */
+    {
+        static ob_table t;
+        CHECK(ob_form_auto(p, "Customers", "Card", &f) && ob_form_save(p, &f), "Card: %s", ob_error(p));
+        CHECK(ob_table_rename(p, "customers", "Clients"), "rename: %s", ob_error(p));
+        CHECK(ob_form_get(p, "Card", &g) && !strcmp(g.table, "Clients") && ob_form_check(p, &g), "follows the rename: %s %s",
+              g.table, ob_error(p));
+        CHECK(ob_form_get(p, "Orders", &g) && !strcmp(g.table, "Orders"), "the Orders form is left alone");
+        /* a design change renames Email to Mail: the form's item follows */
+        CHECK(ob_table_get(p, "Clients", &t), "%s", ob_error(p));
+        for (i = 0; i < t.nfields; i++) copy_s(t.fields[i].from, sizeof t.fields[i].from, t.fields[i].name);
+        i = ob_table_find_field(&t, "Email");
+        copy_s(t.fields[i].name, sizeof t.fields[i].name, "Mail");
+        CHECK(ob_table_change(p, "Clients", &t), "change: %s", ob_error(p));
+        CHECK(ob_form_get(p, "Card", &g) && !strcmp(g.table, "Clients") && ob_form_check(p, &g), "follows the change: %s",
+              ob_error(p));
+        for (i = 0; i < g.nitems && !(g.items[i].kind == OB_FI_FIELD && !strcmp(g.items[i].field, "Mail")); i++) ;
+        CHECK(i < g.nitems && !strcmp(g.items[i - 1].text, "Email"), "the item is Mail, its label kept as typed");
+        /* drop the field the form shows: refused, nothing changed */
+        ob_table_get(p, "Clients", &t);
+        for (i = 0; i < t.nfields; i++) copy_s(t.fields[i].from, sizeof t.fields[i].from, t.fields[i].name);
+        ob_table_remove_field(&t, ob_table_find_field(&t, "Mail"));
+        CHECK(!ob_table_change(p, "Clients", &t), "a field the form shows");
+        CHECK_ERR(p, "The form Card shows Mail: take it off the form first");
+        CHECK(ob_table_get(p, "Clients", &t) && ob_table_find_field(&t, "Mail") >= 0, "Mail is still there");
+        /* off the form, then it can go */
+        ob_form_get(p, "Card", &g);
+        for (i = 0; i < g.nitems && !(g.items[i].kind == OB_FI_FIELD && !strcmp(g.items[i].field, "Mail")); i++) ;
+        ob_form_remove(&g, i);
+        CHECK(ob_form_save(p, &g), "%s", ob_error(p));
+        for (i = 0; i < t.nfields; i++) copy_s(t.fields[i].from, sizeof t.fields[i].from, t.fields[i].name);
+        ob_table_remove_field(&t, ob_table_find_field(&t, "Mail"));
+        CHECK(ob_table_change(p, "Clients", &t), "now it goes: %s", ob_error(p));
+        /* a design change that renames the table (Orders, which nothing looks up) and a field */
+        ob_form_auto(p, "Orders", NULL, &g);
+        CHECK(ob_form_save(p, &g), "%s", ob_error(p));
+        ob_table_get(p, "Orders", &t);
+        for (i = 0; i < t.nfields; i++) copy_s(t.fields[i].from, sizeof t.fields[i].from, t.fields[i].name);
+        copy_s(t.name, sizeof t.name, "Sales");
+        copy_s(t.fields[ob_table_find_field(&t, "Total")].name, sizeof t.fields[0].name, "Amount");
+        CHECK(ob_table_change(p, "Orders", &t), "Orders to Sales: %s", ob_error(p));
+        CHECK(ob_form_get(p, "Orders", &g) && !strcmp(g.table, "Sales") && ob_form_check(p, &g), "the form keeps its name, on Sales: %s",
+              ob_error(p));
+        for (i = 0; i < g.nitems && strcmp(g.items[i].field, "Amount"); i++) ;
+        CHECK(i < g.nitems, "Total is Amount on the form");
+        /* a table a form shows can't be dropped */
+        CHECK(!ob_table_drop(p, "Sales"), "Sales has a form");
+        CHECK_ERR(p, "The form Orders shows Sales: delete the form first");
+        CHECK(ob_form_delete(p, "Orders"), "the form deleted");
+        CHECK(ob_table_drop(p, "Sales"), "then it drops: %s", ob_error(p));
+    }
+
+    /* a newer GFOpenBase's word is passed over; a damaged form says so */
+    ob_close(p);
+    {
+        sqlite3 *db;
+        CHECK(sqlite3_open(path("dforms.oadb"), &db) == SQLITE_OK
+              && sqlite3_exec(db, "INSERT INTO oadb_forms VALUES('New', 'Orders', 'oadb form 1\nfield\tTotal\t\t1\t2\t3\t1\n"
+                                  "star\tx\nlabel\t\tHi\t0\t0\t2\t1\n');"
+                                  "INSERT INTO oadb_forms VALUES('Bad', 'Orders', 'oadb form 9\n')", NULL, NULL, NULL) == SQLITE_OK,
+              "written by hand");
+        sqlite3_close(db);
+    }
+    {
+        char err[OB_ERR_MAX];
+        p = ob_open(path("dforms.oadb"), 0, err, sizeof err);
+        CHECK(p != NULL, "reopened: %s", err);
+        if (!p) return;
+    }
+    CHECK(ob_form_get(p, "New", &g) && g.nitems == 2 && g.items[1].kind == OB_FI_LABEL && !strcmp(g.items[1].text, "Hi"),
+          "two of three: %d", g.nitems);
+    CHECK(!ob_form_get(p, "Bad", &g), "damaged");
+    CHECK_ERR(p, "newer GFOpenBase or damaged");
+    ob_close(p);
+}
+
 /* Joins drawn in the query designer: inner, left and right; what a saved
  * query keeps; what is refused. Orders 1 1 2 3 5: bob (4) has none. */
 static void test_query_joins(void)
@@ -2786,6 +2957,7 @@ int main(int argc, char **argv)
     test_queries();
     test_query_out();
     test_change_rename_looked_up();
+    test_designed_forms();
     test_query_joins();
     test_forms();
     test_not_projects();

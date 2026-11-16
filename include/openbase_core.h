@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.13.1"
+#define OB_CORE_VERSION "0.14.0"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -649,6 +649,68 @@ int ob_query_save_view(ob_project *p, const ob_query *q, const char *name);
 int ob_sqlview_count(ob_project *p);
 const char *ob_sqlview_name(ob_project *p, int i);
 int ob_sqlview_drop(ob_project *p, const char *name);
+
+/* ---- Designed forms (core 0.7, design 6.2) ----
+ * A form places items on a grid counted in the font's character width and
+ * line height, not pixels, so it survives a change of font: x 0 to
+ * OB_FORM_COLS - 1 across, y 0 to OB_FORM_ROWS - 1 down. Kept as text in
+ * oadb_forms. A form's name is its own: it may be its table's name. */
+#define OB_FORM_ITEMS 200       /* items on one form (an auto form of 96 fields: 192) */
+#define OB_FORM_COLS 160
+#define OB_FORM_ROWS 100
+
+typedef enum ob_fitem_kind {
+    OB_FI_FIELD,    /* a field's gadget; field names it */
+    OB_FI_LABEL,    /* text */
+    OB_FI_LINE,     /* across (h 1) or down (w 1) */
+    OB_FI_BOX,      /* a frame round other items; text is its title, may be "" */
+    OB_FI_KINDS
+} ob_fitem_kind;
+
+typedef struct ob_fitem {
+    ob_fitem_kind kind;
+    char field[OB_NAME_MAX];
+    char text[OB_LABEL_MAX];
+    int x, y, w, h;
+} ob_fitem;
+
+typedef struct ob_form {
+    char name[OB_NAME_MAX];
+    char table[OB_NAME_MAX];
+    int nitems;
+    ob_fitem items[OB_FORM_ITEMS];
+} ob_form;
+
+void ob_form_init(ob_form *f, const char *name, const char *table);
+/* Adds an item, kept inside the grid (w and h at least 1); NULL when the
+ * form is full or x, y is off the grid. */
+ob_fitem *ob_form_add(ob_form *f, ob_fitem_kind kind, int x, int y, int w, int h);
+/* Removes item i; the ones after it move up. 0 when there is none. */
+int ob_form_remove(ob_form *f, int i);
+/* The item at cell x, y: the last added that covers it (a box only by its
+ * edge, so what is inside it can be chosen), -1 when none. */
+int ob_form_at(const ob_form *f, int x, int y);
+/* Moves item i to x, y and sizes it w, h, all kept inside the grid. 0 when
+ * there is no item i. */
+int ob_form_place(ob_form *f, int i, int x, int y, int w, int h);
+/* The auto form of a table as a designed one: a label and its field a row,
+ * labels right-aligned to the longest (at most 24), fields 40 wide (a Memo
+ * 4 lines). */
+int ob_form_auto(ob_project *p, const char *table, const char *name, ob_form *out);
+/* Whether the form can be shown: its table is there, each field item names
+ * one of its fields, a line is 1 thick. 0 with the reason. */
+int ob_form_check(ob_project *p, const ob_form *f);
+/* Forms kept in the project (oadb_forms), in name order. Saving a name that
+ * is there replaces it. A table's rename, on its own or in a design change,
+ * renames it in its forms, and a design change's field renames (from[])
+ * rename their items. A table or field a form shows can't be dropped
+ * ("The form Card shows Email: take it off the form first"). */
+int ob_form_count(ob_project *p);
+const char *ob_form_name(ob_project *p, int i);
+int ob_form_get(ob_project *p, const char *name, ob_form *out);
+int ob_form_save(ob_project *p, const ob_form *f);
+int ob_form_rename(ob_project *p, const char *old_name, const char *new_name);
+int ob_form_delete(ob_project *p, const char *name);
 
 /* ---- Values ---- */
 

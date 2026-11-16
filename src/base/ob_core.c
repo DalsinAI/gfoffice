@@ -26,6 +26,8 @@
 #define OB_MAX_TABLES 256
 #define OB_UNDO_MAX 100
 #define QUERIES_SQL "CREATE TABLE IF NOT EXISTS oadb_queries(name TEXT PRIMARY KEY COLLATE NOCASE, grid TEXT, sql TEXT NOT NULL)"
+static int forms_allow(ob_project *p, const ob_table *old, const ob_table *t);
+static int forms_follow(ob_project *p, const ob_table *old, const ob_table *t, const char *new_name);
 
 struct undo_step;
 
@@ -56,6 +58,7 @@ struct ob_project {
     int undo_at_begin;      /* nundo when ob_begin opened the transaction */
     char undo_name[OB_NAME_MAX + 48];
     char qname[OB_NAME_MAX];   /* ob_query_name's answer */
+    char fname[OB_NAME_MAX];   /* ob_form_name's answer */
 };
 
 static void undo_drop_top(ob_project *p);
@@ -1519,6 +1522,7 @@ static int change_table(ob_project *p, const char *old_name, const ob_table *t, 
     for (i = 0; i < t->nfields; i++)
         if (t->fields[i].from[0] && ob_table_find_field(old, t->fields[i].from) < 0)
             return fail(p, "%s has no field %s", old->name, t->fields[i].from);
+    if (!forms_allow(p, old, t)) return 0;
     cols = sqlite3_str_new(NULL);
     vals = sqlite3_str_new(NULL);
     for (i = 0; i < t->nfields; i++) {
@@ -1569,6 +1573,7 @@ static int change_table(ob_project *p, const char *old_name, const ob_table *t, 
     if (!renamed) goto undo;
     if (views && !views_ok(p, old->name)) goto undo;
     if (!runf(p, "DELETE FROM oadb_fields WHERE tbl = %Q", old->name) || !save_fields(p, t)) goto undo;
+    if (!forms_follow(p, old, t, t->name)) goto undo;     /* designed forms follow (core 0.7.0) */
     if (!make_indexes(p, t)) {
         if (strstr(p->err, "must be")) {
             char keep[OB_ERR_MAX];
@@ -1647,7 +1652,8 @@ int ob_table_rename(ob_project *p, const char *old_name, const char *new_name)
     /* SQLite rewrites the views that name the table */
     good = runf(p, "ALTER TABLE \"%w\" RENAME TO \"%w\"", was, new_name)
         && runf(p, "UPDATE oadb_fields SET tbl = %Q WHERE tbl = %Q", new_name, was)
-        && runf(p, "UPDATE oadb_fields SET lookup = %Q WHERE lookup = %Q", new_name, was);
+        && runf(p, "UPDATE oadb_fields SET lookup = %Q WHERE lookup = %Q", new_name, was)
+        && forms_follow(p, t, NULL, new_name);
     forget(p);
     good = good && queries_follow(p, was, new_name);
     forget(p);
@@ -1669,6 +1675,7 @@ int ob_table_drop(ob_project *p, const char *name)
         return 0;
     }
     sqlite3_finalize(st);
+    if (!forms_allow(p, t, NULL)) return 0;
     if (!step_begin(p)) return 0;
     {
         char was[OB_NAME_MAX];
@@ -5005,6 +5012,343 @@ int ob_query_delete(ob_project *p, const char *name)
 {
     if (!query_exists(p, name)) return fail(p, "There is no query named %s", name);
     return runf(p, "DELETE FROM oadb_queries WHERE name = %Q", name) && ok(p);
+}
+
+/* ---- Designed forms (design 6.2) ---- */
+
+#define FORMS_SQL "CREATE TABLE IF NOT EXISTS oadb_forms(name TEXT PRIMARY KEY COLLATE NOCASE, tbl TEXT NOT NULL, items TEXT NOT NULL)"
+
+static const char *const fitem_words[OB_FI_KINDS] = { "field", "label", "line", "box" };
+
+void ob_form_init(ob_form *f, const char *name, const char *table)
+{
+    memset(f, 0, sizeof *f);
+    copy(f->name, sizeof f->name, name ? name : "");
+    copy(f->table, sizeof f->table, table ? table : "");
+}
+
+static int clampi(int v, int lo, int hi)
+{
+    return v < lo ? lo : v > hi ? hi : v;
+}
+
+/* x, y on the grid; w, h at least 1 and inside it from there. */
+static void fitem_fit(ob_fitem *it, int x, int y, int w, int h)
+{
+    it->x = clampi(x, 0, OB_FORM_COLS - 1);
+    it->y = clampi(y, 0, OB_FORM_ROWS - 1);
+    it->w = clampi(w, 1, OB_FORM_COLS - it->x);
+    it->h = clampi(h, 1, OB_FORM_ROWS - it->y);
+}
+
+ob_fitem *ob_form_add(ob_form *f, ob_fitem_kind kind, int x, int y, int w, int h)
+{
+    ob_fitem *it;
+    if (f->nitems >= OB_FORM_ITEMS || (unsigned)kind >= OB_FI_KINDS) return NULL;
+    if (x < 0 || y < 0 || x >= OB_FORM_COLS || y >= OB_FORM_ROWS) return NULL;
+    it = &f->items[f->nitems++];
+    memset(it, 0, sizeof *it);
+    it->kind = kind;
+    fitem_fit(it, x, y, w, h);
+    return it;
+}
+
+int ob_form_remove(ob_form *f, int i)
+{
+    if (i < 0 || i >= f->nitems) return 0;
+    memmove(&f->items[i], &f->items[i + 1], (size_t)(f->nitems - i - 1) * sizeof f->items[0]);
+    f->nitems--;
+    return 1;
+}
+
+int ob_form_at(const ob_form *f, int x, int y)
+{
+    int i;
+    for (i = f->nitems - 1; i >= 0; i--) {
+        const ob_fitem *it = &f->items[i];
+        int in = x >= it->x && x < it->x + it->w && y >= it->y && y < it->y + it->h;
+        if (in && it->kind == OB_FI_BOX)
+            in = x == it->x || x == it->x + it->w - 1 || y == it->y || y == it->y + it->h - 1;
+        if (in) return i;
+    }
+    return -1;
+}
+
+int ob_form_place(ob_form *f, int i, int x, int y, int w, int h)
+{
+    if (i < 0 || i >= f->nitems) return 0;
+    fitem_fit(&f->items[i], x, y, w, h);
+    return 1;
+}
+
+int ob_form_auto(ob_project *p, const char *table, const char *name, ob_form *out)
+{
+    static ob_table t;
+    int i, lw = 0, y = 0;
+    if (!ob_table_get(p, table, &t)) return 0;
+    ob_form_init(out, name && *name ? name : t.name, t.name);
+    for (i = 0; i < t.nfields; i++) {
+        int n = (int)strlen(t.fields[i].label[0] ? t.fields[i].label : t.fields[i].name);
+        if (n > lw) lw = n;
+    }
+    if (lw > 24) lw = 24;
+    for (i = 0; i < t.nfields && y < OB_FORM_ROWS; i++) {
+        const ob_field *fd = &t.fields[i];
+        int h = fd->type == OB_MEMO ? 4 : 1;
+        ob_fitem *it = ob_form_add(out, OB_FI_LABEL, 0, y, lw, 1);
+        if (!it) break;
+        copy(it->text, sizeof it->text, fd->label[0] ? fd->label : fd->name);
+        it = ob_form_add(out, OB_FI_FIELD, lw + 2, y, 40, h);
+        if (!it) break;
+        copy(it->field, sizeof it->field, fd->name);
+        y += h;
+    }
+    return ok(p);
+}
+
+int ob_form_check(ob_project *p, const ob_form *f)
+{
+    static ob_table t;
+    int i, k;
+    char why[OB_ERR_MAX];
+    if (!name_ok(f->name, why, sizeof why, "form")) return fail(p, "%s", why);
+    if (!ob_table_get(p, f->table, &t)) return fail(p, "%s: there is no table %s", f->name, f->table);
+    for (i = 0; i < f->nitems; i++) {
+        const ob_fitem *it = &f->items[i];
+        if ((unsigned)it->kind >= OB_FI_KINDS) return fail(p, "%s: item %d is of no kind", f->name, i + 1);
+        if (it->kind == OB_FI_FIELD) {
+            for (k = 0; k < t.nfields && !same(t.fields[k].name, it->field); k++) ;
+            if (k == t.nfields) return fail(p, "%s: %s has no field %s", f->name, t.name, it->field);
+        }
+        if (it->kind == OB_FI_LINE && it->w != 1 && it->h != 1)
+            return fail(p, "%s: a line goes across or down, one cell thick", f->name);
+    }
+    return ok(p);
+}
+
+static int has_forms(ob_project *p)
+{
+    return scalar(p, "SELECT count(*) FROM sqlite_schema WHERE name = 'oadb_forms'", 0) == 1;
+}
+
+static int form_exists(ob_project *p, const char *name)
+{
+    sqlite3_stmt *st;
+    int found;
+    if (!has_forms(p) || !(st = prep(p, "SELECT 1 FROM oadb_forms WHERE name = ?1"))) return 0;
+    sqlite3_bind_text(st, 1, name, -1, SQLITE_TRANSIENT);
+    found = sqlite3_step(st) == SQLITE_ROW;
+    sqlite3_finalize(st);
+    return found;
+}
+
+int ob_form_count(ob_project *p)
+{
+    return has_forms(p) ? (int)scalar(p, "SELECT count(*) FROM oadb_forms", 0) : 0;
+}
+
+const char *ob_form_name(ob_project *p, int i)
+{
+    sqlite3_stmt *st;
+    const char *r = NULL;
+    if (i < 0 || !has_forms(p)) return NULL;
+    st = prep(p, "SELECT name FROM oadb_forms ORDER BY name COLLATE NOCASE LIMIT 1 OFFSET ?1");
+    if (!st) return NULL;
+    sqlite3_bind_int(st, 1, i);
+    if (sqlite3_step(st) == SQLITE_ROW) {
+        copy(p->fname, sizeof p->fname, (const char *)sqlite3_column_text(st, 0));
+        r = p->fname;
+    }
+    sqlite3_finalize(st);
+    return r;
+}
+
+/* The items as text: a line an item, tab-separated, escaped as a query's grid. */
+static char *form_text(const ob_form *f)
+{
+    sqlite3_str *s = sqlite3_str_new(NULL);
+    int i;
+    sqlite3_str_appendall(s, "oadb form 1\n");
+    for (i = 0; i < f->nitems; i++) {
+        const ob_fitem *it = &f->items[i];
+        sqlite3_str_appendall(s, fitem_words[it->kind]);
+        put_escaped(s, it->field);
+        put_escaped(s, it->text);
+        sqlite3_str_appendf(s, "\t%d\t%d\t%d\t%d\n", it->x, it->y, it->w, it->h);
+    }
+    return sqlite3_str_finish(s);
+}
+
+static int form_read(const char *text, ob_form *f)
+{
+    const char *s = text;
+    char word[16], num[16];
+    int k, x, y, w, h;
+    if (strncmp(s, "oadb form 1\n", 12)) return 0;
+    s += 12;
+    while (*s) {
+        ob_fitem it;
+        grid_cell(&s, word, sizeof word);
+        for (k = 0; k < OB_FI_KINDS && strcmp(word, fitem_words[k]); k++) ;
+        if (k < OB_FI_KINDS) {
+            ob_fitem *to;
+            memset(&it, 0, sizeof it);
+            grid_cell(&s, it.field, sizeof it.field);
+            grid_cell(&s, it.text, sizeof it.text);
+            grid_cell(&s, num, sizeof num); x = atoi(num);
+            grid_cell(&s, num, sizeof num); y = atoi(num);
+            grid_cell(&s, num, sizeof num); w = atoi(num);
+            grid_cell(&s, num, sizeof num); h = atoi(num);
+            if ((to = ob_form_add(f, (ob_fitem_kind)k, clampi(x, 0, OB_FORM_COLS - 1), clampi(y, 0, OB_FORM_ROWS - 1), w, h))) {
+                copy(to->field, sizeof to->field, it.field);
+                copy(to->text, sizeof to->text, it.text);
+            }
+        }
+        while (*s && *s != '\n') s++;     /* a word a newer GFOpenBase writes is passed over */
+        if (*s == '\n') s++;
+    }
+    return 1;
+}
+
+int ob_form_get(ob_project *p, const char *name, ob_form *out)
+{
+    sqlite3_stmt *st;
+    int found = 0;
+    if (!has_forms(p) || !(st = prep(p, "SELECT name, tbl, items FROM oadb_forms WHERE name = ?1")))
+        return fail(p, "There is no form named %s", name);
+    sqlite3_bind_text(st, 1, name, -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(st) == SQLITE_ROW) {
+        const char *items = (const char *)sqlite3_column_text(st, 2);
+        ob_form_init(out, (const char *)sqlite3_column_text(st, 0), (const char *)sqlite3_column_text(st, 1));
+        found = items && form_read(items, out) ? 1 : -1;
+    }
+    sqlite3_finalize(st);
+    if (found < 0) return fail(p, "The form %s is from a newer GFOpenBase or damaged", name);
+    if (!found) return fail(p, "There is no form named %s", name);
+    return ok(p);
+}
+
+int ob_form_save(ob_project *p, const ob_form *f)
+{
+    sqlite3_stmt *st;
+    char *text;
+    int rc;
+    if (!ob_form_check(p, f)) return 0;
+    if (!(text = form_text(f))) return fail(p, "Not enough memory");
+    if (!has_forms(p) && !run(p, FORMS_SQL)) { sqlite3_free(text); return 0; }
+    st = prep(p, "INSERT OR REPLACE INTO oadb_forms(name, tbl, items) VALUES(?1, ?2, ?3)");
+    if (!st) { sqlite3_free(text); return 0; }
+    sqlite3_bind_text(st, 1, f->name, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 2, f->table, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 3, text, -1, SQLITE_TRANSIENT);
+    rc = sqlite3_step(st);
+    sqlite3_finalize(st);
+    sqlite3_free(text);
+    if (rc != SQLITE_DONE) return sql_fail(p, NULL, rc);
+    return ok(p);
+}
+
+int ob_form_rename(ob_project *p, const char *old_name, const char *new_name)
+{
+    char why[OB_ERR_MAX];
+    if (!form_exists(p, old_name)) return fail(p, "There is no form named %s", old_name);
+    if (!name_ok(new_name, why, sizeof why, "form")) return fail(p, "%s", why);
+    if (!same(old_name, new_name) && form_exists(p, new_name)) return fail(p, "There is a form named %s already", new_name);
+    return runf(p, "UPDATE oadb_forms SET name = %Q WHERE name = %Q", new_name, old_name) && ok(p);
+}
+
+int ob_form_delete(ob_project *p, const char *name)
+{
+    if (!form_exists(p, name)) return fail(p, "There is no form named %s", name);
+    return runf(p, "DELETE FROM oadb_forms WHERE name = %Q", name) && ok(p);
+}
+
+/* ---- Designed forms follow their table (core 0.7.0) ----
+ * A table's rename (ob_table_rename, or a design change) renames it in the
+ * forms on it, and a design change's field renames (from[]) rename their
+ * items. A field or table a form shows can't be dropped: the form's item
+ * comes off first, or the form goes, as a Lookup's table can't. */
+
+/* The names of the forms on table, up to max; how many, -1 on error. */
+static int forms_on(ob_project *p, const char *table, char (*names)[OB_NAME_MAX], int max)
+{
+    sqlite3_stmt *st;
+    int n = 0;
+    if (!has_forms(p)) return 0;
+    if (!(st = prep(p, "SELECT name FROM oadb_forms WHERE tbl = ?1 COLLATE NOCASE ORDER BY name COLLATE NOCASE")))
+        return -1;
+    sqlite3_bind_text(st, 1, table, -1, SQLITE_TRANSIENT);
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        if (n < max) copy(names[n], OB_NAME_MAX, (const char *)sqlite3_column_text(st, 0));
+        n++;
+    }
+    sqlite3_finalize(st);
+    return n < max ? n : max;
+}
+
+#define FORMS_ON_MAX 64
+
+/* The new design's field for old field `name`: its index, -1 when it is dropped. */
+static int field_now(const ob_table *t, const char *name)
+{
+    int i;
+    for (i = 0; i < t->nfields; i++)
+        if (same(t->fields[i].from, name)) return i;
+    return -1;
+}
+
+static int forms_allow(ob_project *p, const ob_table *old, const ob_table *t)
+{
+    static char names[FORMS_ON_MAX][OB_NAME_MAX];
+    ob_form *f;
+    int n, i, k, good = 1;
+    if ((n = forms_on(p, old->name, names, FORMS_ON_MAX)) <= 0) return n == 0;
+    if (!t) return fail(p, "The form %s shows %s: delete the form first", names[0], old->name);
+    if (!(f = malloc(sizeof *f))) return fail(p, "Not enough memory");
+    for (i = 0; good && i < n; i++) {
+        if (!ob_form_get(p, names[i], f)) { good = 0; break; }
+        for (k = 0; k < f->nitems; k++) {
+            const ob_fitem *it = &f->items[k];
+            if (it->kind != OB_FI_FIELD || ob_table_find_field(old, it->field) < 0) continue;
+            if (field_now(t, it->field) < 0) {
+                good = fail(p, "The form %s shows %s: take it off the form first", f->name, it->field);
+                break;
+            }
+        }
+    }
+    free(f);
+    return good;
+}
+
+static int forms_follow(ob_project *p, const ob_table *old, const ob_table *t, const char *new_name)
+{
+    static char names[FORMS_ON_MAX][OB_NAME_MAX];
+    ob_form *f;
+    sqlite3_stmt *st;
+    char *text;
+    int n, i, k, j, rc, good = 1;
+    if ((n = forms_on(p, old->name, names, FORMS_ON_MAX)) <= 0) return n == 0;
+    if (!(f = malloc(sizeof *f))) return fail(p, "Not enough memory");
+    for (i = 0; good && i < n; i++) {
+        if (!ob_form_get(p, names[i], f)) { good = 0; break; }
+        copy(f->table, sizeof f->table, new_name);
+        for (k = 0; t && k < f->nitems; k++) {
+            ob_fitem *it = &f->items[k];
+            if (it->kind == OB_FI_FIELD && (j = field_now(t, it->field)) >= 0)
+                copy(it->field, sizeof it->field, t->fields[j].name);
+        }
+        if (!(text = form_text(f))) { good = fail(p, "Not enough memory"); break; }
+        if (!(st = prep(p, "UPDATE oadb_forms SET tbl = ?1, items = ?2 WHERE name = ?3"))) { sqlite3_free(text); good = 0; break; }
+        sqlite3_bind_text(st, 1, new_name, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(st, 2, text, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(st, 3, f->name, -1, SQLITE_TRANSIENT);
+        rc = sqlite3_step(st);
+        sqlite3_finalize(st);
+        sqlite3_free(text);
+        if (rc != SQLITE_DONE) good = sql_fail(p, NULL, rc);
+    }
+    free(f);
+    return good;
 }
 
 /* ---- Saved queries follow a table's rename (core 0.6.3) ---- */
