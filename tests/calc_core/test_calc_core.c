@@ -7223,13 +7223,24 @@ static void test_scenario_frame(void)
         CHECK(f->row == 1 && f->col == 1 && f->clip_x == 40 && f->clip_y == 18);
     }
     /* its name in a tab above the first range's top left corner: 8 points (15 pixels with its margin),
-       the name's width and 4 pixels each side; the text white, after it */
+       the name's width and 4 pixels each side, then the list's 13-pixel button; the text white, after it */
     CHECK(scenario_items(&l, OC_DRAW_FILL, &tab) == 1);
     {
-        const oc_draw_item *t = &l.items[tab], *x = &l.items[tab + 1];
-        CHECK(t->x == 103 && t->y == 35 - 1 - 15 && t->w == 3 * 6 + 8 && t->h == 15);
+        const oc_draw_item *t = &l.items[tab], *x = &l.items[tab + 1], *b = &l.items[tab + 2];
+        CHECK(t->x == 103 && t->y == 35 - 1 - 15 && t->w == 3 * 6 + 8 + 13 + 1 && t->h == 15);
         CHECK(x->kind == OC_DRAW_TEXT && x->text && !strcmp(x->text, "Low") && x->rgb == 0xFFFFFFUL &&
               x->text_x == 107 && x->size == 160 && x->clip_x == 103 && x->clip_w == 26);
+        CHECK(b->kind == OC_DRAW_DROPDOWN && b->role == OC_ROLE_SCENARIO && b->x == 103 + 26 && b->y == 20 &&
+              b->w == 13 && b->h == 13);
+    }
+    /* a click on the tab is the scenarios' list; just below it, the cell */
+    {
+        oc_hit hit;
+        CHECK(oc_view_hit(core, 110, 25, &hit) == OC_HIT_SCENARIO && hit.row == 1 && hit.col == 1 && hit.x == 103 &&
+              hit.y == 19 && hit.w == 40 && hit.h == 15);
+        CHECK(oc_view_hit(core, 135, 25, &hit) == OC_HIT_SCENARIO);            /* its button */
+        CHECK(oc_view_hit(core, 110, 40, &hit) == OC_HIT_CELL && hit.row == 1 && hit.col == 1);
+        CHECK(oc_view_hit(core, 150, 25, &hit) == OC_HIT_CELL && hit.row == 0);  /* beside the tab */
     }
     /* under the active cell's frame */
     for (i = 0, cursor = -1; i < l.n; i++)
@@ -7242,15 +7253,29 @@ static void test_scenario_frame(void)
     CHECK(scenario_items(&l, OC_DRAW_FRAME, &frame) == 1 && scenario_items(&l, OC_DRAW_FILL, &tab) == 1);
     CHECK(l.items[frame].x == 39 && l.items[frame].y == 17 && l.items[frame].h == 2 * 17 + 1);
     CHECK(l.items[tab].x == 40 && l.items[tab].y == 18 && l.items[tab + 1].text && !strcmp(l.items[tab + 1].text, "Top"));
+    {
+        oc_hit hit;
+        CHECK(oc_view_hit(core, 45, 22, &hit) == OC_HIT_SCENARIO && hit.row == 0 && hit.col == 0);
+        CHECK(oc_view_hit(core, 45, 45, &hit) == OC_HIT_CELL && hit.row == 1);
+    }
     /* scrolled so that its first row is above the view: the frame goes on past the top (no tab) */
     oc_view_scroll_to(core, 1, 0);
     CHECK(oc_view_draw(core, &l) == OWF_OK);
     CHECK(scenario_items(&l, OC_DRAW_FRAME, &frame) == 1 && scenario_items(&l, OC_DRAW_FILL, &tab) == 0);
+    CHECK(scenario_items(&l, OC_DRAW_DROPDOWN, &tab) == 0);
     CHECK(l.items[frame].y < 18 && l.items[frame].y + l.items[frame].h == 18 + 17);
+    {
+        oc_hit hit;
+        CHECK(oc_view_hit(core, 45, 22, &hit) == OC_HIT_CELL);               /* no tab, no list */
+    }
     oc_view_scroll_to(core, 0, 0);
     /* Undo goes back to "Low" shown; deleting the shown one takes the frame away */
     CHECK(oc_core_undo(core) == OWF_OK && oc_core_scenario_active(core) == 0);
     CHECK(oc_core_scenario_delete(core, 0) == OWF_OK && oc_core_scenario_active(core) == -1);
+    {
+        oc_hit hit;
+        CHECK(oc_view_hit(core, 110, 25, &hit) == OC_HIT_CELL);
+    }
     CHECK(oc_view_draw(core, &l) == OWF_OK);
     CHECK(scenario_items(&l, OC_DRAW_FRAME, &frame) == 0 && scenario_items(&l, OC_DRAW_FILL, &tab) == 0);
     /* Undo brings it back, shown */

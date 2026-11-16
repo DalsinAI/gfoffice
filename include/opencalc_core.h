@@ -395,9 +395,11 @@ int oc_core_scenario_cells_text(const oc_core *core, const owf_scenario *sc, cha
 /* The scenario shown last on the active sheet (from 0), or -1. The grid
  * draws a frame round each of its ranges (OC_DRAW_FRAME, OC_ROLE_SCENARIO,
  * 1 pixel) and its name in a tab (OC_DRAW_FILL, OC_ROLE_SCENARIO, then its
- * text in white) on the first range's top left corner: above the range
- * when there is room in its pane, else just inside it. Over the cells and
- * charts, under the selection's outline and the active cell's frame. */
+ * text in white, then a list button, OC_DRAW_DROPDOWN) on the first range's
+ * top left corner: above the range when there is room in its pane, else
+ * just inside it. Over the cells and charts, under the selection's outline
+ * and the active cell's frame. A click on the tab is OC_HIT_SCENARIO: the
+ * window offers the sheet's scenarios, and shows the one chosen. */
 int oc_core_scenario_active(const oc_core *core);
 
 /* Data > Solver: make a target cell as large or as small as it can be, or
@@ -880,7 +882,8 @@ enum {
     OC_HIT_COL_EDGE,        /* a column letter's right edge: drag to size it */
     OC_HIT_ROW_EDGE,
     OC_HIT_DROPDOWN,        /* the active cell's list's dropdown button (row, col: the cell) */
-    OC_HIT_FILTER           /* an AutoFilter button (row: heading, col: filtered column) */
+    OC_HIT_FILTER,          /* an AutoFilter button (row: heading, col: filtered column) */
+    OC_HIT_SCENARIO         /* the shown scenario's tab (row, col: its first cell): the list of scenarios to show */
 };
 typedef struct {
     int kind;
