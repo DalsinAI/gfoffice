@@ -60,6 +60,7 @@ typedef struct {
      * extents; MM_TEXT (or a WMF) maps one to one. win_* above is then the picture's frame, device units. */
     int map_mode;
     long ewx, ewy, eww, ewh, evx, evy, evw, evh;
+    int arc_clockwise;                 /* an EMF's SetArcDirection AD_CLOCKWISE */
 } mf_dc;
 
 typedef struct {
@@ -86,6 +87,8 @@ typedef struct {
     int nfigs, capfigs;
     int in_path, path_done;
 } mf_player;
+
+static void arc_figure(mf_player *m, long l, long t, long r, long b, long xs, long ys, long xe, long ye, int kind);
 
 static unsigned u16(const unsigned char *p) { return (unsigned)p[0] | ((unsigned)p[1] << 8); }
 static int s16(const unsigned char *p) { unsigned v = u16(p); return v & 0x8000u ? (int)v - 0x10000 : (int)v; }
@@ -401,6 +404,11 @@ static void record(mf_player *m, unsigned fn, const unsigned char *p, size_t n)
     }
     case META_RECTANGLE: NEED(8); rectangle(m, s16(p + 6), s16(p + 4), s16(p + 2), s16(p)); break;
     case META_ELLIPSE: NEED(8); ellipse(m, s16(p + 6), s16(p + 4), s16(p + 2), s16(p)); break;
+    case META_ARC: case META_CHORD: case META_PIE:   /* YEnd, XEnd, YStart, XStart, Bottom, Right, Top, Left */
+        NEED(16);
+        arc_figure(m, s16(p + 14), s16(p + 12), s16(p + 10), s16(p + 8), s16(p + 6), s16(p + 4), s16(p + 2), s16(p),
+                   fn == META_ARC ? 0 : fn == META_CHORD ? 1 : 2);
+        break;
     case META_ROUNDRECT:                   /* Height, Width, Bottom, Right, Top, Left */
         NEED(12);
         round_rect(m, s16(p + 10), s16(p + 8), s16(p + 6), s16(p + 4), s16(p + 2), s16(p));
@@ -516,7 +524,7 @@ static void record(mf_player *m, unsigned fn, const unsigned char *p, size_t n)
     case META_SELECTPALETTE: case META_REALIZEPALETTE: case META_SETPALENTRIES: case META_RESIZEPALETTE:
     case META_ANIMATEPALETTE: case META_ESCAPE:
         break;
-    default:                               /* pictures, arcs, regions, clipping, flood fills */
+    default:                               /* pictures, regions, clipping, flood fills */
         m->res.skipped++;
         break;
     }
@@ -584,7 +592,7 @@ enum {
     EMR_SCALEVIEWPORTEXTEX = 31, EMR_SCALEWINDOWEXTEX = 32, EMR_SAVEDC = 33, EMR_RESTOREDC = 34,
     EMR_SETWORLDTRANSFORM = 35, EMR_MODIFYWORLDTRANSFORM = 36, EMR_SELECTOBJECT = 37, EMR_CREATEPEN = 38,
     EMR_CREATEBRUSHINDIRECT = 39, EMR_DELETEOBJECT = 40, EMR_ELLIPSE = 42, EMR_RECTANGLE = 43, EMR_ROUNDRECT = 44,
-    EMR_ARC = 45, EMR_CHORD = 46, EMR_PIE = 47, EMR_LINETO = 54, EMR_ARCTO = 55, EMR_BEGINPATH = 59,
+    EMR_ARC = 45, EMR_CHORD = 46, EMR_PIE = 47, EMR_LINETO = 54, EMR_ARCTO = 55, EMR_SETARCDIRECTION = 57, EMR_BEGINPATH = 59,
     EMR_ENDPATH = 60, EMR_CLOSEFIGURE = 61, EMR_FILLPATH = 62, EMR_STROKEANDFILLPATH = 63, EMR_STROKEPATH = 64,
     EMR_ABORTPATH = 68, EMR_GDICOMMENT = 70, EMR_EXTSELECTCLIPRGN = 75, EMR_BITBLT = 76, EMR_STRETCHBLT = 77,
     EMR_MASKBLT = 78, EMR_PLGBLT = 79, EMR_SETDIBITSTODEVICE = 80, EMR_STRETCHDIBITS = 81,
@@ -663,6 +671,152 @@ static void emf_figure(mf_player *m, const long *lp, int n, int closed, int fill
     if (!OWF_SHADE_SET(line_of(m)) && !(filled && OWF_SHADE_SET(fill_of(m)))) return;
     drew(m, m->sink->path(m->ctx, m->xy, n, closed, filled ? fill_of(m) : 0, line_of(m), line_width_of(m),
                           m->dc.pen.dash));
+}
+
+/* ---- arcs, chords and pies ([MS-WMF] 2.3.3.2, 2.3.3.4, 2.3.3.17; [MS-EMF] 2.3.5.2, 2.3.5.4, 2.3.5.34) ---- */
+
+#define ARC_STEPS 64                           /* the ellipse as 64 sides, as Ellipse's own curves are near */
+#define ARC_FULL (4LL * 65536)                 /* a turn, in arc_angle's units */
+
+/* cos 0, 5.625 ... 90 degrees, in 1/16384 */
+static const int arc_cos[17] = { 16384, 16305, 16069, 15679, 15137, 14449, 13623, 12665, 11585, 10394, 9102, 7723,
+                                 6270, 4756, 3196, 1606, 0 };
+
+/* step k's direction, y up */
+static void arc_step(int k, long long *c, long long *s)
+{
+    int r = k % 16;
+    long long a = arc_cos[r], b = arc_cos[16 - r], t;
+    switch ((k / 16) & 3) {
+    case 1: t = a; a = -b; b = t; break;
+    case 2: a = -a; b = -b; break;
+    case 3: t = a; a = b; b = -t; break;
+    }
+    *c = a;
+    *s = b;
+}
+
+/* a direction's angle, y up, from 0 (along x) round to ARC_FULL: not in degrees, but in the same order */
+static long long arc_angle(long long x, long long y)
+{
+    long long ax = x < 0 ? -x : x, ay = y < 0 ? -y : y, t;
+    if (!ax && !ay) return 0;
+    t = ay * 65536 / (ax + ay);                /* 0 along an axis, 65536 along the other */
+    if (x >= 0 && y >= 0) return t;
+    if (x < 0 && y >= 0) return 2 * 65536 - t;
+    if (x < 0) return 2 * 65536 + t;
+    return (ARC_FULL - t) % ARC_FULL;
+}
+
+static long long isqrt64(long long v)
+{
+    long long r = 0, bit = 1LL << 62;
+    if (v <= 0) return 0;
+    while (bit > v) bit >>= 2;
+    while (bit) {
+        if (v >= r + bit) { v -= r + bit; r = (r >> 1) + bit; }
+        else r >>= 1;
+        bit >>= 2;
+    }
+    return r;
+}
+
+/* shifts a and b together until both fit in 15 bits */
+static void arc_small(long long *a, long long *b)
+{
+    while (*a > 32767 || *a < -32767 || *b > 32767 || *b < -32767) { *a /= 2; *b /= 2; }
+}
+
+/* does the mapping from logical units to the box turn one axis over (and so the way round)? */
+static int arc_mirrored(const mf_player *m)
+{
+    int sx = (m->bw < 0) ^ (m->dc.win_w < 0), sy = (m->bh < 0) ^ (m->dc.win_h < 0);
+    if (m->emf && m->dc.map_mode != 1) {
+        sx ^= (m->dc.eww < 0) ^ (m->dc.evw < 0);
+        sy ^= (m->dc.ewh < 0) ^ (m->dc.evh < 0);
+    }
+    return sx != sy;
+}
+
+static void path_append(mf_player *m, const long *lp, int n);
+
+/* an arc of the ellipse in the box l, t, r, b (logical) from the ray to (xs, ys) round to the ray to (xe, ye),
+ * the way the arc direction says as it is seen (y down: counterclockwise is GDI's default); kind 0 an arc (a line),
+ * 1 a chord (closed and filled), 2 a pie (to the centre too), 3 ArcTo (on from the pen, which ends at the arc's end) */
+static void arc_figure(mf_player *m, long l, long t, long r, long b, long xs, long ys, long xe, long ye, int kind)
+{
+    long long cx, cy, rx, ry, ux[2], uy[2], a[2], d_end;
+    long pt[2][2];
+    int i, j, k0, n = 0, back;
+    if (m->stop) return;
+    if (l > r) { long v = l; l = r; r = v; }
+    if (t > b) { long v = t; t = b; b = v; }
+    rx = ((long long)r - l) / 2;               /* long long: long is 32 bits on the Amiga */
+    ry = ((long long)b - t) / 2;
+    cx = l + rx;
+    cy = t + ry;
+    if (rx < 1 || ry < 1) return;
+    /* counterclockwise as seen goes up the angles here (y up); the other way, or a turned-over mapping, goes
+     * from the end back to the start */
+    back = (m->dc.arc_clockwise != 0) ^ arc_mirrored(m);
+    for (i = 0; i < 2; i++) {
+        long long dx = (i ? xe : xs) - cx, dy = (i ? ye : ys) - cy, sx = rx, sy = ry, len;
+        arc_small(&dx, &dy);
+        arc_small(&sx, &sy);
+        if (!sx) sx = 1;
+        if (!sy) sy = 1;
+        ux[i] = dx * sy;                       /* the direction as on a circle: (dx / rx, dy / ry) */
+        uy[i] = dy * sx;
+        if (!ux[i] && !uy[i]) ux[i] = 1;
+        len = isqrt64(ux[i] * ux[i] + uy[i] * uy[i]);
+        if (len < 1) len = 1;
+        pt[i][0] = (long)(cx + rx * ux[i] / len);    /* where the ray meets the ellipse */
+        pt[i][1] = (long)(cy + ry * uy[i] / len);
+        a[i] = arc_angle(ux[i], -uy[i]);
+    }
+    if (!lpoints(m, ARC_STEPS + 4)) return;
+    {
+        int from = back ? 1 : 0, to = back ? 0 : 1;
+        d_end = ((a[to] - a[from]) % ARC_FULL + ARC_FULL) % ARC_FULL;
+        if (!d_end) d_end = ARC_FULL;          /* the same ray twice: all the way round */
+        m->lp[n * 2] = pt[from][0]; m->lp[n * 2 + 1] = pt[from][1]; n++;
+        for (k0 = 0; k0 < ARC_STEPS; k0++) {   /* the first step past the start */
+            long long c, s;
+            arc_step(k0, &c, &s);
+            if (arc_angle(c, s) > a[from]) break;
+        }
+        for (j = 0; j < ARC_STEPS; j++) {
+            long long c, s, d;
+            arc_step((k0 + j) % ARC_STEPS, &c, &s);
+            d = ((arc_angle(c, s) - a[from]) % ARC_FULL + ARC_FULL) % ARC_FULL;
+            if (d <= 0 || d >= d_end) break;
+            m->lp[n * 2] = (long)(cx + rx * c / 16384);
+            m->lp[n * 2 + 1] = (long)(cy - ry * s / 16384);
+            n++;
+        }
+        m->lp[n * 2] = pt[to][0]; m->lp[n * 2 + 1] = pt[to][1]; n++;
+    }
+    if (back)                                  /* the points the way they were asked for */
+        for (i = 0, j = n - 1; i < j; i++, j--) {
+            long v0 = m->lp[i * 2], v1 = m->lp[i * 2 + 1];
+            m->lp[i * 2] = m->lp[j * 2]; m->lp[i * 2 + 1] = m->lp[j * 2 + 1];
+            m->lp[j * 2] = v0; m->lp[j * 2 + 1] = v1;
+        }
+    if (kind == 3) {                           /* ArcTo: a line from the pen to the start, the arc, the pen at its end */
+        long ex = m->lp[(n - 1) * 2], ey = m->lp[(n - 1) * 2 + 1];
+        if (m->in_path) path_append(m, m->lp, n);
+        else {
+            memmove(m->lp + 2, m->lp, (size_t)n * 2 * sizeof *m->lp);
+            m->lp[0] = m->dc.cur_x;
+            m->lp[1] = m->dc.cur_y;
+            emf_figure(m, m->lp, n + 1, 0, 0);
+        }
+        m->dc.cur_x = ex;
+        m->dc.cur_y = ey;
+        return;
+    }
+    if (kind == 2) { m->lp[n * 2] = (long)cx; m->lp[n * 2 + 1] = (long)cy; n++; }
+    emf_figure(m, m->lp, n, kind != 0, kind != 0);
 }
 
 /* the open figure of the path (a MoveTo then LineTo, PolylineTo...): its last point, or start one at the current
@@ -997,6 +1151,15 @@ static void emf_record(mf_player *m, unsigned long type, const unsigned char *p,
         else rectangle(m, (int)clamp_map(s32(p)), (int)clamp_map(s32(p + 4)), (int)clamp_map(s32(p + 8)),
                        (int)clamp_map(s32(p + 12)));
         break;
+    case EMR_ARC: case EMR_CHORD: case EMR_PIE: case EMR_ARCTO:   /* Box (RectL), Start, End (PointL) */
+        NEED(32);
+        arc_figure(m, s32(p), s32(p + 4), s32(p + 8), s32(p + 12), s32(p + 16), s32(p + 20), s32(p + 24),
+                   s32(p + 28), type == EMR_ARC ? 0 : type == EMR_CHORD ? 1 : type == EMR_PIE ? 2 : 3);
+        break;
+    case EMR_SETARCDIRECTION:
+        NEED(4);
+        m->dc.arc_clockwise = u32(p) == 2;
+        break;
     case EMR_ELLIPSE:
         NEED(16);
         if (m->in_path) emf_ellipse_figure(m, p);
@@ -1117,8 +1280,8 @@ static void emf_record(mf_player *m, unsigned long type, const unsigned char *p,
         free(u);
         break;
     }
-    /* drawn as nothing and counted: pictures inside, arcs, clipping, world transforms, gradients */
-    case EMR_ARC: case EMR_CHORD: case EMR_PIE: case EMR_ARCTO: case EMR_EXCLUDECLIPRECT:
+    /* drawn as nothing and counted: pictures inside, clipping, world transforms, gradients */
+    case EMR_EXCLUDECLIPRECT:
     case EMR_INTERSECTCLIPRECT: case EMR_EXTSELECTCLIPRGN: case EMR_SELECTCLIPPATH: case EMR_SETWORLDTRANSFORM:
     case EMR_MODIFYWORLDTRANSFORM: case EMR_BITBLT: case EMR_STRETCHBLT: case EMR_MASKBLT: case EMR_PLGBLT:
     case EMR_SETDIBITSTODEVICE: case EMR_STRETCHDIBITS: case EMR_ALPHABLEND: case EMR_TRANSPARENTBLT:
@@ -1221,6 +1384,7 @@ int owf_metafile_play(const unsigned char *data, size_t length, int x, int y, in
     play_records(&m, at);
     free(m.objects);
     free(m.xy);
+    free(m.lp);                            /* an arc's points */
     if (result) *result = m.res;
     return m.stop ? OWF_ERR_MEMORY : OWF_OK;
 }

@@ -83,17 +83,17 @@ check: merge-table-check
 
 .PHONY: merge-table-test merge-table-check
 
-$(OUT)/test-spell: $(OWF_SRC) $(CORE_SRC) app/ow_spell.c tests/core/test_spell.c include/openwrite_core.h app/ow_spell.h
+$(OUT)/test-spell: $(OWF_SRC) $(CORE_SRC) app/ow_spell.c src/core/ow_spell_dict.c tests/core/test_spell.c include/openwrite_core.h app/ow_spell.h include/ow_spell_dict.h
 	mkdir -p $(OUT)
-	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Iapp -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) app/ow_spell.c tests/core/test_spell.c -lz -o $@
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Iapp -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) app/ow_spell.c src/core/ow_spell_dict.c tests/core/test_spell.c -lz -o $@
 
 spell-test: $(OUT)/test-spell
 	$(OUT)/test-spell
 
-$(OUT)/test-spell-asan: $(OWF_SRC) $(CORE_SRC) app/ow_spell.c tests/core/test_spell.c include/openwrite_core.h app/ow_spell.h
+$(OUT)/test-spell-asan: $(OWF_SRC) $(CORE_SRC) app/ow_spell.c src/core/ow_spell_dict.c tests/core/test_spell.c include/openwrite_core.h app/ow_spell.h include/ow_spell_dict.h
 	mkdir -p $(OUT)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-		-DOWF_HAVE_ZLIB -Iinclude -Iapp -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) app/ow_spell.c tests/core/test_spell.c -lz -o $@
+		-DOWF_HAVE_ZLIB -Iinclude -Iapp -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) app/ow_spell.c src/core/ow_spell_dict.c tests/core/test_spell.c -lz -o $@
 
 spell-check: $(OUT)/test-spell-asan
 	$(OUT)/test-spell-asan
@@ -109,6 +109,16 @@ libc-test: $(OUT)/test-owf-libc
 	$(OUT)/test-owf-libc
 
 .PHONY: libc-test
+
+# every C library call in libowf's archive is one the libraries' runtime gives (owf_runtime.c and friends), so
+# OWF=library ./build-os3.sh links: caught here before the 68k link (in_md.c's sprintf, out_md.c's strpbrk)
+library-libc-check:
+	sh scripts/check-library-libc.sh
+
+test: library-libc-check
+check: library-libc-check
+
+.PHONY: library-libc-check
 
 # libowf's own inflate (libowf/src/owf_inflate.c), which reads zip packages
 # without z.library. tests/inflate/test_inflate.c checks it against zlib's
@@ -386,7 +396,7 @@ check: calc-expect
 # the fixtures (odfpy and pypdf when installed, for the tests only). With
 # GFOpenLayout (OPENLAYOUT_SRC), OWConvert exports decks to PDF and the PDF
 # and layout tests run too; without it they are skipped, and say so.
-DECK_SRC = $(wildcard src/deck/*.c) src/core/ow_layout.c
+DECK_SRC = $(wildcard src/deck/*.c) src/core/ow_layout.c src/core/ow_spell_dict.c
 DECK_DEPS = $(OWF_SRC) libowf/include/owf.h libowf/include/owf_deck.h libowf/include/owf_pdf.h libowf/src/owf_internal.h \
 	libowf/src/owf_deck_int.h
 ifneq ($(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c),)
@@ -446,6 +456,28 @@ deck-edit-test: $(OUT)/test-opr-edit
 
 deck-edit-check: $(OUT)/test-opr-edit-asan
 	$(OUT)/test-opr-edit-asan tests/deck/fixtures/pptx-talk.pptx
+
+# Spelling through a deck (src/deck/opr_spell.c) with GFOpenWrite's dictionary.
+$(OUT)/test-opr-spell: $(DECK_DEPS) $(DECK_SRC) include/openpresentation_core.h include/ow_spell_dict.h tests/deck/test_opr_spell.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) \
+		tests/deck/test_opr_spell.c -lz -o $@
+
+$(OUT)/test-opr-spell-asan: $(DECK_DEPS) $(DECK_SRC) include/openpresentation_core.h include/ow_spell_dict.h tests/deck/test_opr_spell.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) tests/deck/test_opr_spell.c -lz -o $@
+
+deck-spell-test: $(OUT)/test-opr-spell
+	$(OUT)/test-opr-spell
+
+deck-spell-check: $(OUT)/test-opr-spell-asan
+	$(OUT)/test-opr-spell-asan
+
+test: deck-spell-test
+check: deck-spell-check
+
+.PHONY: deck-spell-test deck-spell-check
 
 $(OUT)/test-opr-show: $(DECK_DEPS) $(DECK_SRC) include/openpresentation_core.h tests/deck/test_opr_show.c
 	mkdir -p $(OUT)
@@ -518,6 +550,61 @@ pub-check: $(OUT)/pub-dump-asan $(OUT)/pub-resave-asan $(PUB_MADE)
 
 test: pub-test
 check: pub-check
+
+# GFOpenPublisher's mail merge on the page model (src/pub/opp_merge.c)
+PUB_MERGE_DEPS = $(OWF_SRC) src/pub/opp_merge.c src/core/ow_merge.c tests/pub/test_pub_merge.c \
+	include/openpublisher_merge.h include/ow_merge.h libowf/include/owf_deck.h
+
+$(OUT)/test-publisher-merge: $(PUB_MERGE_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) src/pub/opp_merge.c \
+		src/core/ow_merge.c tests/pub/test_pub_merge.c -lz -o $@
+
+$(OUT)/test-publisher-merge-asan: $(PUB_MERGE_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) src/pub/opp_merge.c \
+		src/core/ow_merge.c tests/pub/test_pub_merge.c -lz -o $@
+
+publisher-merge-test: $(OUT)/test-publisher-merge
+	$(OUT)/test-publisher-merge
+
+publisher-merge-check: $(OUT)/test-publisher-merge-asan
+	$(OUT)/test-publisher-merge-asan
+
+test: publisher-merge-test
+check: publisher-merge-check
+
+.PHONY: publisher-merge-test publisher-merge-check
+
+ifneq ($(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c),)
+# merge fields shown by the page layout and kept by ODP and PPTX (tests/pub/test_pub_merge_show.c)
+PUB_MERGE_SHOW_DEPS = $(PUB_MERGE_DEPS) $(DECK_DEPS) $(DECK_SRC) tests/pub/test_pub_merge_show.c include/openpresentation_core.h
+
+$(OUT)/test-publisher-merge-show: $(PUB_MERGE_SHOW_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) src/pub/opp_merge.c \
+		src/core/ow_merge.c tests/pub/test_pub_merge_show.c -lz -o $@
+
+$(OUT)/test-publisher-merge-show-asan: $(PUB_MERGE_SHOW_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) src/pub/opp_merge.c src/core/ow_merge.c \
+		tests/pub/test_pub_merge_show.c -lz -o $@
+
+publisher-merge-show-test: $(OUT)/test-publisher-merge-show
+	$(OUT)/test-publisher-merge-show
+
+publisher-merge-show-check: $(OUT)/test-publisher-merge-show-asan
+	$(OUT)/test-publisher-merge-show-asan
+
+test: publisher-merge-show-test
+check: publisher-merge-show-check
+publisher-merge-test: publisher-merge-show-test
+publisher-merge-check: publisher-merge-show-check
+
+.PHONY: publisher-merge-show-test publisher-merge-show-check
+endif
 
 ifneq ($(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c),)
 PUB_CORE_SRC = src/pub/opp_import.c src/pub/opp_export.c src/deck/opr_layout.c src/deck/opr_pdf.c src/core/ow_layout.c
@@ -659,3 +746,15 @@ $(FUZZ_OUT)/fuzz_%: tests/fuzz/fuzz_%.c tests/fuzz/driver.c $(OWF_SRC) libowf/in
 # Workstream hooks (docs/openoffice-parity-plan.md, section 4): each stream's host test targets
 # live in its own mk/<stream>.mk, so streams never edit this file at the same time.
 -include $(sort $(wildcard mk/*.mk))
+
+# Markdown in and out (libowf/src/in_md.c, out_md.c): files the test makes itself
+markdown-test: $(OUT)/owconvert
+	python3 tests/markdown/test_markdown.py $(OUT)/owconvert
+
+markdown-check: $(OUT)/owconvert-asan
+	python3 tests/markdown/test_markdown.py $(OUT)/owconvert-asan
+
+test: markdown-test
+check: markdown-check
+
+.PHONY: markdown-test markdown-check

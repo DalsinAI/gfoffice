@@ -53,6 +53,7 @@
 #include <proto/dos.h>
 #include <proto/intuition.h>
 #include <proto/graphics.h>
+#include <graphics/displayinfo.h>
 #include <proto/gadtools.h>
 #include <proto/asl.h>
 #include <proto/datatypes.h>
@@ -71,9 +72,11 @@
 #include <clib/alib_protos.h>
 
 #include "openpresentation_core.h"
+#include "ow_spell_dict.h"
 #include "ow_clipboard.h"
 #ifdef OPENPUBLISHER
 #include "openpublisher_core.h"
+#include "openpublisher_merge.h"
 #endif
 #include "ow_layout.h"
 #include "owf_pdf.h"
@@ -107,7 +110,7 @@ struct RxsLib *RexxSysBase = NULL;
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.32 (12.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.33 (15.11.2026)"
 #define REXX_PORT_NAME "GFOPENPRESENTATION"
 #define UNIT "Slide"
 #define UNIT_UPPER "SLIDE"
@@ -150,9 +153,11 @@ enum {
     M_FIRST, M_PREV, M_NEXT, M_LAST, M_SHOW_GRID, M_SNAP_GRID, M_SHOW_GUIDES, M_SNAP_GUIDES,
     M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_FIT,
-    M_SHOW_FIRST, M_SHOW_CURRENT, M_SHOW_LOOP,
+    M_SHOW_FIRST, M_SHOW_CURRENT, M_SHOW_LOOP, M_SHOW_ON_AUTO, M_SHOW_ON_OWN, M_SHOW_ON_WB,
     M_VIEW_NORMAL, M_VIEW_SORTER, M_VIEW_NOTES, M_VIEW_OUTLINE,
-    M_VIEW_MASTER, M_SLIDE_DESIGN, M_INSERT_FILE, M_PICTURES
+    M_VIEW_MASTER, M_SLIDE_DESIGN, M_INSERT_FILE, M_PICTURES,
+    M_SPELL_AS_YOU_TYPE, M_SPELLING,
+    M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_PAGES
 };
 
 static struct NewMenu menus[] = {
@@ -317,7 +322,28 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Start from First", NULL, 0, 0, (APTR)M_SHOW_FIRST },
     { NM_ITEM, "Start from Current", NULL, 0, 0, (APTR)M_SHOW_CURRENT },
     { NM_ITEM, "Loop from First", NULL, 0, 0, (APTR)M_SHOW_LOOP },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Show On", NULL, 0, 0, NULL },
+    { NM_SUB, "Automatic", NULL, CHECKIT | CHECKED, ~1 & 7, (APTR)M_SHOW_ON_AUTO },
+    { NM_SUB, "Its Own Screen", NULL, CHECKIT, ~2 & 7, (APTR)M_SHOW_ON_OWN },
+    { NM_SUB, "The Workbench Screen", NULL, CHECKIT, ~4 & 7, (APTR)M_SHOW_ON_WB },
 
+    { NM_TITLE, "Tools", NULL, 0, 0, NULL },
+    { NM_ITEM, "Spelling...", "L", 0, 0, (APTR)M_SPELLING },
+    { NM_ITEM, "Spelling as You Type", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)M_SPELL_AS_YOU_TYPE },
+
+#ifdef OPENPUBLISHER
+    { NM_TITLE, "Mailings", NULL, 0, 0, NULL },
+    { NM_ITEM, "Data Source...", NULL, 0, 0, (APTR)M_MERGE_SOURCE },
+    { NM_ITEM, "Insert Merge Field...", NULL, 0, 0, (APTR)M_MERGE_FIELD },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Next Record", NULL, 0, 0, (APTR)M_MERGE_NEXT },
+    { NM_ITEM, "Previous Record", NULL, 0, 0, (APTR)M_MERGE_PREV },
+    { NM_ITEM, "Show Field Names", NULL, 0, 0, (APTR)M_MERGE_NAMES },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Merge to New Publication", NULL, 0, 0, (APTR)M_MERGE_PAGES },
+
+#endif
     { NM_TITLE, "Help", NULL, 0, 0, NULL },
     { NM_ITEM, "About " PROGRAM "...", NULL, 0, 0, (APTR)M_ABOUT },
     { NM_END, NULL, NULL, 0, 0, NULL }
@@ -429,6 +455,11 @@ static int sorter_click_index = -1;
 
 static int selected_obj = -1;
 static int edit_obj = -1;
+/* Spelling (GFOpenWrite's dictionary, PROGDIR:Dictionaries/): opened the
+ * first time it is wanted; misspelt words in the text being typed get a
+ * wavy underline while spell_as_you_type is on. */
+static ow_spell *spell;
+static int spell_tried, spell_as_you_type = 1;
 static opr_pos caret;
 static opr_selection text_selection;
 static int text_selecting;
@@ -2691,6 +2722,65 @@ static void draw_text_selection(const opr_slide *s, const ol_scale *sc)
     SetDrMd(rp, JAM1);
 }
 
+
+/* The dictionary, opened once; loud says why when there is none. */
+static int spell_ready(int loud)
+{
+    static const char *const paths[] = { "PROGDIR:Dictionaries/en_GB.words", "PROGDIR:Dictionaries/en_US.words",
+                                         "SYS:Dictionaries/en_GB.words", NULL };
+    char msg[160];
+    int i;
+    if (spell) return 1;
+    if (spell_tried && !loud) return 0;
+    spell_tried = 1;
+    /* the word list is about a megabyte: say why the pause */
+    set_status("Opening the dictionary...");
+    draw_status();
+    for (i = 0; paths[i]; i++)
+        if ((spell = ow_spell_open(paths[i], "PROGDIR:Dictionaries/user.words", msg, sizeof msg)) != NULL) return 1;
+    if (loud) set_status("No dictionary: GFOpenWrite's en_GB.words goes in PROGDIR:Dictionaries/.");
+    return 0;
+}
+
+/* A wavy line under each misspelt word of the text being typed, under the
+ * glyphs the caret mapping places, so wrapping and columns need nothing more. */
+static void draw_spell_marks(const opr_slide *s, const ol_scale *sc)
+{
+    static opr_spell_mark marks[200];
+    struct RastPort *rp = win ? win->RPort : NULL;
+    int frame, n, i, guard = 0;
+    if (!rp || !spell_as_you_type || edit_obj < 0 || !s || (frame = opr_slide_frame_for(s, edit_obj)) < 0 ||
+        !spell_ready(0))
+        return;
+    n = opr_spell_marks(deck, spell, current, edit_obj, &caret, marks, 200);
+    if (n > 200) n = 200;
+    if (n <= 0) return;
+    SetAPen(rp, (ULONG)argb_pen(0xffd02020u));
+    SetDrMd(rp, JAM1);
+    for (i = 0; i < n; i++) {
+        opr_pos at, end;
+        at.para = end.para = marks[i].para;
+        at.offset = marks[i].start;
+        end.offset = marks[i].end;
+        while (app_compare_pos(at, end) < 0 && guard++ < 100000) {
+            opr_pos next = at;
+            ol_rect a, b;
+            int x, x2, y;
+            if (opr_text_move(deck, current, edit_obj, &next, OPR_MOVE_RIGHT) < 0 || app_compare_pos(next, at) <= 0)
+                break;
+            if (app_compare_pos(next, end) > 0) next = end;
+            if (opr_caret_box(s, frame, at, NULL, NULL, &a) && opr_caret_box(s, frame, next, NULL, NULL, &b) &&
+                a.y == b.y) {
+                x = ol_scale_x(sc, a.x);
+                x2 = ol_scale_x(sc, b.x);
+                y = ol_scale_y(sc, a.y) + ol_scale_length(sc, a.height) - 2;
+                for (; x < x2; x++) WritePixel(rp, x, y + ((x >> 1) & 1));
+            }
+            at = next;
+        }
+    }
+}
+
 static void draw_caret(const opr_slide *s, const ol_scale *sc)
 {
     int frame;
@@ -2832,6 +2922,7 @@ static void draw_slide_part(const box *part)
         draw_guides(&sc);
     }
     draw_selection(s);
+    draw_spell_marks(s, &sc);
     draw_text_selection(s, &sc);
     draw_caret(s, &sc);
     if (region) {
@@ -4497,11 +4588,149 @@ static ULONG show_tick_delta(ULONG seconds, ULONG micros, ULONG *last_seconds, U
     return delta;
 }
 
+/* ---- Where the show goes (design 7.1): Show > Show On, kept in ENV: and ENVARC: ---- */
+#define SHOW_PLACE_DIR PROGRAM
+static int show_place_choice = OPR_SHOW_AUTO;
+
+static void show_place_marks(void)
+{
+    struct NewMenu *m;
+    for (m = menus; m->nm_Type != NM_END; m++) {
+        ULONG id = (ULONG)m->nm_UserData;
+        if (id == M_SHOW_ON_AUTO || id == M_SHOW_ON_OWN || id == M_SHOW_ON_WB)
+            m->nm_Flags = CHECKIT | ((id == M_SHOW_ON_AUTO && show_place_choice == OPR_SHOW_AUTO) ||
+                                     (id == M_SHOW_ON_OWN && show_place_choice == OPR_SHOW_OWN_SCREEN) ||
+                                     (id == M_SHOW_ON_WB && show_place_choice == OPR_SHOW_WORKBENCH) ? CHECKED : 0);
+    }
+}
+
+/* Before the menus are made: the choice kept, ticked */
+static void show_place_load(void)
+{
+    char *s = read_file("ENV:" SHOW_PLACE_DIR "/ShowScreen");
+    show_place_choice = opr_show_place_from(s);
+    free(s);
+    show_place_marks();
+}
+
+static void show_place_write(const char *root)
+{
+    char path[64];
+    BPTR l, f;
+    const char *word = opr_show_place_word(show_place_choice);
+    snprintf(path, sizeof path, "%s:%s", root, SHOW_PLACE_DIR);
+    if ((l = Lock((STRPTR)path, ACCESS_READ)) != 0) UnLock(l);
+    else if ((l = CreateDir((STRPTR)path)) != 0) UnLock(l);
+    snprintf(path, sizeof path, "%s:%s/ShowScreen", root, SHOW_PLACE_DIR);
+    if ((f = Open((STRPTR)path, MODE_NEWFILE)) != 0) {
+        Write(f, (APTR)word, (LONG)strlen(word));
+        Write(f, (APTR)"\n", 1);
+        Close(f);
+    }
+}
+
+static void show_place_set(int choice)
+{
+    show_place_choice = choice;
+    show_place_write("ENV");
+    show_place_write("ENVARC");
+}
+
+/* The show's own screen: the slide's shape, at least 640 x 480, the best
+ * mode for it at 8 bits (AGA) or 16 or 24 (RTG), opened behind; NULL when
+ * none can open (the show goes on the Workbench screen). */
+static struct Screen *show_screen_open(void)
+{
+    static UWORD pens[] = { (UWORD)~0 };
+    struct DimensionInfo dims;
+    struct Screen *s;
+    ULONG id, flags;
+    int w, h, depth, wb_depth = screen_depth(), rtg;
+    if (((struct Library *)GfxBase)->lib_Version < 39 || !deck) return NULL;
+    flags = GetBitMapAttr(scr->RastPort.BitMap, BMA_FLAGS);
+    rtg = wb_depth > 8 || !(flags & BMF_STANDARD);
+    opr_show_screen_size(deck->width, deck->height, &w, &h);
+    depth = opr_show_screen_depth(rtg, wb_depth);
+    id = BestModeID(BIDTAG_NominalWidth, (ULONG)w, BIDTAG_NominalHeight, (ULONG)h, BIDTAG_Depth, (ULONG)depth, TAG_DONE);
+    if (id == INVALID_ID && depth > 8) {
+        depth = 8;
+        id = BestModeID(BIDTAG_NominalWidth, (ULONG)w, BIDTAG_NominalHeight, (ULONG)h, BIDTAG_Depth, (ULONG)depth, TAG_DONE);
+    }
+    if (id == INVALID_ID && wb_depth < depth) {           /* fewer colours than 8 bits: as many as Workbench has */
+        depth = wb_depth;
+        id = BestModeID(BIDTAG_NominalWidth, (ULONG)w, BIDTAG_NominalHeight, (ULONG)h, BIDTAG_Depth, (ULONG)depth, TAG_DONE);
+    }
+    if (id == INVALID_ID) return NULL;
+    if (GetDisplayInfoData(NULL, (UBYTE *)&dims, sizeof dims, DTAG_DIMS, id) > 0) {
+        w = dims.Nominal.MaxX - dims.Nominal.MinX + 1;
+        h = dims.Nominal.MaxY - dims.Nominal.MinY + 1;
+        if (dims.MaxDepth > 0 && depth > (int)dims.MaxDepth) depth = (int)dims.MaxDepth;
+    }
+    s = OpenScreenTags(NULL,
+        SA_DisplayID, id, SA_Width, (ULONG)w, SA_Height, (ULONG)h, SA_Depth, (ULONG)depth,
+        SA_Type, CUSTOMSCREEN, SA_Title, (ULONG)SHOW_TITLE, SA_ShowTitle, FALSE, SA_Quiet, TRUE,
+        SA_Behind, TRUE, SA_Draggable, FALSE, SA_SharePens, TRUE, SA_Interleaved, TRUE,
+        SA_Pens, (ULONG)pens, SA_Font, (ULONG)&font_attr,
+        TAG_DONE);
+    if (s) {        /* black until the first slide is drawn */
+        ULONG i;
+        for (i = 0; i < 4 && i < (1UL << depth); i++) SetRGB32(&s->ViewPort, i, 0, 0, 0);
+    }
+    return s;
+}
+
+/* The menu on the show's own screen (design 7.3, the right button): Next,
+ * Previous, Go to <unit> (the first SHOW_GOTO of them; a number and
+ * Return reaches the rest), Black, White, End. */
+#define SHOW_GOTO 40
+enum { SM_NEXT = 1, SM_PREV, SM_BLACK, SM_WHITE, SM_END, SM_GOTO = 100 };
+static struct NewMenu show_nm[10 + SHOW_GOTO];
+static char show_goto_text[SHOW_GOTO][32];
+
+static struct Menu *show_menu_make(APTR svi)
+{
+    struct Menu *m;
+    int n = 0, i;
+    show_nm[n++] = (struct NewMenu){ NM_TITLE, (STRPTR)"Show", NULL, 0, 0, NULL };
+    show_nm[n++] = (struct NewMenu){ NM_ITEM, (STRPTR)"Next", NULL, 0, 0, (APTR)SM_NEXT };
+    show_nm[n++] = (struct NewMenu){ NM_ITEM, (STRPTR)"Previous", NULL, 0, 0, (APTR)SM_PREV };
+    show_nm[n++] = (struct NewMenu){ NM_ITEM, (STRPTR)"Go to " UNIT, NULL, 0, 0, NULL };
+    for (i = 0; deck && i < deck->nslides && i < SHOW_GOTO; i++) {
+        snprintf(show_goto_text[i], sizeof show_goto_text[i], UNIT " %d%s", i + 1, deck->slides[i].hidden ? " (hidden)" : "");
+        show_nm[n++] = (struct NewMenu){ NM_SUB, (STRPTR)show_goto_text[i], NULL, 0, 0, (APTR)(ULONG)(SM_GOTO + i) };
+    }
+    show_nm[n++] = (struct NewMenu){ NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL };
+    show_nm[n++] = (struct NewMenu){ NM_ITEM, (STRPTR)"Black Screen", (STRPTR)"B", 0, 0, (APTR)SM_BLACK };
+    show_nm[n++] = (struct NewMenu){ NM_ITEM, (STRPTR)"White Screen", (STRPTR)"W", 0, 0, (APTR)SM_WHITE };
+    show_nm[n++] = (struct NewMenu){ NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL };
+    show_nm[n++] = (struct NewMenu){ NM_ITEM, (STRPTR)"End Show", NULL, 0, 0, (APTR)SM_END };
+    show_nm[n++] = (struct NewMenu){ NM_END, NULL, NULL, 0, 0, NULL };
+    if (!svi || !(m = CreateMenus(show_nm, TAG_DONE))) return NULL;
+    if (!LayoutMenus(m, svi, GTMN_NewLookMenus, TRUE, TAG_DONE)) { FreeMenus(m); return NULL; }
+    return m;
+}
+
+static void show_home(struct Screen *show_scr, struct Screen *home_scr, ogt_ctx *home_ctx)
+{
+    ogt_ctx gone;
+    if (!show_scr) return;
+    own_pen_free();
+    gone = ctx;
+    ctx = *home_ctx;              /* still the context direct colours are matched in */
+    ogt_ctx_free(&gone);
+    scr = home_scr;
+    CloseScreen(show_scr);
+}
+
 static void run_show(int from, int loop)
 {
     master_view_leave();
     struct Window *sw;
     struct IntuiMessage *im;
+    struct Screen *show_scr = NULL, *home_scr;
+    struct Menu *show_menu = NULL;
+    APTR show_vi = NULL;
+    ogt_ctx home_ctx;
     opr_show show;
     show_buffers buffers;
     int running = 1, blank = 0, number = 0, have_time = 0, drawn_slide, drawn_blank = 0, drawn_step;
@@ -4511,24 +4740,43 @@ static void run_show(int from, int loop)
         return;
     }
     stop_typing();
+    home_scr = scr;
+    if (opr_show_place(show_place_choice, screen_depth(), scr->Width, scr->Height) == OPR_SHOW_OWN_SCREEN &&
+        (show_scr = show_screen_open()) != NULL) {
+        home_ctx = ctx;                    /* the Workbench screen's pens, back after the show */
+        own_pen_free();
+        scr = show_scr;
+        if (!ogt_ctx_init(&ctx, scr, &theme, theme_mode)) {
+            ogt_ctx failed = ctx;
+            ctx = home_ctx;
+            ogt_ctx_free(&failed);
+            scr = home_scr;
+            CloseScreen(show_scr);
+            show_scr = NULL;
+        }
+    }
     sw = OpenWindowTags(NULL,
-        WA_PubScreen, (ULONG)scr,
+        show_scr ? WA_CustomScreen : WA_PubScreen, (ULONG)scr,
         WA_Left, 0, WA_Top, 0, WA_Width, scr->Width, WA_Height, scr->Height,
         WA_Borderless, TRUE, WA_Backdrop, TRUE, WA_Activate, TRUE,
-        WA_RMBTrap, TRUE, WA_SimpleRefresh, TRUE,
+        WA_RMBTrap, show_scr ? FALSE : TRUE, WA_SimpleRefresh, TRUE, WA_NewLookMenus, TRUE,
         WA_IDCMP, IDCMP_REFRESHWINDOW | IDCMP_MOUSEBUTTONS | IDCMP_VANILLAKEY |
-                  IDCMP_RAWKEY | IDCMP_INTUITICKS,
+                  IDCMP_RAWKEY | IDCMP_INTUITICKS | IDCMP_MENUPICK,
         TAG_DONE);
     if (!sw) {
+        show_home(show_scr, home_scr, &home_ctx);
         tell(SHOW_TITLE, "The full-screen show window could not open.");
         return;
     }
+    if (show_scr && (show_vi = GetVisualInfo(show_scr, TAG_DONE)) != NULL && (show_menu = show_menu_make(show_vi)) != NULL)
+        SetMenuStrip(sw, show_menu);
     show_buffers_open(&buffers, sw->Width, sw->Height);
     if (show_entry_step(&show) < 0) {
         show_paint_at(sw->RPort, sw->Width, sw->Height, &show, -1, 0, 0);
         show_play_step(sw, &buffers, &show, 0);
     } else
         show_draw(sw, &show, blank, number);
+    if (show_scr) ScreenToFront(show_scr);
     drawn_slide = show.slide;
     drawn_step = show.step;
     while (running) {
@@ -4545,7 +4793,24 @@ static void run_show(int from, int loop)
                 EndRefresh(sw, TRUE);
                 continue;
             }
-            if (class == IDCMP_INTUITICKS) {
+            if (class == IDCMP_MENUPICK) {
+                UWORD pick = code;
+                while (pick != MENUNULL && show_menu) {
+                    struct MenuItem *item = ItemAddress(show_menu, pick);
+                    ULONG what;
+                    if (!item) break;
+                    what = (ULONG)GTMENUITEM_USERDATA(item);
+                    if (what == SM_NEXT) { if (opr_show_next(&show) < 0) running = 0; blank = number = 0; redraw = 1; }
+                    else if (what == SM_PREV) { opr_show_previous(&show); blank = number = 0; redraw = 1; }
+                    else if (what == SM_BLACK) { blank = blank == 1 ? 0 : 1; number = 0; redraw = 1; }
+                    else if (what == SM_WHITE) { blank = blank == 2 ? 0 : 2; number = 0; redraw = 1; }
+                    else if (what == SM_END) running = 0;
+                    else if (what >= SM_GOTO && what < SM_GOTO + SHOW_GOTO) {
+                        opr_show_goto(&show, (int)(what - SM_GOTO)); blank = number = 0; redraw = 1;
+                    }
+                    pick = item->NextSelect;
+                }
+            } else if (class == IDCMP_INTUITICKS) {
                 rc = opr_show_tick(&show, show_tick_delta(seconds, micros, &last_seconds, &last_micros, &have_time));
                 if (rc < 0) running = 0;
                 else if (rc > 0) { blank = number = 0; redraw = 1; }
@@ -4606,7 +4871,10 @@ static void run_show(int from, int loop)
         }
     }
     show_buffers_close(&buffers);
+    if (show_menu) { ClearMenuStrip(sw); FreeMenus(show_menu); }
     CloseWindow(sw);
+    if (show_vi) FreeVisualInfo(show_vi);
+    show_home(show_scr, home_scr, &home_ctx);
     show_slide(show.slide);
     ActivateWindow(win);
     draw_all();
@@ -5005,6 +5273,184 @@ static int find_next_text(int ask_text)
     draw_slide();
     draw_status();
     return 1;
+}
+
+/* ---- Tools > Spelling: every slide's text and notes, word by word ---- */
+
+static int spell_found_compare(const opr_find_result *f, int slide, int obj, opr_pos at)
+{
+    if (f->slide != slide) return f->slide < slide ? -1 : 1;
+    if (f->obj != obj) return f->obj < obj ? -1 : 1;
+    return app_compare_pos(f->selection.anchor, at);
+}
+
+/* The word chosen in the slide or the notes, as Find shows what it found. */
+static void spell_show(const opr_find_result *f)
+{
+    if ((f->obj == OPR_NOTES) != notes_view) set_view(f->obj == OPR_NOTES ? 2 : 0);
+    show_slide(f->slide);
+    selected_obj = f->obj == OPR_NOTES ? -1 : f->obj;
+    edit_obj = f->obj;
+    text_selection = f->selection;
+    caret = f->selection.focus;
+    edit_grouped = 0;
+    draw_slide();
+}
+
+static void spell_dialog(void)
+{
+    enum { G_WORD = 1, G_CHANGE, G_LIST, G_IGNORE, G_IGNORE_ALL, G_ADD, G_DO_CHANGE, G_CLOSE };
+    static char sugg[8][48], word[96], change[96];
+    static struct Node nodes[8];
+    struct List labels;
+    struct Gadget *glist = NULL, *last, *gword, *gchange, *glv, *g;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    opr_find_result found;
+    opr_pos from, start;
+    int from_slide, from_obj, start_slide, start_obj, wrapped = 0, done = 0, nsugg = 0, i, rc, changed = 0;
+    int ww = 420, wh = 190;
+    if (!deck || !deck->nslides || !scr || !vi) return;
+    if (!spell_ready(1)) {
+        draw_status();
+        return;
+    }
+    if (sorter_view || outline_view) set_view(0);
+    /* from the caret, else the start of the slide shown */
+    start_slide = current;
+    start_obj = edit_obj >= 0 ? edit_obj : 0;
+    if (edit_obj >= 0) start = text_selection.anchor;
+    else start.para = 0, start.offset = 0;
+    if (edit_obj >= 0 && app_compare_pos(text_selection.focus, start) < 0) start = text_selection.focus;
+    from_slide = start_slide; from_obj = start_obj; from = start;
+    labels.lh_Head = (struct Node *)&labels.lh_Tail;
+    labels.lh_Tail = NULL;
+    labels.lh_TailPred = (struct Node *)&labels.lh_Head;
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr;
+    ng.ng_VisualInfo = vi;
+    last = CreateContext(&glist);
+    ng.ng_LeftEdge = 140; ng.ng_TopEdge = 14; ng.ng_Width = 170; ng.ng_Height = fh + 6;
+    ng.ng_GadgetText = (STRPTR)"Not in dictionary"; ng.ng_Flags = PLACETEXT_LEFT; ng.ng_GadgetID = G_WORD;
+    last = gword = CreateGadget(TEXT_KIND, last, &ng, GTTX_Border, TRUE, TAG_DONE);
+    ng.ng_TopEdge = 40; ng.ng_GadgetText = (STRPTR)"Change to"; ng.ng_GadgetID = G_CHANGE;
+    last = gchange = CreateGadget(STRING_KIND, last, &ng, GTST_MaxChars, (ULONG)(sizeof change - 1), TAG_DONE);
+    ng.ng_TopEdge = 82; ng.ng_Height = 96; ng.ng_GadgetText = (STRPTR)"Suggestions"; ng.ng_Flags = PLACETEXT_ABOVE;
+    ng.ng_GadgetID = G_LIST;
+    last = glv = CreateGadget(LISTVIEW_KIND, last, &ng, GTLV_Labels, (ULONG)&labels, GTLV_ShowSelected, 0, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_LeftEdge = 322; ng.ng_Width = 88; ng.ng_Height = fh + 8;
+    ng.ng_TopEdge = 14; ng.ng_GadgetText = (STRPTR)"Ignore"; ng.ng_GadgetID = G_IGNORE;
+    last = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_TopEdge = 40; ng.ng_GadgetText = (STRPTR)"Ignore All"; ng.ng_GadgetID = G_IGNORE_ALL;
+    last = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_TopEdge = 66; ng.ng_GadgetText = (STRPTR)"Add"; ng.ng_GadgetID = G_ADD;
+    last = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_TopEdge = 92; ng.ng_GadgetText = (STRPTR)"Change"; ng.ng_GadgetID = G_DO_CHANGE;
+    last = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_TopEdge = 160; ng.ng_GadgetText = (STRPTR)"Close"; ng.ng_GadgetID = G_CLOSE;
+    g = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!gword || !gchange || !glv || !g) goto out;
+    while (!done) {
+        int act = 0;
+        rc = opr_spell_next(deck, spell, from_slide, from_obj, from, &found, word, sizeof word);
+        if (rc < 0) {
+            tell("Spelling", "There is not enough memory to check this " DOCUMENT_LOWER ".");
+            break;
+        }
+        /* round once: past the end back to the start, then up to where it began */
+        if (rc && spell_found_compare(&found, from_slide, from_obj, from) < 0) wrapped = 1;
+        if (!rc || (wrapped && spell_found_compare(&found, start_slide, start_obj, start) >= 0)) {
+            set_status(changed ? "Spelling checked; the changes can be undone." : "Spelling checked: no more misspelt words.");
+            break;
+        }
+        spell_show(&found);
+        nsugg = ow_spell_suggest(spell, word, sugg, 8);
+        GT_SetGadgetAttrs(glv, rw, NULL, GTLV_Labels, (ULONG)~0, TAG_DONE);
+        labels.lh_Head = (struct Node *)&labels.lh_Tail;
+        labels.lh_TailPred = (struct Node *)&labels.lh_Head;
+        for (i = 0; i < nsugg; i++) {
+            memset(&nodes[i], 0, sizeof nodes[i]);
+            nodes[i].ln_Name = sugg[i];
+            AddTail(&labels, &nodes[i]);
+        }
+        snprintf(change, sizeof change, "%s", nsugg ? sugg[0] : word);
+        if (!rw) {
+            GT_SetGadgetAttrs(gword, NULL, NULL, GTTX_Text, (ULONG)word, GTTX_CopyText, TRUE, TAG_DONE);
+            GT_SetGadgetAttrs(gchange, NULL, NULL, GTST_String, (ULONG)change, TAG_DONE);
+            GT_SetGadgetAttrs(glv, NULL, NULL, GTLV_Labels, (ULONG)&labels, TAG_DONE);
+            rw = OpenWindowTags(NULL, WA_Title, (ULONG)"Spelling", WA_PubScreen, (ULONG)scr,
+                WA_InnerWidth, ww, WA_InnerHeight, wh, WA_Left, (scr->Width - ww) / 2, WA_Top, scr->Height - wh - 40,
+                WA_Gadgets, (ULONG)glist, WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE,
+                WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+                WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | BUTTONIDCMP | STRINGIDCMP | LISTVIEWIDCMP | TEXTIDCMP,
+                TAG_DONE);
+            if (!rw) break;
+            GT_RefreshWindow(rw, NULL);
+        } else {
+            GT_SetGadgetAttrs(gword, rw, NULL, GTTX_Text, (ULONG)word, GTTX_CopyText, TRUE, TAG_DONE);
+            GT_SetGadgetAttrs(gchange, rw, NULL, GTST_String, (ULONG)change, TAG_DONE);
+            GT_SetGadgetAttrs(glv, rw, NULL, GTLV_Labels, (ULONG)&labels, TAG_DONE);
+        }
+        while (!act) {
+            struct IntuiMessage *m;
+            Wait(1UL << rw->UserPort->mp_SigBit);
+            while (!act && (m = GT_GetIMsg(rw->UserPort))) {
+                ULONG cls = m->Class;
+                UWORD code = m->Code, id = 0;
+                if ((cls == IDCMP_GADGETUP || cls == IDCMP_GADGETDOWN) && m->IAddress)
+                    id = ((struct Gadget *)m->IAddress)->GadgetID;
+                GT_ReplyIMsg(m);
+                if (cls == IDCMP_CLOSEWINDOW) act = G_CLOSE;
+                else if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); }
+                else if (cls == IDCMP_GADGETUP && id == G_LIST && code < (UWORD)nsugg)
+                    GT_SetGadgetAttrs(gchange, rw, NULL, GTST_String, (ULONG)sugg[code], TAG_DONE);
+                else if (cls == IDCMP_GADGETUP && id >= G_IGNORE) act = id;
+            }
+        }
+        /* go on after the word, or after what replaced it */
+        from_slide = found.slide;
+        from_obj = found.obj;
+        from = found.selection.focus;
+        switch (act) {
+        case G_CLOSE:
+            done = 1;
+            set_status("Spelling stopped.");
+            break;
+        case G_IGNORE_ALL:
+            ow_spell_ignore(spell, word);
+            break;
+        case G_ADD:
+            if (!ow_spell_add(spell, word)) set_status("The word could not be saved in PROGDIR:Dictionaries/user.words.");
+            break;
+        case G_DO_CHANGE: {
+            STRPTR v = NULL;
+            GT_GetGadgetAttrs(gchange, rw, NULL, GTST_String, (ULONG)&v, TAG_DONE);
+            snprintf(change, sizeof change, "%s", v ? (char *)v : "");
+            if (strcmp(change, word)) {
+                long grow = (long)strlen(change) - (long)strlen(word);
+                type_text(change, strlen(change));
+                edit_grouped = 0;
+                changed = 1;
+                from = caret;
+                /* the start point moves with the text when it is after the change, in the same paragraph */
+                if (start_slide == found.slide && start_obj == found.obj && start.para == found.selection.anchor.para &&
+                    start.offset > found.selection.anchor.offset) {
+                    long moved = (long)start.offset + grow;
+                    start.offset = moved > (long)found.selection.anchor.offset ? (size_t)moved
+                                                                               : found.selection.anchor.offset;
+                }
+            }
+            break;
+        }
+        default:
+            break;
+        }
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (glist) FreeGadgets(glist);
+    draw_slide();
+    draw_status();
 }
 
 static void replace_text_command(int all)
@@ -7036,6 +7482,210 @@ static void open_deck(const char *path)
     owf_report_free(report);
 }
 
+#ifdef OPENPUBLISHER
+/* ---- Mailings: mail merge (src/pub/opp_merge.c) ----
+ * The data source is a CSV file whose first line names the columns. Merge fields show the column's name in
+ * guillemets, or the values of the record shown; Merge to New Publication makes the pages once for each record
+ * in this window, as a new untitled publication (the publication's own file is left as it is). */
+static ow_merge_table *merge_table;
+static int merge_at = -1;                            /* the record shown; -1: the field names */
+
+/* A list of names (Latin-1) to choose one from: its index, or -1 */
+static int pick_requester(const char *title, const char *label, const char *button, char (*names)[72], int n)
+{
+    struct Gadget *glist = NULL, *last, *glv, *gok, *gcancel;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    struct List items;
+    struct Node *nodes;
+    int i, chosen = -1, picked = 0, done = 0, ww = 320, wh = 190;
+    if (!scr || !vi || n <= 0) return -1;
+    if (!(nodes = (struct Node *)calloc((size_t)n, sizeof *nodes))) return -1;
+    NewList(&items);
+    for (i = 0; i < n; ++i) { nodes[i].ln_Name = names[i]; AddTail(&items, &nodes[i]); }
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr; ng.ng_VisualInfo = vi;
+    last = CreateContext(&glist);
+    ng.ng_LeftEdge = 12; ng.ng_TopEdge = 20; ng.ng_Width = 296; ng.ng_Height = 130;
+    ng.ng_GadgetText = (STRPTR)label; ng.ng_GadgetID = 1; ng.ng_Flags = PLACETEXT_ABOVE;
+    last = glv = CreateGadget(LISTVIEW_KIND, last, &ng, GTLV_Labels, (ULONG)&items, GTLV_ShowSelected, 0,
+                              GTLV_Selected, 0, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_GadgetText = (STRPTR)button; ng.ng_GadgetID = 2;
+    ng.ng_LeftEdge = 142; ng.ng_TopEdge = 160; ng.ng_Width = 78; ng.ng_Height = 20;
+    last = gok = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_GadgetText = (STRPTR)"Cancel"; ng.ng_GadgetID = 3; ng.ng_LeftEdge = 230;
+    last = gcancel = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!glv || !gok || !gcancel) goto out;
+    rw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)title, WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh,
+        WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)glist, WA_DragBar, TRUE, WA_DepthGadget, TRUE,
+        WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | LISTVIEWIDCMP | BUTTONIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((m = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = m->Class;
+            UWORD code = m->Code;
+            UWORD gid = m->IAddress && (cls == IDCMP_GADGETUP || cls == IDCMP_GADGETDOWN)
+                      ? ((struct Gadget *)m->IAddress)->GadgetID : 0;
+            GT_ReplyIMsg(m);
+            if (cls == IDCMP_CLOSEWINDOW) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); }
+            else if (cls == IDCMP_GADGETUP) {
+                if (gid == 1) picked = code;
+                else if (gid == 2) { chosen = picked >= 0 && picked < n ? picked : -1; done = 1; }
+                else if (gid == 3) done = 1;
+            }
+        }
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (glist) FreeGadgets(glist);
+    free(nodes);
+    return chosen;
+}
+
+static void merge_status(const char *before)
+{
+    char msg[200];
+    if (merge_at >= 0 && merge_table)
+        snprintf(msg, sizeof msg, "%.150sRecord %d of %d.", before, merge_at + 1, merge_table->nrows);
+    else snprintf(msg, sizeof msg, "%.150sField names shown.", before);
+    set_status(msg);
+}
+
+static const char *merge_error(int rc)
+{
+    return rc == OWF_ERR_IO ? "The data source could not be read." :
+           rc == OWF_ERR_FORMAT ? "The data source has no columns: its first line names them." :
+           rc == OWF_ERR_UNSUPPORTED ? "The data source is too big (4 MB at most)." : owf_error_text(rc);
+}
+
+/* The merge fields show record at (-1: their names): 1, or 0 with the user told */
+/* Shows record at (-1: the field names) with no requester: OWF_OK or the error */
+static int merge_show_rc(int at)
+{
+    int rc = opp_merge_show(deck, merge_table, at, NULL);
+    if (rc != OWF_OK) return rc;
+    merge_at = at;
+    relayout();
+    return OWF_OK;
+}
+
+static int merge_show(int at)
+{
+    int rc = merge_show_rc(at);
+    if (rc != OWF_OK) { tell("Mail Merge", owf_error_text(rc)); return 0; }
+    return 1;
+}
+
+/* Reads a data source and shows its first record: OWF_OK or the error */
+static int merge_load(const char *path, char *msg, size_t size)
+{
+    ow_merge_table *t = NULL;
+    int rc = opp_merge_load_file(path, &t), n = 0;
+    if (rc != OWF_OK) return rc;
+    ow_merge_table_free(merge_table);
+    merge_table = t;
+    if ((rc = opp_merge_show(deck, t, t->nrows ? 0 : -1, NULL)) != OWF_OK) return rc;
+    merge_at = t->nrows ? 0 : -1;
+    relayout();
+    snprintf(msg, size, "%.100s: %d columns, %d records. ", leaf(path), t->ncols, t->nrows);
+    if (opp_merge_fields(deck, t, &n) && n)
+        snprintf(msg + strlen(msg), size - strlen(msg), "%d field%s name a column it lacks. ", n, n == 1 ? "" : "s");
+    return OWF_OK;
+}
+
+/* The pages once for each record, as a new untitled publication: OWF_OK or the error */
+static int merge_pages_now(void)
+{
+    char msg[120];
+    int rc, n = merge_table ? merge_table->nrows : 0;
+    stop_typing();
+    if ((rc = opp_merge_pages(deck, merge_table, -1, -1)) != OWF_OK) return rc;
+    if (undo) opr_undo_clear(undo);
+    laid_clear();
+    current = 0;
+    clear_object_selection();
+    current_path[0] = 0;
+    dirty = 1;
+    update_window_title();
+    relayout();
+    snprintf(msg, sizeof msg, "%d records merged: %d %s.", n, deck->nslides, deck->nslides == 1 ? UNIT_LOWER : UNITS_LOWER);
+    set_status(msg);
+    return OWF_OK;
+}
+
+static void do_merge(int what)
+{
+    char path[512], msg[240];
+    int rc, n, k;
+    if (!deck) return;
+    master_view_leave();
+    switch (what) {
+    case M_MERGE_SOURCE:
+        if (!ask_file(0, "Mail merge data source (CSV)", NULL, path, sizeof path)) return;
+        if ((rc = merge_load(path, msg, sizeof msg)) != OWF_OK) { tell("Mail Merge", merge_error(rc)); return; }
+        merge_status(msg);
+        break;
+    case M_MERGE_FIELD: {
+        char (*names)[72];
+        owf_obj *o;
+        box b;
+        if (!merge_table) { tell("Mail Merge", "Choose a data source first (Mailings > Data Source...)."); return; }
+        if (edit_obj < 0 || edit_obj >= deck->slides[current].nobjs) {
+            tell("Mail Merge", "Click in a text box where the field should go, then insert it.");
+            return;
+        }
+        if (!(names = (char (*)[72])calloc((size_t)merge_table->ncols, sizeof *names))) return;
+        for (k = 0; k < merge_table->ncols; ++k) name_to_latin1(merge_table->cells[k], names[k], sizeof names[k]);
+        k = pick_requester("Insert Merge Field", "Column", "Insert", names, merge_table->ncols);
+        free(names);
+        if (k < 0) return;
+        before_change(&b);
+        o = &deck->slides[current].objs[edit_obj];
+        rc = opp_merge_insert_field_at(o, caret.para, caret.offset, merge_table->cells[k]);
+        if (rc == OWF_OK) rc = opp_merge_show(deck, merge_table, merge_at, NULL);
+        if (rc != OWF_OK) { tell("Mail Merge", owf_error_text(rc)); return; }
+        edit_grouped = 0;                            /* the field is a step of its own */
+        laid_clear();
+        text_changed(NULL);
+        set_status("Merge field inserted.");
+        break;
+    }
+    case M_MERGE_NEXT: case M_MERGE_PREV: case M_MERGE_NAMES:
+        n = merge_table ? merge_table->nrows : 0;
+        if (!n && what != M_MERGE_NAMES) { tell("Mail Merge", "The data source has no records, or there is none."); return; }
+        k = what == M_MERGE_NAMES ? -1 : what == M_MERGE_NEXT ? (merge_at + 1 < n ? merge_at + 1 : n - 1)
+                                                               : (merge_at > 0 ? merge_at - 1 : 0);
+        if (!merge_show(k)) return;
+        merge_status("");
+        break;
+    case M_MERGE_PAGES:
+        n = merge_table ? merge_table->nrows : 0;
+        if (!n) { tell("Mail Merge", "The data source has no records, or there is none."); return; }
+        if (!opp_merge_fields(deck, merge_table, NULL)) {
+            tell("Mail Merge", "The publication has no merge fields (Mailings > Insert Merge Field...).");
+            return;
+        }
+        snprintf(msg, sizeof msg, "The pages are made once for each of the %d records, in this window, as a new "
+                 "untitled publication.\n\n%s", n,
+                 dirty ? "The changes to this publication that are not saved are lost." :
+                         "The publication's own file is left as it is.");
+        if (ask("Merge to New Publication", msg, "Merge|Cancel") != 1) return;
+        if ((rc = merge_pages_now()) != OWF_OK) { tell("Mail Merge", owf_error_text(rc)); return; }
+        break;
+    }
+    draw_status();
+}
+#endif
+
 static void new_deck(void)
 {
     master_view_leave();
@@ -7580,6 +8230,10 @@ static void menu_action(ULONG id)
     case M_WRAP_TOP_BOTTOM: set_selected_wrap(OWF_WRAP_TOP_BOTTOM); break;
     case M_WRAP_DISTANCE: edit_selected_wrap_distance(); break;
     case M_LINK_TEXT_NEXT: link_selected_text_frame(); break;
+#ifdef OPENPUBLISHER
+    case M_MERGE_SOURCE: case M_MERGE_FIELD: case M_MERGE_NEXT: case M_MERGE_PREV: case M_MERGE_NAMES:
+    case M_MERGE_PAGES: do_merge((int)id); break;
+#endif
     case M_UNLINK_TEXT: unlink_selected_text_frame(); break;
 #endif
     case M_DUPLICATE_OBJECT: duplicate_selected_object(); break;
@@ -7603,6 +8257,16 @@ static void menu_action(ULONG id)
     case M_ZOOM_IN: zoom_step(1); break;
     case M_ZOOM_OUT: zoom_step(-1); break;
     case M_ZOOM_FIT: set_zoom(100); break;
+    case M_SPELLING: spell_dialog(); break;
+    case M_SPELL_AS_YOU_TYPE:
+        spell_as_you_type = !spell_as_you_type;
+        if (spell_as_you_type && !spell_ready(1)) {
+            draw_status();
+            break;
+        }
+        set_status(spell_as_you_type ? "Misspelt words are underlined as you type." : "Spelling as you type off.");
+        draw_slide(); draw_status();
+        break;
     case M_SHOW_GRID:
         show_grid = !show_grid;
         set_status(show_grid ? "Half-inch grid shown." : "Grid hidden.");
@@ -7630,6 +8294,9 @@ static void menu_action(ULONG id)
     case M_SHOW_FIRST: run_show(0, 0); break;
     case M_SHOW_CURRENT: run_show(current, 0); break;
     case M_SHOW_LOOP: run_show(0, 1); break;
+    case M_SHOW_ON_AUTO: show_place_set(OPR_SHOW_AUTO); break;
+    case M_SHOW_ON_OWN: show_place_set(OPR_SHOW_OWN_SCREEN); break;
+    case M_SHOW_ON_WB: show_place_set(OPR_SHOW_WORKBENCH); break;
     }
 }
 
@@ -7901,7 +8568,11 @@ static int rexx_do_command(const char *command, char **result_out)
         rexx_copy(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE "
                   "SAVEAS EXPORT PRINT " UNIT_UPPER "S " UNIT_UPPER " NEW" UNIT_UPPER " DELETE" UNIT_UPPER " VIEW OUTLINE GETNOTES SETNOTES PICK PICKED MOVEPICKED COPYPICKED DELETEPICKED HIDEPICKED "
                   "SHOWPICKED OBJECTS PICKOBJECTS PICKEDOBJECTS OBJECTBOX MOVEOBJECTS ALIGN DISTRIBUTE GROUP UNGROUP DELETEOBJECTS GETTEXT "
-                  "SETTEXT UNDO REDO QUIT");
+                  "SETTEXT SPELL UNDO REDO QUIT"
+#ifdef OPENPUBLISHER
+                  " MERGESOURCE MERGEFIELD MERGEFIELDS MERGERECORD MERGEPAGES"
+#endif
+                  );
     else if (starts_word_ci(command, "FAULT", &arg)) {
         if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -8082,6 +8753,16 @@ static int rexx_do_command(const char *command, char **result_out)
                 if (opr_outline_build(deck, &outline_rows) < 0) outline_rows.count = 0;
                 snprintf(result_text, sizeof result_text, "%d", outline_rows.count);
             }
+        }
+    } else if (starts_word_ci(command, "SPELL", &arg)) {    /* SPELL [COUNT|LIST|CHECK w|SUGGEST w|ADD w|IGNORE w] */
+        int r;
+        if (!spell_ready(0)) {
+            ok = 0; rc_fail = RX_NOW;
+            rexx_copy(result_text, sizeof result_text, "No dictionary: en_GB.words goes in PROGDIR:Dictionaries/");
+        } else if ((r = opr_spell_rexx(deck, spell, arg, result_text, sizeof result_text)) != 0) {
+            ok = 0; rc_fail = r;
+        } else if (starts_word_ci(arg, "ADD", NULL) || starts_word_ci(arg, "IGNORE", NULL)) {
+            draw_slide();                                  /* the underline changes */
         }
     } else if (starts_word_ci(command, "GETNOTES", &arg)) {  /* this slide's speaker notes, paragraphs as \n */
         char *t = deck ? opr_notes_get(deck, current) : NULL, *o = result_text;
@@ -8404,6 +9085,69 @@ static int rexx_do_command(const char *command, char **result_out)
             }
             rexx_copy(result_text, sizeof result_text, ok ? "OK" : "Out of memory");
         }
+#ifdef OPENPUBLISHER
+    } else if (starts_word_ci(command, "MERGESOURCE", &arg)) {   /* MERGESOURCE path: a CSV data source */
+        char msg[240];
+        int rc;
+        if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "Missing path"); }
+        else if ((rc = merge_load(arg, msg, sizeof msg)) != OWF_OK) { ok = 0; rexx_copy(result_text, sizeof result_text, merge_error(rc)); }
+        else { merge_status(msg); draw_status(); rexx_copy(result_text, sizeof result_text, msg); }
+    } else if (starts_word_ci(command, "MERGEFIELD", &arg)) {    /* MERGEFIELD n column: a field at the end of object n */
+        const char *column;
+        char *utf8;
+        int rc;
+        if (!merge_table) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No data source"); }
+        else if ((obj = rexx_obj(arg, &column)) < 0) { ok = 0; rexx_copy(result_text, sizeof result_text, "No such object"); }
+        else if (!opr_obj_editable(deck, current, obj)) { ok = 0; rexx_copy(result_text, sizeof result_text, "That object takes no text"); }
+        else if (!*column) { ok = 0; rexx_copy(result_text, sizeof result_text, "Missing column"); }
+        else if (!(utf8 = name_from_latin1(column))) { ok = 0; rexx_copy(result_text, sizeof result_text, "Out of memory"); }
+        else {
+            stop_typing();
+            rc = opr_undo_push(undo, deck, current, obj) < 0 ? OWF_ERR_MEMORY
+               : opp_merge_insert_field(&deck->slides[current].objs[obj], -1, utf8, NULL);
+            if (rc == OWF_OK) rc = opp_merge_show(deck, merge_table, merge_at, NULL);
+            owf_free(utf8);
+            if (rc != OWF_OK) { ok = 0; rexx_copy(result_text, sizeof result_text, owf_error_text(rc)); }
+            else {
+                laid_clear();
+                slide_changed(current);
+                dirty = 1;
+                update_window_title();
+                relayout();
+                set_status("Merge field inserted.");
+                draw_status();
+                rexx_copy(result_text, sizeof result_text, "OK");
+            }
+        }
+    } else if (starts_word_ci(command, "MERGERECORD", &arg)) {   /* MERGERECORD [n | NEXT | PREVIOUS | NAMES]: the record shown */
+        int n = merge_table ? merge_table->nrows : 0, at = merge_at, rc = OWF_OK;
+        if (!*arg) at = merge_at;
+        else if (starts_word_ci(arg, "NAMES", NULL)) at = -1;
+        else if (starts_word_ci(arg, "NEXT", NULL)) at = merge_at + 1 < n ? merge_at + 1 : n - 1;
+        else if (starts_word_ci(arg, "PREVIOUS", NULL)) at = merge_at > 0 ? merge_at - 1 : 0;
+        else {   /* a whole number only: 0 is the names, 1..n a record */
+            char *end = NULL;
+            long v = strtol(arg, &end, 10);
+            while (end && (*end == ' ' || *end == '\t')) end++;
+            at = (end == arg || !end || *end || v < 0 || v > n) ? -2 : (int)v - 1;
+        }
+        if (*arg && (at < -1 || at >= n)) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No such record"); }
+        else if (*arg && (rc = merge_show_rc(at)) != OWF_OK) { ok = 0; rexx_copy(result_text, sizeof result_text, owf_error_text(rc)); }
+        else {
+            if (*arg) { merge_status(""); draw_status(); }
+            snprintf(result_text, sizeof result_text, "%d %d", merge_at + 1, n);   /* the record shown (0: names), of n */
+        }
+    } else if (starts_word_ci(command, "MERGEFIELDS", &arg)) {   /* how many fields, and how many name no column */
+        int missing = 0, n = opp_merge_fields(deck, merge_table, &missing);
+        snprintf(result_text, sizeof result_text, "%d %d", n, missing);
+    } else if (starts_word_ci(command, "MERGEPAGES", &arg)) {    /* MERGEPAGES [FORCE]: merge to a new publication */
+        int rc;
+        if (!merge_table || !merge_table->nrows) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No records"); }
+        else if (!opp_merge_fields(deck, merge_table, NULL)) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No merge fields"); }
+        else if (dirty && strcasecmp(arg, "FORCE")) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Unsaved changes"); }
+        else if ((rc = merge_pages_now()) != OWF_OK) { ok = 0; rexx_copy(result_text, sizeof result_text, owf_error_text(rc)); }
+        else { draw_status(); snprintf(result_text, sizeof result_text, "%d", deck->nslides); }
+#endif
     } else if (starts_word_ci(command, "UNDO", &arg) || starts_word_ci(command, "REDO", &arg)) {
         int redo = toupper((unsigned char)command[0]) == 'R';
         if (!(redo ? opr_redo_can(undo) : opr_undo_can(undo))) {
@@ -8505,6 +9249,7 @@ static int open_window(void)
     if (!(font = ogt_open_font(&theme, scr, &font_attr))) return 0;
     fh = font->tf_YSize;
     ogt_ctx_init(&ctx, scr, &theme, theme_mode);
+    show_place_load();
     menu = CreateMenus(menus, TAG_DONE);
     if (menu) LayoutMenus(menu, vi, GTMN_NewLookMenus, TRUE, TAG_DONE);
     free_area(&l, &t, &aw, &ah);
@@ -8627,6 +9372,7 @@ out:
     opr_clip_free(slide_clip);
     if (deck) owf_deck_free(deck);
     opr_undo_free(undo);
+    ow_spell_close(spell);
     if (theme.text) ogt_theme_free(&theme);
     if (LayersBase) CloseLibrary(LayersBase);
     if (OpenFontTextBase) CloseLibrary(OpenFontTextBase);

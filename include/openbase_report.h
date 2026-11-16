@@ -11,8 +11,25 @@
  * row. A page footer: "Page n of m". No rows: the title and "No records.".
  *
  * Text in a project is ISO-8859-1; the document gets it as UTF-8.
- * The report window, and keeping reports in the project (oadb_reports),
- * come later.
+ *
+ * 0.2.0, report design: up to three group levels (group, then subgroup[0]
+ * and subgroup[1]), each a heading one size down, the rows in a table for
+ * each group of the last level with its totals, and an outer level's totals
+ * after its groups ("Totals for Region: North" and a table). And the bands,
+ * each a line of text with [names] in it:
+ *   head        the report header, heading 1 ("" [Title])
+ *   group_head  each level's group header ("" [Group]: [Value])
+ *   group_foot  each level's group footer, after its totals ("" none)
+ *   foot        the report footer, after the report's totals ("" none)
+ *   page_head   on every page, at the top ("" none)
+ *   page_foot   on every page, centred at the bottom ("" Page [Page] of [Pages])
+ * The names: [Title] (the title, or the name), [Date] (the day it is
+ * printed), [Page] and [Pages] (page bands only), [Group] (the level's
+ * field, by its heading) and [Value] (its value; "(none)" when empty) in
+ * group bands, [Count] (the rows in the group, or in the report) in footers,
+ * and any field (column, for a query) of the source in group bands: the
+ * group's first row in its header, its last row in its footer. "[[" is a
+ * '['. A field called Title, Date... is shadowed by the name.
  *
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
@@ -26,8 +43,10 @@
 extern "C" {
 #endif
 
-#define OB_REPORT_VERSION "0.1.0"
+#define OB_REPORT_VERSION "0.2.1"
 #define OB_REPORT_COLUMNS 16
+#define OB_REPORT_LEVELS 3        /* group levels: group, subgroup[0], subgroup[1] */
+#define OB_BAND_MAX 160            /* a band's text, with its 0 */
 
 /* A column: a field of the table (or a column of the query, by its heading)
  * and the total under it. Count counts the values that aren't empty; Sum,
@@ -40,7 +59,7 @@ typedef struct ob_rcolumn {
     ob_total total;
 } ob_rcolumn;
 
-/* About 3 KB. */
+/* About 4.5 KB: a window keeps one static, not on a small Amiga stack. */
 typedef struct ob_report {
     char name[OB_NAME_MAX];
     char title[OB_VALUE_MAX];       /* "" is the name */
@@ -55,9 +74,30 @@ typedef struct ob_report {
                                        query must ORDER BY it first, which isn't checked. */
     int ncolumns;
     ob_rcolumn columns[OB_REPORT_COLUMNS];
+    /* 0.2.0 */
+    char subgroup[OB_REPORT_LEVELS - 1][OB_NAME_MAX];   /* the second and third levels ("" none); a table's
+                                       rows sort by every level (ob_view's then[]), the same way up or
+                                       down; a grid query must sort by every level first, in order */
+    char head[OB_BAND_MAX], foot[OB_BAND_MAX];                  /* the bands: see the top of this file */
+    char page_head[OB_BAND_MAX], page_foot[OB_BAND_MAX];
+    char group_head[OB_REPORT_LEVELS][OB_BAND_MAX], group_foot[OB_REPORT_LEVELS][OB_BAND_MAX];
+    int no_totals;                  /* bit L: level L's groups have no totals (the report's stay) */
+    int new_page;                   /* each first-level group after the first starts a new page */
 } ob_report;
 
+/* The bands, for a designer (0.2.1). */
+typedef enum { OB_BAND_HEAD, OB_BAND_FOOT, OB_BAND_PAGE_HEAD, OB_BAND_PAGE_FOOT, OB_BAND_GROUP_HEAD,
+               OB_BAND_GROUP_FOOT, OB_BANDS } ob_band;
+
 void ob_report_init(ob_report *r, const char *name);
+/* Band b's text in r (a group band's at level, 0 to OB_REPORT_LEVELS - 1; the others take 0), and its size
+ * in *size (may be NULL): NULL for a band or level that isn't. */
+char *ob_report_band(ob_report *r, ob_band b, int level, size_t *size);
+/* b's name ("report header", "page footer"...), "" for one that isn't. */
+const char *ob_report_band_title(ob_band b);
+/* The [names] b may have, for a designer to show: "[Title] [Date] [Page] [Pages]"; "[a field]" is any field
+ * (a query's column) of the source. "" for a band that isn't. */
+const char *ob_report_band_names(ob_band b);
 /* Adds a column; NULL when there are OB_REPORT_COLUMNS already. */
 ob_rcolumn *ob_report_add_column(ob_report *r, const char *field, ob_total total);
 
@@ -76,6 +116,27 @@ int ob_report_build(ob_project *p, const ob_report *r, const char *const *params
  * gets what the format could not keep. 0, or -1 with the reason in err. */
 int ob_report_save(ob_project *p, const ob_report *r, const char *const *params, const char *path,
                    const char *format, owf_report *notes, char *err, size_t errsize);
+
+/* ---- The text a report is kept as ----
+ * "OADBREPORT 1" then a line a setting ("table=Orders", "column=Amount|Total|Sum"), '\n' at the end of
+ * each; "OADBREPORT 2" when any 0.2.0 setting is used (subgroup=, head=, foot=, pagehead=, pagefoot=,
+ * grouphead=L|text, groupfoot=L|text with L 1 to 3, nototals=, newpage=), so a GFOpenBase that can't
+ * make it says so; '\\', '\n' and '|' in a value are written \\, \n and \|. A reader skips keys it doesn't know.
+ * The name isn't in the text: it is the key it is kept under. */
+
+/* r as text in out: its length, or -1 when it doesn't fit in size. */
+int ob_report_to_text(const ob_report *r, char *out, size_t size);
+/* r from text, named name: 0, or -1 with the reason in err ("line 3: ..."). */
+int ob_report_from_text(ob_report *r, const char *name, const char *text, char *err, size_t errsize);
+
+/* ---- Reports kept in the project ----
+ * The core keeps each report's text in oadb_reports (ob_report_count... in openbase_core.h). */
+
+/* Checks r (ob_report_check) and keeps it under its name, replacing one kept there: 0, or -1 with the
+ * reason in err. */
+int ob_report_store(ob_project *p, const ob_report *r, char *err, size_t errsize);
+/* The report kept as name (any case), named as it was kept: 0, or -1 with the reason in err. */
+int ob_report_load(ob_project *p, const char *name, ob_report *r, char *err, size_t errsize);
 
 #ifdef __cplusplus
 }

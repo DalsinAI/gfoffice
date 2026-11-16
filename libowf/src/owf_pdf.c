@@ -657,7 +657,7 @@ int owf_pdf_finish(owf_pdf *pdf, const char *title, unsigned char **data, size_t
         owf_report_add(report, OWF_NOTE_LOST, "Pictures in a format the PDF export does not draw yet (only JPEG, PNG and WMF) are left out");
     if (pdf->mf_skipped)
         owf_report_add(report, OWF_NOTE_APPROX,
-                       "Parts of WMF and EMF pictures (pictures inside them, arcs, clipping) are left out");
+                       "Parts of WMF and EMF pictures (pictures inside them, clipping, world transforms) are left out");
     link_obj = nobj;
     nobj += pdf->nlinks;
     info_obj = nobj++;
