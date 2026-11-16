@@ -908,6 +908,14 @@ static void test_task_info(void)
     CHECK_N(opj_set_cells(doc, 1, cols, ok, 0, &bad), OWF_ERR_FORMAT);
     CHECK_N(opj_set_cells(doc, 1, NULL, ok, 1, NULL), OWF_ERR_FORMAT);
     CHECK_N(opj_set_cells(doc, 7, cols, ok, 1, &bad), OWF_ERR_FORMAT);
+    {   /* As Soon As Possible chosen with a date edited too: the type stands, the date is left alone */
+        static const char *const asap[3] = { "As Soon As Possible", "30/11/26", "Two crews" };
+        CHECK_N(opj_set_cells(doc, 1, cols, asap, 3, &bad), OWF_OK);
+        CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_TYPE), "As Soon As Possible");
+        CHECK_S(cell_of(doc, 1, OPJ_COL_START), "Wed 18/11/26");
+        CHECK_N(opj_undo(doc), OWF_OK);
+        CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_TYPE), "Start No Earlier Than");
+    }
     /* a type with a date and none yet: where the task is now; short names, any case */
     CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, "mso"), OWF_OK);
     CHECK_S(cell_of(doc, 0, OPJ_COL_CONSTRAINT_TYPE), "Must Start On");

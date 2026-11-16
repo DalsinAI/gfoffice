@@ -651,15 +651,21 @@ int opj_set_cell(opj_doc *doc, int row, int column, const char *text)
 int opj_set_cells(opj_doc *doc, int row, const int *columns, const char *const *texts, int n, int *bad)
 {
     owf_project *work;
-    int rc, i;
+    int rc, i, undated = 0;
     if (bad) *bad = -1;
     if (!columns || !texts || n < 1) return OWF_ERR_FORMAT;
     if (!(work = begin(doc, row, &rc))) return rc;
-    for (i = 0; i < n; i++)
+    for (i = 0; i < n; i++) {
+        if (undated && columns[i] == OPJ_COL_CONSTRAINT_DATE) continue;   /* ASAP or ALAP chosen: no date */
         if ((rc = set_field(work, row, columns[i], texts[i])) != OWF_OK) {
             if (bad) *bad = i;
             return fail(work, rc);
         }
+        if (columns[i] == OPJ_COL_CONSTRAINT_TYPE && texts[i]) {
+            int k = constraint_parse(texts[i]);
+            undated = k == OWF_CON_ASAP || k == OWF_CON_ALAP;
+        }
+    }
     return commit(doc, work);
 }
 

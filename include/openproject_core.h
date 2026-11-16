@@ -114,7 +114,8 @@ void opj_cell_text(const opj_doc *doc, int row, int column, char *out, size_t si
 int opj_set_cell(opj_doc *doc, int row, int column, const char *text);
 /* Task Information's OK: several of row's cells typed at once, in the order given, as one edit (one Undo
  * step), scheduled once at the end. Nothing changes when any cell is refused: its place in columns goes
- * in *bad (when not NULL; -1 when none was), with OWF_ERR_FORMAT, or OWF_ERR_MEMORY. */
+ * in *bad (when not NULL; -1 when none was), with OWF_ERR_FORMAT, or OWF_ERR_MEMORY. A Constraint Date
+ * after a Constraint Type of As Soon or As Late As Possible is left alone, so the type chosen stands. */
 int opj_set_cells(opj_doc *doc, int row, const int *columns, const char *const *texts, int n, int *bad);
 /* The outline number of a row, "1.2.3". */
 void opj_outline_number(const opj_doc *doc, int row, char *out, size_t size);
