@@ -568,12 +568,51 @@ static void change_to(owf_buf *out, odt_track *tk, int rev, int para_style)
     }
 }
 
+/* 1.12.6: the number ranges' names, each once, before the text (text:sequence-decls); a list of the names seen
+ * (few: Figure, Table), so each SEQ is looked up once */
+static void put_sequence_decls(owf_buf *out, const owf_doc *doc)
+{
+    owf_story *st;
+    const char **seen = NULL;
+    int nseen = 0, cap = 0, n, i, j, k;
+    for (n = 0; (st = owf_doc_story((owf_doc *)doc, n)) != NULL; ++n)
+        for (i = 0; i < st->nparas; ++i)
+            for (j = 0; j < st->paras[i].nruns; ++j) {
+                const owf_run *r = &st->paras[i].runs[j];
+                if (r->kind != OWF_RUN_FIELD || r->field != OWF_FIELD_SEQ || !r->href || !*r->href) continue;
+                for (k = 0; k < nseen && strcmp(seen[k], r->href); ++k)
+                    ;
+                if (k < nseen) continue;
+                if (nseen == cap) {
+                    const char **grown = realloc((void *)seen, (size_t)(cap ? cap * 2 : 8) * sizeof *grown);
+                    if (!grown) {
+                        out->failed = 1;
+                        free((void *)seen);
+                        return;
+                    }
+                    seen = grown;
+                    cap = cap ? cap * 2 : 8;
+                }
+                seen[nseen++] = r->href;
+            }
+    if (nseen) {
+        owf_buf_puts(out, "<text:sequence-decls>");
+        for (k = 0; k < nseen; ++k) {
+            owf_buf_puts(out, "<text:sequence-decl text:display-outline-level=\"0\" text:name=\"");
+            owf_buf_puts_xml(out, seen[k]);
+            owf_buf_puts(out, "\"/>");
+        }
+        owf_buf_puts(out, "</text:sequence-decls>");
+    }
+    free((void *)seen);
+}
+
 /* 1.7: a field with a shown value, as its ODF element */
 static void put_field(owf_buf *out, const owf_doc *doc, const owf_run *run)
 {
     static const char *const names[] = { "title", "initial-creator", "subject", "file-name", "word-count",
                                          "chapter", "user-field-get", "bookmark-ref", "bookmark-ref",
-                                         "database-display", "alphabetical-index-mark" };
+                                         "database-display", "alphabetical-index-mark", "sequence" };
     const char *name = run->field >= OWF_FIELD_TITLE && run->field <= OWF_FIELD_LAST
                      ? names[run->field - OWF_FIELD_TITLE] : NULL;
     if (!name) return;
@@ -594,6 +633,21 @@ static void put_field(owf_buf *out, const owf_doc *doc, const owf_run *run)
     owf_buf_printf(out, "<text:%s", name);
     if (run->field == OWF_FIELD_FILENAME) owf_buf_puts(out, " text:display=\"name-and-extension\"");
     if (run->field == OWF_FIELD_CHAPTER) owf_buf_puts(out, " text:display=\"name\" text:outline-level=\"1\"");
+    if (run->field == OWF_FIELD_SEQ) {               /* 1.12.6: a number range, counted as ours are */
+        owf_buf_puts(out, " text:name=\"");
+        owf_buf_puts_xml(out, run->href ? run->href : "");
+        owf_buf_puts(out, "\" text:formula=\"ooow:");
+        {   /* the formula names it as a variable: anything but letters, digits and _ as _ */
+            const char *c;
+            for (c = run->href ? run->href : ""; *c; ++c)
+                if ((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') || (*c >= '0' && *c <= '9') || *c == '_' ||
+                    (unsigned char)*c >= 0x80)
+                    owf_buf_putc(out, *c);
+                else
+                    owf_buf_putc(out, '_');
+        }
+        owf_buf_puts(out, "+1\" style:num-format=\"1\"");
+    }
     if (run->field == OWF_FIELD_USER) {
         owf_buf_puts(out, " text:name=\"");
         owf_buf_puts_xml(out, run->href ? run->href : "");
@@ -766,7 +820,13 @@ static void put_para_part(owf_buf *out, const owf_doc *doc, const owf_para *para
             continue;
         }
         t=char_style(s,&run->fmt);
-        kind = run->kind == OWF_RUN_FRAME || run->kind == OWF_RUN_IMAGE ? 0 : change_kind(doc, run->revision);
+        kind = change_kind(doc, run->revision);      /* 1.12: pictures too */
+        if (run->kind == OWF_RUN_FRAME && kind) {
+            /* 1.12: a frame's change is saved accepted (owf_export_file reports it): a deleted frame is left
+             * out, an inserted one is the document's */
+            if (kind == OWF_REV_DELETE) continue;
+            kind = 0;
+        }
         if (kind == OWF_REV_DELETE) {
             /* 1.5: deleted text: in the deletion's region (written accepted when there is none: left out) */
             if (tk) {
@@ -841,6 +901,15 @@ static void put_para_part(owf_buf *out, const owf_doc *doc, const owf_para *para
 }
 
 /* A paragraph by itself (a table cell's, a text box's): its end is never joined to another. */
+/* 1.12: whether the table starting at paragraph i keeps a row when its tracked row changes are accepted */
+static int table_kept(const owf_doc *doc, const owf_story *story, int i)
+{
+    int id = story->paras[i].table_id;
+    for (; i < story->nparas && story->paras[i].table_id == id; ++i)
+        if (change_kind(doc, story->paras[i].row_revision) != OWF_REV_DELETE) return 1;
+    return 0;
+}
+
 static void put_para_odt(owf_buf *out, const owf_doc *doc, const owf_para *para, styles *s)
 {
     put_para_part(out, doc, para, s, 1, 1, NULL);
@@ -856,8 +925,13 @@ static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, 
             owf_buf_printf(out,"<text:section text:name=\"Section%d\" text:style-name=\"Sect%d\">",i+1,i+1);
             section_open=1;
         }
-        if(p->table_id>=0){int id=p->table_id,row=-1;owf_buf_printf(out,"<table:table table:name=\"Table%d\">",id+1);
-            while(i<story->nparas&&story->paras[i].table_id==id){p=&story->paras[i];if(p->table_row!=row){if(row>=0)owf_buf_puts(out,"</table:table-row>");owf_buf_puts(out,"<table:table-row>");row=p->table_row;}if(OWF_SHADE_SET(p->cell_shading))owf_buf_printf(out,"<table:table-cell table:style-name=\"Cell%06lX\" office:value-type=\"string\">",OWF_SHADE_RGB(p->cell_shading));else owf_buf_puts(out,"<table:table-cell office:value-type=\"string\">");put_para_odt(out,doc,p,s);owf_buf_puts(out,"</table:table-cell>");++i;}
+        if(p->table_id>=0&&!table_kept(doc,story,i)){   /* 1.12: every row a tracked deletion: no table (ODF wants a row) */
+            int id=p->table_id;
+            while(i<story->nparas&&story->paras[i].table_id==id)++i;
+        }else if(p->table_id>=0){int id=p->table_id,row=-1;owf_buf_printf(out,"<table:table table:name=\"Table%d\">",id+1);
+            while(i<story->nparas&&story->paras[i].table_id==id){p=&story->paras[i];
+                if(change_kind(doc,p->row_revision)==OWF_REV_DELETE){++i;continue;}   /* 1.12: saved accepted */
+                if(p->table_row!=row){if(row>=0)owf_buf_puts(out,"</table:table-row>");owf_buf_puts(out,"<table:table-row>");row=p->table_row;}if(OWF_SHADE_SET(p->cell_shading))owf_buf_printf(out,"<table:table-cell table:style-name=\"Cell%06lX\" office:value-type=\"string\">",OWF_SHADE_RGB(p->cell_shading));else owf_buf_puts(out,"<table:table-cell office:value-type=\"string\">");put_para_odt(out,doc,p,s);owf_buf_puts(out,"</table:table-cell>");++i;}
             if(row>=0)owf_buf_puts(out,"</table:table-row>");
             owf_buf_puts(out,"</table:table>");
         }else{
@@ -910,6 +984,25 @@ static void put_named_styles(owf_buf *out, const owf_doc *doc)
                        i, i, i, heading_size[i]);
     owf_buf_puts(out, "<style:style style:name=\"Header\" style:family=\"paragraph\" style:parent-style-name=\"Standard\" style:class=\"extra\"/>");
     owf_buf_puts(out, "<style:style style:name=\"Footer\" style:family=\"paragraph\" style:parent-style-name=\"Standard\" style:class=\"extra\"/>");
+    {   /* 1.12.1: how footnotes and endnotes are numbered, when not the usual way. text:start-value is
+         * LibreOffice's offset from 1 (0: start at 1), as it reads and writes it. ODF has no symbols: those go
+         * as numbers (export_odt's report says so). */
+        static const char *const cls[2] = { "footnote", "endnote" };
+        static const char *const fmt[OWF_NOTE_FORMAT_COUNT] = { NULL, "1", "i", "I", "a", "A", "1" };
+        const owf_page *pg = &doc->page;
+        int k;
+        for (k = 0; k < 2; ++k) {
+            int f = pg->note_format[k] > OWF_NOTE_FORMAT_DEFAULT && pg->note_format[k] < OWF_NOTE_FORMAT_COUNT
+                    ? pg->note_format[k] : OWF_NOTE_FORMAT_DEFAULT;
+            int page = !k && pg->note_restart[k] == OWF_NOTE_RESTART_PAGE;   /* 1.12.3 */
+            if (!f && pg->note_start[k] <= 1 && !page) continue;
+            owf_buf_printf(out, "<text:notes-configuration text:note-class=\"%s\" style:num-format=\"%s\"", cls[k],
+                           f ? fmt[f] : k ? "i" : "1");
+            if (pg->note_start[k] > 1) owf_buf_printf(out, " text:start-value=\"%d\"", pg->note_start[k] - 1);
+            owf_buf_puts(out, k ? "/>" : page ? " text:footnotes-position=\"page\" text:start-numbering-at=\"page\"/>"
+                                         : " text:footnotes-position=\"page\" text:start-numbering-at=\"document\"/>");
+        }
+    }
     owf_buf_puts(out, "</office:styles>");
 }
 
@@ -1046,6 +1139,7 @@ static int build_content_xml(const owf_doc *doc, owf_buf *out, owf_report *repor
         }
     }
     owf_buf_puts(out, "</office:automatic-styles><office:body><office:text>");
+    put_sequence_decls(out, doc);                    /* 1.12.6 */
     if (doc->nuserfields) {                          /* 1.7: the user fields */
         int k;
         owf_buf_puts(out, "<text:user-field-decls>");
@@ -1088,6 +1182,10 @@ static int export_odt(const owf_doc *doc, unsigned char **data, size_t *length, 
         return OWF_ERR_MEMORY;
 
     owf_zip_add(zip, "mimetype", mimetype, sizeof mimetype - 1, 0);
+    if (doc->page.note_format[0] == OWF_NOTE_FORMAT_SYMBOL || doc->page.note_format[1] == OWF_NOTE_FORMAT_SYMBOL)
+        owf_report_add(report, OWF_NOTE_APPROX, "Notes numbered with symbols were saved numbered 1, 2, 3: ODT has no symbols");
+    if (doc->page.note_restart[0] == OWF_NOTE_RESTART_SECTION || doc->page.note_restart[1] == OWF_NOTE_RESTART_SECTION)
+        owf_report_add(report, OWF_NOTE_APPROX, "Notes numbered again in each section were saved numbered through: ODT has no such setting");   /* 1.12.3 */
 
     owf_buf_puts(&part, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                         "<manifest:manifest xmlns:manifest=\"urn:oasis:names:tc:opendocument:xmlns:manifest:1.0\" manifest:version=\"1.3\">"

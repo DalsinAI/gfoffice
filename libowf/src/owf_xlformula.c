@@ -1136,6 +1136,11 @@ static int of_part(const char **pp, const char *end, owf_buf *name, cell_ref *c)
     return 0;
 }
 
+static int hex_value(int c)
+{
+    return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+
 /* "[.A1]", "[$Sheet1.A1:.B2]", "['file:///x.ods'#$S.A1]" as Excel's text;
  * 0 when it is not a reference we can read. */
 static int put_xl_from_of(owf_buf *b, const char *p, size_t n)
@@ -1167,6 +1172,11 @@ static int put_xl_from_of(owf_buf *b, const char *p, size_t n)
                 if (*s == '/' || *s == '\\' || *s == ':')
                     start = s + 1;
             for (s = start; s < q; s++) {
+                if (*s == '%' && q - s > 2 && hex_value(s[1]) >= 0 && hex_value(s[2]) >= 0) {
+                    owf_buf_putc(&book, (char)(hex_value(s[1]) * 16 + hex_value(s[2])));   /* as owf_link_name */
+                    s += 2;
+                    continue;
+                }
                 owf_buf_putc(&book, *s);
                 if (*s == '\'' && s + 1 < q && s[1] == '\'')
                     s++;

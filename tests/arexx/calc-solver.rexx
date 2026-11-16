@@ -45,6 +45,23 @@ CALL want 'SETCELL B6 =B2*C2', 0
 CALL want 'SOLVE MAX B6 BY B2:C2 B4<=18', 5     /* not linear */
 CALL want 'LASTERROR', 0
 SAY '     LASTERROR:' res
+/* the Nonlinear engine: max B2 * C2 with 3 B2 + 2 C2 <= 18 -> B2 3, C2 4.5, 13.5 (a local answer, so near) */
+CALL want 'SETCELL B2 1', 0
+CALL want 'SETCELL C2 1', 0
+CALL want 'SOLVE MAX B6 BY B2:C2 B4<=18 NONLINEAR', 0
+PARSE VAR res obj ' B2=' x ' C2=' y
+IF ~DATATYPE(obj, 'N') | ABS(obj - 13.5) > 0.001 | ABS(x - 3) > 0.001 | ABS(y - 4.5) > 0.001 THEN
+    CALL bad 'SOLVE NONLINEAR gave' res
+CALL want 'SOLVE MAX B6 BY B2:C2 B4<=18 INT B2 NONLINEAR', 10   /* no whole numbers with Nonlinear */
+CALL want 'LASTERROR', 0
+SAY '     LASTERROR:' res
+CALL want 'SOLVE MAX B6 BY B2:C2 B4<=18 NONLINEAR KEEP', 0       /* the model keeps its engine */
+CALL want 'SOLVE', 0
+PARSE VAR res obj .
+IF ABS(obj - 13.5) > 0.001 THEN CALL bad 'SOLVE (kept Nonlinear model) gave' res
+CALL want 'SOLVE SIMPLEX', 5                                     /* the same model, Simplex LP: not linear */
+CALL want 'SETCELL B2 0', 0
+CALL want 'SETCELL C2 0', 0
 CALL want 'SOLVE MAX D3 BY B2:C2', 10           /* the target holds no formula */
 CALL want 'SOLVE MAX B5 BY B3', 10              /* a variable holds a formula */
 CALL want 'SOLVE MAX B5 BY B2:C2 B4<D3', 10     /* < is not a relation */

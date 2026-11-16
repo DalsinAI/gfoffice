@@ -48,6 +48,22 @@ int oc_core_scenario_find(const oc_core *core, const char *name)
     return -1;
 }
 
+int oc_core_scenario_active(const oc_core *core)
+{
+    int i, n = oc_core_scenario_count(core);
+    for (i = 0; i < n; i++) {
+        owf_scenario sc;
+        int active;
+        if (!owf_scenario_get(core->book, core->sheet, i, &sc))
+            continue;
+        active = sc.active;
+        owf_scenario_free(&sc);
+        if (active)
+            return i;
+    }
+    return -1;
+}
+
 /* The work on a copy swapped in as one Undo step. */
 static int commit(oc_core *core, owf_book *work, owf_calc *calc)
 {
