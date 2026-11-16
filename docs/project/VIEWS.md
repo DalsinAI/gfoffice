@@ -82,6 +82,13 @@ the next PR and only wires windows, menus and requesters to these calls.
   height and font (`opj_usage_view` gives its places). `opj_usage_rows`, `opj_usage_row` and
   `opj_usage_cell_text` give its rows and cells. The app's View menu switches between Gantt Chart
   and Resource Usage (ARexx `VIEW`); the usage view is read only, and Resources... edits.
+- **The Task Usage view** (`opj_task_usage_draw`), MS Project's: Resource Usage turned round. A row
+  for each task (indented by its outline level, a summary's name bold, its ID and its work), then a row
+  for each of its assignments (the resource's name, indented, and the assignment's work). The chart
+  holds each row's work in every period of the timescale's lower tier; a task's row adds up its own
+  assignments' and its subtasks' work and is shaded. Its table (ID, Task Name, Work) is as wide as
+  Resource Usage's and it shares the same view fields. View > Task Usage (K, or ARexx `VIEW TASKUSAGE`)
+  shows it; it is read only, as Resource Usage is (`opj_edit_refused` with `OPJ_VIEW_TASK_USAGE`).
 - **The Network Diagram** (`src/project/opj_network.c`), MS Project's: a box for every task that isn't
   a summary, 160 pixels wide and four rows high, holding its name (bold), its ID and duration, its start
   and its finish. A box stands in the column one past its furthest predecessor's (tasks with none in

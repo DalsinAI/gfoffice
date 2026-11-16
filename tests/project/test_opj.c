@@ -795,6 +795,92 @@ static void test_usage(void)
     opj_doc_free(doc);
 }
 
+/* Task Usage, from test_usage's plan: each task, then who works on it, and the work each day. */
+static void test_task_usage(void)
+{
+    opj_doc *doc = three();
+    opj_view v;
+    oldraw *d;
+    char out[64];
+    int t = -1, a = -2, e;
+    unsigned long bg;
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_RESOURCES, "Dale,Bob[50%]"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_RESOURCES, "Dale"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_PREDECESSORS, ""), OWF_OK);
+    /* Rows: Plan, its Dale and Bob; Build, its Dale; Ship. */
+    CHECK_N(opj_task_usage_rows(doc), 6);
+    CHECK(opj_task_usage_row(doc, 0, &t, &a) && t == 0 && a == -1);
+    CHECK(opj_task_usage_row(doc, 2, &t, &a) && t == 0 && a >= 0 && doc->plan->assigns[a].resource == 1);
+    CHECK(opj_task_usage_row(doc, 3, &t, &a) && t == 1 && a == -1);
+    CHECK(opj_task_usage_row(doc, 4, &t, &a) && t == 1 && doc->plan->assigns[a].resource == 0);
+    CHECK(opj_task_usage_row(doc, 5, &t, &a) && t == 2 && a == -1);
+    CHECK_N(opj_task_usage_row(doc, 6, &t, &a), 0);
+    CHECK_N(opj_task_usage_row(doc, -1, &t, &a), 0);
+    CHECK_N(opj_task_usage_rows(NULL), 0);
+    /* The table: a task's ID, name and work; an assignment's resource and work. */
+    CHECK_S(opj_task_usage_column_title(OPJ_UCOL_NAME), "Task Name");
+    CHECK_S(opj_task_usage_column_title(-1), "");
+    opj_task_usage_cell_text(doc, 0, OPJ_UCOL_ID, out, sizeof out);
+    CHECK_S(out, "1");
+    opj_task_usage_cell_text(doc, 0, OPJ_UCOL_WORK, out, sizeof out);
+    CHECK_S(out, "24h");                                                   /* Dale's 16h and Bob's 8h */
+    opj_task_usage_cell_text(doc, 1, OPJ_UCOL_NAME, out, sizeof out);
+    CHECK_S(out, "Dale");
+    opj_task_usage_cell_text(doc, 1, OPJ_UCOL_ID, out, sizeof out);
+    CHECK_S(out, "");
+    opj_task_usage_cell_text(doc, 2, OPJ_UCOL_WORK, out, sizeof out);
+    CHECK_S(out, "8h");
+    opj_task_usage_cell_text(doc, 5, OPJ_UCOL_NAME, out, sizeof out);
+    CHECK_S(out, "Ship");
+    opj_task_usage_cell_text(doc, 9, OPJ_UCOL_NAME, out, sizeof out);
+    CHECK_S(out, "");
+    /* Work on Monday the 16th: Plan's 8h and 4h; Build's 8h; Ship none */
+    opj_task_usage_text(doc, 0, -1, AT(16, 0, 0), AT(17, 0, 0), out, sizeof out);
+    CHECK_S(out, "12h");
+    opj_task_usage_text(doc, 1, -1, AT(16, 0, 0), AT(17, 0, 0), out, sizeof out);
+    CHECK_S(out, "8h");
+    CHECK(opj_task_usage_row(doc, 2, &t, &a));
+    opj_task_usage_text(doc, 0, a, AT(16, 0, 0), AT(17, 0, 0), out, sizeof out);
+    CHECK_S(out, "4h");
+    opj_task_usage_text(doc, 1, a, AT(16, 0, 0), AT(17, 0, 0), out, sizeof out);   /* not Build's */
+    CHECK_S(out, "");
+    opj_task_usage_text(doc, 2, -1, AT(16, 0, 0), AT(30, 0, 0), out, sizeof out);
+    CHECK_S(out, "");
+    opj_task_usage_text(doc, 0, -1, AT(17, 0, 0), AT(16, 0, 0), out, sizeof out);   /* backwards */
+    CHECK_S(out, "");
+    /* Drawn: its own titles, names, each day's work; a task's row shaded across the chart. */
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    d = cur = oldraw_new(&ops, NULL, W, H, NULL);
+    CHECK(d != NULL);
+    bg = oldraw_resolve(d, OLDRAW_PEN(OLDRAW_PEN_BACKGROUND)) & 0xFFFFFFUL;
+    memset(px, 0, sizeof px);
+    ntexts = 0;
+    opj_task_usage_draw(d, &v, doc, NULL);
+    CHECK(drew("Task Name") && drew("Work") && drew("Plan") && drew("Dale") && drew("Bob") && drew("Ship"));
+    CHECK(drew("12h") && drew("4h"));
+    CHECK(!drew("Resource Name"));
+    CHECK_X(px[40][300], 0xF0F0F0);                                        /* Plan's row */
+    CHECK_X(px[56][300], bg);                                              /* its Dale's */
+    /* a summary's row holds its subtasks' work */
+    CHECK_N(opj_insert_task(doc, 0, "Phase"), OWF_OK);
+    CHECK_N(opj_indent(doc, 1, 3, 1), OWF_OK);
+    CHECK_N(opj_task_usage_rows(doc), 7);
+    opj_task_usage_text(doc, 0, -1, AT(16, 0, 0), AT(17, 0, 0), out, sizeof out);
+    CHECK_S(out, "20h");
+    opj_task_usage_text(doc, 1, -1, AT(16, 0, 0), AT(17, 0, 0), out, sizeof out);
+    CHECK_S(out, "12h");
+    ntexts = 0;
+    opj_task_usage_draw(d, &v, doc, NULL);
+    CHECK(drew("Phase") && drew("20h"));
+    /* read only, with its own reason */
+    for (e = OPJ_EDIT_CELL; e < OPJ_NEDITS; ++e)
+        CHECK(opj_edit_refused(OPJ_VIEW_TASK_USAGE, e) != NULL &&
+              !strcmp(opj_edit_refused(OPJ_VIEW_TASK_USAGE, e), "Task Usage is read only: Gantt Chart (G) edits tasks"));
+    CHECK(opj_edit_refused(OPJ_VIEW_TASK_USAGE, OPJ_EDIT_NONE) == NULL);
+    oldraw_free(d);
+    opj_doc_free(doc);
+}
+
 static int has_bytes(const unsigned char *data, size_t n, const char *what)
 {
     size_t k = strlen(what), i;
@@ -1098,6 +1184,7 @@ int main(void)
     test_pdf();
     test_usage();
     test_usage_edits();
+    test_task_usage();
     test_columns();
     test_task_info();
     test_network();
