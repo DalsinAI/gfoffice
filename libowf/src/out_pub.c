@@ -6,9 +6,10 @@
  * (owf_cfbw.c). This first writer keeps pages and master pages, text
  * boxes, shapes and tables, each frame's box and look, the text with its
  * paragraphs' alignment, character runs (bold, italic, underline, size,
- * typeface, colour), links and table cells, and the colour scheme.
- * Pictures, WordArt and groups' own records are not written yet: a
- * report note says so, and a group's frames are kept on the page.
+ * typeface, colour), links and table cells, the colour scheme, and
+ * pictures (PNG, GIF, JPEG, DIB, WMF, EMF: 8). WordArt and groups' own
+ * records are not written yet: a report note says so, and a group's
+ * frames are kept on the page.
  *
  * What our reader reads back is checked (tests/pub/test_pub_save.py);
  * whether Publisher itself opens these files is not known yet.
@@ -146,7 +147,7 @@ typedef struct {
     int nout;
     unsigned long colours[256];          /* PL: the text's colours as 0x00BBGGRR */
     int ncolours;
-    int lost_pictures, lost_wordart, lost_groups, lost_colours;
+    int lost_pictures, lost_kinds, lost_wordart, lost_groups, lost_colours;
 } writer;
 
 static int npages_all(const owf_pub *pub)
@@ -415,9 +416,128 @@ static void close_rec(owf_buf *b, size_t at)
     patch32(b, at, (unsigned long)(b->length - at - 4));
 }
 
+/* ---- pictures: the BLIP store (PUB-FORMAT.md 8, after [MS-ODRAW] 2.2.32-2.2.33) ---- */
+
+typedef struct {
+    unsigned rtype, inst;                /* the record in EscherDelayStm and its instance */
+    unsigned char win, mac;              /* the store entry's two types */
+    int metafile;                        /* 1: WMF/EMF, its 34-byte header and zlib data */
+} picture_kind;
+
+static int picture_kind_of(const owf_image *im, picture_kind *k)
+{
+    const char *m = im->mime ? im->mime : "";
+    memset(k, 0, sizeof *k);
+    if (!im->data || !im->length)
+        return 0;
+    if (!strcmp(m, "image/png") || !strcmp(m, "image/gif")) {
+        k->rtype = 0xF01E; k->inst = 0x6E0; k->win = k->mac = 6;
+    } else if (!strcmp(m, "image/jpeg")) {
+        k->rtype = 0xF01D; k->inst = 0x46A; k->win = k->mac = 5;
+    } else if (!strcmp(m, "image/x-dib")) {
+        k->rtype = 0xF01F; k->inst = 0x7A8; k->win = k->mac = 7;
+    } else if (!strcmp(m, "image/x-wmf")) {
+        k->rtype = 0xF01B; k->inst = 0x216; k->win = 3; k->mac = 4; k->metafile = 1;
+    } else if (!strcmp(m, "image/x-emf")) {
+        k->rtype = 0xF01A; k->inst = 0x3D4; k->win = 2; k->mac = 4; k->metafile = 1;
+    } else
+        return 0;
+    return 1;
+}
+
+/* zlib data (RFC 1950) in stored DEFLATE blocks: no compressor needed, and
+ * the same bytes every time. */
+static void put_zlib_stored(owf_buf *b, const unsigned char *p, size_t n)
+{
+    unsigned long a = 1, s2 = 0;
+    size_t k = 0, i;
+    owf_buf_putc(b, 0x78);
+    owf_buf_putc(b, 0x01);
+    do {
+        size_t len = n - k > 65535 ? 65535 : n - k;
+        owf_buf_putc(b, k + len == n ? 1 : 0);
+        owf_buf_putc(b, (int)(len & 0xFF));
+        owf_buf_putc(b, (int)(len >> 8));
+        owf_buf_putc(b, (int)(~len & 0xFF));
+        owf_buf_putc(b, (int)((~len >> 8) & 0xFF));
+        owf_buf_put(b, p + k, len);
+        k += len;
+    } while (k < n);
+    for (i = 0; i < n; i++) {
+        a = (a + p[i]) % 65521UL;
+        s2 = (s2 + a) % 65521UL;
+    }
+    owf_buf_putc(b, (int)((s2 >> 8) & 0xFF));
+    owf_buf_putc(b, (int)(s2 & 0xFF));
+    owf_buf_putc(b, (int)((a >> 8) & 0xFF));
+    owf_buf_putc(b, (int)(a & 0xFF));
+}
+
+/* Every picture the publication holds, in its order: entry k + 1 is image k.
+ * The store goes in EscherStm, the pictures in EscherDelayStm. */
+static void write_blips(writer *w, owf_buf *store, owf_buf *delay)
+{
+    const owf_doc *res = w->pub->res;
+    int k, i, j;
+    for (k = 0; res && k < res->nimages; k++) {
+        const owf_image *im = &res->images[k];
+        picture_kind pk;
+        unsigned long uses = 0, off = (unsigned long)delay->length;
+        size_t r, bse;
+        if (!picture_kind_of(im, &pk)) {
+            pk.rtype = 0xF01E; pk.inst = 0x6E0; pk.win = pk.mac = 6;
+            w->lost_kinds++;             /* a kind the store has no record for: an empty entry */
+            bse = open_rec(store, 0xF007, pk.win, 2);
+            owf_buf_putc(store, 0);
+            owf_buf_putc(store, 0);
+            for (i = 0; i < 34; i++)
+                owf_buf_putc(store, 0);
+            close_rec(store, bse);
+            continue;
+        }
+        for (i = 0; i < npages_all(w->pub); i++) {
+            const owf_pub_page *pg = page_at(w->pub, i);
+            for (j = 0; j < pg->nframes; j++)
+                if (w->frame_chunk[i][j] >= 0 && pg->frames[j].kind == OWF_PUB_PICTURE && pg->frames[j].image == k)
+                    uses++;
+        }
+        r = open_rec(delay, pk.rtype, pk.inst, 0);
+        for (i = 0; i < 16; i++)
+            owf_buf_putc(delay, 0);      /* the picture's id (MD4 in [MS-ODRAW]; zero here, not checked by our reader) */
+        if (pk.metafile) {
+            size_t zat, after;
+            put32(delay, (unsigned long)im->length);
+            put32(delay, 0); put32(delay, 0); put32(delay, 0); put32(delay, 0);
+            put32(delay, 0); put32(delay, 0);
+            zat = delay->length;
+            put32(delay, 0);
+            owf_buf_putc(delay, 0);      /* DEFLATE */
+            owf_buf_putc(delay, 0xFE);
+            put_zlib_stored(delay, im->data, im->length);
+            after = delay->length;
+            patch32(delay, zat, (unsigned long)(after - zat - 6));
+        } else {
+            owf_buf_putc(delay, 0xFF);   /* the tag */
+            owf_buf_put(delay, im->data, im->length);
+        }
+        close_rec(delay, r);
+        bse = open_rec(store, 0xF007, pk.win, 2);
+        owf_buf_putc(store, pk.win);
+        owf_buf_putc(store, pk.mac);
+        for (i = 0; i < 16; i++)
+            owf_buf_putc(store, 0);
+        put16(store, 0xFF);
+        put32(store, (unsigned long)(delay->length - off));
+        put32(store, uses);
+        put32(store, off);
+        put32(store, 0);
+        close_rec(store, bse);
+    }
+}
+
 static void write_shape(writer *w, owf_buf *b, const owf_pub_frame *f, long chunk, unsigned long spid)
 {
-    unsigned long pid[12], val[12];
+    unsigned long pid[13], val[13];
     int n = 0, k, stype;
     size_t sp = open_rec(b, 0xF004, 0, 15), r, blk;
     if (f->kind == OWF_PUB_TEXT)
@@ -437,6 +557,13 @@ static void write_shape(writer *w, owf_buf *b, const owf_pub_frame *f, long chun
             pid[n] = 0x81 + (unsigned)k;
             val[n++] = (unsigned long)f->inset[k];
         }
+    if (f->kind == OWF_PUB_PICTURE && f->image >= 0 && w->pub->res && f->image < w->pub->res->nimages) {
+        picture_kind pk;
+        if (picture_kind_of(&w->pub->res->images[f->image], &pk)) {
+            pid[n] = 0x4104;             /* the store's entry, from 1 */
+            val[n++] = (unsigned long)f->image + 1;
+        }
+    }
     if (f->filled == 1) {
         pid[n] = 0x181;
         val[n++] = bgr(f->fill);
@@ -489,7 +616,7 @@ static void write_shape(writer *w, owf_buf *b, const owf_pub_frame *f, long chun
     close_rec(b, sp);
 }
 
-static void write_escher(writer *w, owf_buf *b)
+static void write_escher(writer *w, owf_buf *b, owf_buf *delay)
 {
     const owf_pub *pub = w->pub;
     size_t r, r2, dg, sp;
@@ -501,8 +628,17 @@ static void write_escher(writer *w, owf_buf *b)
     put32(b, 1);
     put32(b, 1);
     close_rec(b, r2);
-    r2 = open_rec(b, 0xF001, 0, 15);
-    close_rec(b, r2);
+    {
+        owf_buf store;
+        owf_buf_init(&store);
+        write_blips(w, &store, delay);
+        if (store.failed)
+            w->failed = 1;
+        r2 = open_rec(b, 0xF001, (unsigned)(w->pub->res ? w->pub->res->nimages : 0), 15);
+        owf_buf_put(b, store.data, store.length);
+        close_rec(b, r2);
+        owf_buf_free(&store);
+    }
     close_rec(b, r);
     for (k = 0; k < npages_all(pub); k++) {
         const owf_pub_page *pg = page_at(pub, k);
@@ -529,8 +665,9 @@ static void write_escher(writer *w, owf_buf *b)
         close_rec(b, sp);
         for (i = 0, shapes = 0; i < pg->nframes; i++)
             if (w->frame_chunk[k][i] >= 0) {
-                if (pg->frames[i].kind == OWF_PUB_PICTURE)
-                    w->lost_pictures++;
+                if (pg->frames[i].kind == OWF_PUB_PICTURE &&
+                    (pg->frames[i].image < 0 || !w->pub->res || pg->frames[i].image >= w->pub->res->nimages))
+                    w->lost_pictures++;      /* a picture frame the reader found no picture for */
                 write_shape(w, b, &pg->frames[i], w->frame_chunk[k][i], base + (unsigned long)++shapes);
             }
         close_rec(b, r);
@@ -1052,7 +1189,7 @@ static void write_summary(owf_buf *b)
 int owf_pub_write(const owf_pub *pub, unsigned char **data, size_t *length, owf_report *report)
 {
     writer w;
-    owf_buf contents, quill, escher, summary;
+    owf_buf contents, quill, escher, delay, summary;
     owf_cfbw *cf = NULL;
     int k, s, rc = OWF_OK, n = pub ? npages_all(pub) : 0;
 
@@ -1066,6 +1203,7 @@ int owf_pub_write(const owf_pub *pub, unsigned char **data, size_t *length, owf_
     owf_buf_init(&contents);
     owf_buf_init(&quill);
     owf_buf_init(&escher);
+    owf_buf_init(&delay);
     owf_buf_init(&summary);
     w.page_chunk = owf_calloc((size_t)(n ? n : 1), sizeof *w.page_chunk);
     w.frame_chunk = owf_calloc((size_t)(n ? n : 1), sizeof *w.frame_chunk);
@@ -1137,9 +1275,9 @@ int owf_pub_write(const owf_pub *pub, unsigned char **data, size_t *length, owf_
     if (!w.failed)
         write_quill(&w, &quill);
     if (!w.failed)
-        write_escher(&w, &escher);
+        write_escher(&w, &escher, &delay);
     write_summary(&summary);
-    if (contents.failed || quill.failed || escher.failed || summary.failed)
+    if (contents.failed || quill.failed || escher.failed || delay.failed || summary.failed)
         w.failed = 1;
 
     if (!w.failed && !(cf = owf_cfbw_new()))
@@ -1151,6 +1289,7 @@ int owf_pub_write(const owf_pub *pub, unsigned char **data, size_t *length, owf_
             owf_cfbw_add(cf, "Contents", contents.data, contents.length) != OWF_OK ||
             owf_cfbw_add(cf, "Quill/QuillSub/CONTENTS", quill.data, quill.length) != OWF_OK ||
             owf_cfbw_add(cf, "Escher/EscherStm", escher.data, escher.length) != OWF_OK ||
+            (delay.length && owf_cfbw_add(cf, "Escher/EscherDelayStm", delay.data, delay.length) != OWF_OK) ||
             owf_cfbw_add(cf, "\005DocumentSummaryInformation", summary.data, summary.length) != OWF_OK)
             w.failed = 1;
         else
@@ -1160,8 +1299,9 @@ int owf_pub_write(const owf_pub *pub, unsigned char **data, size_t *length, owf_
         rc = OWF_ERR_MEMORY;
     if (rc == OWF_OK) {
         if (w.lost_pictures)
-            owf_report_add(report, OWF_NOTE_LOST, "%d picture(s) saved as empty frames: pictures are not written to .pub yet",
-                           w.lost_pictures);
+            owf_report_add(report, OWF_NOTE_LOST, "%d picture frame(s) with no picture saved as empty frames", w.lost_pictures);
+        if (w.lost_kinds)
+            owf_report_add(report, OWF_NOTE_LOST, "%d picture(s) of a kind .pub does not store saved as empty entries", w.lost_kinds);
         if (w.lost_wordart)
             owf_report_add(report, OWF_NOTE_LOST, "%d WordArt object(s) left out: WordArt is not written to .pub yet",
                            w.lost_wordart);
@@ -1178,6 +1318,7 @@ int owf_pub_write(const owf_pub *pub, unsigned char **data, size_t *length, owf_
     owf_buf_free(&contents);
     owf_buf_free(&quill);
     owf_buf_free(&escher);
+    owf_buf_free(&delay);
     owf_buf_free(&summary);
     for (k = 0; k < n && w.frame_chunk; k++)
         owf_free(w.frame_chunk[k]);
