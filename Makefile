@@ -544,11 +544,13 @@ pub-test: $(OUT)/pub-dump $(OUT)/pub-resave $(PUB_MADE)
 	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub.py $(OUT)/pub-dump 40
 	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub_save.py $(OUT)/pub-resave $(OUT)/pub-dump
 	python3 tests/pub/test_pub_long_list.py $(OUT)/pub-dump
+	python3 tests/pub/test_pub_many_masters.py $(OUT)/pub-dump
 
 pub-check: $(OUT)/pub-dump-asan $(OUT)/pub-resave-asan $(PUB_MADE)
 	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub.py $(OUT)/pub-dump-asan 150
 	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub_save.py $(OUT)/pub-resave-asan $(OUT)/pub-dump-asan
 	python3 tests/pub/test_pub_long_list.py $(OUT)/pub-dump-asan
+	python3 tests/pub/test_pub_many_masters.py $(OUT)/pub-dump-asan
 
 test: pub-test
 check: pub-check
