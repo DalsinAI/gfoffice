@@ -7093,6 +7093,32 @@ static void pick_from_list(int bx, int by, int bw, int bh)
     refresh();
 }
 
+/* The shown scenario's tab: the sheet's scenarios in a list under it; the one chosen is shown. */
+static void pick_scenario(int bx, int by, int bw, int bh)
+{
+    char **items;
+    int n = oc_core_scenario_count(core), i, got = 0, chosen, now = oc_core_scenario_active(core);
+    if (n <= 0) return;
+    items = calloc((size_t)n, sizeof *items);
+    if (!items) { set_status("Not enough memory for the list."); return; }
+    for (i = 0; i < n; ++i) {
+        owf_scenario sc;
+        if (!oc_core_scenario_get(core, i, &sc)) break;
+        items[i] = malloc(strlen(sc.name) + 1);
+        if (items[i]) strcpy(items[i], sc.name);
+        owf_scenario_free(&sc);
+        if (!items[i]) break;
+        got++;
+    }
+    chosen = got == n ? choice_popup(bx, by, bw, bh, items, n, now >= 0 ? items[now] : "") : -1;
+    if (got != n) set_status("Not enough memory for the list.");
+    if (chosen >= 0 && chosen != now && result(oc_core_scenario_show(core, chosen), NULL))
+        set_status("Scenario shown; Undo puts the old values back.");
+    for (i = 0; i < got; ++i) free(items[i]);
+    free(items);
+    refresh();
+}
+
 static int filter_condition_text(const char *text, int *op, const char **value)
 {
     while (*text == ' ' || *text == '\t') text++;
@@ -7291,6 +7317,10 @@ static void grid_press(int mx, int my, UWORD qual, ULONG secs, ULONG micros)
     oc_view_hit(core, mx - grid_box.x, my - grid_box.y, &hit);
     if (hit.kind == OC_HIT_DROPDOWN) {               /* the list's button: its choices */
         pick_from_list(grid_box.x + hit.x, grid_box.y + hit.y, hit.w, hit.h);
+        return;
+    }
+    if (hit.kind == OC_HIT_SCENARIO) {               /* the shown scenario's tab: the sheet's scenarios */
+        pick_scenario(grid_box.x + hit.x, grid_box.y + hit.y, hit.w, hit.h);
         return;
     }
     if (hit.kind == OC_HIT_FILTER) {                 /* an AutoFilter heading's distinct values */
