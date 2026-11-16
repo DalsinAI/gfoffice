@@ -310,6 +310,17 @@ static unsigned char *pdf_of(const owf_doc *doc, const char *format, const char 
     return data;
 }
 
+/* 2.0.44: whether a report has a note with this text in it */
+static int report_says(const owf_report *rp, const char *what)
+{
+    int i;
+    for (i = 0; rp && i < owf_report_count(rp); ++i) {
+        const char *note = owf_report_note(rp, i, NULL, NULL);
+        if (note && strstr(note, what)) return 1;
+    }
+    return 0;
+}
+
 /* how many times s is in the PDF's bytes */
 static int pdf_count(const unsigned char *pdf, size_t n, const char *s)
 {
@@ -435,7 +446,57 @@ static void test_print_margin(void)
             longer = pdf_of(doc, "pdf-comments-margin", "long-", &nl, NULL);
             CHECK(longer && pdf_count(longer, nl, "(Comments) Tj") == 1 && pdf_count(longer, nl, "([3]) Tj") == 2 &&
                   pdf_count(longer, nl, "/F2 8 Tf") == 2, "the long one listed, the other two in the margin");
+            /* 2.0.44 (Budgie, #269): every note too long for the margin: the text keeps its full width, as
+             * pdf-comments lays it out, and the report says why */
+            for (i = 0; i < doc->ncomments; ++i) {
+                char *copy = (char *)owf_malloc(300 * 5 + 1);
+                if (!copy) continue;
+                memcpy(copy, doc->comments[over].text, 300 * 5);
+                copy[300 * 5] = 0;
+                if (i != over) { owf_free(doc->comments[i].text); doc->comments[i].text = copy; }
+                else owf_free(copy);
+            }
+            {
+                owf_report *rp = owf_report_new();
+                unsigned char *all = NULL, *all_end = NULL;
+                size_t na = 0, nae = 0;
+                all = pdf_of(doc, "pdf-comments-margin", "all-long-", &na, rp);
+                all_end = pdf_of(doc, "pdf-comments", "all-long-", &nae, NULL);
+                CHECK(all && all_end && na == nae && !memcmp(all, all_end, na),
+                      "no note fits: the same PDF as the list after the text, the text at its full width");
+                CHECK(report_says(rp, "No comment had room in the margin"), "and the report says so");
+                free(all); free(all_end);
+                owf_report_free(rp);
+            }
         }
+    }
+    /* 2.0.44 (Budgie, #269): more marks on one line than the margin takes (16): the rest listed, and said */
+    {
+        static const char *const one[] = { "Crowded" };
+        owf_doc *crowd = doc_of(one, 1);
+        ow_editor *ed = crowd ? ow_editor_new(crowd) : NULL;
+        owf_report *rp = owf_report_new();
+        unsigned char *c = NULL;
+        size_t nc = 0;
+        int i;
+        CHECK(ed != NULL && rp != NULL, "a crowded line");
+        if (ed && rp) {
+            ow_editor_set_review_author(ed, "Cy");
+            for (i = 0; i < 17; ++i) { caret(ed, 0, 7); ow_editor_insert_comment(ed, "x"); }
+            ow_editor_free(ed);
+            ed = NULL;
+            CHECK(crowd->ncomments == 17, "17 comments at the line's end");
+            crowd->page.width = 20 * 1440;              /* wide enough for the 17 marks on one line */
+            c = pdf_of(crowd, "pdf-comments-margin", "crowded-", &nc, rp);
+            CHECK(c && pdf_count(c, nc, "/F2 8 Tf") == 16 && pdf_count(c, nc, "(Comments) Tj") == 1,
+                  "16 in the margin, the 17th listed after the text");
+            CHECK(report_says(rp, "1 comment on lines with more than 16 marks is listed after the text"),
+                  "and the report says so");
+        }
+        ow_editor_free(ed);
+        free(c);
+        owf_report_free(rp);
+        owf_doc_free(crowd);
     }
 out:
     free(m); free(end); free(narrow); free(narrow_end); free(longer);
