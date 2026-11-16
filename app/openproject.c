@@ -48,7 +48,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenProject 0.1.10 (16.11.2026)"
+#define VERSION_TEXT "GFOpenProject 0.1.12 (16.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenProject, the project planner of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -58,7 +58,7 @@ enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_XML, M_EXPORT_CSV, M_EXPORT_PDF, M_PRINT, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_EDIT, M_INSERT, M_DELETE, M_INDENT, M_OUTDENT, M_LINK, M_UNLINK,
     M_DAYS, M_WEEKS, M_MONTHS, M_QUARTERS, M_SHOW_BASELINE, M_RESOURCES, M_START, M_GANTT, M_USAGE, M_NETWORK, M_TASK_USAGE, M_GRAPH, M_TRACKING,
-    M_SET_BASELINE, M_CLEAR_BASELINE,
+    M_SET_BASELINE, M_CLEAR_BASELINE, M_WORKTIME, M_PLAN_CALENDAR, M_TASK_CALENDAR,
     M_INFO,
     M_COLUMN                                 /* View > Columns: M_COLUMN + the column (OPJ_COL_) */
 };
@@ -132,6 +132,10 @@ static struct NewMenu menus[] = {
     { NM_TITLE, "Tools", NULL, 0, 0, NULL },
     { NM_ITEM, "Set Baseline", NULL, 0, 0, (APTR)M_SET_BASELINE },
     { NM_ITEM, "Clear Baseline", NULL, 0, 0, (APTR)M_CLEAR_BASELINE },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Change Working Time...", NULL, 0, 0, (APTR)M_WORKTIME },
+    { NM_ITEM, "Plan Calendar...", NULL, 0, 0, (APTR)M_PLAN_CALENDAR },
+    { NM_ITEM, "Task Calendar...", NULL, 0, 0, (APTR)M_TASK_CALENDAR },
     { NM_END, NULL, NULL, 0, 0, NULL }
 };
 
@@ -1023,6 +1027,86 @@ static void resources_window(void)
 
 /* ---- Menus, mouse and keys ---- */
 
+/* ---- Tools > Change Working Time..., Plan Calendar..., Task Calendar... ---- */
+
+static const char *cal_name(int cal)
+{
+    const owf_project *p = DOC->plan;
+    return cal >= 0 && cal < p->ncalendars && p->calendars[cal].name ? p->calendars[cal].name : "Standard";
+}
+
+/* A calendar by the name typed (default: def's); one not in the plan is made, a copy of the plan's, when
+ * the user says so (make set). -1 when cancelled. */
+static int ask_calendar(const char *title, int def, int make)
+{
+    char name[64], msg[160];
+    int cal, rc;
+    put_text(name, sizeof name, cal_name(def));
+    for (;;) {
+        if (!ask_text(title, "Calendar", name, sizeof name)) return -1;
+        if ((cal = opj_find_calendar(DOC->plan, name)) >= 0) return cal;
+        if (!make) {
+            snprintf(msg, sizeof msg, "There is no calendar %.60s", name);
+            tell(msg);
+            continue;
+        }
+        snprintf(msg, sizeof msg, "There is no calendar %.40s.\nMake it, a copy of %.40s?", name, cal_name(DOC->plan->calendar));
+        if (!ask(msg, "Make it|Cancel")) continue;
+        rc = opj_add_calendar(DOC, name, DOC->plan->calendar, &cal);
+        if (rc == OWF_OK) return cal;
+        tell(rc == OWF_ERR_MEMORY ? "Out of memory" : "A calendar's name can't be empty or a number");
+    }
+}
+
+static void change_working_time(void)
+{
+    static char days[48] = "Mon";
+    char title[96], hours[96];
+    int cal, rc;
+    if (rexx_busy || (cal = ask_calendar("Change Working Time", DOC->plan->calendar, 1)) < 0) return;
+    snprintf(title, sizeof title, "Change Working Time: %.60s", cal_name(cal));
+    for (;;) {
+        if (!ask_text(title, "Days (Mon, or 24/12/26 - 1/1/27)", days, sizeof days)) return;
+        if (opj_days_parse(days, NULL, NULL, NULL)) break;
+        tell("Type a weekday (Mon, Friday) or dates (24/12/26, or 24/12/26 - 1/1/27)");
+    }
+    opj_days_hours_text(DOC->plan, cal, days, hours);
+    for (;;) {
+        if (!ask_text(title, "Hours (08:00-12:00, 13:00-17:00, off, default)", hours, sizeof hours)) return;
+        if ((rc = opj_set_days_hours(DOC, cal, days, hours)) == OWF_OK) break;
+        if (rc == OWF_ERR_MEMORY) { edit_failed(rc, "Change Working Time"); return; }
+        tell("Hours are spans in order, 08:00-12:00, 13:00-17:00, or off;\ndefault gives dates their week's hours again");
+    }
+    snprintf(title, sizeof title, "%.60s: %.24s now %.60s", cal_name(cal), days, hours);
+    set_status(title);
+}
+
+static void plan_calendar(void)
+{
+    int cal;
+    if (rexx_busy || (cal = ask_calendar("Plan Calendar", DOC->plan->calendar, 0)) < 0) return;
+    edit_failed(opj_set_plan_calendar(DOC, cal), "Plan Calendar");
+}
+
+/* The selected task's own calendar; an empty name gives it the plan's again. */
+static void task_calendar(void)
+{
+    char name[64], prompt[96];
+    int row = view.selected, cal;
+    if (rexx_busy) return;
+    if (row < 0 || row >= DOC->plan->ntasks) { set_status("Task Calendar: choose a task first"); return; }
+    if (DOC->plan->tasks[row].summary) { set_status("Task Calendar: a summary works its subtasks' calendars"); return; }
+    put_text(name, sizeof name, DOC->plan->tasks[row].calendar < 0 ? "" : cal_name(DOC->plan->tasks[row].calendar));
+    snprintf(prompt, sizeof prompt, "Calendar (empty: the plan's)");
+    for (;;) {
+        if (!ask_text("Task Calendar", prompt, name, sizeof name)) return;
+        cal = name[0] ? opj_find_calendar(DOC->plan, name) : -1;
+        if (!name[0] || cal >= 0) break;
+        tell("There is no such calendar: Change Working Time... makes one");
+    }
+    edit_failed(opj_set_task_calendar(DOC, row, cal), "Task Calendar");
+}
+
 static void set_zoom(int zoom)
 {
     owf_ptime mid = opj_view_time(&view, opj_chart_left(&view));
@@ -1124,6 +1208,9 @@ static void menu_action(ULONG id, struct MenuItem *item)
         break;
     case M_SET_BASELINE: edit_failed(opj_set_baseline(DOC, 0, -1), "Set Baseline"); view.show_baseline = 1; break;
     case M_CLEAR_BASELINE: edit_failed(opj_clear_baseline(DOC, 0, -1), "Clear Baseline"); break;
+    case M_WORKTIME: change_working_time(); break;
+    case M_PLAN_CALENDAR: plan_calendar(); break;
+    case M_TASK_CALENDAR: task_calendar(); break;
     }
     redraw();
 }
