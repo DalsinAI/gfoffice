@@ -1641,7 +1641,7 @@ static void read_text(odp *o, owf_obj *obj, const owf_xml_node *box, const owf_x
 static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_master *m, int which)
 {
     const owf_xml_node *groups[8], *g, *row, *cell;
-    int widths[TABLE_MAX_COLS], ncols = 0, ngroups = 0, nrows = 0, i, merged = 0;
+    int widths[TABLE_MAX_COLS], ncols = 0, ngroups = 0, nrows = 0, i;
     textctx t;
 
     memset(&t, 0, sizeof t);
@@ -1728,7 +1728,6 @@ static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_
                         }
                     }
                     col++;
-                    merged = 1;
                     continue;
                 }
                 if (!is(cell, NS_TABLE, "table-cell") || col >= TABLE_MAX_COLS)
@@ -1739,7 +1738,6 @@ static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_
                     if (span_c > 1 || span_r > 1) {
                         if (owf_table_add_merge(obj, nrows, col, span_r > 0 ? span_r : 1, span_c > 0 ? span_c : 1) < 0)
                             o->failed = 1;
-                        merged = 1;
                     }
                 }
                 cs = find_style(o, attr(cell, NS_TABLE, "style-name"), "table-cell", which);
@@ -1776,8 +1774,6 @@ static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_
         obj->text.paras[i].table_cols = ncols;
     if (obj->nrows > 0 && obj->nrows < nrows && owf_table_set_row_height(obj, nrows - 1, 0) < 0)
         o->failed = 1;        /* rows past the last with a height: as their text needs */
-    if (merged)
-        owf_report_add(o->report, OWF_NOTE_APPROX, "Merged table cells are shown apart");
     obj->ncols = ncols;
     if (ncols) {
         int any = 0;
