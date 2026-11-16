@@ -1348,6 +1348,142 @@ int opj_set_assignment(opj_doc *doc, int task, int resource, long units)
     return commit(doc, work);
 }
 
+/* ---- Assign Resources ---- */
+
+static int find_assign(const owf_project *p, int task, int resource)
+{
+    int i;
+    for (i = 0; i < p->nassigns; i++)
+        if (p->assigns[i].task == task && p->assigns[i].resource == resource) return i;
+    return -1;
+}
+
+int opj_assign_get(const opj_doc *doc, int task, int resource, opj_assign_info *out)
+{
+    int a;
+    if (!out) return 0;
+    memset(out, 0, sizeof *out);
+    if (!doc || task < 0 || task >= doc->plan->ntasks || resource < 0 || resource >= doc->plan->nresources) return 0;
+    if ((a = find_assign(doc->plan, task, resource)) >= 0) {
+        out->assigned = 1;
+        out->units = doc->plan->assigns[a].units;
+        out->work = doc->plan->assigns[a].work;
+        out->cost = doc->plan->assigns[a].cost;
+    }
+    return 1;
+}
+
+int opj_units_parse(const opj_doc *doc, int resource, const char *text, long *units)
+{
+    const char *s = text;
+    long v = 0;
+    int type;
+    if (!doc || !units || !s || resource < 0 || resource >= doc->plan->nresources) return OWF_ERR_FORMAT;
+    type = doc->plan->resources[resource].type;
+    while (*s == ' ') s++;
+    if (type == OWF_RES_COST) {
+        if (!take_money(&s, &v)) return OWF_ERR_FORMAT;
+    } else if (!take_hundredths(&s, &v)) {
+        return OWF_ERR_FORMAT;
+    }
+    if (type == OWF_RES_WORK) {
+        if (v % 100) return OWF_ERR_FORMAT;          /* whole percent */
+        v /= 100;
+        if (*s == '%') s++;
+        if (v > 100000L) return OWF_ERR_FORMAT;
+    }
+    while (*s == ' ') s++;
+    if (*s || v <= 0) return OWF_ERR_FORMAT;
+    *units = v;
+    return OWF_OK;
+}
+
+void opj_units_text(const opj_doc *doc, int resource, long units, char *out, size_t size)
+{
+    char t[32];
+    if (!out || !size) return;
+    *out = 0;
+    if (!doc || resource < 0 || resource >= doc->plan->nresources) return;
+    switch (doc->plan->resources[resource].type) {
+    case OWF_RES_WORK: sprintf(t, "%ld%%", units); break;
+    case OWF_RES_MATERIAL: put_hundredths(units, 1, t); break;
+    default: put_hundredths(units, 0, t); break;
+    }
+    copy_out(t, out, size);
+}
+
+void opj_assign_line(const opj_doc *doc, int task, int resource, char *out, size_t size)
+{
+    opj_assign_info info;
+    char units[32] = "", cost[32] = "";
+    const char *name;
+    if (!out || !size) return;
+    *out = 0;
+    if (!opj_assign_get(doc, task, resource, &info)) return;
+    name = doc->plan->resources[resource].name ? doc->plan->resources[resource].name : "";
+    if (info.assigned) {
+        opj_units_text(doc, resource, info.units, units, sizeof units);
+        opj_money_text(info.cost, cost);
+    }
+    snprintf(out, size, "%c %-20.20s %8s %10s", info.assigned ? '*' : ' ', name, units, cost);
+}
+
+/* Units typed for the resource, or when none are typed: had (an assignment's own, 0 for none), else one of
+ * the resource's kind (100% or a unit; a cost resource has no default). */
+static int units_or(const opj_doc *doc, int resource, const char *text, long had, long *units)
+{
+    const char *s = text;
+    while (s && *s == ' ') s++;
+    if (s && *s) return opj_units_parse(doc, resource, s, units);
+    if (had > 0) *units = had;
+    else if (doc->plan->resources[resource].type == OWF_RES_COST) return OWF_ERR_FORMAT;
+    else *units = 100;
+    return OWF_OK;
+}
+
+int opj_assign_resource(opj_doc *doc, int task, int resource, const char *units)
+{
+    owf_project *work;
+    long u;
+    int a, rc;
+    if (!doc || task < 0 || task >= doc->plan->ntasks || resource < 0 || resource >= doc->plan->nresources)
+        return OWF_ERR_FORMAT;
+    a = find_assign(doc->plan, task, resource);
+    if ((rc = units_or(doc, resource, units, a >= 0 ? doc->plan->assigns[a].units : 0, &u)) != OWF_OK) return rc;
+    if (!(work = begin(doc, task, &rc))) return rc;
+    if (owf_project_assign(work, task, resource, u) < 0) return fail(work, OWF_ERR_MEMORY);
+    return commit(doc, work);
+}
+
+int opj_remove_resource(opj_doc *doc, int task, int resource)
+{
+    owf_project *work;
+    int rc;
+    if (!doc || task < 0 || task >= doc->plan->ntasks || find_assign(doc->plan, task, resource) < 0)
+        return OWF_ERR_FORMAT;
+    if (!(work = begin(doc, task, &rc))) return rc;
+    owf_project_unassign(work, task, resource);
+    return commit(doc, work);
+}
+
+int opj_replace_resource(opj_doc *doc, int task, int from, int to, const char *units)
+{
+    owf_project *work;
+    long u;
+    int a, rc;
+    if (!doc || task < 0 || task >= doc->plan->ntasks || from == to || to < 0 || to >= doc->plan->nresources ||
+        (a = find_assign(doc->plan, task, from)) < 0 || find_assign(doc->plan, task, to) >= 0)
+        return OWF_ERR_FORMAT;
+    rc = units_or(doc, to, units,
+                  doc->plan->resources[from].type == doc->plan->resources[to].type ? doc->plan->assigns[a].units : 0,
+                  &u);
+    if (rc != OWF_OK) return rc;
+    if (!(work = begin(doc, task, &rc))) return rc;
+    work->assigns[a].resource = to;              /* its place and uid stay */
+    work->assigns[a].units = u;
+    return commit(doc, work);
+}
+
 /* ---- Resource usage ---- */
 
 #define DAY 1440L
