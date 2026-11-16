@@ -1215,6 +1215,33 @@ void oc_core_status(oc_core *core, char *out, size_t size);
  * cut short when it is wider than the strip. */
 int oc_tab_strip(const int *width, int n, int avail, int arrows, int current, int *first, int *scroll);
 
+/* ---- Tracked changes (Edit > Track Changes) ----
+ * While the book records changes, each cell whose content changes (typed, pasted, filled, cleared, sorted...;
+ * not its format), rows and columns inserted and deleted, sheets added (or duplicated) and renamed become
+ * changes (owf_change, the book's), with the author and the time, until they are accepted (kept as they are) or
+ * rejected (undone). Sheets cannot be deleted while it records. Each accept and reject is an Undo step; Undo of
+ * a change takes its record back with it. Turning recording on or off clears Undo; off drops the changes (the
+ * book stays as it is), as LibreOffice does. The author (NULL: none, shown as "Unknown Author") is copied; the
+ * clock writes the time as ISO 8601 ("2026-11-16T06:30:00"; NULL: the computer's). */
+typedef void (*oc_clock_fn)(void *user, char *out, size_t size);
+int oc_core_track_changes(const oc_core *core);
+int oc_core_set_track_changes(oc_core *core, int on);
+int oc_core_set_track_author(oc_core *core, const char *author);   /* OWF_OK or OWF_ERR_MEMORY */
+void oc_core_set_track_clock(oc_core *core, oc_clock_fn clock, void *user);
+int oc_core_change_count(const oc_core *core);
+const owf_change *oc_core_change_at(const oc_core *core, int index);  /* NULL past the end */
+/* A change as the list in the window shows it ("Cell Sheet1.B3 changed from 5 to 7"): as snprintf */
+int oc_core_change_text(const oc_core *core, int index, char *out, size_t size);
+/* The newest change that shows on a cell (its content changed, or it is in rows or columns inserted), or -1 */
+int oc_core_cell_change(const oc_core *core, int sheet, unsigned row, unsigned col);
+/* OWF_OK; OWF_ERR_UNSUPPORTED (no such change, or a sheet that cannot go: the last one); OWF_ERR_MEMORY.
+ * Rejecting a cell's change rejects the later ones of that cell first; rejecting inserted rows rejects the
+ * changes in them. */
+int oc_core_accept_change(oc_core *core, int index);
+int oc_core_reject_change(oc_core *core, int index);
+int oc_core_accept_all_changes(oc_core *core);
+int oc_core_reject_all_changes(oc_core *core);
+
 /* ---- What the window reads of the book: copies only ----
  * The window reads the book through these calls and oc_view_draw's display list,
  * never through the book's structs. So the book could live where the window can't

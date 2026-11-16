@@ -35,12 +35,13 @@
 
 #define REG(r, decl) register decl __asm(#r)
 #define LIB_VERSION 2
-#define LIB_REVISION 6                 /* 2.1: libowf 1.2's structures; 2.2: 1.3's (frames: owf_doc, owf_run_kind), owf_open
+#define LIB_REVISION 7                 /* 2.1: libowf 1.2's structures; 2.2: 1.3's (frames: owf_doc, owf_run_kind), owf_open
                                           checks their sizes; 2.3: libowf 1.3.1 (DOCX table cells, headings'
                                           spacing, line spacing, internal links), the same structures; 2.4:
                                           1.4's owf_para (its style and bookmarks); 2.5: owf_doc's
                                           header_left and footer_left (GFOpenWrite 2.0.23); 2.6:
-                                          protection in owf_cellstyle and owf_sheet (their sizes change) */
+                                          protection in owf_cellstyle and owf_sheet (their sizes change); 2.7:
+                                          tracked changes in owf_book (its size changes) */
 
 struct OWFLibBase {
     struct Library lib;

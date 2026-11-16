@@ -5728,6 +5728,212 @@ static void test_external_books(void)
     owf_book_free(b);
 }
 
+static void track_clock(void *user, char *out, size_t size)
+{
+    (void)user;
+    snprintf(out, size, "%s", "2026-11-16T07:00:00");
+}
+
+static int empty_at(oc_core *core, const char *cell)
+{
+    const owf_cell *c = at(core, cell);
+    return !c || (c->type == OWF_VALUE_EMPTY && !c->formula);
+}
+
+/* Edit > Track Changes in the core: what is recorded, where it moves, accept, reject, Undo. */
+static void test_track_changes(void)
+{
+    oc_core *core = fresh();
+    const owf_change *c;
+    char line[160];
+    if (!core) return;
+    oc_core_set_track_clock(core, track_clock, NULL);
+    CHECK(oc_core_set_track_author(core, "Lister") == OWF_OK);
+    enter_at(core, "A1", "5");                                  /* before recording: no change */
+    CHECK(oc_core_change_count(core) == 0 && !oc_core_track_changes(core));
+    CHECK(oc_core_set_track_changes(core, 1) == OWF_OK && oc_core_track_changes(core) && !oc_core_can_undo(core));
+    enter_at(core, "A1", "7");
+    enter_at(core, "B2", "=A1*2");
+    CHECK(oc_core_change_count(core) == 2);
+    c = oc_core_change_at(core, 0);
+    CHECK(c && c->kind == OWF_CHANGE_CELL && c->sheet == 0 && c->row == 0 && c->col == 0 && c->id == 1);
+    CHECK(c && c->before && !strcmp(c->before, "5") && c->after && !strcmp(c->after, "7"));
+    CHECK(c && c->author && !strcmp(c->author, "Lister") && c->date && !strcmp(c->date, "2026-11-16T07:00:00"));
+    c = oc_core_change_at(core, 1);
+    CHECK(c && !c->before && c->after && !strcmp(c->after, "=A1*2") && c->id == 2);
+    CHECK(oc_core_change_text(core, 0, line, sizeof line) > 0);
+    CHECK_STR(line, "Cell Sheet1.A1 changed from 5 to 7");
+    CHECK(oc_core_cell_change(core, 0, 1, 1) == 1 && oc_core_cell_change(core, 0, 2, 2) == -1);
+    go(core, "A1");                                            /* a format is no change */
+    CHECK(oc_core_toggle_flags(core, OWF_BOLD) == OWF_OK && oc_core_change_count(core) == 2);
+    CHECK(oc_core_set_input(core, 0, 0, 0, "7") == OWF_OK && oc_core_change_count(core) == 2);  /* nor the same */
+    /* Undo takes a change back with it, Redo brings it again */
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_undo(core) == OWF_OK && oc_core_undo(core) == OWF_OK);
+    CHECK(oc_core_change_count(core) == 1 && empty_at(core, "B2"));
+    CHECK(oc_core_redo(core) == OWF_OK && oc_core_change_count(core) == 2 && fabs(num(core, "B2") - 14) < 1e-9);
+
+    /* a row inserted above moves the changes down; rejecting it takes the row away */
+    go(core, "A1");
+    CHECK(oc_core_insert(core, 0) == OWF_OK && oc_core_change_count(core) == 3);
+    c = oc_core_change_at(core, 2);
+    CHECK(c && c->kind == OWF_CHANGE_INSERT_ROWS && c->row == 0 && c->count == 1);
+    CHECK(oc_core_change_at(core, 0)->row == 1 && oc_core_change_at(core, 1)->row == 2 && fabs(num(core, "A2") - 7) < 1e-9);
+    CHECK(oc_core_cell_change(core, 0, 0, 5) == 2);
+    CHECK(oc_core_change_text(core, 2, line, sizeof line) > 0);
+    CHECK_STR(line, "Rows 1:1 inserted on Sheet1");
+    CHECK(oc_core_reject_change(core, 2) == OWF_OK && oc_core_change_count(core) == 2);
+    CHECK(oc_core_change_at(core, 0)->row == 0 && fabs(num(core, "A1") - 7) < 1e-9 && !strcmp(formula(core, "B2"), "A1*2"));
+
+    /* a row deleted takes the cells and changes in it; rejecting it brings them back */
+    go(core, "B2");
+    CHECK(oc_core_delete(core, 0) == OWF_OK && oc_core_change_count(core) == 2 && empty_at(core, "B2"));
+    c = oc_core_change_at(core, 1);
+    CHECK(c && c->kind == OWF_CHANGE_DELETE_ROWS && c->row == 1 && c->count == 1 && c->nchildren == 1 && c->ncells == 1);
+    CHECK(c && c->ncells == 1 && c->cells[0].row == 0 && c->cells[0].col == 1 && !strcmp(c->cells[0].input, "=A1*2"));
+    CHECK(c && c->nchildren == 1 && c->children[0].kind == OWF_CHANGE_CELL && c->children[0].row == 0);
+    CHECK(c && c->id == 3);                                    /* numbered past the one it holds */
+    CHECK(oc_core_reject_change(core, 1) == OWF_OK && oc_core_change_count(core) == 2);
+    c = oc_core_change_at(core, 1);
+    CHECK(c && c->kind == OWF_CHANGE_CELL && c->row == 1 && c->col == 1 && c->id == 2);
+    CHECK(!strcmp(formula(core, "B2"), "A1*2") && fabs(num(core, "B2") - 14) < 1e-9);
+
+    /* rejecting a cell's change gives its old content; accepting keeps the new */
+    CHECK(oc_core_reject_change(core, 0) == OWF_OK && fabs(num(core, "A1") - 5) < 1e-9 && fabs(num(core, "B2") - 10) < 1e-9);
+    CHECK(oc_core_change_count(core) == 1);
+    CHECK(oc_core_accept_change(core, 0) == OWF_OK && oc_core_change_count(core) == 0 && !strcmp(formula(core, "B2"), "A1*2"));
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_change_count(core) == 1);
+    CHECK(oc_core_redo(core) == OWF_OK && oc_core_change_count(core) == 0);
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_undo(core) == OWF_OK && oc_core_change_count(core) == 2 &&
+          fabs(num(core, "A1") - 7) < 1e-9);                     /* the reject undone too */
+    CHECK(oc_core_accept_all_changes(core) == OWF_OK && oc_core_change_count(core) == 0);
+    CHECK(oc_core_accept_all_changes(core) == OWF_ERR_UNSUPPORTED && oc_core_reject_change(core, 0) == OWF_ERR_UNSUPPORTED);
+
+    /* sheets added and renamed; none deleted while recording; changes go with their sheets */
+    CHECK(oc_core_add_sheet(core, "Two") == 1 && oc_core_change_count(core) == 1);
+    c = oc_core_change_at(core, 0);
+    CHECK(c && c->kind == OWF_CHANGE_INSERT_SHEET && c->sheet == 1 && c->after && !strcmp(c->after, "Two"));
+    CHECK(oc_core_rename_sheet(core, 1, "Second") == OWF_OK && oc_core_change_count(core) == 2);
+    CHECK(oc_core_change_text(core, 1, line, sizeof line) > 0);
+    CHECK_STR(line, "Sheet Two renamed to Second");
+    CHECK(oc_core_delete_sheet(core, 1) == OWF_ERR_UNSUPPORTED && oc_core_sheet_count(core) == 2);
+    CHECK(oc_core_set_sheet(core, 1) == OWF_OK);
+    enter_at(core, "C3", "x");
+    CHECK(oc_core_change_count(core) == 3 && oc_core_change_at(core, 2)->sheet == 1);
+    CHECK(oc_core_move_sheet(core, 1, 0) == OWF_OK && oc_core_change_count(core) == 3);
+    CHECK(oc_core_change_at(core, 0)->sheet == 0 && oc_core_change_at(core, 2)->sheet == 0);
+    CHECK(oc_core_move_sheet(core, 0, 1) == OWF_OK && oc_core_change_at(core, 2)->sheet == 1);
+    CHECK(oc_core_reject_change(core, 1) == OWF_OK && !strcmp(oc_core_book(core)->sheets[1].name, "Two") &&
+          oc_core_change_count(core) == 2);
+    CHECK(oc_core_reject_change(core, 0) == OWF_OK && oc_core_sheet_count(core) == 1 && oc_core_change_count(core) == 0);
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_sheet_count(core) == 2 && oc_core_change_count(core) == 2);
+    CHECK(oc_core_reject_all_changes(core) == OWF_OK && oc_core_sheet_count(core) == 1 && oc_core_change_count(core) == 0);
+
+    /* columns: inserted, and one deleted with a changed cell in it; rejecting all puts the sheet back */
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK);
+    enter_at(core, "E5", "q");
+    go(core, "B1");
+    CHECK(oc_core_insert(core, 1) == OWF_OK && !strcmp(formula(core, "C2"), "A1*2"));
+    go(core, "F1");                                            /* E5 moved to F5 */
+    CHECK(oc_core_delete(core, 1) == OWF_OK && oc_core_change_count(core) == 2);   /* E5's change went into it */
+    c = oc_core_change_at(core, 1);
+    CHECK(c && c->kind == OWF_CHANGE_DELETE_COLS && c->col == 5 && c->ncells == 1 && c->cells[0].row == 4 &&
+          c->cells[0].col == 0 && c->nchildren == 1);
+    CHECK(oc_core_change_at(core, 0)->kind == OWF_CHANGE_INSERT_COLS && oc_core_change_at(core, 0)->col == 1);
+    CHECK(oc_core_reject_all_changes(core) == OWF_OK && oc_core_change_count(core) == 0);
+    CHECK(!strcmp(formula(core, "B2"), "A1*2") && empty_at(core, "E5") && empty_at(core, "F5"));
+
+    /* turning recording off drops the changes and Undo; the cells stay */
+    enter_at(core, "A1", "8");
+    CHECK(oc_core_change_count(core) == 1);
+    CHECK(oc_core_set_track_changes(core, 0) == OWF_OK && oc_core_change_count(core) == 0 && !oc_core_can_undo(core));
+    CHECK(fabs(num(core, "A1") - 8) < 1e-9);
+    {   /* a book read with changes that keep only the old content (as ODS and XLSX do): the new from the cells */
+        owf_book *b = owf_book_new();
+        owf_sheet *sh = b ? owf_book_add_sheet(b, "Read") : NULL;
+        owf_change *ch = b ? malloc(2 * sizeof *ch) : NULL;
+        owf_cell *cell;
+        if (sh && ch && (cell = owf_sheet_cell(sh, 0, 0, 1)) != NULL) {
+            owf_cell_set_number(cell, 3);
+            memset(ch, 0, 2 * sizeof *ch);
+            ch[0].kind = ch[1].kind = OWF_CHANGE_CELL;
+            ch[0].id = 1;
+            ch[1].id = 2;
+            ch[1].before = malloc(2);
+            if (ch[1].before)
+                strcpy(ch[1].before, "2");
+            b->changes = ch;
+            b->nchanges = b->capchanges = 2;
+            b->track_changes = 1;
+            CHECK(oc_core_set_book(core, b) == OWF_OK && oc_core_track_changes(core) && oc_core_change_count(core) == 2);
+            c = oc_core_change_at(core, 0);
+            CHECK(c && !c->before && c->after && !strcmp(c->after, "2"));
+            c = oc_core_change_at(core, 1);
+            CHECK(c && c->after && !strcmp(c->after, "3"));
+            CHECK(oc_core_reject_all_changes(core) == OWF_OK && empty_at(core, "A1"));
+        } else {
+            free(ch);
+            owf_book_free(b);
+        }
+    }
+    {   /* a log's changes, each where it was when made (XLSX): moved by the inserts and deletes after them */
+        owf_book *b = owf_book_new();
+        owf_sheet *sh = b ? owf_book_add_sheet(b, "Log") : NULL;
+        owf_change *ch = b ? calloc(3, sizeof *ch) : NULL;
+        if (sh && ch) {
+            ch[0].kind = OWF_CHANGE_CELL;                      /* A3 typed into */
+            ch[0].row = 2;
+            ch[0].id = 1;
+            ch[1].kind = OWF_CHANGE_INSERT_ROWS;               /* a row above it */
+            ch[1].count = 1;
+            ch[1].id = 2;
+            ch[2].kind = OWF_CHANGE_DELETE_ROWS;               /* its row deleted, row 4 by then */
+            ch[2].row = 3;
+            ch[2].count = 1;
+            ch[2].id = 3;
+            b->changes = ch;
+            b->nchanges = b->capchanges = 3;
+            b->track_changes = b->changes_as_made = 1;
+            CHECK(oc_core_set_book(core, b) == OWF_OK && oc_core_change_count(core) == 2);
+            c = oc_core_change_at(core, 0);
+            CHECK(c && c->kind == OWF_CHANGE_INSERT_ROWS && c->row == 0);
+            c = oc_core_change_at(core, 1);
+            CHECK(c && c->kind == OWF_CHANGE_DELETE_ROWS && c->row == 3 && c->nchildren == 1 &&
+                  c->children[0].row == 0 && c->children[0].id == 1);
+            CHECK(!oc_core_book(core)->changes_as_made);
+        } else {
+            free(ch);
+            owf_book_free(b);
+        }
+    }
+    oc_core_free(core);
+
+    /* a deletion's changes follow their sheet when sheets move or are added before it is rejected */
+    if ((core = fresh()) != NULL) {
+        int three, one = 1, two = 0;
+        oc_core_set_track_clock(core, track_clock, NULL);
+        CHECK(oc_core_add_sheet(core, "Two") == 1 && oc_core_set_sheet(core, 1) == OWF_OK);
+        enter_at(core, "B2", "7");
+        CHECK(oc_core_set_sheet(core, 0) == OWF_OK && oc_core_set_track_changes(core, 1) == OWF_OK);
+        enter_at(core, "B2", "42");
+        go(core, "B2");
+        CHECK(oc_core_delete(core, 0) == OWF_OK && oc_core_change_count(core) == 1);
+        CHECK(oc_core_move_sheet(core, 0, 1) == OWF_OK);          /* Sheet1 to the end */
+        three = oc_core_add_sheet(core, "Three");
+        CHECK(three >= 0 && oc_core_change_count(core) == 2);
+        if (three <= one) one++;
+        if (three <= two) two++;
+        c = oc_core_change_at(core, 0);
+        CHECK(c && c->kind == OWF_CHANGE_DELETE_ROWS && c->sheet == one && c->nchildren == 1 && c->children[0].sheet == one);
+        CHECK(oc_core_reject_change(core, 0) == OWF_OK && oc_core_change_count(core) == 2);
+        c = oc_core_change_at(core, 0);
+        CHECK(c && c->kind == OWF_CHANGE_CELL && c->sheet == one && c->row == 1 && c->col == 1);
+        CHECK(oc_core_reject_change(core, 0) == OWF_OK && oc_core_change_count(core) == 1);
+        CHECK(oc_core_set_sheet(core, two) == OWF_OK && fabs(num(core, "B2") - 7) < 1e-9);
+        CHECK(oc_core_set_sheet(core, one) == OWF_OK && empty_at(core, "B2"));
+        oc_core_free(core);
+    }
+}
+
 /* Edit Links: the list, a target as a file, and an update from the file (an Undo step); a file not there
  * leaves the last values. */
 static void test_edit_links(void)
@@ -8498,6 +8704,7 @@ int main(void)
     test_protection();
     test_book_protection();
     test_external_books();
+    test_track_changes();
     test_edit_links();
     test_pivot_summary();
     test_pivot_layout();
