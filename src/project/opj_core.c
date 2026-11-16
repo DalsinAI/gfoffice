@@ -1014,26 +1014,80 @@ int opj_set_cells(opj_doc *doc, int row, const int *columns, const char *const *
     return commit(doc, work);
 }
 
-int opj_set_baseline(opj_doc *doc, int first, int count)
+int opj_set_baseline_n(opj_doc *doc, int n, int first, int count)
 {
     owf_project *work;
-    if (!doc) return OWF_ERR_FORMAT;
+    if (!doc || n < 0 || n >= OWF_NBASELINES) return OWF_ERR_FORMAT;
     if (count < 0) first = 0, count = doc->plan->ntasks;
     if (first < 0 || count < 1 || first > doc->plan->ntasks - count) return OWF_ERR_FORMAT;
     if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
-    owf_project_set_baseline(work, first, count);
+    owf_project_set_baseline_n(work, n, first, count);
     return commit(doc, work);
+}
+
+int opj_clear_baseline_n(opj_doc *doc, int n, int first, int count)
+{
+    owf_project *work;
+    if (!doc || n < 0 || n >= OWF_NBASELINES) return OWF_ERR_FORMAT;
+    if (count < 0) first = 0, count = doc->plan->ntasks;
+    if (first < 0 || count < 1 || first > doc->plan->ntasks - count) return OWF_ERR_FORMAT;
+    if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
+    owf_project_clear_baseline_n(work, n, first, count);
+    return commit(doc, work);
+}
+
+int opj_set_baseline(opj_doc *doc, int first, int count)
+{
+    return opj_set_baseline_n(doc, 0, first, count);
 }
 
 int opj_clear_baseline(opj_doc *doc, int first, int count)
 {
-    owf_project *work;
-    if (!doc) return OWF_ERR_FORMAT;
-    if (count < 0) first = 0, count = doc->plan->ntasks;
-    if (first < 0 || count < 1 || first > doc->plan->ntasks - count) return OWF_ERR_FORMAT;
-    if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
-    owf_project_clear_baseline(work, first, count);
-    return commit(doc, work);
+    return opj_clear_baseline_n(doc, 0, first, count);
+}
+
+unsigned opj_baselines_saved(const opj_doc *doc)
+{
+    unsigned bits = 0;
+    owf_pbaseline b;
+    int i, n;
+    if (!doc) return 0;
+    for (i = 0; i < doc->plan->ntasks; i++)
+        for (n = 0; n < OWF_NBASELINES; n++)
+            if (owf_ptask_baseline(&doc->plan->tasks[i], n, &b)) bits |= 1u << n;
+    return bits;
+}
+
+int opj_baseline_parse(const char *text)
+{
+    static const char word[] = "baseline";
+    int n = 0, digits = 0, i;
+    if (!text) return 0;
+    while (*text == ' ' || *text == '\t') text++;
+    for (i = 0; word[i] && (text[i] == word[i] || text[i] == word[i] - 32); i++)
+        ;
+    if (!word[i]) text += i;
+    while (*text == ' ' || *text == '\t') text++;
+    while (*text >= '0' && *text <= '9' && digits < 3) n = n * 10 + (*text++ - '0'), digits++;
+    while (*text == ' ' || *text == '\t') text++;
+    if (*text || n >= OWF_NBASELINES) return -1;
+    return n;
+}
+
+void opj_baselines_text(const opj_doc *doc, char *out, size_t size)
+{
+    unsigned bits = opj_baselines_saved(doc);
+    size_t len = 0;
+    int n;
+    if (!out || !size) return;
+    *out = 0;
+    for (n = 0; n < OWF_NBASELINES; n++)
+        if (bits & (1u << n)) {
+            int w = snprintf(out + len, size - len, len ? " %d" : "%d", n);
+            if (w < 0 || (size_t)w >= size - len) break;
+            len += (size_t)w;
+        }
+    if (!len) snprintf(out, size, "none");
 }
 
 int opj_update_project(opj_doc *doc, owf_ptime status, int whole, int *changed)
