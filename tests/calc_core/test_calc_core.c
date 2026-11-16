@@ -5804,8 +5804,23 @@ static void test_edit_links(void)
     CHECK(oc_core_undo(core) == OWF_OK);
     CHECK(num(core, "A1") == 20 && num(core, "A2") == 2);
     CHECK(oc_core_book(core)->extbooks[0].sheets[0].ncells == 1);
-    remove(src_path);
     oc_core_free(core);
+    /* as the ARexx test does it: a formula on a book not kept is #REF!; saved, the file links that book (its
+       sheet, no values); opened again and updated, the formula has the file's value */
+    core = fresh();
+    if (core) {
+        enter_at(core, "A1", "='[calc-core-link-src.xlsx]Q1'!A2*2");
+        CHECK(at(core, "A1") && at(core, "A1")->type == OWF_VALUE_ERROR && oc_core_link_count(core) == 0);
+        CHECK(oc_core_save(core, "build/host/calc-core-link-main.xlsx", "xlsx", NULL) == OWF_OK);
+        CHECK(oc_core_open(core, "build/host/calc-core-link-main.xlsx", NULL, NULL, NULL) == OWF_OK);
+        CHECK(oc_core_link_count(core) == 1 && oc_core_link(core, 0, &name, &target, &sheets) == OWF_OK && sheets == 1);
+        CHECK(oc_link_path(target, "build/host", path, sizeof path) && !strcmp(path, "build/host/calc-core-link-src.xlsx"));
+        CHECK(oc_core_update_link(core, 0, path, NULL, &sheets) == OWF_OK && sheets == 1);
+        CHECK(num(core, "A1") == 16);
+        remove("build/host/calc-core-link-main.xlsx");
+        oc_core_free(core);
+    }
+    remove(src_path);
 }
 
 static void test_book_protection(void)
