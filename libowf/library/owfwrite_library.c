@@ -41,13 +41,17 @@
  * calls; owf_run and owf_doc grew, so the three libraries go together again.
  * 3.11: libowf 1.12, a picture in the line may be a tracked change (owf_run.revision on OWF_RUN_IMAGE): DOCX
  * w:ins and w:del round its w:drawing, ODT changed regions, in and out. No new calls and no struct grew.
+ * 3.12: libowf 1.12.1 (after 3.11's 1.12.0), footnote and endnote numbering (owf_page.note_format and
+ * note_start): DOCX w:footnotePr and w:endnotePr, ODT text:notes-configuration, in and out; the marks in every
+ * format numbered by them. No new calls; owf_page grew, and owf_doc with it, so the three libraries go together
+ * again.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 11
-#define OWF_LIB_VERS "3.11"
+#define OWF_LIB_REVISION 12
+#define OWF_LIB_VERS "3.12"
 #define OWF_LIB_DATE "15.11.2026"
 #define OWF_LIB_CALLS_H "owfwrite_calls.h"
 #include "owf_libbase.h"
