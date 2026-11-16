@@ -2037,9 +2037,89 @@ static int view_order(ob_project *p, const ob_table *t, const ob_view *v, sqlite
     return 1;
 }
 
+struct qplan;
+static int criterion(ob_project *p, struct qplan *pl, const char *ref, const ob_field *f, const char *heading,
+                     const char *text, sqlite3_str *s);
+
+int ob_view_form_set(ob_view *v, const char *field, int row, const char *text)
+{
+    int i;
+    if (row < 0 || row >= OB_FORM_OR || !field || !field[0]) return 0;
+    for (i = 0; i < v->ncrit; i++)
+        if (v->crit[i].row == row && same(v->crit[i].field, field)) break;
+    if (!text || !*skip_space(text)) {
+        if (i < v->ncrit) {
+            memmove(&v->crit[i], &v->crit[i + 1], (size_t)(v->ncrit - i - 1) * sizeof v->crit[0]);
+            v->ncrit--;
+        }
+        return 1;
+    }
+    if (i == v->ncrit) {
+        if (v->ncrit >= OB_FORM_CRIT) return 0;
+        v->ncrit++;
+        copy(v->crit[i].field, sizeof v->crit[i].field, field);
+        v->crit[i].row = row;
+    }
+    copy(v->crit[i].text, sizeof v->crit[i].text, text);
+    return 1;
+}
+
+const char *ob_view_form_get(const ob_view *v, const char *field, int row)
+{
+    int i;
+    for (i = 0; v && i < v->ncrit && i < OB_FORM_CRIT; i++)
+        if (v->crit[i].row == row && same(v->crit[i].field, field)) return v->crit[i].text;
+    return "";
+}
+
+void ob_view_form_clear(ob_view *v)
+{
+    v->ncrit = 0;
+    memset(v->crit, 0, sizeof v->crit);
+}
+
+int ob_view_filtered(const ob_view *v)
+{
+    return v && (v->op != OB_FILTER_NONE || v->ncrit > 0);
+}
+
+/* Filter by Form's criteria, after `join` (" WHERE " or " AND "): the
+ * rows' criteria joined by AND, the rows by OR, as a query's are. */
+static int form_where(ob_project *p, const ob_table *t, const ob_view *v, sqlite3_str *s, const char *join)
+{
+    int r, i, rows = 0;
+    if (!v || v->ncrit <= 0) return 1;
+    if (v->ncrit > OB_FORM_CRIT) return fail(p, "Filter by Form tests at most %d fields", OB_FORM_CRIT);
+    for (i = 0; i < v->ncrit; i++) {
+        if (v->crit[i].row < 0 || v->crit[i].row >= OB_FORM_OR) return fail(p, "Filter by Form has %d rows", OB_FORM_OR);
+        if (!field_named(t, v->crit[i].field)) return fail(p, "%s has no field %s", t->name, v->crit[i].field);
+    }
+    sqlite3_str_appendf(s, "%s(", join);
+    for (r = 0; r < OB_FORM_OR; r++) {
+        int n = 0;
+        for (i = 0; i < v->ncrit; i++) {
+            const ob_form_crit *c = &v->crit[i];
+            const ob_field *f;
+            char *ref;
+            int good;
+            if (c->row != r || !*skip_space(c->text)) continue;
+            f = field_named(t, c->field);
+            sqlite3_str_appendall(s, n ? " AND " : rows ? " OR (" : "(");
+            if (!(ref = sqlite3_mprintf("\"%w\"", f->name))) return fail(p, "Not enough memory");
+            good = criterion(p, NULL, ref, f, field_label(f), c->text, s);
+            sqlite3_free(ref);
+            if (!good) return 0;
+            n++;
+        }
+        if (n) { sqlite3_str_appendall(s, ")"); rows++; }
+    }
+    sqlite3_str_appendall(s, rows ? ")" : "1)");
+    return 1;
+}
+
 /* What a view's filter adds to a SELECT ... FROM table: its WHERE,
- * appended to s, the filter's value into *bind (?3; kind V_NULL when none).
- * 0 with the reason. */
+ * appended to s, the filter's value into *bind (?3; kind V_NULL when none),
+ * then Filter by Form's criteria. 0 with the reason. */
 static int view_where(ob_project *p, const ob_table *t, const ob_view *v, sqlite3_str *s, value *bind)
 {
     const ob_field *f;
@@ -2054,11 +2134,11 @@ static int view_where(ob_project *p, const ob_table *t, const ob_view *v, sqlite
         nc = holds_text(f->type) ? " COLLATE NOCASE" : "";
         switch (v->op) {
         case OB_FILTER_EMPTY:
-            sqlite3_str_appendf(s, " WHERE \"%w\" IS NULL", f->name);
+            sqlite3_str_appendf(s, " WHERE (\"%w\" IS NULL", f->name);
             if (holds_text(f->type)) sqlite3_str_appendf(s, " OR \"%w\" = ''", f->name);
             break;
         case OB_FILTER_NOT_EMPTY:
-            sqlite3_str_appendf(s, " WHERE \"%w\" IS NOT NULL", f->name);
+            sqlite3_str_appendf(s, " WHERE (\"%w\" IS NOT NULL", f->name);
             if (holds_text(f->type)) sqlite3_str_appendf(s, " AND \"%w\" <> ''", f->name);
             break;
         case OB_FILTER_CONTAINS:
@@ -2075,7 +2155,7 @@ static int view_where(ob_project *p, const ob_table *t, const ob_view *v, sqlite
             bind->text[o++] = '%';
             bind->text[o] = 0;
             bind->kind = V_TEXT;
-            sqlite3_str_appendf(s, " WHERE \"%w\" LIKE ?3 ESCAPE '\\'", f->name);
+            sqlite3_str_appendf(s, " WHERE (\"%w\" LIKE ?3 ESCAPE '\\'", f->name);
             break;
         }
         default: {
@@ -2088,12 +2168,13 @@ static int view_where(ob_project *p, const ob_table *t, const ob_view *v, sqlite
             if (!convert(&loose, v->value, bind, e, sizeof e)) return fail(p, "%s", e);
             if (bind->kind == V_NULL)
                 return fail(p, "%s: give a value to compare with, or use Is empty", field_label(f));
-            sqlite3_str_appendf(s, " WHERE \"%w\" %s ?3%s", f->name, ops[v->op], nc);
+            sqlite3_str_appendf(s, " WHERE (\"%w\" %s ?3%s", f->name, ops[v->op], nc);
             break;
         }
         }
+        sqlite3_str_appendall(s, ")");
     }
-    return 1;
+    return form_where(p, t, v, s, v && v->op != OB_FILTER_NONE ? " AND " : " WHERE ");
 }
 
 static int view_sql(ob_project *p, const ob_table *t, const ob_view *v, sqlite3_str *s, value *bind)
@@ -2122,7 +2203,7 @@ ob_int ob_view_total(ob_project *p, const char *table, const ob_view *v)
     char *sql;
     value b;
     ob_int n = -1;
-    if (!v || v->op == OB_FILTER_NONE) return ob_row_total(p, table);
+    if (!ob_view_filtered(v)) return ob_row_total(p, table);
     if (!(t = design(p, table))) return -1;
     s = sqlite3_str_new(NULL);
     sqlite3_str_appendf(s, "SELECT count(*) FROM \"%w\"", t->name);
@@ -2332,6 +2413,57 @@ int ob_children(ob_project *p, const char *table, ob_relation *out, int max)
         }
     free(all);
     return n < 0 ? -1 : k;
+}
+
+/* A subform's rows: r's table filtered on its Lookup Equals the record. */
+static void child_view(ob_view *v, const ob_relation *r, ob_int parent)
+{
+    ob_view_init(v);
+    snprintf(v->field, sizeof v->field, "%s", r->field);
+    v->op = OB_FILTER_EQUALS;
+    snprintf(v->value, sizeof v->value, "%lld", (long long)parent);
+}
+
+static int child_key_cb(void *user, ob_int key, int n, const char *const *v)
+{
+    (void)n;
+    (void)v;
+    *(ob_int *)user = key;
+    return 1;
+}
+
+ob_int ob_child_key(ob_project *p, const ob_relation *r, ob_int parent, ob_int pos)
+{
+    ob_view v;
+    ob_int key = -1;
+    if (!r || !r->table[0] || !r->field[0]) { fail(p, "No subform"); return -2; }
+    if (parent <= 0 || pos < 0) return -1;
+    child_view(&v, r, parent);
+    if (ob_view_rows(p, r->table, &v, pos, 1, child_key_cb, &key) < 0) return -2;
+    return key;
+}
+
+int ob_child_add(ob_project *p, const ob_relation *r, ob_int parent, int n, const char *const *fields,
+                 const char *const *values, ob_int *key)
+{
+    const char *f[OB_MAX_FIELDS], *v[OB_MAX_FIELDS];
+    char pk[24];
+    int i, k = 0;
+    if (!r || !r->table[0] || !r->field[0]) return fail(p, "No subform");
+    if (parent <= 0) return fail(p, "Save the record first: its rows in %s need its key", r->table);
+    if (n < 0 || n > OB_MAX_FIELDS) return fail(p, "Too many fields");
+    for (i = 0; i < n; i++) {
+        if (same(fields[i], r->field)) continue;     /* the link is the record's */
+        if (k >= OB_MAX_FIELDS - 1) return fail(p, "Too many fields");
+        f[k] = fields[i];
+        v[k] = values[i];
+        k++;
+    }
+    snprintf(pk, sizeof pk, "%lld", (long long)parent);
+    f[k] = r->field;
+    v[k] = pk;
+    k++;
+    return ob_row_add(p, r->table, k, f, v, key);
 }
 
 /* ---- CSV ---- */
@@ -3004,10 +3136,48 @@ void ob_query_remove_column(ob_query *q, int i)
     q->ncolumns--;
 }
 
+void ob_query_remove_join(ob_query *q, int i)
+{
+    if (i < 0 || i >= q->njoins) return;
+    memmove(&q->joins[i], &q->joins[i + 1], sizeof q->joins[0] * (size_t)(q->njoins - i - 1));
+    q->njoins--;
+}
+
+int ob_query_add_join(ob_query *q, const char *left, const char *lfield, const char *right, const char *rfield,
+                      ob_join kind)
+{
+    int i;
+    ob_qjoin *k;
+    if (!left || !lfield || !right || !rfield || !*left || !*lfield || !*right || !*rfield) return -1;
+    if (q->njoins < 0 || q->njoins >= OB_QUERY_JOINS || (unsigned)kind >= OB_JOINS || same(left, right)) return -1;
+    for (i = 0; i < q->njoins; i++) {
+        const ob_qjoin *o = &q->joins[i];
+        if ((same(o->left, left) && same(o->lfield, lfield) && same(o->right, right) && same(o->rfield, rfield))
+            || (same(o->left, right) && same(o->lfield, rfield) && same(o->right, left) && same(o->rfield, lfield)))
+            return -1;
+    }
+    k = &q->joins[q->njoins];
+    memset(k, 0, sizeof *k);
+    copy(k->left, sizeof k->left, left);
+    copy(k->lfield, sizeof k->lfield, lfield);
+    copy(k->right, sizeof k->right, right);
+    copy(k->rfield, sizeof k->rfield, rfield);
+    k->kind = kind;
+    return q->njoins++;
+}
+
+const char *ob_join_name(ob_join k)
+{
+    static const char *const names[OB_JOINS] = { "Inner", "Left", "Right" };
+    return (unsigned)k < OB_JOINS ? names[k] : "";
+}
+
 void ob_query_remove_table(ob_query *q, int i)
 {
     int c;
     if (i < 0 || i >= q->ntables) return;
+    for (c = q->njoins - 1; c >= 0; c--)
+        if (same(q->joins[c].left, q->tables[i]) || same(q->joins[c].right, q->tables[i])) ob_query_remove_join(q, c);
     for (c = q->ncolumns - 1; c >= 0; c--)
         if (q->columns[c].table[0] && same(q->columns[c].table, q->tables[i])) ob_query_remove_column(q, c);
     memmove(q->tables[i], q->tables[i + 1], OB_NAME_MAX * (size_t)(q->ntables - i - 1));
@@ -3153,6 +3323,7 @@ static int criterion(ob_project *p, qplan *pl, const char *ref, const ob_field *
     if (*v == '[') {
         size_t n = strlen(v);
         qparam *q;
+        if (!pl) return fail(p, "%s: Filter by Form can't ask a question: type the value", heading);
         if (v[n - 1] != ']' || n < 3) return fail(p, "%s: a question to ask is written in [ ], such as [Which town?]", heading);
         if (pl->nparams >= OB_QUERY_PARAMS) return fail(p, "A query asks at most %d questions", OB_QUERY_PARAMS);
         q = &pl->params[pl->nparams++];
@@ -3275,6 +3446,60 @@ static int add_out(ob_project *p, qplan *pl, const char *heading, int type)
     return 1;
 }
 
+/* The table of a join's side: its index in the query; 0 with the reason. */
+static int join_side(ob_project *p, const ob_query *q, const ob_table *tabs, const char *t, const char *f, int *ti)
+{
+    int i;
+    for (i = 0; i < q->ntables && !same(tabs[i].name, t); i++) ;
+    if (i == q->ntables) return fail(p, "%s: a join uses %s, which isn't in the query", qname(q), t);
+    if (ob_table_find_field(&tabs[i], f) < 0) return fail(p, "%s: a join uses %s.%s, which isn't there", qname(q), t, f);
+    *ti = i;
+    return 1;
+}
+
+/* FROM's joins as drawn: from the first table, each next one that a join
+ * reaches from the tables placed so far, ON every join between it and them;
+ * the first join's kind, turned round when the new table is its left side. */
+static int joins_from(ob_project *p, const ob_query *q, const ob_table *tabs, sqlite3_str *from)
+{
+    int placed[OB_QUERY_TABLES] = { 0 }, jl[OB_QUERY_JOINS], jr[OB_QUERY_JOINS];
+    int n, j, t;
+    if (q->njoins < 0 || q->njoins > OB_QUERY_JOINS) return fail(p, "%s: too many joins", qname(q));
+    for (j = 0; j < q->njoins; j++) {
+        const ob_qjoin *k = &q->joins[j];
+        if ((unsigned)k->kind >= OB_JOINS) return fail(p, "%s: a join of no kind", qname(q));
+        if (!join_side(p, q, tabs, k->left, k->lfield, &jl[j]) || !join_side(p, q, tabs, k->right, k->rfield, &jr[j]))
+            return 0;
+        if (jl[j] == jr[j]) return fail(p, "%s: a join goes from %s to itself", qname(q), tabs[jl[j]].name);
+    }
+    placed[0] = 1;
+    for (n = 1; n < q->ntables; n++) {
+        int pick = -1, first = -1, any = 0;
+        ob_join kind;
+        for (t = 1; t < q->ntables && pick < 0; t++) {
+            if (placed[t]) continue;
+            for (j = 0; j < q->njoins; j++)
+                if ((jl[j] == t && placed[jr[j]]) || (jr[j] == t && placed[jl[j]])) { pick = t; first = j; break; }
+        }
+        if (pick < 0) {
+            for (t = 1; placed[t]; t++) ;
+            return fail(p, "%s isn't joined to the query's other tables: draw a join to it", tabs[t].name);
+        }
+        kind = q->joins[first].kind;
+        if (kind != OB_JOIN_INNER && jl[first] == pick) kind = kind == OB_JOIN_LEFT ? OB_JOIN_RIGHT : OB_JOIN_LEFT;
+        sqlite3_str_appendf(from, " %sJOIN \"%w\" ON ",
+                            kind == OB_JOIN_LEFT ? "LEFT " : kind == OB_JOIN_RIGHT ? "RIGHT " : "", tabs[pick].name);
+        for (j = 0; j < q->njoins; j++)
+            if ((jl[j] == pick && placed[jr[j]]) || (jr[j] == pick && placed[jl[j]])) {
+                sqlite3_str_appendf(from, "%s\"%w\".\"%w\" = \"%w\".\"%w\"", any ? " AND " : "",
+                                    tabs[jl[j]].name, q->joins[j].lfield, tabs[jr[j]].name, q->joins[j].rfield);
+                any = 1;
+            }
+        placed[pick] = 1;
+    }
+    return 1;
+}
+
 static qplan *plan_make(ob_project *p, const ob_query *q)
 {
     qplan *pl = calloc(1, sizeof *pl);
@@ -3309,7 +3534,9 @@ static qplan *plan_make(ob_project *p, const ob_query *q)
     order = sqlite3_str_new(NULL);
     /* FROM, each table joined to one before it by a relationship */
     sqlite3_str_appendf(from, " FROM \"%w\"", tabs[0].name);
-    if (q->ntables > 1) {
+    if (q->ntables > 1 && q->njoins > 0) {
+        if (!joins_from(p, q, tabs, from)) goto bad;
+    } else if (q->ntables > 1) {
         nrels = ob_relations(p, NULL, 0);
         if (nrels < 0) goto bad;
         rels = calloc((size_t)(nrels ? nrels : 1), sizeof *rels);
@@ -3518,6 +3745,39 @@ int ob_query_check(ob_project *p, const ob_query *q)
     if (!pl) return 0;
     plan_free(pl);
     return ok(p);
+}
+
+static int joined(const ob_query *q, const char *a, const char *b)
+{
+    int i;
+    for (i = 0; i < q->njoins; i++)
+        if ((same(q->joins[i].left, a) && same(q->joins[i].right, b)) || (same(q->joins[i].left, b) && same(q->joins[i].right, a)))
+            return 1;
+    return 0;
+}
+
+int ob_query_relation_joins(ob_project *p, ob_query *q)
+{
+    static ob_table pt;
+    ob_relation *rels;
+    int n, i, j, r, added = 0;
+    if ((n = ob_relations(p, NULL, 0)) < 0) return -1;
+    if (!(rels = calloc((size_t)(n ? n : 1), sizeof *rels))) { fail(p, "Not enough memory"); return -1; }
+    n = ob_relations(p, rels, n);
+    for (i = 0; i < q->ntables; i++)
+        for (j = 0; j < q->ntables; j++) {
+            if (i == j || joined(q, q->tables[i], q->tables[j])) continue;
+            for (r = 0; r < n; r++) {
+                const char *key;
+                if (!same(rels[r].table, q->tables[i]) || !same(rels[r].lookup, q->tables[j])) continue;
+                if (!ob_table_get(p, rels[r].lookup, &pt) || !(key = counter_of(&pt))) continue;
+                if (ob_query_add_join(q, q->tables[i], rels[r].field, q->tables[j], key, OB_JOIN_INNER) >= 0) added++;
+                break;
+            }
+        }
+    free(rels);
+    ok(p);
+    return added;
 }
 
 int ob_query_sql(ob_project *p, const ob_query *q, char *out, size_t size)
@@ -3731,7 +3991,7 @@ static char *grid_text(const ob_query *q)
 {
     sqlite3_str *s = sqlite3_str_new(NULL);
     int i, r;
-    sqlite3_str_appendall(s, "oadb query 1\n");
+    sqlite3_str_appendall(s, q->njoins > 0 ? "oadb query 2\n" : "oadb query 1\n");
     for (i = 0; i < q->ntables; i++) {
         sqlite3_str_appendall(s, "table");
         put_escaped(s, q->tables[i]);
@@ -3747,6 +4007,15 @@ static char *grid_text(const ob_query *q)
         sqlite3_str_appendf(s, "\t%d\t%d\t%d", c->show ? 1 : 0, c->sort, (int)c->total);
         for (r = 0; r < OB_QUERY_OR; r++) put_escaped(s, c->criteria[r]);
         sqlite3_str_appendall(s, "\n");
+    }
+    for (i = 0; i < q->njoins && i < OB_QUERY_JOINS; i++) {
+        const ob_qjoin *k = &q->joins[i];
+        sqlite3_str_appendall(s, "join");
+        put_escaped(s, k->left);
+        put_escaped(s, k->lfield);
+        put_escaped(s, k->right);
+        put_escaped(s, k->rfield);
+        sqlite3_str_appendf(s, "\t%d\n", (int)k->kind);
     }
     return sqlite3_str_finish(s);
 }
@@ -3773,7 +4042,7 @@ static int grid_read(const char *text, ob_query *q)
 {
     const char *s = text;
     char word[16], num[16];
-    if (strncmp(s, "oadb query 1\n", 13)) return 0;
+    if (strncmp(s, "oadb query 1\n", 13) && strncmp(s, "oadb query 2\n", 13)) return 0;
     s += 13;
     while (*s) {
         grid_cell(&s, word, sizeof word);
@@ -3793,6 +4062,15 @@ static int grid_read(const char *text, ob_query *q)
             grid_cell(&s, num, sizeof num); c->total = (ob_total)atoi(num);
             if ((unsigned)c->total >= OB_TOTALS) c->total = OB_TOTAL_NONE;
             for (r = 0; r < OB_QUERY_OR; r++) grid_cell(&s, c->criteria[r], sizeof c->criteria[r]);
+        } else if (!strcmp(word, "join") && q->njoins < OB_QUERY_JOINS) {
+            ob_qjoin *k = &q->joins[q->njoins++];
+            memset(k, 0, sizeof *k);
+            grid_cell(&s, k->left, sizeof k->left);
+            grid_cell(&s, k->lfield, sizeof k->lfield);
+            grid_cell(&s, k->right, sizeof k->right);
+            grid_cell(&s, k->rfield, sizeof k->rfield);
+            grid_cell(&s, num, sizeof num); k->kind = (ob_join)atoi(num);
+            if ((unsigned)k->kind >= OB_JOINS) k->kind = OB_JOIN_INNER;
         }
         while (*s && *s != '\n') s++;
         if (*s == '\n') s++;
@@ -3869,4 +4147,111 @@ int ob_query_delete(ob_project *p, const char *name)
 {
     if (!query_exists(p, name)) return fail(p, "There is no query named %s", name);
     return runf(p, "DELETE FROM oadb_queries WHERE name = %Q", name) && ok(p);
+}
+
+/* ---- Reports kept in the project (oadb_reports; include/openbase_report.h) ----
+ * The core keeps each report's text under its name and never reads it: ob_report.c writes and parses
+ * it. Names are a query's kind of name, and no table has one. */
+
+#define REPORTS_SQL "CREATE TABLE IF NOT EXISTS oadb_reports(name TEXT PRIMARY KEY COLLATE NOCASE, def TEXT NOT NULL)"
+
+static char report_name_buf[OB_NAME_MAX];  /* ob_report_name's answer: one task, one at a time */
+
+static int has_reports(ob_project *p)
+{
+    return scalar(p, "SELECT count(*) FROM sqlite_schema WHERE name = 'oadb_reports'", 0) == 1;
+}
+
+static int report_exists(ob_project *p, const char *name)
+{
+    sqlite3_stmt *st;
+    int found;
+    if (!has_reports(p) || !(st = prep(p, "SELECT 1 FROM oadb_reports WHERE name = ?1"))) return 0;
+    sqlite3_bind_text(st, 1, name, -1, SQLITE_TRANSIENT);
+    found = sqlite3_step(st) == SQLITE_ROW;
+    sqlite3_finalize(st);
+    return found;
+}
+
+static int report_name_ok(ob_project *p, const char *name, const char *old)
+{
+    char why[OB_ERR_MAX];
+    if (!name_ok(name, why, sizeof why, "report")) return fail(p, "%s", why);
+    if (table_exists(p, name)) return fail(p, "There is a table named %s: give the report another name", name);
+    if (old && !same(old, name) && report_exists(p, name))
+        return fail(p, "There is a report named %s already", name);
+    return 1;
+}
+
+int ob_report_count(ob_project *p)
+{
+    return has_reports(p) ? (int)scalar(p, "SELECT count(*) FROM oadb_reports", 0) : 0;
+}
+
+const char *ob_report_name(ob_project *p, int i)
+{
+    sqlite3_stmt *st;
+    const char *r = NULL;
+    if (i < 0 || !has_reports(p)) return NULL;
+    if (!(st = prep(p, "SELECT name FROM oadb_reports ORDER BY name COLLATE NOCASE LIMIT 1 OFFSET ?1"))) return NULL;
+    sqlite3_bind_int(st, 1, i);
+    if (sqlite3_step(st) == SQLITE_ROW) {
+        copy(report_name_buf, sizeof report_name_buf, (const char *)sqlite3_column_text(st, 0));
+        r = report_name_buf;
+    }
+    sqlite3_finalize(st);
+    return r;
+}
+
+int ob_report_get_text(ob_project *p, const char *name, char *out, size_t size)
+{
+    sqlite3_stmt *st;
+    int rc = 0;
+    if (size) out[0] = 0;
+    if (!report_exists(p, name)) return fail(p, "There is no report named %s", name);
+    if (!(st = prep(p, "SELECT def FROM oadb_reports WHERE name = ?1"))) return 0;
+    sqlite3_bind_text(st, 1, name, -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(st) == SQLITE_ROW) {
+        const char *def = (const char *)sqlite3_column_text(st, 0);
+        size_t n = def ? strlen(def) : 0;
+        if (n < size) { memcpy(out, def ? def : "", n + 1); rc = ok(p); }
+        else rc = fail(p, "Report %s is too big to read", name);
+    } else {
+        rc = fail(p, "There is no report named %s", name);
+    }
+    sqlite3_finalize(st);
+    return rc;
+}
+
+int ob_report_put_text(ob_project *p, const char *name, const char *text)
+{
+    sqlite3_stmt *st;
+    int rc;
+    if (!report_name_ok(p, name, NULL)) return 0;
+    if (!has_reports(p) && !run(p, REPORTS_SQL)) return 0;
+    /* replacing keeps the name as it was first given */
+    if (report_exists(p, name)) {
+        if (!(st = prep(p, "UPDATE oadb_reports SET def = ?2 WHERE name = ?1"))) return 0;
+    } else if (!(st = prep(p, "INSERT INTO oadb_reports(name, def) VALUES(?1, ?2)"))) {
+        return 0;
+    }
+    sqlite3_bind_text(st, 1, name, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 2, text ? text : "", -1, SQLITE_TRANSIENT);
+    rc = sqlite3_step(st);
+    sqlite3_finalize(st);
+    if (rc != SQLITE_DONE) return sql_fail(p, NULL, rc);
+    return ok(p);
+}
+
+int ob_report_rename(ob_project *p, const char *old_name, const char *new_name)
+{
+    if (!report_exists(p, old_name)) return fail(p, "There is no report named %s", old_name);
+    if (!report_name_ok(p, new_name, old_name)) return 0;
+    return runf(p, "UPDATE oadb_reports SET name = %Q WHERE name = %Q", new_name, old_name) && ok(p);
+}
+
+int ob_report_delete(ob_project *p, const char *name)
+{
+    if (!report_exists(p, name)) return fail(p, "There is no report named %s", name);
+    return runf(p, "DELETE FROM oadb_reports WHERE name = %Q", name) && ok(p);
 }

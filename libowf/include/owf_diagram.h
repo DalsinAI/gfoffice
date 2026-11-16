@@ -218,6 +218,13 @@ int owf_outline_write(const owf_ditem *items, int n, owf_outline_kind kind, cons
  * page; OWF_ERR_MEMORY. */
 int owf_dpdf_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
 
+/* ---- EPS ----
+ * One page as Encapsulated PostScript (EPSF-3.0, level 2), drawn as the PDF draws it: the same shapes, lines and
+ * standard-font text (re-encoded to WinAnsiEncoding), its BoundingBox the page's contents with 10 pixels round. */
+
+/* page as EPS, into owf_malloc'd *data. OWF_OK; OWF_ERR_FORMAT when there is no such page; OWF_ERR_MEMORY. */
+int owf_deps_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
+
 #ifdef __cplusplus
 }
 #endif
