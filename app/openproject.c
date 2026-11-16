@@ -1071,8 +1071,6 @@ static const char *cal_name(int cal)
     return cal >= 0 && cal < p->ncalendars && p->calendars[cal].name ? p->calendars[cal].name : "Standard";
 }
 
-/* A calendar by the name typed (default: def's); one not in the plan is made, a copy of the plan's, when
- * the user says so (make set). -1 when cancelled. */
 /* Tools > Set Baseline... and Clear Baseline...: which one, Baseline (0) or Baseline 1 to 10, for the whole plan. */
 static void baseline_n(int clear)
 {
@@ -1095,6 +1093,8 @@ static void baseline_n(int clear)
     set_status(done);
 }
 
+/* A calendar by the name typed (default: def's); one not in the plan is made, a copy of the plan's, when
+ * the user says so (make set). -1 when cancelled. */
 static int ask_calendar(const char *title, int def, int make)
 {
     char name[64], msg[160];

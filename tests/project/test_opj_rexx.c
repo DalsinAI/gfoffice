@@ -479,6 +479,32 @@ static void test_baselines(void)
     CHECK_S(ok("BASELINES"), "0 3 10");
 }
 
+/* REPLACE: Assign Resources' Replace. */
+static void test_replace(void)
+{
+    opj_doc_free(rx.doc);
+    rx.doc = opj_doc_new(NULL, AT(16, 8, 0));
+    CHECK(rx.doc != NULL);
+    if (!rx.doc) return;
+    ok("ADDTASK Dig DURATION 2d");
+    ok("ADDRESOURCE Dale");
+    ok("ADDRESOURCE Bob");
+    ok("ADDRESOURCE Ann");
+    ok("ASSIGN 1 Dale UNITS=50");
+    ok("REPLACE 1 Dale Bob");
+    CHECK_S(ok("GETCELL 1 Resources"), "Bob[50%]");
+    ok("REPLACE 1 Bob Ann UNITS=75%");
+    CHECK_S(ok("GETCELL 1 Resources"), "Ann[75%]");
+    CHECK_N(rx_do("REPLACE 1 Bob Dale"), OPJ_RX_ERROR);                    /* Bob isn't on it */
+    CHECK_N(rx_do("REPLACE 1 Ann Nobody"), OPJ_RX_ERROR);
+    CHECK_S(rx.lasterror, "REPLACE: no resource Nobody");
+    CHECK_N(rx_do("REPLACE 1 Nobody Ann"), OPJ_RX_ERROR);
+    CHECK_S(rx.lasterror, "REPLACE: no resource Nobody");
+    CHECK_N(rx_do("REPLACE 1 Ann Dale UNITS=lots"), OPJ_RX_ERROR);
+    ok("UNDO");
+    CHECK_S(ok("GETCELL 1 Resources"), "Bob[50%]");
+}
+
 int main(void)
 {
     if (!own_folder()) {
@@ -497,6 +523,7 @@ int main(void)
     test_calendars();
     test_update();
     test_baselines();
+    test_replace();
     if (!rx.doc) return 1;
     CHECK_N(opj_rexx_format("A.XML"), OWF_PFILE_MSPDI);
     CHECK_N(opj_rexx_format("plan.Csv"), OWF_PFILE_CSV);
