@@ -881,6 +881,62 @@ static void test_task_usage(void)
     opj_doc_free(doc);
 }
 
+/* The Resource Graph, from test_usage's plan: Dale 200% on Monday and Tuesday (Plan and Build), 100% on
+ * Wednesday (Build); Bob 50% on Monday and Tuesday. */
+static void test_graph(void)
+{
+    opj_doc *doc = three();
+    opj_view v;
+    oldraw_rect in, ov;
+    oldraw *d;
+    unsigned long bg;
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_RESOURCES, "Dale,Bob[50%]"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_RESOURCES, "Dale"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_PREDECESSORS, ""), OWF_OK);
+    CHECK_N(opj_graph_percent(doc, 0, AT(16, 0, 0), AT(17, 0, 0)), 200);
+    CHECK_N(opj_graph_percent(doc, 0, AT(18, 0, 0), AT(19, 0, 0)), 100);
+    CHECK_N(opj_graph_percent(doc, 0, AT(19, 0, 0), AT(20, 0, 0)), 0);
+    CHECK_N(opj_graph_percent(doc, 1, AT(16, 0, 0), AT(17, 0, 0)), 50);
+    CHECK_N(opj_graph_percent(doc, 0, AT(21, 0, 0), AT(23, 0, 0)), -1);   /* the weekend: no working time */
+    CHECK_N(opj_graph_percent(doc, 0, AT(17, 0, 0), AT(16, 0, 0)), -1);
+    CHECK_N(opj_graph_percent(doc, 5, AT(16, 0, 0), AT(17, 0, 0)), -1);
+    CHECK_N(opj_graph_percent(doc, 0, AT(16, 0, 0), AT(23, 0, 0)), 100);  /* the week: 40h of 40h */
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    CHECK_N(opj_graph_scale(&v, doc, 0), 200);
+    CHECK_N(opj_graph_scale(&v, doc, 1), 100);
+    /* Dale's Monday: 0-100% blue, 100-200% red, the plot from y 48 down to 184 */
+    CHECK(opj_graph_bar(&v, doc, 0, AT(16, 10, 0), 200, &in, &ov));
+    CHECK_N(in.x, 289); CHECK_N(in.w, 22);
+    CHECK_N(in.y, 116); CHECK_N(in.h, 68);
+    CHECK_N(ov.y, 48); CHECK_N(ov.h, 68);
+    CHECK(opj_graph_bar(&v, doc, 0, AT(18, 0, 0), 200, &in, &ov));   /* Wednesday: at its max */
+    CHECK_N(in.y, 116); CHECK_N(ov.h, 0);
+    CHECK(!opj_graph_bar(&v, doc, 0, AT(19, 0, 0), 200, &in, &ov));  /* Thursday: nothing */
+    CHECK(opj_graph_bar(&v, doc, 1, AT(16, 0, 0), 100, &in, &ov));   /* Bob: half */
+    CHECK_N(in.y, 116); CHECK_N(in.h, 68); CHECK_N(ov.h, 0);
+    d = cur = oldraw_new(&ops, NULL, W, H, NULL);
+    CHECK(d != NULL);
+    bg = oldraw_resolve(d, OLDRAW_PEN(OLDRAW_PEN_BACKGROUND)) & 0xFFFFFFUL;
+    memset(px, 0, sizeof px);
+    ntexts = 0;
+    opj_graph_draw(d, &v, doc, 0, NULL);
+    CHECK_X(px[100][300], 0xD03030);                       /* Monday over */
+    CHECK_X(px[150][300], 0x4A7BD0);                       /* and within */
+    CHECK_X(px[100][340], bg);                             /* Wednesday: not over */
+    CHECK_X(px[150][340], 0x4A7BD0);
+    CHECK_X(px[116][500], 0x202020);                       /* the max units line */
+    CHECK_X(px[184][500], 0x202020);                       /* 0% */
+    CHECK_X(px[150][500], bg);
+    CHECK(drew("Dale") && drew("Peak: 200%") && drew("Max Units: 100%") && drew("200%") && drew("0%"));
+    CHECK(drew("16 Nov '26"));
+    ntexts = 0;
+    opj_graph_draw(d, &v, doc, 9, NULL);
+    CHECK(drew("No resource: Resources... adds them"));
+    CHECK(opj_edit_refused(OPJ_VIEW_GRAPH, OPJ_EDIT_INFO) != NULL);
+    oldraw_free(d);
+    opj_doc_free(doc);
+}
+
 static int has_bytes(const unsigned char *data, size_t n, const char *what)
 {
     size_t k = strlen(what), i;
@@ -1185,6 +1241,7 @@ int main(void)
     test_usage();
     test_usage_edits();
     test_task_usage();
+    test_graph();
     test_columns();
     test_task_info();
     test_network();

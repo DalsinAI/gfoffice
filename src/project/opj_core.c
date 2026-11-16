@@ -935,6 +935,22 @@ owf_ptime opj_period_next(int zoom, owf_ptime start)
     }
 }
 
+long opj_graph_percent(const opj_doc *doc, int resource, owf_ptime from, owf_ptime to)
+{
+    const owf_project *p;
+    const owf_presource *r;
+    long work, avail;
+    if (!doc || resource < 0 || resource >= doc->plan->nresources || to <= from || !doc->plan->ncalendars) return -1;
+    p = doc->plan;
+    r = &p->resources[resource];
+    if (r->type != OWF_RES_WORK) return -1;
+    avail = owf_pcal_work(&p->calendars[r->calendar >= 0 && r->calendar < p->ncalendars ? r->calendar : p->calendar],
+                          from, to);
+    if (avail <= 0) return -1;
+    work = owf_presource_work(p, resource, from, to);
+    return work / avail * 100 + work % avail * 100 / avail;   /* no overflow at 32 bits */
+}
+
 void opj_task_usage_text(const opj_doc *doc, int task, int assign, owf_ptime from, owf_ptime to, char *out,
                          size_t size)
 {

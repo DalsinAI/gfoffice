@@ -89,6 +89,14 @@ the next PR and only wires windows, menus and requesters to these calls.
   assignments' and its subtasks' work and is shaded. Its table (ID, Task Name, Work) is as wide as
   Resource Usage's and it shares the same view fields. View > Task Usage (K, or ARexx `VIEW TASKUSAGE`)
   shows it; it is read only, as Resource Usage is (`opj_edit_refused` with `OPJ_VIEW_TASK_USAGE`).
+- **The Resource Graph** (`opj_graph_draw`), MS Project's: one work resource's allocation in each
+  period of the timescale's lower tier, as a bar of percent (its work there over its calendar's working
+  time there, `opj_graph_percent`): blue up to its max units, red above, with its percent over the bar
+  where the period is wide enough. A dark line marks its max units; the scale runs from 0 to
+  `opj_graph_scale` (its peak in the periods shown or its max units, at least 100%, rounded up to 50).
+  The table's place holds the resource's name, its peak and its max units, with the scale's ends beside
+  the chart. View > Resource Graph (H, or ARexx `VIEW GRAPH`) shows it; up and down choose the resource.
+  It is read only.
 - **The Network Diagram** (`src/project/opj_network.c`), MS Project's: a box for every task that isn't
   a summary, 160 pixels wide and four rows high, holding its name (bold), its ID and duration, its start
   and its finish. A box stands in the column one past its furthest predecessor's (tasks with none in
