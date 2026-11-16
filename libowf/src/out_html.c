@@ -71,7 +71,7 @@ static void put_base64(owf_buf *out, const unsigned char *d, size_t n)
 static void put_run(owf_buf *out, const owf_doc *doc, const owf_run *run, owf_report *report)
 {
     const owf_charfmt *f = &run->fmt;
-    int span = f->font >= 0 || f->size || f->colour != OWF_COLOUR_AUTO;
+    int span = f->font >= 0 || f->size || f->colour != OWF_COLOUR_AUTO || (f->flags & OWF_HIDDEN);
 
     if (span) {
         owf_buf_puts(out, "<span style=\"");
@@ -87,6 +87,8 @@ static void put_run(owf_buf *out, const owf_doc *doc, const owf_run *run, owf_re
         }
         if (f->colour != OWF_COLOUR_AUTO)
             owf_buf_printf(out, "color: #%06lx; ", f->colour & 0xFFFFFFUL);
+        if (f->flags & OWF_HIDDEN)
+            owf_buf_puts(out, "display: none; ");     /* 1.14: hidden text, kept but not shown */
         if (!out->failed)
             out->length -= 2;   /* the last "; " */
         owf_buf_puts(out, "\">");

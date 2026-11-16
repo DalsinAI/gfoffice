@@ -195,6 +195,73 @@ static void test_pdf_writer(void)
     owf_pdf_free(pdf);
 }
 
+/* whether the pixel centre (px + 0.5, py + 0.5) is inside the polygon, even-odd, doubled to stay whole */
+static int inside(const int *xy, int n, int px, int py)
+{
+    int i, in = 0;
+    long sx = px * 2 + 1, sy = py * 2 + 1;
+    for (i = 0; i < n; i++) {
+        long x0 = xy[i * 2] * 2L, y0 = xy[i * 2 + 1] * 2L, x1 = xy[((i + 1) % n) * 2] * 2L,
+             y1 = xy[((i + 1) % n) * 2 + 1] * 2L;
+        if ((y0 > sy) != (y1 > sy) && sx < x0 + (sy - y0) * (x1 - x0) / (y1 - y0)) in = !in;
+    }
+    return in;
+}
+
+/* the screen's bands (opr_gradient_band) painted in order onto a 40 x 20 grid */
+static void paint_bands(const int *outline, int n, int kind, int angle, unsigned long grid[20][40])
+{
+    int band, k, x, y, pts[2 * (OL_MAX_SHAPE_POINTS + 40)];
+    unsigned long colour;
+    for (y = 0; y < 20; y++)
+        for (x = 0; x < 40; x++) grid[y][x] = 0x1000000UL;          /* nothing */
+    for (band = 0; band < 16; band++) {
+        k = opr_gradient_band(outline, n, 0, 0, 40, 20, kind, angle, 0x000000, 0xFFFFFF, band, 16, pts,
+                              OL_MAX_SHAPE_POINTS + 40, &colour);
+        CHECK(k >= 0, "a band");
+        for (y = 0; y < 20; y++)
+            for (x = 0; x < 40; x++)
+                if (k >= 3 && inside(pts, k, x, y)) grid[y][x] = colour;
+    }
+}
+
+static void test_screen_bands(void)
+{
+    static const int box[8] = {0, 0, 40, 0, 40, 20, 0, 20};
+    static const int tri[6] = {0, 20, 20, 0, 40, 20};
+    unsigned long grid[20][40];
+    int x, y, covered = 1, rising = 1, outside_empty = 1, pts[16];
+    unsigned long colour;
+    paint_bands(box, 4, OPR_GRADIENT_LINEAR, 0, grid);
+    for (y = 0; y < 20; y++)
+        for (x = 0; x < 40; x++) {
+            if (grid[y][x] & 0x1000000UL) covered = 0;
+            if (x && grid[y][x] < grid[y][x - 1]) rising = 0;
+        }
+    CHECK(covered, "linear bands cover the whole box, no gaps");
+    CHECK(rising, "left to right: darker to lighter");
+    CHECK(grid[10][0] < 0x101010 && grid[10][39] > 0xEFEFEF, "black at the left, white at the right");
+    paint_bands(box, 4, OPR_GRADIENT_LINEAR, 900, grid);
+    CHECK(grid[19][20] < 0x101010 && grid[0][20] > 0xEFEFEF, "900: from the bottom up");
+    paint_bands(tri, 3, OPR_GRADIENT_LINEAR, 0, grid);
+    for (y = 0; y < 20; y++)
+        for (x = 0; x < 40; x++)
+            if (!inside(tri, 3, x, y) && !(grid[y][x] & 0x1000000UL)) outside_empty = 0;
+    CHECK(outside_empty, "bands stay inside a triangle's outline");
+    CHECK(!(grid[18][20] & 0x1000000UL), "and fill it");
+    paint_bands(box, 4, OPR_GRADIENT_RADIAL, 0, grid);
+    covered = 1;
+    for (y = 0; y < 20; y++)
+        for (x = 0; x < 40; x++)
+            if (grid[y][x] & 0x1000000UL) covered = 0;
+    CHECK(covered, "radial rings cover the whole box");
+    CHECK(grid[10][20] < 0x202020 && grid[0][0] > 0xD0D0D0, "radial: dark centre, light corners");
+    CHECK(opr_gradient_band(box, 4, 0, 0, 40, 20, OPR_GRADIENT_LINEAR, 0, 0, 0xFFFFFF, 0, 16, pts, 2, &colour) == -1,
+          "too little room: -1");
+    CHECK(opr_gradient_band(box, 2, 0, 0, 40, 20, OPR_GRADIENT_LINEAR, 0, 0, 0xFFFFFF, 0, 16, pts, 8, &colour) == 0,
+          "not an outline: nothing");
+}
+
 int main(void)
 {
     owf_deck *deck = NULL;
@@ -205,6 +272,7 @@ int main(void)
     }
     owf_deck_free(deck);
     test_pdf_writer();
+    test_screen_bands();
     printf("gradient: %d checks, %d failed\n", checks, failures);
     return failures != 0;
 }

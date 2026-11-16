@@ -1,12 +1,12 @@
 /*
- * GFOpenPublisher's mail merge on the shared page model (src/pub/opp_merge.c).
+ * GFOpenPressmaster's mail merge on the shared page model (src/pub/opp_merge.c).
  * The data source is the suite's merge table (include/ow_merge.h), the same
  * one GFOpenWrite reads. A merge field is a field run (OWF_RUN_FIELD,
  * OWF_FIELD_MERGE) in a frame's text: its href is the column, its text the
  * value shown. MIT, Copyright (c) 2026 AmiCradle Team.
  */
-#ifndef OPENPUBLISHER_MERGE_H
-#define OPENPUBLISHER_MERGE_H
+#ifndef OPENPRESSMASTER_MERGE_H
+#define OPENPRESSMASTER_MERGE_H
 
 #include "owf_deck.h"
 #include "ow_merge.h"

@@ -1,4 +1,6 @@
-# GFOpenPublisher against Microsoft Publisher 2021: score
+# GFOpenPressmaster against Microsoft Publisher 2021: score
+
+GFOpenPressmaster was renamed from GFOpenPublisher on 16 November 2026 (0.3.31). Rows before that date use the old name.
 
 The comparator is Microsoft Publisher 2021, the last perpetual desktop release. The score is the workflow-weighted estimate used by the 9 November gap analysis (docs/gfoffice/PARITY-GAPS-2026-11-09.md). It asks whether an ordinary user can finish Publisher's documented workflow, with editing, save, reload and Undo all working. A feature that only imports or displays gets less credit than one that edits, saves and reloads. Only code merged on main is scored. The plan is teams/team2/designs/GFOPENPUBLISHER-PARITY-PLAN-20261114.md in the team notes, and the .pub facts are in docs/gfoffice/PUB-FORMAT.md.
 
@@ -30,7 +32,7 @@ Libraries that are merged but not yet behind a menu are not scored: the compound
 | Find, Replace, clipboard | Done | Wrapped Find, Replace All, FTXT and object clipboard |
 | Spelling | Gap | Not hooked to the suite speller yet |
 | PDF, print, ODP save | Done | ODP save and reload; PDF; print |
-| ARexx | Done | Port GFOPENPUBLISHER, return codes 0/5/10/20 |
+| ARexx | Done | Port GFOPENPRESSMASTER (GFOPENPUBLISHER still answers for old scripts), return codes 0/5/10/20 |
 | PageStream import | Gap | No sample documents yet |
 
 ## Waiting to merge (not scored)

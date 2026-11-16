@@ -56,7 +56,11 @@ enum {
     OWF_UNDERLINE = 1 << 2,
     OWF_STRIKE = 1 << 3,
     OWF_SUPER = 1 << 4,
-    OWF_SUB = 1 << 5
+    OWF_SUB = 1 << 5,
+    /* 1.14: hidden text (DOCX w:vanish, ODF text:display="none", RTF \v): kept and saved; GFOpenWrite's
+     * layout leaves it out unless the view shows it (OW_LAYOUT_SHOW_HIDDEN); PDF and Markdown leave it out,
+     * HTML keeps it with display: none */
+    OWF_HIDDEN = 1 << 6
 };
 
 #define OWF_COLOUR_AUTO 0xFFFFFFFFUL

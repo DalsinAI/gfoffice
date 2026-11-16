@@ -211,6 +211,8 @@ static void put_text_props(owf_buf *out, const owf_doc *doc, const owf_charfmt *
                           " style:text-underline-color=\"font-color\"");
     if (f->flags & OWF_STRIKE)
         owf_buf_puts(out, " style:text-line-through-style=\"solid\"");
+    if (f->flags & OWF_HIDDEN)
+        owf_buf_puts(out, " text:display=\"none\"");   /* 1.14 */
     if (f->flags & OWF_SUPER)
         owf_buf_puts(out, " style:text-position=\"super 58%\"");
     else if (f->flags & OWF_SUB)

@@ -1,4 +1,4 @@
-# GFOpenPublisher format lab (docs/gfoffice/PUB-FORMAT.md). MIT, Copyright (c) 2026 AmiCradle Team.
+# GFOpenPressmaster format lab (docs/gfoffice/PUB-FORMAT.md). MIT, Copyright (c) 2026 AmiCradle Team.
 import sys, struct
 def chunks(b):
     if b[:8] != b'CHNKINK ': return None

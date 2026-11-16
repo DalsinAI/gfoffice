@@ -72,8 +72,8 @@ for f in $OWFSRC; do
     */owf_book.c | */owf_cfb.c | */owf_xlfunc.c | */in_xls.c | */out_csv.c | */owf_chart.c | */owf_chartbook.c | */owf_chartodf.c) ;;
     */owf_booknum.c | */owf_xlformula.c | */in_xlsx.c | */out_xlsx.c | */in_ods.c | */out_ods.c | */in_csv.c) ;;
     */owf_deck.c | */in_odp.c | */out_odp.c | */in_pptx.c | */owf_pdf.c | */owf_pdffonts.c) ;;
-    */in_pub.c) ;;   # GFOpenPublisher's .pub reader: it needs owf_cfb.c
-    */owf_cfbw.c | */out_pub.c) ;;   # GFOpenPublisher's .pub save and its compound file writer
+    */in_pub.c) ;;   # GFOpenPressmaster's .pub reader: it needs owf_cfb.c
+    */owf_cfbw.c | */out_pub.c) ;;   # GFOpenPressmaster's .pub save and its compound file writer
     */owf_kind.c) ;;   # owf_file_kind: it reads the workbook and .pub detectors
     *) OWFSRC_DOCS="$OWFSRC_DOCS $f" ;;
     esac
@@ -176,7 +176,7 @@ for f in owf_deck.c in_odp.c out_odp.c in_pptx.c owf_pdf.c owf_pdffonts.c owf_ch
 done
 # The chart editor (Chart Data..., OPR_CHART_EDITOR; Presentation gap 2) is GFOpenCalc's core on a data sheet:
 # src/calc, the formula engine (libowf/calc) and the workbook code they need, with libnix's maths (-lm). About
-# 1 MB more; GFOpenPublisher's build below leaves it out.
+# 1 MB more; GFOpenPressmaster's build below leaves it out.
 OWFSRC_CHARTED=""
 for f in owf_book.c owf_cfb.c owf_xlfunc.c in_xls.c out_csv.c owf_chartbook.c owf_xlformula.c in_xlsx.c out_xlsx.c \
     in_ods.c out_ods.c in_csv.c owf_kind.c; do
@@ -193,17 +193,17 @@ done
     -o "$OUT/GFOpenPresentation"
 echo "$OUT/GFOpenPresentation ($(wc -c < "$OUT/GFOpenPresentation") bytes)"
 
-# GFOpenPublisher P1a: the clean-room .pub reader adapted to the same positioned-page model and
+# GFOpenPressmaster P1a: the clean-room .pub reader adapted to the same positioned-page model and
 # GFOpenLayout/PDF/screen renderer as Presentation.  This first build is linked: owfpub.library's
 # ABI still exposes the P0 model only, and the deck bridge is intentionally kept in the portable core.
 OWFSRC_PUB="$OWFSRC_DECK $HERE/libowf/src/owf_cfb.c $HERE/libowf/src/in_pub.c"
 # shellcheck disable=SC2086
-"$CC" $CFLAGS_COMMON -DOPENPUBLISHER -DOW_CLIPBOARD_OBJECTS -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
+"$CC" $CFLAGS_COMMON -DOPENPRESSMASTER -DOW_CLIPBOARD_OBJECTS -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
     $OWFSRC_PUB "$HERE"/src/deck/*.c "$HERE/src/core/ow_spell_dict.c" "$HERE/src/pub/opp_import.c" "$HERE/src/pub/opp_merge.c" "$HERE/src/pub/opp_template.c" "$HERE/src/core/ow_merge.c" "$HERE/src/core/ow_layout.c" $OL_C \
     "$HERE/app/openpresent.c" "$HERE/app/ow_stack.c" "$HERE/app/ow_clipboard.c" "$HERE"/third_party/opengadtools/*.c -lamiga \
-    -o "$OUT/GFOpenPublisher"
-echo "$OUT/GFOpenPublisher ($(wc -c < "$OUT/GFOpenPublisher") bytes)"
+    -o "$OUT/GFOpenPressmaster"
+echo "$OUT/GFOpenPressmaster ($(wc -c < "$OUT/GFOpenPressmaster") bytes)"
 fi
 
 # Workstream hooks (docs/openoffice-parity-plan.md, section 4): a stream that needs a new program or

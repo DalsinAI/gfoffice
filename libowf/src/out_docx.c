@@ -56,6 +56,8 @@ static void put_rpr_props(owf_buf *out, const owf_doc *doc, const owf_charfmt *f
         owf_buf_puts(out, "<w:i/>");
     if (f->flags & OWF_STRIKE)
         owf_buf_puts(out, "<w:strike/>");
+    if (f->flags & OWF_HIDDEN)
+        owf_buf_puts(out, "<w:vanish/>");             /* 1.14 */
     if (f->colour != OWF_COLOUR_AUTO)
         owf_buf_printf(out, "<w:color w:val=\"%06lX\"/>", f->colour & 0xFFFFFFUL);
     if (f->size)

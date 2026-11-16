@@ -74,6 +74,42 @@ int opj_set_notes(opj_doc *doc, int row, const char *notes);
  * first..first+count-1, count -1: the whole plan. */
 int opj_set_baseline(opj_doc *doc, int first, int count);
 int opj_clear_baseline(opj_doc *doc, int first, int count);
+/* Tools > Tracking > Update Project: work complete through status (owf_project_update; whole: 0% or 100%
+ * only), as one edit; how many tasks changed in *changed (when not NULL). */
+int opj_update_project(opj_doc *doc, owf_ptime status, int whole, int *changed);
+
+/* ---- Change Working Time: calendars (one Undo step each, the plan scheduled again) ----
+ * cal is an index into plan->calendars. */
+
+/* Working hours as typed: spans "08:00-12:00, 13:00-17:00" (commas or spaces between them, "8-12" whole
+ * hours too), or "off" (or "") for no working time. 1 and *out set, or 0 when it isn't hours. */
+int opj_hours_parse(const char *text, owf_pday *out);
+/* The other way: "08:00-12:00, 13:00-17:00", or "off". out holds at least 80 bytes. */
+void opj_hours_text(const owf_pday *h, char *out);
+/* A calendar by its name (case ignored) or its number from 1; -1 when there is none. */
+int opj_find_calendar(const owf_project *p, const char *name);
+/* A new base calendar called name, a copy of calendar from (its week and its exceptions; -1: Standard's
+ * hours), its index in *index. OWF_ERR_FORMAT for an empty name or one a calendar has already. */
+int opj_add_calendar(opj_doc *doc, const char *name, int from, int *index);
+/* The hours of one weekday (0 Sunday) in every week of the calendar. */
+int opj_set_week_hours(opj_doc *doc, int cal, int weekday, const char *hours);
+/* The hours of the days first..last (days since 1 Jan 2000, at most 3660 of them): hours, "off" for
+ * holidays, or NULL to give them back the week's hours. */
+int opj_set_day_hours(opj_doc *doc, int cal, long first, long last, const char *hours);
+/* The days a Change Working Time line names: a weekday ("Mon", "friday": 1, *weekday 0 Sunday..6), or a
+ * date or two ("24/12/26", "24/12/26 - 1/1/27", "24/12/26 to 1/1/27": 2, *first and *last in days since
+ * 1 Jan 2000, at most 3660 days). 0 when it is neither. */
+int opj_days_parse(const char *text, int *weekday, long *first, long *last);
+/* What a Change Working Time line's days work now: a weekday's hours, or the first day's (out at least
+ * 80 bytes, "" when text names no days or cal is out of range). */
+void opj_days_hours_text(const owf_project *p, int cal, const char *text, char *out);
+/* Sets the hours of the days text names (as opj_days_parse) on calendar cal: hours as opj_hours_parse,
+ * or "default" for dates to have the week's hours again. One Undo step; OWF_ERR_FORMAT for days or hours
+ * that aren't. */
+int opj_set_days_hours(opj_doc *doc, int cal, const char *days, const char *hours);
+/* The plan's calendar (Project > Project Information's), or a task's own (-1: the plan's). */
+int opj_set_plan_calendar(opj_doc *doc, int cal);
+int opj_set_task_calendar(opj_doc *doc, int row, int cal);
 
 /* ---- The task sheet ---- */
 
@@ -94,6 +130,10 @@ enum {
     OPJ_COL_CONSTRAINT_TYPE,             /* "Start No Earlier Than", as MS Project names them */
     OPJ_COL_CONSTRAINT_DATE,             /* "NA" for As Soon / Late As Possible */
     OPJ_COL_NOTES,
+    OPJ_COL_ACTUAL_START,                /* "NA" until the task has started */
+    OPJ_COL_ACTUAL_FINISH,
+    OPJ_COL_ACTUAL_DURATION,             /* duration times % complete, worked out */
+    OPJ_COL_REMAINING_DURATION,
     OPJ_NCOLS
 };
 
@@ -110,8 +150,15 @@ void opj_cell_text(const opj_doc *doc, int row, int column, char *out, size_t si
  * a work resource); Constraint Type (its name, any case, or a short one: ASAP, ALAP, MSO, MFO, SNET, SNLT, FNET,
  * FNLT; a type with a date and none yet takes the task's start, or finish for the finish types); Constraint
  * Date (NA makes it As Soon As Possible; a date on an ASAP or ALAP task makes it Start No Earlier Than);
- * Notes. ID, WBS and the baseline columns can't be typed into (OWF_ERR_FORMAT). */
+ * Notes; Actual Start and Actual Finish (a date, or NA to clear it: an actual finish with no actual start
+ * gives the task its scheduled start as one, and clearing the start clears the finish too). % Complete
+ * above 0 gives a task with no actual start its scheduled start, 100 its scheduled finish as actual
+ * finish, below 100 clears an actual finish and 0 both, as MS Project does. ID, WBS, the baseline,
+ * variance, Actual Duration and Remaining Duration columns can't be typed into (OWF_ERR_FORMAT);
+ * opj_column_typed says which can. */
 int opj_set_cell(opj_doc *doc, int row, int column, const char *text);
+/* 1 when a column can be typed into, 0 when it is worked out. */
+int opj_column_typed(int column);
 /* Task Information's OK: several of row's cells typed at once, in the order given, as one edit (one Undo
  * step), scheduled once at the end. Nothing changes when any cell is refused: its place in columns goes
  * in *bad (when not NULL; -1 when none was), with OWF_ERR_FORMAT, or OWF_ERR_MEMORY. A Constraint Date

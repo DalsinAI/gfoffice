@@ -43,6 +43,9 @@ ow_layout *ow_layout_new_reserved(const owf_doc *doc, ol_measure_text_fn measure
  * accepted (deleted text takes no room, inserted and reformatted text has no change colours), while the
  * document keeps them; a deleted paragraph end still ends its paragraph. 0: changes shown, as above. */
 #define OW_LAYOUT_FINAL 1u
+/* 2.0.46: hidden text (OWF_HIDDEN) shown, underlined (Word's Show hidden text); without it hidden text takes
+ * no room, as a deletion's does in the final view. A note's mark or a comment's place is always shown. */
+#define OW_LAYOUT_SHOW_HIDDEN 2u
 ow_layout *ow_layout_new_view(const owf_doc *doc, ol_measure_text_fn measure, void *measure_userdata, size_t ops,
                               unsigned view);
 /* 2.0.22: about how many display ops the document's layout makes, a little more than it does, worked out

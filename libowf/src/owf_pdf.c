@@ -334,7 +334,8 @@ int owf_pdf_gradient(owf_pdf *pdf, const int *xy, int n, int x, int y, int w, in
         /* from the outline's first point along the way to its last (any shape, turned or not) */
         for (i = 0; i < n; i++) {
             long long t = ((long long)(xy[i * 2] - cx) * ux + (long long)(xy[i * 2 + 1] - cy) * uy) / 16384;
-            long d = labs((long)(xy[i * 2] - cx)) + labs((long)(xy[i * 2 + 1] - cy));
+            long dx = (long)(xy[i * 2] - cx), dy = (long)(xy[i * 2 + 1] - cy);
+            long d = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);   /* no labs: the libraries' runtime has none */
             if (!i || t < lo) lo = t;
             if (!i || t > hi) hi = t;
             if (d > len) len = d;                                      /* far enough each side */

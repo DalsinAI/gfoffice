@@ -138,7 +138,11 @@ static void change_style(const owf_doc *doc, int number, ol_style *s)
 static int hidden_deletion(const ow_layout *l, const owf_doc *doc, const owf_run *r)
 {
     const owf_revision *rv;
-    if (!l || !(l->view & OW_LAYOUT_FINAL) || r->comment || r->note > 0)
+    if (r->comment || r->note > 0)
+        return 0;
+    if ((r->fmt.flags & OWF_HIDDEN) && !(l && (l->view & OW_LAYOUT_SHOW_HIDDEN)))
+        return 1;                                    /* 2.0.46: hidden text, where the view doesn't show it */
+    if (!l || !(l->view & OW_LAYOUT_FINAL))
         return 0;
     rv = OWF_DOC_REVISION(doc, r->revision);
     return rv && rv->kind == OWF_REV_DELETE;
@@ -189,6 +193,7 @@ static void run_style(const owf_doc *doc, const owf_charfmt *fmt, int line_spaci
     if (flags & OWF_ITALIC) text |= OL_TEXT_ITALIC;
     if (flags & OWF_UNDERLINE) text |= OL_TEXT_UNDERLINE;
     if (flags & OWF_STRIKE) text |= OL_TEXT_STRIKE;
+    if (flags & OWF_HIDDEN) text |= OL_TEXT_UNDERLINE;   /* 2.0.46: shown hidden text, underlined */
     if (flags & OWF_SUPER) text |= OL_TEXT_SUPER;
     if (flags & OWF_SUB) text |= OL_TEXT_SUB;
     if (font >= 0 && font < doc->nfonts) {
