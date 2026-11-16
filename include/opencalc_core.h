@@ -392,6 +392,13 @@ int oc_core_scenario_show(oc_core *core, int index);
 int oc_core_scenario_delete(oc_core *core, int index);
 /* A scenario's ranges as one types them: "B2:C4,E7". 0 when they do not fit. */
 int oc_core_scenario_cells_text(const oc_core *core, const owf_scenario *sc, char *out, size_t size);
+/* The scenario shown last on the active sheet (from 0), or -1. The grid
+ * draws a frame round each of its ranges (OC_DRAW_FRAME, OC_ROLE_SCENARIO,
+ * 1 pixel) and its name in a tab (OC_DRAW_FILL, OC_ROLE_SCENARIO, then its
+ * text in white) on the first range's top left corner: above the range
+ * when there is room in its pane, else just inside it. Over the cells and
+ * charts, under the selection's outline and the active cell's frame. */
+int oc_core_scenario_active(const oc_core *core);
 
 /* Data > Solver: make a target cell as large or as small as it can be, or
  * equal to a value, by changing variable cells, under constraints. Models
@@ -601,7 +608,7 @@ int oc_core_remove_duplicates(oc_core *core, const unsigned *cols, unsigned ncol
                               int has_header, unsigned *removed_out);
 
 /* ---- Data > Consolidate ----
- * Several source ranges (on any sheets, up to OC_CONSOLIDATE_SOURCES) are
+ * Several source ranges or names of ranges (on any sheets, up to OC_CONSOLIDATE_SOURCES) are
  * put together with one of the OC_SUBTOTAL_ functions into one table whose
  * top left cell is dest: cell by cell where they sit, or matched by the
  * labels in their first column (row_labels), their first row
@@ -621,6 +628,13 @@ typedef struct {
 } oc_consolidate_spec;
 /* SUM, no labels, no link, no sources. */
 void oc_consolidate_init(oc_consolidate_spec *spec);
+/* The defined names a source can be, for the window to offer: those the
+ * active sheet sees (its own, and the workbook's that no name of its own
+ * hides), not hidden, whose formula is one range. Their indexes for
+ * oc_core_name_at into index, in the book's order: the count (at most
+ * max). A source typed as a name (case aside) reads as its range. */
+#define OC_CONSOLIDATE_NAMES 32
+int oc_core_consolidate_names(const oc_core *core, int *index, int max);
 /* The active sheet's last settings: 1 when it has some. */
 int oc_core_consolidate_settings(const oc_core *core, oc_consolidate_spec *spec);
 /* OWF_OK (the table is selected when it is on the active sheet),
@@ -924,7 +938,8 @@ enum {
     OC_ROLE_NOTE,           /* behind the active cell's comment (pale yellow) */
     OC_ROLE_NOTE_LINE,      /* its frame */
     OC_ROLE_FILTER,         /* an AutoFilter's button */
-    OC_ROLE_CHART           /* a chart's area, bars and lines (its text is OC_ROLE_TEXT): rgb */
+    OC_ROLE_CHART,          /* a chart's area, bars and lines (its text is OC_ROLE_TEXT): rgb */
+    OC_ROLE_SCENARIO        /* the shown scenario's frame and its name's tab (its text is OC_ROLE_TEXT) */
 };
 enum { OC_ALIGN_LEFT, OC_ALIGN_CENTRE, OC_ALIGN_RIGHT };
 

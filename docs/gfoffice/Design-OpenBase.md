@@ -397,7 +397,7 @@ print) needs no script.
   Return, or a double-click on the chosen row closes the form and opens
   the subform table's, at that row, in the view of the record's rows
   (`ob_child_view`); Table > Show All Rows goes back to every row.
-- Designed forms, step 1 (core 0.7.0): the model and its keeping. An
+- Designed forms, step 1 (core 0.14.0): the model and its keeping. An
   `ob_form` holds up to 200 items (field, label, line, box) on a 160 by
   100 grid of character cells; `ob_form_auto` makes a table's auto form as
   one; `ob_form_at` finds the item under a cell (a box by its edge) and
