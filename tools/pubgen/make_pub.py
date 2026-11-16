@@ -167,12 +167,16 @@ def qf(fid, typ, value=None):
     return fv(fid, typ, value, wide=True)
 
 
-def char_props(bold=None, italic=None, size=None, font=None, old=False):
+def char_props(bold=None, italic=None, size=None, font=None, old=False, underline=None, colour=None):
     out = b''
     if bold is not None:
         out += qf(0x202, 0x08 if bold else 0x10, None if bold else 0)
     if italic is not None:
         out += qf(0x203, 0x08 if italic else 0x10, None if italic else 0)
+    if colour is not None:                   # a place in the text's PL list of colours
+        out += qf(0x244, 0x88, qf(0x200, 0x20, colour))
+    if underline is not None:                # low byte 1: single (Publisher writes 0x801 on its links)
+        out += qf(0x21E, 0x10, 0x801 if underline else 0)
     if size is not None:
         out += qf(0x20C, 0x20, int(size * 12700))
     if font is not None:
@@ -232,6 +236,7 @@ class Text:
         self.links = {}                      # story: [(from, length, kind, target)]
         self.cells = {}                      # story: paragraphs in each cell
         self.spare = {}                      # story: links of a second TOKN, which readers ignore
+        self.colours = None                  # PL: each 0x00BBGGRR, or 0x08 in the top byte and a scheme place
 
     def story(self, text_id, paras, links=None, cells=None):
         self.stories.append((text_id, paras))
@@ -335,6 +340,9 @@ class Text:
         # chunks: name, index, data; TEXT at 0x200 as the files have it
         chunks = [('TEXT', 0, tbytes), ('STRS', 0, strs), ('SYID', 0, syid), ('FONT', 0, font),
                   ('STSH', 0, stsh0), ('STSH', 1, stsh1), ('FDPC', 0, None), ('FDPP', 0, None)] + tokns
+        if self.colours is not None:         # PL (PUB-FORMAT.md 6.9): n, 0x1C, 0, then a block a colour
+            chunks.append(('PL  ', 0, struct.pack('<III', len(self.colours), 0x1C, 0) +
+                           b''.join(block(qf(0x201, 0x20, v)) for v in self.colours)))
         out = bytearray(0x200)
         out[0:8] = b'CHNKINK '
         struct.pack_into('<HH', out, 0x0C, len(chunks), 0)
@@ -643,7 +651,8 @@ def runs():
             cells=[1, 1, 2, 1, 1, 1])
     t.story(4, [(None, [('On the second page', None)])])
     t.story(5, [(None, [('Left on the scratch area', None)])])
-    s6 = t.story(6, [(None, [('See our site, write to us, or turn to page 1.', None)])],
+    s6 = t.story(6, [(None, [('See ', None), ('our site', char_props(underline=True)), (', ', None),
+                             ('write to us', char_props(underline=True)), (', or turn to page 1.', None)])],
             links=[(4, 8, 1, 'https://example.org/gfoffice/'), (14, 11, 4, 'mailto:team@example.org?subject=Hello'),
                    (30, 14, 3, '\u010a')])
     t.spare[s6] = [(0, 3, 1, 'https://example.org/not-this-one/')]
@@ -701,7 +710,10 @@ def look():
     m = page_chunk(c, name='Master Page A')
     p = page_chunk(c, master=m)
     t = Text(['Times New Roman'], [DEFAULT_STYLE])
-    t.story(1, [(None, [('A headline over a bar', None)])])
+    # text colours: red as 0x00BBGGRR, the scheme's place 2, then one not known (left as it is)
+    t.colours = [0x08000000, 0x000000FF, 0x08000002, 0xFFFFFFFE]
+    t.story(1, [(None, [('A ', None), ('headline', char_props(colour=1)), (' over', char_props(colour=2)),
+                        (' a bar', char_props(colour=3))])])
     bar = frame_chunk(c, p, text_id=1)
     corner = frame_chunk(c, p)
     border = frame_chunk(c, p)

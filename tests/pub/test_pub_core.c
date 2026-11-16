@@ -165,6 +165,11 @@ int main(void)
     CHECK(deck_href(deck, "our site") && !strcmp(deck_href(deck, "our site"), "https://example.org/gfoffice/"));
     CHECK(deck_href(deck, "write to us") && !strcmp(deck_href(deck, "write to us"), "mailto:team@example.org?subject=Hello"));
     CHECK(deck_href(deck, "See ") == NULL && deck_href(deck, ", or turn to page 1.") == NULL);
+    /* P1b underline (0x21E's low byte): on the two linked words only */
+    CHECK(deck_run(deck, "our site") && (deck_run(deck, "our site")->flags & OWF_UNDERLINE));
+    CHECK(deck_run(deck, "write to us") && (deck_run(deck, "write to us")->flags & OWF_UNDERLINE));
+    CHECK(deck_run(deck, "See ") && !(deck_run(deck, "See ")->flags & OWF_UNDERLINE));
+    CHECK(deck_run(deck, "Bold and italic") && !(deck_run(deck, "Bold and italic")->flags & OWF_UNDERLINE));
     if (deck && deck->nslides > 0 && deck->slides[0].nobjs > 3) {
         const owf_charfmt *bold = run_fmt(&deck->slides[0].objs[1].text, "Bold and italic");
         const owf_charfmt *plain = run_fmt(&deck->slides[0].objs[0].text, "Plain text");
@@ -204,6 +209,7 @@ int main(void)
              * default (-1); the typeface itself is GFOffice's ODP round trip's, not the .pub reader's */
             CHECK(again && (again->font < 0 || !strcmp(font_name(roundtrip->res, again), "Liberation Sans")));
             CHECK(deck_href(roundtrip, "our site") && !strcmp(deck_href(roundtrip, "our site"), "https://example.org/gfoffice/"));
+            CHECK(deck_run(roundtrip, "our site") && (deck_run(roundtrip, "our site")->flags & OWF_UNDERLINE));
             if (roundtrip->slides[0].nobjs > 2) {
                 const owf_story *t = &roundtrip->slides[0].objs[2].text;
                 int k, last_row = -1, cells_ok = t->nparas >= 6;
@@ -275,9 +281,15 @@ int main(void)
         CHECK(count_look(deck, OWF_SHADE(0xFFFFFF), 0, 0) == 1);
         CHECK(count_look(deck, OWF_SHADE(0x996633), OWF_SHADE(0x993300), 10) == 1);
         CHECK(deck->slides[0].objs[0].inset[0] == 144);
+        /* P1b text colour (0x244, a place in PL): red as 0x00BBGGRR, the scheme's place 2, and one not known */
+        CHECK(deck_run(deck, "headline") && deck_run(deck, "headline")->colour == 0xFF0000);
+        CHECK(deck_run(deck, " over") && deck_run(deck, " over")->colour == 0x000099);
+        CHECK(deck_run(deck, " a bar") && deck_run(deck, " a bar")->colour == OWF_COLOUR_AUTO);
+        CHECK(deck_run(deck, "A ") && deck_run(deck, "A ")->colour == OWF_COLOUR_AUTO);
         CHECK(format->export(deck, &odp, &odp_length, report) == OWF_OK);
         CHECK(owf_import_deck_memory(odp, odp_length, "odp", &roundtrip, report, &used) == OWF_OK && roundtrip);
         CHECK(count_look(roundtrip, OWF_SHADE(0xCCCCEB), OWF_SHADE(0x000000), 20) == 1);
+        CHECK(deck_run(roundtrip, "headline") && deck_run(roundtrip, "headline")->colour == 0xFF0000);
         free(odp); odp = NULL; odp_length = 0;
         owf_deck_free(roundtrip); roundtrip = NULL;
     }
