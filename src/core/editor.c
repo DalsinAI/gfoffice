@@ -133,6 +133,12 @@ static void clear_doc_data(owf_doc *doc)
         owf_free(doc->format_changes[i].date);
     }
     owf_free(doc->format_changes);
+    for (i = 0; i < doc->npara_format_changes; ++i) {   /* libowf 1.13 */
+        owf_free(doc->para_format_changes[i].author);
+        owf_free(doc->para_format_changes[i].date);
+        owf_free(doc->para_format_changes[i].style);
+    }
+    owf_free(doc->para_format_changes);
     for (i = 0; i < doc->nnote_stories; ++i) free_story_data(&doc->note_stories[i]);   /* libowf 1.12.2 */
     owf_free(doc->note_stories);
     memset(doc, 0, sizeof(*doc));
@@ -158,6 +164,7 @@ static int clone_story(owf_story *dst, const owf_story *src)
         dp->section_break = sp->section_break;
         dp->mark_revision = sp->mark_revision;       /* 2.1.0 */
         dp->row_revision = sp->row_revision;         /* 2.0.38 */
+        dp->para_format_change = sp->para_format_change;   /* libowf 1.13 */
         dp->style = NULL;                            /* 2.0.12: its style and bookmarks too */
         dp->bookmarks = NULL;
         if (sp->style && !(dp->style = copy_bytes(sp->style, strlen(sp->style)))) return 0;
@@ -247,6 +254,8 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     char *merge_source;
     owf_format_change *format_changes;
     int nformat_changes, capformat_changes;
+    owf_para_format_change *para_format_changes;
+    int npara_format_changes, cappara_format_changes;
     owf_story *note_stories;
     int nnote_stories;
     if (!dst || !snapshot) return;
@@ -286,6 +295,11 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     capformat_changes = dst->capformat_changes;
     dst->format_changes = NULL;
     dst->nformat_changes = dst->capformat_changes = 0;
+    para_format_changes = dst->para_format_changes;   /* libowf 1.13: the paragraphs' too */
+    npara_format_changes = dst->npara_format_changes;
+    cappara_format_changes = dst->cappara_format_changes;
+    dst->para_format_changes = NULL;
+    dst->npara_format_changes = dst->cappara_format_changes = 0;
     note_stories = dst->note_stories;   /* libowf 1.12.2: the notes' formats, which go with the notes */
     nnote_stories = dst->nnote_stories;
     dst->note_stories = NULL;
@@ -314,6 +328,9 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     dst->format_changes = format_changes;
     dst->nformat_changes = nformat_changes;
     dst->capformat_changes = capformat_changes;
+    dst->para_format_changes = para_format_changes;
+    dst->npara_format_changes = npara_format_changes;
+    dst->cappara_format_changes = cappara_format_changes;
     dst->note_stories = note_stories;
     dst->nnote_stories = nnote_stories;
     owf_free(snapshot);                 /* only the old outer shell */
@@ -1789,6 +1806,7 @@ static int split_paragraph(ow_editor *editor, ow_position pos,
     }
     p->nruns = pos.run + 1;
     marks_split(p, np, at);                          /* 2.0.21: the bookmarks after the caret go with the text */
+    np->para_format_change = p->para_format_change;   /* libowf 1.13: both halves have the format, and its change */
     np->mark_revision = p->mark_revision;            /* 2.1.0: the old end is the new paragraph's; the new end */
     p->mark_revision = editor->typing_rev;           /* is the change being typed, if one is */
 
@@ -6542,6 +6560,7 @@ static int story_final(owf_doc *d, owf_story *story)
         owf_para *p = &story->paras[i];
         owf_run *runs;
         p->mark_revision = 0;
+        p->para_format_change = 0;                   /* libowf 1.13 */
         for (j = 0, cap = 1; j < p->nruns; ++j) {    /* room: a value's lines each take two runs */
             const char *t = p->runs[j].kind == OWF_RUN_FIELD && p->runs[j].text ? p->runs[j].text : NULL;
             ++cap;

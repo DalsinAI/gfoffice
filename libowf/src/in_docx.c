@@ -1713,8 +1713,36 @@ static void paragraph(docx *d, const owf_xml_node *p)
             if (!rev) d->failed = 1;
             st->paras[st->nparas - 1].mark_revision = rev;
         }
-        if (wchild(d, ppr, "pPrChange") || wchild(d, mrpr, "rPrChange"))   /* 1.11: the runs' are kept */
-            owf_report_add(d->report, OWF_NOTE_APPROX, "Tracked paragraph format changes are kept as the format is now");
+        if (wchild(d, mrpr, "rPrChange"))         /* 1.11: the runs' are kept; 1.13: the paragraphs' too */
+            owf_report_add(d->report, OWF_NOTE_APPROX, "Tracked format changes of paragraph marks are kept as the format is now");
+    }
+    {
+        /* 1.13: a tracked paragraph format change (w:pPrChange): its w:pPr is the paragraph's whole format
+         * before it, from its style (the document's default when it names none) up, as the paragraph's own is */
+        const owf_xml_node *chg = wchild(d, ppr, "pPrChange");
+        owf_story *st = d->b->story;
+        if (chg && st && st->nparas) {
+            const owf_xml_node *old = wchild(d, chg, "pPr");
+            const owf_xml_node *ostyle = wchild(d, old, "pStyle");
+            const char *oid = ostyle ? wval(d, ostyle) : NULL;
+            owf_parafmt before = d->base_para;
+            owf_charfmt bc = d->base_char;
+            owf_paraprops opp;
+            int k, number;
+            owf_styles_resolve(d->tables, 1, oid ? oid : d->default_para, OWF_FAMILY_PARAGRAPH, &before, &bc);
+            memset(&opp, 0, sizeof opp);
+            read_ppr(d, old, &opp, NULL, NULL);
+            owf_paraprops_apply(&before, &opp);
+            for (k = 0; k < before.ntabs; k++) {     /* from the indent, as the paragraph's own (above) */
+                before.tabs[k].position -= before.indent_left;
+                if (before.tabs[k].position < 0)
+                    before.tabs[k].position = 0;
+            }
+            number = owf_track_para_format_add(d->doc, owf_xml_attr(chg, d->w, "author"), owf_xml_attr(chg, d->w, "date"),
+                                               oid, &before);
+            if (!number) d->failed = 1;
+            st->paras[st->nparas - 1].para_format_change = number;
+        }
     }
     if (wchild(d, ppr, "sectPr")) {
         const owf_xml_node *sect = wchild(d, ppr, "sectPr");
