@@ -302,9 +302,11 @@ where it began.
 - In GFOpenBase: Query > New Query..., Open Query... (Run, Design...,
   Delete...), Design Query... and Run Again. A query's rows show in the
   datasheet, read only, and a click on a table goes back to it.
-- Not yet: drawing the tables and joins as boxes (5.2's picture), saving
-  a query as a `VIEW`, a query's rows as CSV, and following a table's
-  rename into the saved queries.
+- Core 0.13.1 (GFOpenBase 0.13.1): Query > Save as View... keeps a query
+  as a `VIEW` (no `[questions]`; a change that would break a view is
+  refused), Export Results as CSV... writes a query's rows, and a table's
+  rename follows into the saved grid queries.
+- Not yet: drawing the tables and joins as boxes (5.2's picture).
 
 ### 5.5 Tests
 
@@ -393,7 +395,11 @@ print) needs no script.
   the record and shown, not typed (`ob_child_add`); choose a row, then
   Edit Row... or Delete Row... (`ob_child_key` gives its key). The
   record is saved first, so a new record has its key.
-- Not yet: the form designer (6.2), Return on a subform row to open its table's form, buttons
+- A subform row's own form (core 0.6.4, GFOpenBase 0.6.4): Open Form,
+  Return, or a double-click on the chosen row closes the form and opens
+  the subform table's, at that row, in the view of the record's rows
+  (`ob_child_view`); Table > Show All Rows goes back to every row.
+- Not yet: the form designer (6.2), buttons
   and events (6.5), forms kept in `oadb_forms`.
 
 ## 7. Reports

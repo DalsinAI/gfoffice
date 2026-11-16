@@ -1231,6 +1231,8 @@ static int pivot_run(oc_core *core, owf_pivotdef *def, int output_index)
     owf_calc *calc = NULL;
     int rc, had_old;
     char name[32];
+    if (output_index < 0 && oc_book_locked(core))
+        return OC_PROTECTED;                        /* a new sheet in a protected workbook */
     if (!owf_pivot_check(core->book, def))
         return OWF_ERR_FORMAT;
     had_old = output_index >= 0 && owf_pivot_get(core->book, output_index, &old);

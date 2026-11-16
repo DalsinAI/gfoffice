@@ -115,14 +115,15 @@ enum {
     M_COMMENT, M_COMMENT_NEXT, M_COMMENT_PREV, M_COMMENT_REPLY, M_COMMENT_EDIT, M_COMMENT_DONE, M_COMMENT_DELETE,
     M_COMMENT_FILTER,                                /* 2.0.39 */
     M_FIELD_TITLE, M_FIELD_AUTHOR, M_FIELD_SUBJECT, M_FIELD_FILENAME, M_FIELD_WORDS, M_FIELD_CHAPTER, M_FIELD_USER,
-    M_CROSS_REF, M_DOC_INFO, M_USER_FIELDS, M_UPDATE_FIELDS,
+    M_CROSS_REF, M_DOC_INFO, M_USER_FIELDS, M_UPDATE_FIELDS, M_FIELD_SEQ,
     M_FOOTNOTE, M_ENDNOTE, M_NOTE_NEXT, M_NOTE_PREV, M_NOTE_EDIT, M_NOTE_CONVERT, M_NOTE_DELETE, M_NOTE_NUMBERING,
     M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_DOC, M_MERGE_FILES,
     M_INDEX_ENTRY, M_INDEX,
     M_AC_ON, M_AC_REPLACE, M_AC_SENTENCE, M_AC_TWO_CAPS, M_AC_QUOTES, M_AC_DASHES, M_AC_ADD, M_AC_REMOVE,
     M_LABELS, M_ENV_DL, M_ENV_C5, M_ENV_C6, M_ENV_US10, M_ENV_RETURN, M_ENV_FEED, M_MERGE_PRINT,   /* 2.0.37 */
     M_AC_COMPLETE,
-    M_PRINT_COMMENTS
+    M_PRINT_COMMENTS,
+    M_PRINT_MARGIN                                   /* 2.0.40 */
 };
 
 static struct NewMenu menus[] = {
@@ -136,6 +137,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Print...", "P", 0, 0, (APTR)M_PRINT },
     { NM_ITEM, "Export PDF...", NULL, 0, 0, (APTR)M_PDF },
     { NM_ITEM, "Print Comments", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)M_PRINT_COMMENTS },   /* 2.0.36 */
+    { NM_ITEM, "Comments in the Margin", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)M_PRINT_MARGIN },   /* 2.0.40 */
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "About...", NULL, 0, 0, (APTR)M_ABOUT },
     { NM_ITEM, "Quit", "Q", 0, 0, (APTR)M_QUIT },
@@ -206,6 +208,7 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Word Count", NULL, 0, 0, (APTR)M_FIELD_WORDS },
     { NM_SUB, "Chapter", NULL, 0, 0, (APTR)M_FIELD_CHAPTER },
     { NM_SUB, "User Field...", NULL, 0, 0, (APTR)M_FIELD_USER },
+    { NM_SUB, "Number Range...", NULL, 0, 0, (APTR)M_FIELD_SEQ },   /* 2.0.43: Figure 1, Table 2 */
     { NM_ITEM, "Cross-reference...", NULL, 0, 0, (APTR)M_CROSS_REF },
 
     { NM_TITLE, "Format", NULL, 0, 0, NULL },
@@ -2238,6 +2241,23 @@ static void paint_op(void *userdata, const ol_device_op *d)
                 ogt_text(rp, ogt_pen(&ctx, "muted"), d->box.x + 6, d->box.y + 6, label, d->box.width - 12);
             }
         }
+        if (pp->body && !pp->thumb) {
+            /* 2.0.38: a tracked picture: a frame in its author's colour, crossed out when deleted */
+            unsigned long rgb = 0;
+            int change = ow_layout_picture_change(pp->layout, d->op->u.image.node_id, &rgb);
+            if (change) {
+                LONG pen = argb_pen(0xFF000000UL | (uint32_t)rgb);
+                int x2 = d->box.x + d->box.width - 1, y2 = d->box.y + d->box.height - 1;
+                ogt_frame(rp, pen, d->box.x, d->box.y, d->box.width, d->box.height);
+                if (d->box.width > 4 && d->box.height > 4)
+                    ogt_frame(rp, pen, d->box.x + 1, d->box.y + 1, d->box.width - 2, d->box.height - 2);
+                if (change == OW_PICTURE_DELETED) {
+                    ogt_set_apen(rp, pen);
+                    Move(rp, d->box.x, d->box.y); Draw(rp, x2, y2);
+                    Move(rp, x2, d->box.y); Draw(rp, d->box.x, y2);
+                }
+            }
+        }
         break;
     }
     case OL_OP_SHAPE:
@@ -3559,6 +3579,22 @@ static void do_save(void)
 /* 2.0.36: Project > Print Comments: Print and Export PDF put the comments in, a raised mark where each is and
  * the list after the text (libowf's "pdf-comments"); off, as before, they are left out */
 static int print_comments;
+/* 2.0.40: Project > Comments in the Margin: printed comments beside their lines ("pdf-comments-margin") instead of
+ * listed after the text */
+static int comments_in_margin;
+
+/* What Print and Export PDF do with the comments: 0 leave them out, 1 list them after the text, 2 beside their
+ * lines */
+static int print_comments_mode(void)
+{
+    return print_comments ? (comments_in_margin ? 2 : 1) : 0;
+}
+
+static const char *print_format(void)
+{
+    static const char *const formats[] = { "pdf", "pdf-comments", "pdf-comments-margin" };
+    return formats[print_comments_mode()];
+}
 
 static void do_export_pdf(void)
 {
@@ -3596,7 +3632,7 @@ static void do_export_pdf(void)
         if (strlen(path) + 4 < sizeof path) strcat(path, ".pdf");
     }
     report = owf_report_new();
-    rc = owf_export_file(doc, path, print_comments ? "pdf-comments" : "pdf", report);
+    rc = owf_export_file(doc, path, print_format(), report);
     if (rc != OWF_OK) {
         snprintf(msg, sizeof msg, "GFOpenWrite could not export the PDF.\n\n%s", owf_error_text(rc));
         tell("Export PDF", msg);
@@ -4041,7 +4077,8 @@ static void do_command(int id)
     case C_SAVE: do_save(); break;
     case C_PRINT: {
         char msg[220];
-        if (print_with_feed(doc, current_path[0] ? leaf(current_path) : NULL, print_comments, msg, sizeof msg)) {
+        if (print_with_feed(doc, current_path[0] ? leaf(current_path) : NULL, print_comments_mode(), msg,
+                           sizeof msg)) {
             set_status(msg); request_document_redraw();
         } else tell("Print", msg);
         break;
@@ -4617,6 +4654,30 @@ static void do_index(int what)
     }
 }
 
+static char *comment_utf8(const char *latin1);
+
+/* 2.0.43 (libowf 1.12.6): Insert > Fields > Number Range...: a numbered field of a name (Figure, Table), its number
+ * the count of that name's fields up to it, renumbered as they move */
+static void do_number_range(void)
+{
+    static char last[48] = "Figure";
+    char typed[48], msg[96];
+    char *u;
+    int rc;
+    if (!editor) return;
+    if (!text_requester("Number Range", "Name (Figure, Table...):", last, typed, sizeof typed) || !typed[0]) return;
+    snprintf(last, sizeof last, "%s", typed);
+    if (!(u = comment_utf8(typed))) { DisplayBeep(scr); return; }
+    snprintf(msg, sizeof msg, "%s number inserted.", typed);
+    rc = ow_editor_insert_field_arg(editor, OWF_FIELD_SEQ, u);
+    free(u);
+    if (rc == OWF_ERR_FORMAT) {                      /* Word's rule for the name */
+        tell("Number Range", "A name is a letter, then letters, digits and _ (no spaces), 40 at most.");
+        return;
+    }
+    if (editor_result(rc, msg)) fields_update();
+}
+
 static void do_cross_reference(void)
 {
     static int page_form;
@@ -4829,8 +4890,18 @@ static void do_note_numbering(void)
         return;
     start = atoi(typed);
     if (start < 1 || start > 9999) { tell("Note Numbering", "The first number is from 1 to 9999."); return; }
-    snprintf(msg, sizeof msg, "%s numbered %s from %d.", k ? "Endnotes" : "Footnotes", note_format_names[f], start);
-    editor_result(ow_editor_set_note_numbering(editor, k, f, start), msg);
+    {   /* 2.0.42: then where they start again (endnotes: never on each page) */
+        static const char *const again[3] = { "Through the document", "At each section", "On each page" };
+        char picks[3][72];
+        int r, i;
+        for (i = 0; i < (k ? 2 : 3); ++i) snprintf(picks[i], sizeof picks[i], "%s", again[i]);
+        r = pick_requester("Note Numbering", k ? "Number endnotes again:" : "Number footnotes again:", picks, k ? 2 : 3);
+        if (r < 0) return;
+        snprintf(msg, sizeof msg, "%s numbered %s from %d, %s.", k ? "Endnotes" : "Footnotes", note_format_names[f],
+                 start, r == 0 ? "through" : r == 1 ? "again at each section" : "again on each page");
+        if (editor_result(ow_editor_set_note_numbering(editor, k, f, start), msg))
+            editor_result(ow_editor_set_note_restart(editor, k, r), msg);
+    }
 }
 
 static void do_note(int what)
@@ -5381,8 +5452,13 @@ static void menu_action(ULONG id)
     case M_TABLE_STYLE: do_table_style(); break;
     case M_TABLE_ROW_ADD: editor_result(ow_editor_table_insert_row(editor),"Table row inserted."); break;
     case M_TABLE_ROW_DEL: editor_result(ow_editor_table_delete_row(editor),"Table row deleted."); break;
-    case M_TABLE_COL_ADD: editor_result(ow_editor_table_insert_column(editor),"Table column inserted."); break;
-    case M_TABLE_COL_DEL: editor_result(ow_editor_table_delete_column(editor),"Table column deleted."); break;
+    case M_TABLE_COL_ADD:
+    case M_TABLE_COL_DEL:
+        /* 2.0.38: rows are recorded as changes, columns not yet: none while recording */
+        if (ow_editor_track_changes(editor)) set_status("Columns cannot be put in or deleted while changes are recorded.");
+        else if (id == M_TABLE_COL_ADD) editor_result(ow_editor_table_insert_column(editor), "Table column inserted.");
+        else editor_result(ow_editor_table_delete_column(editor), "Table column deleted.");
+        break;
     case M_PAGE_SETUP: {
         owf_page pg;
         if (editor) {
@@ -5413,6 +5489,7 @@ static void menu_action(ULONG id)
     case M_FIELD_USER: do_user_field(1); break;
     case M_USER_FIELDS: do_user_field(0); break;
     case M_CROSS_REF: do_cross_reference(); break;
+    case M_FIELD_SEQ: do_number_range(); break;
     case M_DOC_INFO: do_doc_info(); break;
     case M_UPDATE_FIELDS:
         if (editor) { fields_update(); set_status("Fields updated."); request_document_redraw(); }
@@ -5460,7 +5537,15 @@ static void menu_action(ULONG id)
     case M_ENV_FEED: do_feed(); break;
     case M_PRINT_COMMENTS:
         print_comments = !print_comments;
-        set_status(print_comments ? "Print and Export PDF put the comments in." : "Print and Export PDF leave the comments out.");
+        set_status(!print_comments ? "Print and Export PDF leave the comments out." : comments_in_margin ?
+                   "Print and Export PDF put the comments beside their lines." :
+                   "Print and Export PDF put the comments in, listed after the text.");
+        break;
+    case M_PRINT_MARGIN:
+        comments_in_margin = !comments_in_margin;
+        set_status(comments_in_margin ? (print_comments ? "Printed comments go beside their lines." :
+                                         "Printed comments will go beside their lines: Print Comments is off.") :
+                   "Printed comments are listed after the text.");
         break;
     }
 }
@@ -5642,7 +5727,7 @@ static int rexx_do_command(const char *command, char **result_out)
         "OPEN SAVEAS SAVE EXPORT PRINT INSERTTEXT FIND GETTEXT COMMAND TRACKCHANGES CHANGES NEXTCHANGE PREVCHANGE "
         "ACCEPTCHANGE REJECTCHANGE ACCEPTALL REJECTALL REVIEWAUTHOR ADDCOMMENT COMMENTS NEXTCOMMENT PREVCOMMENT GETCOMMENT "
         "REPLYCOMMENT EDITCOMMENT RESOLVECOMMENT DELETECOMMENT COMMENTSBY INSERTFIELD DOCINFO USERFIELD CROSSREF UPDATEFIELDS "
-        "ADDFOOTNOTE ADDENDNOTE NOTES NEXTNOTE PREVNOTE GETNOTE EDITNOTE CONVERTNOTE DELETENOTE NOTENUMBERING "
+        "ADDFOOTNOTE ADDENDNOTE NOTES NEXTNOTE PREVNOTE GETNOTE EDITNOTE CONVERTNOTE DELETENOTE NOTENUMBERING NOTERESTART "
         "MERGESOURCE MERGEFIELDS MERGERECORDS MERGERECORD INSERTMERGEFIELD MERGE INDEXENTRY INDEXENTRIES INSERTINDEX "
         "AUTOCORRECT ACREPLACE TYPETEXT COMPLETE LABELSHEETS LABELS LABELSIZE ENVELOPE RETURNADDRESS FEED QUIT");
     else if(starts_word_ci(command,"FAULT",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"FAULT needs a code");}else Fault(atol(arg),NULL,(STRPTR)result,sizeof result);}
@@ -5654,8 +5739,10 @@ static int rexx_do_command(const char *command, char **result_out)
     else if(starts_word_ci(command,"SAVEAS",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"SAVEAS needs a file");}else{save_document_as(arg);if(rexx_noted)ok=0;snprintf(result,sizeof result,"%s",status);}}
     else if(starts_word_ci(command,"SAVE",&arg)){if(current_path[0]){save_document_as(current_path);if(rexx_noted)ok=0;snprintf(result,sizeof result,"%s",status);}else{ok=0;snprintf(result,sizeof result,"Untitled document needs SAVEAS");}}
     else if(starts_word_ci(command,"EXPORT",&arg)){owf_report *rp;if(!*arg){ok=0;snprintf(result,sizeof result,"Missing export path");}else{rp=owf_report_new();ok=owf_export_file(doc,arg,NULL,rp)==OWF_OK;owf_report_free(rp);snprintf(result,sizeof result,"%s",ok?"Exported":"Export failed");}}
-    else if(starts_word_ci(command,"PRINT",&arg)){const char *w;int with=print_comments;   /* 2.0.36: PRINT [COMMENTS|NOCOMMENTS] */
-        if(starts_word_ci(arg,"COMMENTS",&w))with=1;else if(starts_word_ci(arg,"NOCOMMENTS",&w))with=0;
+    else if(starts_word_ci(command,"PRINT",&arg)){const char *w,*w2;int with=print_comments_mode();   /* 2.0.36: PRINT [COMMENTS [MARGIN|END]|NOCOMMENTS] */
+        if(starts_word_ci(arg,"COMMENTS",&w)){with=comments_in_margin?2:1;   /* 2.0.40: MARGIN beside their lines, END listed after */
+            if(starts_word_ci(w,"MARGIN",&w2))with=2;else if(starts_word_ci(w,"END",&w2))with=1;}
+        else if(starts_word_ci(arg,"NOCOMMENTS",&w))with=0;
         ok=print_with_feed(doc,current_path[0]?leaf(current_path):NULL,with,result,sizeof result);}
     else if(starts_word_ci(command,"INSERTTEXT",&arg)){ok=editor_result(ow_editor_insert_text_block(editor,arg,strlen(arg)),"ARexx text inserted.");snprintf(result,sizeof result,"%s",ok?"Inserted":"Insert failed");}
     else if(starts_word_ci(command,"FIND",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"Missing search text");}else{int f=ow_editor_find(editor,arg,0,0,1);ok=f>0;if(ok)bring_focus_into_view();else{request_document_redraw();rc_fail=RX_WARN;}snprintf(result,sizeof result,"%s",ok?"Found":"Not found");}}
@@ -5727,6 +5814,21 @@ static int rexx_do_command(const char *command, char **result_out)
                 if(f>0||start>0){ok=editor_result(ow_editor_set_note_numbering(editor,k,f>0?f:cur_f,start>0?start:cur_s),"Note numbering changed.");
                     ow_editor_note_numbering(editor,k,&cur_f,&cur_s);}
                 snprintf(result,sizeof result,"%s %d",codes[cur_f>0&&cur_f<OWF_NOTE_FORMAT_COUNT?cur_f:1],cur_s);
+            }
+        }
+    }
+    else if(starts_word_ci(command,"NOTERESTART",&arg)){   /* 2.0.42: NOTERESTART FOOTNOTE|ENDNOTE [CONTINUOUS|SECTION|PAGE]; answers it */
+        static const char *const words[OWF_NOTE_RESTART_COUNT]={"CONTINUOUS","SECTION","PAGE"};
+        const char *w;int k=-1,r=-1,i;
+        if(starts_word_ci(arg,"FOOTNOTE",&w))k=0;else if(starts_word_ci(arg,"ENDNOTE",&w))k=1;
+        if(k<0||!editor){ok=0;snprintf(result,sizeof result,"NOTERESTART FOOTNOTE|ENDNOTE [CONTINUOUS|SECTION|PAGE]");}
+        else{
+            while(*w==' ')++w;
+            for(i=0;*w&&i<OWF_NOTE_RESTART_COUNT;++i)if(!strcasecmp(w,words[i]))r=i;
+            if(*w&&(r<0||(k&&r==OWF_NOTE_RESTART_PAGE))){ok=0;snprintf(result,sizeof result,"%s",k?"Endnotes start again at CONTINUOUS or SECTION":"Unknown restart: CONTINUOUS, SECTION or PAGE");}
+            else{
+                if(r>=0)ok=editor_result(ow_editor_set_note_restart(editor,k,r),"Note numbering changed.");
+                snprintf(result,sizeof result,"%s",words[ow_editor_note_restart(editor,k)]);
             }
         }
     }
@@ -5834,8 +5936,9 @@ static int rexx_do_command(const char *command, char **result_out)
     else if(starts_word_ci(command,"INSERTFIELD",&arg)){static const char *const kinds[]={"PAGE","PAGES","DATE","TIME","TITLE","AUTHOR","SUBJECT","FILENAME","WORDS","CHAPTER","USER","REF","REFPAGE"};char kind[16];const char *rest=arg;int k,n=0,rc;char *u=NULL;
         while(*rest&&*rest!=' '&&n<15){kind[n++]=(char)toupper((unsigned char)*rest++);}kind[n]=0;rest=skip_space(rest);
         for(k=0;k<13&&strcmp(kinds[k],kind);++k);
-        if(!editor||k==13){ok=0;snprintf(result,sizeof result,"INSERTFIELD takes PAGE PAGES DATE TIME TITLE AUTHOR SUBJECT FILENAME WORDS CHAPTER, or USER, REF or REFPAGE and a name");}
-        else{if(*rest)u=comment_utf8(rest);rc=ow_editor_insert_field_arg(editor,(owf_field)k,u&&*u?u:NULL);free(u);if(rc==OWF_ERR_FORMAT){ok=0;snprintf(result,sizeof result,"%s",k>=10?"That field needs a name":"That field takes no name");}else{ok=editor_result(rc,"Field inserted.");if(ok)fields_update();snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}}
+        if(k==13&&!strcmp(kind,"SEQ"))k=OWF_FIELD_SEQ;   /* 2.0.43: INSERTFIELD SEQ name, a number range */
+        if(!editor||k==13){ok=0;snprintf(result,sizeof result,"INSERTFIELD takes PAGE PAGES DATE TIME TITLE AUTHOR SUBJECT FILENAME WORDS CHAPTER, or USER, REF, REFPAGE or SEQ and a name");}
+        else{if(*rest)u=comment_utf8(rest);rc=ow_editor_insert_field_arg(editor,(owf_field)k,u&&*u?u:NULL);free(u);if(rc==OWF_ERR_FORMAT){ok=0;snprintf(result,sizeof result,"%s",k==OWF_FIELD_SEQ&&*rest?"A number range's name is a letter, then letters, digits and _, 40 at most":k>=10?"That field needs a name":"That field takes no name");}else{ok=editor_result(rc,"Field inserted.");if(ok)fields_update();snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}}
     else if(starts_word_ci(command,"DOCINFO",&arg)){char what[16];const char *rest=arg;int n=0,k;while(*rest&&*rest!=' '&&n<15){what[n++]=(char)toupper((unsigned char)*rest++);}what[n]=0;rest=skip_space(rest);
         k=!strcmp(what,"TITLE")?0:!strcmp(what,"AUTHOR")?1:!strcmp(what,"SUBJECT")?2:-1;
         if(!editor||k<0){ok=0;snprintf(result,sizeof result,"DOCINFO takes TITLE, AUTHOR or SUBJECT, and a value to set");}

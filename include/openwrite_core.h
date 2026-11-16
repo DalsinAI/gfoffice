@@ -318,6 +318,9 @@ int ow_editor_table_apply_style(ow_editor *editor, ow_table_scope scope,
                                 unsigned long shading, int borders,
                                 unsigned long border_colour);
 int ow_editor_table_move(ow_editor *editor, int delta);
+/* 2.0.38: recording, a row put in is an insertion and a row deleted is marked deleted (the author's own
+ * inserted row goes), accepted and rejected as one change; columns are not recorded, so inserting or
+ * deleting one while recording is OWF_ERR_UNSUPPORTED. */
 int ow_editor_table_insert_row(ow_editor *editor);
 int ow_editor_table_delete_row(ow_editor *editor);
 int ow_editor_table_insert_column(ow_editor *editor);
@@ -446,6 +449,12 @@ int ow_editor_delete_note(ow_editor *editor);
  * undoable; DEFAULT or the kind's own format, and a start of 0 or 1, are the usual numbering. */
 int ow_editor_note_numbering(const ow_editor *editor, int endnote, int *format, int *start);
 int ow_editor_set_note_numbering(ow_editor *editor, int endnote, int format, int start);
+/* libowf 1.12.3 (2.0.42): where a kind's numbers start again: an owf_note_restart (endnotes never on each page:
+ * OWF_ERR_FORMAT). Setting it is undoable. The layout numbers footnotes on each page; ow_editor_note_info's and
+ * ow_editor_current_note's marks, which know no pages, run on through the document, and so do the formats that
+ * list notes (RTF, HTML, plain text). */
+int ow_editor_note_restart(const ow_editor *editor, int endnote);
+int ow_editor_set_note_restart(ow_editor *editor, int endnote, int restart);
 
 /* ---- Fields with a value (core 1.4) ----
  * The document's title, author and subject, the file's name, its words, the chapter (the level-1 heading a

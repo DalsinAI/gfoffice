@@ -39,17 +39,31 @@
  * 3.10: libowf 1.11, tracked format changes of runs (owf_run.format_change, owf_doc.format_changes,
  * owf_format_change): DOCX w:rPrChange in and out; other formats the format as it is now (accepted). No new
  * calls; owf_run and owf_doc grew, so the three libraries go together again.
+ * 3.11: libowf 1.12, a picture in the line may be a tracked change (owf_run.revision on OWF_RUN_IMAGE): DOCX
+ * w:ins and w:del round its w:drawing, ODT changed regions, in and out. A frame's run may be one too (DOCX in
+ * and out; ODT saves it accepted). No new calls and no struct grew.
  * 3.12: libowf 1.12.1 (after 3.11's 1.12.0), footnote and endnote numbering (owf_page.note_format and
  * note_start): DOCX w:footnotePr and w:endnotePr, ODT text:notes-configuration, in and out; the marks in every
  * format numbered by them. No new calls; owf_page grew, and owf_doc with it, so the three libraries go together
  * again.
+ * 3.13: libowf 1.12.2, the notes' text with its formats (owf_doc.note_stories, OWF_DOC_NOTE_STORY): DOCX's
+ * notes' runs in and out. No new calls; owf_doc grew, so the three libraries go together again.
+ * 3.14: libowf 1.12.3, notes numbered again at each section or page (owf_page.note_restart): DOCX
+ * w:numRestart, ODT text:start-numbering-at, in and out. No new calls; owf_page grew, and owf_doc with it.
+ * 3.15: libowf 1.12.4, number ranges (OWF_FIELD_SEQ): DOCX SEQ fields, ODT text:sequence and its
+ * text:sequence-decl, in and out. No new calls and no structure grew, so owfpub and owfpresent stay.
+ * 3.16: libowf 1.12.5 (3.14 and 3.15, libowf 1.12.3 and 1.12.4, are #288's and #292's), a table row may be a
+ * tracked change (owf_para.row_revision: DOCX w:trPr/w:ins and w:del; ODT saves it accepted). No new calls;
+ * owf_para grew, so the three libraries go together again.
+ * 3.17: libowf 1.12.6, 3.15's number ranges (OWF_FIELD_SEQ) on top of 3.16: #292 was numbered 3.15 before
+ * #255's 3.16 merged first, so the library that knows SEQ is 3.17. No new calls and no structure grew.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 12
-#define OWF_LIB_VERS "3.12"
-#define OWF_LIB_DATE "15.11.2026"
+#define OWF_LIB_REVISION 17
+#define OWF_LIB_VERS "3.17"
+#define OWF_LIB_DATE "16.11.2026"
 #define OWF_LIB_CALLS_H "owfwrite_calls.h"
 #include "owf_libbase.h"

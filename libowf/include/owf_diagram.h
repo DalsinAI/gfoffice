@@ -111,6 +111,9 @@ owf_dcell *owf_dpage_find(const owf_dpage *p, const char *id);
 int owf_dpage_index(const owf_dpage *p, const char *id);
 /* A new cell at the end (on top); id NULL makes a new one. NULL when the id is taken or memory ran out. */
 owf_dcell *owf_dpage_add(owf_dpage *p, const char *id, const char *parent, int kind);
+/* A copy of src (every field and attribute) at the end, with id (NULL makes a new one) in place of src's. NULL
+ * when the id is taken or memory ran out. src must not be a cell of p: p's cells may move. */
+owf_dcell *owf_dpage_add_copy(owf_dpage *p, const owf_dcell *src, const char *id);
 /* Removes the cell, every cell inside it, and the edges joined to any of them; how many went. */
 int owf_dpage_remove(owf_dpage *p, const char *id);
 /* An id no cell has, into buf (at least 16 bytes). */
@@ -224,6 +227,23 @@ int owf_dpdf_write(const owf_diagram *d, int page, unsigned char **data, size_t 
 
 /* page as EPS, into owf_malloc'd *data. OWF_OK; OWF_ERR_FORMAT when there is no such page; OWF_ERR_MEMORY. */
 int owf_deps_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
+
+/* ---- Graphs in text: Mermaid and Graphviz DOT ----
+ * One page as a graph for tools that lay it out themselves: shapes as nodes (the nearest shape the format has),
+ * shapes with shapes inside as subgraphs (DOT clusters), connectors joined at both ends as edges with their labels,
+ * dashes and arrowheads, and colours. Places are not kept. */
+
+/* page as a Mermaid flowchart, into owf_malloc'd *data. OWF_OK; OWF_ERR_FORMAT when there is no such page;
+ * OWF_ERR_MEMORY. */
+int owf_dmermaid_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
+/* page as a Graphviz DOT digraph; as owf_dmermaid_write. */
+int owf_ddot_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
+/* page as a GraphML graph: shapes as nodes keeping their places and sizes, a container as a node holding a
+ * nested graph; as owf_dmermaid_write. */
+int owf_dgraphml_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
+/* page as an Excalidraw scene (JSON): shapes, their labels and the arrows joining them where they are on the
+ * page; as owf_dmermaid_write. */
+int owf_dexcal_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
 
 #ifdef __cplusplus
 }

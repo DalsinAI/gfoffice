@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.10.0"
+#define OB_CORE_VERSION "0.13.1"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -210,6 +210,21 @@ int ob_table_sql(const ob_table *t, const char *as_name, char *out, size_t size)
  * (which may be more than max), -1 on error. */
 int ob_relations(ob_project *p, ob_relation *out, int max);
 
+/* Drawn in the relationships view (core 0.11.0), each one table change
+ * (ob_table_change: rows kept, refused with the reason if a row would look
+ * up a row that isn't there):
+ * ob_relation_add: table.field, an Integer or a Lookup, now looks up
+ * lookup's key (a Counter), rule on delete. field NULL or "": a new Lookup
+ * field, named lookup (or "lookup 2" when that is taken), its name in made
+ * (when not NULL). A table's Counter or key can't look up.
+ * ob_relation_set_rule: what deleting a looked-up row does to its rows.
+ * ob_relation_remove: no longer a relationship; the field is an Integer
+ * holding the same keys. */
+int ob_relation_add(ob_project *p, const char *table, const char *field, const char *lookup,
+                    ob_on_delete rule, char *made, size_t size);
+int ob_relation_set_rule(ob_project *p, const char *table, const char *field, ob_on_delete rule);
+int ob_relation_remove(ob_project *p, const char *table, const char *field);
+
 /* ---- Rows ----
  * Values are text in the field's own form, as a datasheet cell or a form's
  * gadget holds them: "1,234.50" for Currency, "Yes"/"No" for Yes/No,
@@ -344,6 +359,10 @@ int ob_children(ob_project *p, const char *table, ob_relation *out, int max);
  * `pos` (from 0, key order) among r's rows for record `parent`: -1 when
  * there is none, -2 on error. */
 ob_int ob_child_key(ob_project *p, const ob_relation *r, ob_int parent, ob_int pos);
+/* The view of r's rows for record `parent` (core 0.10.1): r->field Equals
+ * parent, key order. A subform row opened in its own table's form is
+ * shown in this view, so the form steps through that record's rows. */
+void ob_child_view(ob_view *v, const ob_relation *r, ob_int parent);
 /* Adds a row to r's table for record `parent`: its Lookup r->field holds
  * parent whatever the fields give for it; the rest as ob_row_add takes them.
  * 0 with the reason when parent is not a key (a new record not yet saved:
@@ -393,6 +412,8 @@ typedef struct ob_csv_opts {
     int found_sep;
     ob_charset found_charset;
     int found_header;
+    /* out, ob_dbf_import */
+    ob_int deleted;         /* records the file marks deleted, left out */
 } ob_csv_opts;
 
 void ob_csv_opts_init(ob_csv_opts *o);
@@ -408,6 +429,41 @@ ob_int ob_csv_export_with(ob_project *p, const char *table, const ob_view *v, co
  * time, else Text (Memo past 255 characters). The caller may change it, then
  * ob_table_create and ob_csv_import_with. o's found_* say what was found. */
 int ob_csv_guess(ob_project *p, const char *path, const char *name, ob_csv_opts *o, ob_table *out);
+
+/* ---- dBASE files (core 0.9, design 8) ----
+ * The .dbf of dBASE III, which most database and spreadsheet programs read
+ * and write; written from the published description of the format. Text is
+ * kept as ISO-8859-1, as the Amiga keeps it.
+ *
+ * Export: every row of the view (NULL: key order) of table into path, a
+ * column a field, named as dBASE names them (upper case, letters, digits
+ * and _, 10 at most: "Credit limit" is CREDIT_LIM, a second one CREDIT_L_2).
+ * Counter, Integer and Lookup are N with no decimals; Number is N with as
+ * many decimals as its values need (9 at most); Currency N with 2; Date D;
+ * Yes/No L; Text and Choice C as wide as their longest value (254 at most:
+ * a longer one makes the column a memo); Memo M, its text in a .dbt beside
+ * the .dbf (path with .dbt for .dbf), in 512-byte blocks; Time and Date and
+ * time C of 8 and 19. Datatype objects are left out. Rows written, -1 on
+ * error.
+ *
+ * Import: adds the file's records to table, all or none (o->skip_bad: the
+ * good ones, the bad listed as "Record 4: ..." in o->report). Columns go to
+ * the fields they name (by name, by the name dBASE would give the field, or
+ * by label, any case) when each does; otherwise to the table's fields in
+ * order, as CSV's. Records marked deleted are left out and counted in
+ * o->deleted. dBASE III and IV files are read, their memos too (a .dbt
+ * beside the file); FoxPro's are refused with that reason. Records added,
+ * -1 with the reason. o may be NULL.
+ *
+ * Guess: a new table's design from a .dbf's columns: a numeric ID column
+ * with no decimals becomes the Counter (so its keys are kept), else one is
+ * added; C is Text of that width, N with no decimals Integer (Number past
+ * 18 digits), N with 2 Currency, other N and F Number, D Date, L Yes/No, M
+ * Memo. Names are as dBASE wrote them, first letter kept upper (NAME is
+ * Name). Then ob_table_create and ob_dbf_import. */
+ob_int ob_dbf_export(ob_project *p, const char *table, const ob_view *v, const char *path);
+ob_int ob_dbf_import(ob_project *p, const char *table, const char *path, ob_csv_opts *o);
+int ob_dbf_guess(ob_project *p, const char *path, const char *name, ob_table *out);
 
 /* ---- Undo (core 0.4) ----
  * Each row added, changed or deleted, and each CSV import, can be undone,
@@ -566,6 +622,33 @@ int ob_query_get(ob_project *p, const char *name, ob_query *out);
 int ob_query_save(ob_project *p, const ob_query *q);
 int ob_query_rename(ob_project *p, const char *old_name, const char *new_name);
 int ob_query_delete(ob_project *p, const char *name);
+
+/* ---- A query's rows as CSV, a query as a view (core 0.13.1) ----
+ * CSV: a header of the result's headings, then every row the query gives,
+ * as ob_csv_export_with writes a table's (o: separator and charset; NULL is
+ * a comma and ISO-8859-1). Datatype object columns are left out. The answers
+ * (params) are checked before the file is made. Rows written, -1 on error.
+ *
+ * A view: the query's SELECT kept in the project as an SQL VIEW, so other
+ * SQLite programs (and typed SQL) can read it. Its name is a table's kind of
+ * name and no table or saved query has it; saving a name that is there
+ * replaces that view. A query that asks [questions] can't be a view.
+ * Renaming a table rewrites the views that name it (SQLite does), also when
+ * a design change renames it; a design change or a delete that would leave a
+ * view unable to read is refused.
+ * Saving or deleting a view is not on the Undo list.
+ *
+ * Renaming a table (ob_table_rename, or a design change that renames it) also
+ * renames it in saved queries made in the grid: their tables, their columns'
+ * tables, and "Orders". in an expression (as the designer writes a field).
+ * SQL typed as SQL is kept as it was typed. */
+ob_int ob_query_csv_export(ob_project *p, const ob_query *q, const char *const *params, const char *path,
+                           const ob_csv_opts *o);
+int ob_query_save_view(ob_project *p, const ob_query *q, const char *name);
+/* The project's views, in name order; a name is good until the next call. */
+int ob_sqlview_count(ob_project *p);
+const char *ob_sqlview_name(ob_project *p, int i);
+int ob_sqlview_drop(ob_project *p, const char *name);
 
 /* ---- Values ---- */
 

@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.12.1"
+#define OWF_VERSION "1.12.6"
 
 /* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
@@ -87,8 +87,11 @@ typedef enum { OWF_FIELD_PAGE, OWF_FIELD_PAGES, OWF_FIELD_DATE, OWF_FIELD_TIME,
                OWF_FIELD_MERGE,
                /* 1.10: an alphabetical index entry where it is (shows nothing): href is the entry, "Main:Sub" for
                 * a subentry (DOCX XE, ODF text:alphabetical-index-mark) */
-               OWF_FIELD_INDEX } owf_field;
-#define OWF_FIELD_LAST OWF_FIELD_INDEX
+               OWF_FIELD_INDEX,
+               /* 1.12.6: a number range: href is its name ("Figure", "Table"), text the number last shown, the
+                * count of its name's fields up to it (DOCX SEQ, ODF text:sequence) */
+               OWF_FIELD_SEQ } owf_field;
+#define OWF_FIELD_LAST OWF_FIELD_SEQ
 
 typedef struct {
     owf_run_kind kind;
@@ -99,7 +102,8 @@ typedef struct {
     int image;               /* index into doc->images for OWF_RUN_IMAGE, doc->frames for OWF_RUN_FRAME */
     int revision;            /* 1.5: a tracked change: 1 + its index in doc->revisions (OWF_REV_INSERT: this
                                 run was inserted, OWF_REV_DELETE: deleted but kept, shown struck through);
-                                0: none */
+                                0: none. 1.12: a picture in the line (OWF_RUN_IMAGE) or a frame's run (its
+                                frame put in or deleted; DOCX keeps it, ODT saves it accepted) may be one */
     int comment;             /* 1.6: a comment's place (OWF_RUN_TEXT runs with no text, kept apart from the text
                                 round them): 1 + its index in doc->comments where it is anchored (shown, and where
                                 a range ends); -(1 + its index) where its range starts. 0: none */
@@ -189,6 +193,10 @@ typedef struct {
      * in doc->revisions. Inserted: Return was typed there. Deleted: accepting the deletion joins the next
      * paragraph to this one. 0: none. */
     int mark_revision;
+    /* 1.12: a table cell's row is a tracked change (DOCX w:trPr/w:ins, w:del): 1 + its index in doc->revisions,
+     * the same on every cell of the row. Inserted: the row was put in; deleted: accepting it takes the row
+     * away. 0: none. */
+    int row_revision;
 } owf_para;
 
 typedef enum {
@@ -226,7 +234,14 @@ typedef struct {
      * text:notes-configuration): an owf_note_format (OWF_NOTE_FORMAT_DEFAULT: the kind's own, footnotes 1, 2,
      * endnotes i, ii) and the first number (0 or 1: 1) */
     int note_format[2], note_start[2];
+    /* 1.12.3: where each kind's numbers start again (DOCX's w:numRestart, ODF's text:start-numbering-at): an
+     * owf_note_restart. Endnotes can't start again on each page (Word's rule): they run on. */
+    int note_restart[2];
 } owf_page;
+
+/* 1.12.3: where a kind of note's numbering starts again: never (through the document), at each section's start
+ * (owf_para.section_columns), on each page (footnotes only) */
+typedef enum { OWF_NOTE_RESTART_CONTINUOUS, OWF_NOTE_RESTART_SECTION, OWF_NOTE_RESTART_PAGE, OWF_NOTE_RESTART_COUNT } owf_note_restart;
 
 /* 1.12.1: a kind of note's numbers. Symbols are Word's Chicago style: *, dagger, double dagger, section, then
  * doubled (**), and so on. Letters run a to z, then aa to zz (as Word does). */
@@ -314,7 +329,8 @@ typedef struct owf_format_change {
  * (owf_run.comment); one with a range has a run where the range starts too. A changed comment (its text, done)
  * is a new one that its runs name instead. ODT's office:annotation and DOCX's comments come in and go out as
  * these; other formats leave them out, but for "pdf-comments" (1.10.1), the PDF with a raised mark where each is
- * and the comments listed after the text. Its size never changes (owf_struct_size doesn't list it). (owf_comment
+ * and the comments listed after the text, and "pdf-comments-margin" (1.12.1), the same marks with each comment
+ * in a note beside its line. Its size never changes (owf_struct_size doesn't list it). (owf_comment
  * is a spreadsheet cell's.) */
 typedef struct owf_annotation {
     char *author;            /* UTF-8; NULL: unknown */
@@ -384,7 +400,21 @@ typedef struct owf_doc {
      * only grows, as the comments' and notes' do */
     int nformat_changes, capformat_changes;
     struct owf_format_change *format_changes;
+    /* 1.12.2: the notes' text with its formats: note_stories[i] is notes[i]'s paragraphs and their runs (bold,
+     * italic, underline, strike, size, font, colour, fields; the note's mark is not among them). notes[i] is
+     * plain, as its text has it, when i >= nnote_stories or that story has no paragraphs (OWF_DOC_NOTE_STORY);
+     * notes[i].text stays its plain copy either way. DOCX's notes come in and go out with their formats.
+     * The list is as long as the last note with formats needs, never longer than nnotes. */
+    int nnote_stories;
+    owf_story *note_stories;
 } owf_doc;
+
+/* 1.12.2: note index's formatted text (owf_doc.note_stories), NULL when it is plain. A macro, so that programs on
+ * the library have it too. */
+#define OWF_DOC_NOTE_STORY(doc, index)                                                                     \
+    ((index) >= 0 && (index) < (doc)->nnote_stories && (doc)->note_stories[(index)].nparas > 0             \
+         ? &(doc)->note_stories[(index)]                                                                   \
+         : (owf_story *)0)
 
 /* ---- Memory ----
  * Everything an owf_doc holds (stories, paragraphs, runs, their text,
@@ -702,6 +732,13 @@ typedef struct owf_book {
     int active;                  /* the sheet shown first */
     int nparts, capparts;        /* owf.library 2.1: parts kept as they were (a sheet's drawing...) */
     owf_part *parts;
+    /* owf.library 2.6: the workbook's structure protected (no sheet added, deleted, renamed, moved, hidden or
+       shown), as Excel's workbookProtection lockStructure and ODF's table:structure-protected */
+    int protect_structure;
+    char *protect_hash;          /* Excel's 16-bit password hash as 4 hex digits, or NULL: no password */
+    char *protect_kept;          /* a hash libowf cannot check, as its file wrote it: "xlsx:" and the workbook*
+                                    hash attributes, or "ods:" the digest algorithm's URI, a space and
+                                    table:protection-key; or NULL */
 } owf_book;
 
 owf_book *owf_book_new(void);
