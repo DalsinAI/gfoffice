@@ -454,6 +454,72 @@ owf_sheet *owf_extbook_sheet(owf_extbook *eb, const char *name, int create)
     return sheet;
 }
 
+static int hex_value(int c)
+{
+    return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+
+char *owf_link_name(const char *target, size_t length)
+{
+    size_t i, start = 0, n = 0;
+    char *name;
+    for (i = 0; i < length; i++)
+        if (target[i] == '/' || target[i] == '\\' || target[i] == ':')
+            start = i + 1;
+    if (start >= length || !(name = malloc(length - start + 1)))
+        return NULL;
+    for (i = start; i < length; i++) {
+        if (target[i] == '%' && i + 2 < length && hex_value(target[i + 1]) >= 0 && hex_value(target[i + 2]) >= 0) {
+            name[n++] = (char)(hex_value(target[i + 1]) * 16 + hex_value(target[i + 2]));
+            i += 2;
+        } else {
+            name[n++] = target[i];
+        }
+    }
+    name[n] = 0;
+    return name;
+}
+
+int owf_book_link_last_sheet(owf_book *book, const char *target, const char *sheet)
+{
+    char *name = owf_link_name(target, strlen(target));
+    owf_extbook *eb = name ? owf_book_add_extbook(book, name, target) : NULL;
+    owf_sheet *from, *to;
+    int i, n;
+    free(name);
+    if (!eb || !book->nsheets || !(to = owf_extbook_sheet(eb, sheet, 1)))
+        return -1;
+    from = &book->sheets[book->nsheets - 1];
+    for (i = 0; i < to->ncells; i++) {
+        free(to->cells[i].text);
+        free(to->cells[i].formula);
+    }
+    free(to->cells);
+    to->cells = from->cells;
+    to->ncells = from->ncells;
+    to->capcells = from->capcells;
+    from->cells = NULL;
+    from->ncells = from->capcells = 0;
+    for (i = n = 0; i < to->ncells; i++) {     /* values only: the empty cells and formulas go */
+        owf_cell c = to->cells[i];
+        free(c.formula);
+        if (c.type == OWF_VALUE_EMPTY) {
+            free(c.text);
+            continue;
+        }
+        c.formula = NULL;
+        c.style = 0;
+        c.flags = 0;
+        to->cells[n++] = c;
+    }
+    to->ncells = n;
+    free_sheet(from);
+    book->nsheets--;
+    if (book->active >= book->nsheets)
+        book->active = book->nsheets ? book->nsheets - 1 : 0;
+    return 0;
+}
+
 owf_sheet *owf_book_add_sheet(owf_book *book, const char *name)
 {
     owf_sheet *sheet;

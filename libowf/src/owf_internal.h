@@ -215,6 +215,12 @@ char *owf_xl_formula_move(const char *text, long drow, long dcol);
 /* From an XLSX file: "_xlfn." (and "_xlws.", "_xlpm.") off, and another
  * book's number ("[1]Rates!A1") as its file's name, books[0] for [1]. */
 char *owf_xl_formula_from_file(const char *text, char *const *books, int nbooks);
+/* The name formulas give another book: the last part of its path or URL, "%20" and the like decoded (NULL:
+ * none, or memory ran out). */
+char *owf_link_name(const char *target, size_t length);
+/* The book's last sheet made another book's (target) sheet: its values kept (no formulas or styles), the sheet
+ * taken out of the book. -1 when memory runs out (the sheet stays). */
+int owf_book_link_last_sheet(owf_book *book, const char *target, const char *sheet);
 /* For an XLSX file: "_xlfn." on where Excel wants it, and with links, each
  * other book by its number, the books, their sheets and names collected in
  * links for the file's externalLink parts. */

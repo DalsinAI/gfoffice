@@ -699,8 +699,7 @@ def test_xlsx_ods_xlsx(work, xlsx_paths):
                   "\n".join(l for l in (a + "\n---\n" + b).splitlines() if l.startswith(kind) or l == "---"))
         ranges = lambda text: [l.split(' "')[0] for l in text.splitlines() if l.startswith("autofilter ")]
         check("xlsx to ods to xlsx: AutoFilter ranges the same: " + stem, ranges(a) == ranges(b), (ranges(a), ranges(b)))
-        # other books' values: ODS keeps them from its own change (table:table-source)
-        same_meaning("xlsx to ods to xlsx: " + stem, a, b, extra, drop=("autofilter ", "ext"))
+        same_meaning("xlsx to ods to xlsx: " + stem, a, b, extra, drop=("autofilter ",))
 
 
 def test_ods_round_trips(work, ods_paths):
@@ -1083,7 +1082,7 @@ def test_external_books(work):
     path = hand("ext")
     rc, out, err = dump(path)
     want = ['extbook "Other.xlsx" target="file:///C:/Books/Other.xlsx"', 'extsheet "Other.xlsx" "Rates"',
-            'extcell "Rates" 0,0 number 2', 'extcell "Rates" 0,1 text "Two & a\\x0d"', 'extcell "Rates" 2,2 bool 1',
+            'extcell "Rates" 0,0 number 2', 'extcell "Rates" 0,1 text "Two & a\\x0d\\nb"', 'extcell "Rates" 2,2 bool 1',
             'extcell "Rates" 2,3 error #REF!', 'extsheet "Other.xlsx" "Unused"']
     check("external books: read", rc == 0 and parse(out).get("ext") == want, parse(out).get("ext"))
     again = os.path.join(work, "ext-again.xlsx")
@@ -1091,7 +1090,7 @@ def test_external_books(work):
         link = part(again, "xl/externalLinks/externalLink1.xml")
         check("external books: values written", '<sheetNames><sheetName val="Rates"/><sheetName val="Unused"/></sheetNames>'
               '<definedNames><definedName name="Rate"/></definedNames><sheetDataSet><sheetData sheetId="0"><row r="1">'
-              '<cell r="A1"><v>2</v></cell><cell r="B1" t="str"><v xml:space="preserve">Two &amp; a_x000D_</v></cell></row>'
+              '<cell r="A1"><v>2</v></cell><cell r="B1" t="str"><v xml:space="preserve">Two &amp; a_x000D_\nb</v></cell></row>'
               '<row r="3"><cell r="C3" t="b"><v>1</v></cell><cell r="D3" t="e"><v>#REF!</v></cell></row></sheetData>'
               '</sheetDataSet>' in link, link)
         rels = part(again, "xl/externalLinks/_rels/externalLink1.xml.rels")
@@ -1117,6 +1116,55 @@ def test_external_books(work):
         check("external books: formula sheets after the cached", '<sheetNames><sheetName val="Unused"/><sheetName val="Rates"/>'
               '</sheetNames>' in link and '<sheetData sheetId="0"><row r="1"><cell r="A1"><v>2</v>' in link, link)
 
+    # ODS: a table of LibreOffice's kind for each sheet, the formulas naming the book where it is, and back
+    ods = os.path.join(work, "ext.ods")
+    if convert(path, ods):
+        content = part(ods, "content.xml")
+        check("external books: ODS value table", '<table:table table:name="\'file:///C:/Books/Other.xlsx\'#Rates">'
+              '<table:table-source xlink:type="simple" xlink:href="file:///C:/Books/Other.xlsx" table:table-name="Rates" '
+              'table:mode="copy-results-only"/><table:table-column table:number-columns-repeated="4"/><table:table-row>'
+              '<table:table-cell office:value-type="float" office:value="2"/>' in content and
+              '<table:table-row table:number-rows-repeated="1"><table:table-cell/></table:table-row><table:table-row>'
+              '<table:table-cell table:number-columns-repeated="2"/><table:table-cell office:value-type="boolean" '
+              'office:boolean-value="true"/>' in content and "'#Unused\"><table:table-source" in content, content[-3000:])
+        check("external books: ODS formula names the file", "of:=['file:///C:/Books/Other.xlsx'#$Rates.$A$1]+Rate" in content,
+              re.findall(r'table:formula="[^"]*Rate[^"]*"', content))
+        rc, out, err = dump(ods)
+        b = parse(out)
+        check("external books: ODS read", rc == 0 and b.get("ext") == [l.replace("\\x0d\\n", "\\n") for l in want], b.get("ext"))
+        check("external books: ODS value tables are not sheets", [s["name"] for s in b["sheets"]] == ["Data", "Hidden", "Very & hidden"],
+              [s["name"] for s in b["sheets"]])
+        cell_is(b, 0, "E4", 'number 2 formula "[Other.xlsx]Rates!$A$1+Rate"', "external books: ODS ")
+    # LibreOffice's own: "%20" in the URL, the sheet from table:table-name; a sheet linked with its formulas
+    # (copy-all) stays a sheet, noted
+    src = os.path.join(work, "ext-ods")
+    shutil.copytree(os.path.join(FIX, "ods-hand"), src)
+    content_path = os.path.join(src, "content.xml")
+    with open(content_path, encoding="utf-8") as f:
+        text = f.read()
+    at = text.rindex("</t:table>") + len("</t:table>")
+    link = ('<t:table xmlns:xl="http://www.w3.org/1999/xlink" t:name="\'file:///home/dale/My%20Rates.ods\'#Q1">'
+            '<t:table-source xl:href="file:///home/dale/My%20Rates.ods" xl:type="simple" t:table-name="Q 1" '
+            't:mode="copy-results-only"/><t:table-column/><t:table-row t:number-rows-repeated="2"><t:table-cell/></t:table-row>'
+            '<t:table-row><t:table-cell office:value-type="float" office:value="7" t:formula="of:=1+6"/>'
+            '<t:table-cell office:value-type="string"><text:p>seven</text:p></t:table-cell></t:table-row></t:table>'
+            '<t:table xmlns:xl="http://www.w3.org/1999/xlink" t:name="Linked"><t:table-source xl:href="Other.ods" '
+            't:table-name="Sheet1" t:mode="copy-all"/><t:table-column/><t:table-row><t:table-cell office:value-type="float" '
+            'office:value="1"/></t:table-row></t:table>')
+    with open(content_path, "w", encoding="utf-8") as f:
+        f.write(text[:at] + link + text[at:])
+    hand = zip_dir(src, src + ".ods", stored_first="mimetype")
+    rc, out, err = dump(hand)
+    b = parse(out)
+    check("external books: LibreOffice's table read", rc == 0 and b.get("ext") == [
+        'extbook "My Rates.ods" target="file:///home/dale/My%20Rates.ods"', 'extsheet "My Rates.ods" "Q 1"',
+        'extcell "Q 1" 2,0 number 7', 'extcell "Q 1" 2,1 text "seven"'], b.get("ext"))
+    check("external books: copy-all stays a sheet", [s["name"] for s in b["sheets"]][-1] == "Linked" and
+          any("linked to other files" in n for n in b["notes"]), ([s["name"] for s in b["sheets"]], b["notes"]))
+    xlsx = os.path.join(work, "ext-ods.xlsx")
+    if convert(hand, xlsx):
+        rc, out, err = dump(xlsx)
+        check("external books: XLSX links only the books formulas name", parse(out).get("ext") is None, parse(out).get("ext"))
 
 def test_book_protection(work):
     """Workbook structure protection: XLSX workbookProtection lockStructure and ODS table:structure-protected,
