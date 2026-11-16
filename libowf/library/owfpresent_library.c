@@ -54,7 +54,7 @@
  * 3.14: owf_pdf_gradient is a call, at the end, so OWConvert's deck PDF (opr_pdf.c's gradient fills) links
  * against owfpresent.library again.
  * 3.16 (3.14 is #382's, 3.15 #262's): owf_para.para_format_change and owf_doc.para_format_changes
- * (owfwrite.library 3.22, libowf 1.17), so owf_para and owf_doc are larger and a program's size check refuses
+ * (owfwrite.library 3.22, libowf 1.18), so owf_para and owf_doc are larger and a program's size check refuses
  * 3.15 and before. No call changes.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.

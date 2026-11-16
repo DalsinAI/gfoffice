@@ -1744,11 +1744,11 @@ static void paragraph(docx *d, const owf_xml_node *p)
             if (!rev) d->failed = 1;
             st->paras[st->nparas - 1].mark_revision = rev;
         }
-        if (wchild(d, mrpr, "rPrChange"))         /* 1.11: the runs' are kept; 1.17: the paragraphs' too */
+        if (wchild(d, mrpr, "rPrChange"))         /* 1.11: the runs' are kept; 1.18: the paragraphs' too */
             owf_report_add(d->report, OWF_NOTE_APPROX, "Tracked format changes of paragraph marks are kept as the format is now");
     }
     {
-        /* 1.17: a tracked paragraph format change (w:pPrChange): its w:pPr is the paragraph's whole format
+        /* 1.18: a tracked paragraph format change (w:pPrChange): its w:pPr is the paragraph's whole format
          * before it, from its style (the document's default when it names none) up, as the paragraph's own is */
         const owf_xml_node *chg = wchild(d, ppr, "pPrChange");
         owf_story *st = d->b->story;

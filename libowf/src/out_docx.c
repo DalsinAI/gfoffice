@@ -209,7 +209,7 @@ static void put_ppr_props(owf_buf *out, const owf_parafmt *f, const char *style)
         owf_buf_printf(out, "<w:jc w:val=\"%s\"/>", jc[f->align]);
 }
 
-/* 1.17: fc is the paragraph's tracked format change (w:pPrChange, last, the format before in its own w:pPr),
+/* 1.18: fc is the paragraph's tracked format change (w:pPrChange, last, the format before in its own w:pPr),
  * style_before the style it names there */
 static void put_ppr(owf_buf *out, const owf_doc *doc, const owf_parafmt *f, const char *style,
                     int section_end, const owf_para *section, int next_break,
@@ -772,7 +772,7 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
     char instr[320];
     char style[16], ostyle[16];
     const char *pstyle = NULL, *opstyle = NULL;
-    const owf_para_format_change *pfc = OWF_DOC_PARA_FORMAT_CHANGE(doc, para->para_format_change);   /* 1.17 */
+    const owf_para_format_change *pfc = OWF_DOC_PARA_FORMAT_CHANGE(doc, para->para_format_change);   /* 1.18 */
     docx_marks mk;
     size_t at = 0;
     int j;
