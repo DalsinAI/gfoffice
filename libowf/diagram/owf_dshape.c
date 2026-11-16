@@ -194,6 +194,16 @@ static owf_dnum part(owf_dnum len, owf_dnum frac)
     return (owf_dnum)((wide)len * frac / 100);
 }
 
+/* A shape's size key as a length along len: with fixedSize=1 the size is page pixels (px when not given), else a
+ * part of len in hundredths (frac when not given), as draw.io's files hold it. */
+static owf_dnum size_along(const char *style, owf_dnum len, owf_dnum frac, owf_dnum px)
+{
+    char v[8];
+    if (owf_dstyle_get(style, "fixedSize", v, sizeof v) && !strcmp(v, "1"))
+        return num(style, "size", px);
+    return part(len, num(style, "size", frac));
+}
+
 static owf_dnum smaller(owf_dnum a, owf_dnum b)
 {
     return a < b ? a : b;
@@ -283,12 +293,12 @@ static void make(build *b, const char *style, int kind)
         pt(b, w - d, d); pt(b, w, 0); pt(b, w, h - d); pt(b, w - d, h);
         break;
     case S_STEP:                         /* a chevron pointing east */
-        k = clamp(part(w, num(style, "size", 20)), 0, w / 2);
+        k = clamp(size_along(style, w, 20, OWF_DNUM(20)), 0, w / 2);
         start(b, BOTH);
         pt(b, 0, 0); pt(b, w - k, 0); pt(b, w, h / 2); pt(b, w - k, h); pt(b, 0, h); pt(b, k, h / 2);
         break;
     case S_TRAPEZOID:                    /* narrower at the top */
-        k = clamp(part(w, num(style, "size", 20)), 0, w / 2);
+        k = clamp(size_along(style, w, 20, OWF_DNUM(20)), 0, w / 2);
         start(b, BOTH);
         pt(b, 0, h); pt(b, k, 0); pt(b, w - k, 0); pt(b, w, h);
         break;
@@ -321,7 +331,7 @@ static void make(build *b, const char *style, int kind)
         break;
     }
     case S_DATASTORAGE:                  /* bowed out on the left, in on the right */
-        k = clamp(part(w, num(style, "size", 10)), 0, w / 2);
+        k = clamp(size_along(style, w, 10, OWF_DNUM(10)), 0, w / 2);
         start(b, BOTH);
         pt(b, k, 0);
         arc(b, w, h / 2, k, h / 2, 48, 16, 2);

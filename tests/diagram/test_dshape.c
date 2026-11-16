@@ -105,6 +105,10 @@ static void test_places(void)
 
     CHECK_N(owf_dshape_outline("shape=step;", box, &s), 1);        /* size 0.2 of the width */
     CHECK(has(10, 10) && has(90, 10) && has(110, 40) && has(90, 70) && has(10, 70) && has(30, 40));
+    CHECK_N(owf_dshape_outline("shape=step;fixedSize=1;size=15;", box, &s), 1);   /* in pixels with fixedSize */
+    CHECK(has(95, 10) && has(110, 40) && has(25, 40));
+    CHECK_N(owf_dshape_outline("shape=step;fixedSize=1;", box, &s), 1);           /* 20 when not given */
+    CHECK(has(90, 10) && has(30, 40));
     CHECK_N(owf_dshape_outline("shape=offPageConnector;", box, &s), 1);   /* the point 0.38 of the height */
     CHECK(has(10, 10) && has(110, 10) && has(60, 70));
     CHECK_N(s.points[2].y, 1000 + 6000 - 2280);
