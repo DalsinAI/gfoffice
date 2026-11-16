@@ -234,29 +234,23 @@ static void read_points(owf_chart_series *s, const grid *g, int vc, int r0, int 
     }
 }
 
-int owf_chart_from_odf(const char *xml, size_t length, owf_chart *c)
+int owf_chart_from_odf_node(const owf_xml_node *root, owf_chart *c)
 {
-    owf_xml *x;
-    const owf_xml_node *root, *autos, *chart, *plot, *t, *n, *table;
+    const owf_xml_node *autos, *chart, *plot, *t, *n, *table;
     const char *cls, *cats = NULL;
-    int e = OWF_OK, failed = 0, vertical, hole, scatter, ns = 0, cc = 0;
+    int failed = 0, vertical, hole, scatter, ns = 0, cc = 0;
     grid g;
     if (!c)
         return OWF_ERR_FORMAT;
     memset(c, 0, sizeof *c);
-    if (!xml || !length)
+    if (!root)
         return OWF_ERR_FORMAT;
-    if (!(x = owf_xml_parse(xml, length, &e)))
-        return e == OWF_ERR_MEMORY ? OWF_ERR_MEMORY : OWF_ERR_FORMAT;
-    root = owf_xml_root(x);
     autos = owf_xml_child(root, NS_OFFICE, "automatic-styles");
     chart = owf_xml_child(owf_xml_child(owf_xml_child(root, NS_OFFICE, "body"), NS_OFFICE, "chart"), NS_CHART, "chart");
     plot = owf_xml_child(chart, NS_CHART, "plot-area");
     table = owf_xml_child(chart, NS_TABLE, "table");
-    if (!chart || !plot) {
-        owf_xml_free(x);
+    if (!chart || !plot)
         return OWF_ERR_FORMAT;
-    }
     {
         const owf_xml_node *pp = chart_props(autos, owf_xml_attr(plot, NS_CHART, "style-name"), "chart-properties");
         vertical = is_true(pp ? owf_xml_attr(pp, NS_CHART, "vertical") : NULL);
@@ -345,12 +339,27 @@ int owf_chart_from_odf(const char *xml, size_t length, owf_chart *c)
         c->nseries++;
     }
     free(g.cells);
-    owf_xml_free(x);
     if (failed) {
         owf_chart_clear(c);
         return OWF_ERR_MEMORY;
     }
     return OWF_OK;
+}
+
+int owf_chart_from_odf(const char *xml, size_t length, owf_chart *c)
+{
+    owf_xml *x;
+    int e = OWF_OK, r;
+    if (!c)
+        return OWF_ERR_FORMAT;
+    memset(c, 0, sizeof *c);
+    if (!xml || !length)
+        return OWF_ERR_FORMAT;
+    if (!(x = owf_xml_parse(xml, length, &e)))
+        return e == OWF_ERR_MEMORY ? OWF_ERR_MEMORY : OWF_ERR_FORMAT;
+    r = owf_chart_from_odf_node(owf_xml_root(x), c);
+    owf_xml_free(x);
+    return r;
 }
 
 /* ---- Writing ---- */
@@ -406,7 +415,7 @@ static void put_title(owf_buf *b, const char *element, const char *text)
     owf_buf_printf(b, "</text:p></chart:%s>", element);
 }
 
-int owf_chart_odf_xml(const owf_chart *c, int width, int height, owf_buf *b)
+int owf_chart_odf_xml(const owf_chart *c, int width, int height, int inline_doc, owf_buf *b)
 {
     static const char *const legends[] = { "end", "start", "top", "bottom" };
     int i, r, rows = 0, scatter, pie, cats = 0;
@@ -427,8 +436,9 @@ int owf_chart_odf_xml(const owf_chart *c, int width, int height, owf_buf *b)
             if (r < c->series[i].npoints && (scatter ? c->series[i].points[r].has_x : c->series[i].points[r].label != NULL))
                 cats = 1;
 
-    owf_buf_puts(b, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<office:document-content "
-                    "xmlns:office=\"" NS_OFFICE "\" xmlns:style=\"" NS_STYLE "\" xmlns:text=\"" NS_TEXT "\" "
+    owf_buf_puts(b, inline_doc ? "<office:document office:mimetype=\"application/vnd.oasis.opendocument.chart\" "
+                               : "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<office:document-content ");
+    owf_buf_puts(b, "xmlns:office=\"" NS_OFFICE "\" xmlns:style=\"" NS_STYLE "\" xmlns:text=\"" NS_TEXT "\" "
                     "xmlns:table=\"" NS_TABLE "\" xmlns:draw=\"" NS_DRAW "\" xmlns:chart=\"" NS_CHART "\" "
                     "xmlns:svg=\"" NS_SVG "\" xmlns:fo=\"" NS_FO "\" office:version=\"1.2\"><office:automatic-styles>");
     owf_buf_printf(b, "<style:style style:name=\"plot\" style:family=\"chart\"><style:chart-properties chart:vertical=\"%s\"",
@@ -514,7 +524,7 @@ int owf_chart_odf_xml(const owf_chart *c, int width, int height, owf_buf *b)
                 owf_buf_puts(b, "<table:table-cell/>");
         owf_buf_puts(b, "</table:table-row>");
     }
-    owf_buf_puts(b, "</table:table-rows></table:table></chart:chart></office:chart></office:body>"
-                    "</office:document-content>\n");
+    owf_buf_puts(b, "</table:table-rows></table:table></chart:chart></office:chart></office:body>");
+    owf_buf_puts(b, inline_doc ? "</office:document>" : "</office:document-content>\n");
     return b->failed ? OWF_ERR_MEMORY : OWF_OK;
 }

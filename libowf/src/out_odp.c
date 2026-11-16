@@ -990,6 +990,15 @@ static void put_custom_geometry(owf_buf *out, const owf_obj *o)
 static void put_chart_object(odpw *w, owf_buf *out, const owf_obj *o)
 {
     owf_buf *b;
+    if (w->flat) {                   /* one file: the chart document inside its object */
+        owf_buf_puts(out, "<draw:object>");
+        if (owf_chart_odf_xml(o->chart, o->width, o->height, 1, out) != OWF_OK)
+            w->failed = 1;
+        owf_buf_puts(out, "</draw:object>");
+        if (o->image >= 0)
+            put_image(w, out, "draw:image", NULL, o->image);
+        return;
+    }
     if (w->ncharts == w->capcharts) {
         int want = w->capcharts ? w->capcharts * 2 : 4;
         owf_buf *c = realloc(w->charts, (size_t)want * sizeof *c);
@@ -1002,7 +1011,7 @@ static void put_chart_object(odpw *w, owf_buf *out, const owf_obj *o)
     }
     b = &w->charts[w->ncharts];
     owf_buf_init(b);
-    if (owf_chart_odf_xml(o->chart, o->width, o->height, b) != OWF_OK) {
+    if (owf_chart_odf_xml(o->chart, o->width, o->height, 0, b) != OWF_OK) {
         owf_buf_free(b);
         w->failed = 1;
         return;
@@ -1023,7 +1032,7 @@ static void put_object(odpw *w, owf_buf *out, const owf_obj *objs, int n, int in
 
     if (depth > OWF_DECK_MAX_DEPTH)
         return;
-    if (o->kind == OWF_OBJ_OTHER || (o->kind == OWF_OBJ_CHART && (!o->chart || w->flat))) {
+    if (o->kind == OWF_OBJ_OTHER || (o->kind == OWF_OBJ_CHART && !o->chart)) {
         if (o->keep >= 0 && o->keep < w->deck->nkept && w->deck->kept[o->keep].kind == OWF_KEPT_OBJECT)
             owf_buf_puts(out, w->deck->kept[o->keep].xml);
         else

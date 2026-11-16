@@ -919,6 +919,15 @@ static owf_chart *read_chart_object(odp *o, const owf_xml_node *ob)
     unsigned char *data = NULL;
     size_t length = 0;
     owf_chart *chart;
+    const owf_xml_node *doc = owf_xml_child(ob, NS_OFFICE, "document");
+    if (doc) {                       /* a flat file's: the chart inside the object */
+        chart = malloc(sizeof *chart);
+        if (chart && owf_chart_from_odf_node(doc, chart) != OWF_OK) {
+            free(chart);
+            chart = NULL;
+        }
+        return chart;
+    }
     if (!o->zip || !href)
         return NULL;
     if (!strncmp(href, "./", 2))

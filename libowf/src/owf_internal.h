@@ -347,7 +347,10 @@ int owf_chart_pptx_parts(const owf_chart *c, const char *data_rid, owf_buf *part
  * in its own table, "local-table". Read: OWF_OK, OWF_ERR_FORMAT when it holds no chart, OWF_ERR_MEMORY (c then holds
  * nothing; owf_chart_clear frees it). Written: the chart width by height twips, its data a column a series. */
 int owf_chart_from_odf(const char *xml, size_t length, owf_chart *c);
-int owf_chart_odf_xml(const owf_chart *c, int width, int height, owf_buf *b);
+/* The same from its parsed root: office:document-content, or a flat file's office:document in its draw:object. */
+int owf_chart_from_odf_node(const owf_xml_node *root, owf_chart *c);
+/* inline_doc: as a flat file holds it, an office:document to go inside draw:object. */
+int owf_chart_odf_xml(const owf_chart *c, int width, int height, int inline_doc, owf_buf *b);
 /* A chart part's root (c:chartSpace) read into c, which holds nothing yet (owf_chart.c, for owf_chartbook.c). */
 void owf_chart_read_space(owf_chart *c, const owf_xml_node *space, int *failed);
 /* And a sheet's charts kept so, as an .xlsx's drawing is kept: its drawing, relationships and charts parts. */

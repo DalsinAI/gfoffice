@@ -342,7 +342,7 @@ static void test_odf(void)
     CHECK(c.nseries == 2 && c.series[0].colour == OWF_SHADE(0x004586) && !c.series[1].colour, "its series' colours");
 
     owf_buf_init(&b);
-    CHECK(owf_chart_odf_xml(&c, 9072, 5103, &b) == OWF_OK && b.length, "ODF written");
+    CHECK(owf_chart_odf_xml(&c, 9072, 5103, 0, &b) == OWF_OK && b.length, "ODF written");
     memset(&e, 0, sizeof e);
     CHECK(owf_chart_from_odf((const char *)b.data, b.length, &e) == OWF_OK, "ODF read back");
     check_sales(&e, "ODF read back");
@@ -358,7 +358,7 @@ static void test_odf(void)
         c.grouping = kinds[k] == OWF_CHART_PIE ? OWF_CHART_CLUSTERED : OWF_CHART_STACKED;
         owf_buf_init(&b);
         memset(&e, 0, sizeof e);
-        CHECK(owf_chart_odf_xml(&c, 7200, 4320, &b) == OWF_OK &&
+        CHECK(owf_chart_odf_xml(&c, 7200, 4320, 0, &b) == OWF_OK &&
               owf_chart_from_odf((const char *)b.data, b.length, &e) == OWF_OK, "kind %d", kinds[k]);
         CHECK(e.kind == kinds[k] && e.grouping == c.grouping, "kind %d back as %d, grouping %d", kinds[k], e.kind,
               e.grouping);
@@ -381,7 +381,7 @@ static void test_odf(void)
     }
     owf_buf_init(&b);
     memset(&e, 0, sizeof e);
-    CHECK(owf_chart_odf_xml(&c, 7200, 4320, &b) == OWF_OK &&
+    CHECK(owf_chart_odf_xml(&c, 7200, 4320, 0, &b) == OWF_OK &&
           owf_chart_from_odf((const char *)b.data, b.length, &e) == OWF_OK && e.kind == OWF_CHART_SCATTER, "scatter");
     CHECK(e.nseries == 2 && e.series[1].npoints == 3 && e.series[1].points[2].has_x && near(e.series[1].points[2].x, 31.5) &&
           near(e.series[1].points[2].value, 1.8) && !e.series[1].points[1].has_value, "scatter's points");
@@ -458,6 +458,27 @@ static void test_odp_round_trip(void)
     o = chart_obj(again);
     CHECK(o && o->chart, "still a chart");
     if (o && o->chart) check_sales(o->chart, "ODP to ODP");
+    free(odp2);
+    odp2 = NULL;
+    owf_deck_free(again);
+    again = NULL;
+
+    /* flat XML: the chart document inside its object */
+    CHECK(back && owf_export_fodp(back, &odp2, &on2, NULL) == OWF_OK && odp2, "saved as FODP");
+    if (odp2) {
+        char *t = malloc(on2 + 1);
+        if (t) {
+            memcpy(t, odp2, on2);
+            t[on2] = 0;
+            CHECK(strstr(t, "<draw:object><office:document office:mimetype=\"application/vnd.oasis.opendocument.chart\"") != NULL,
+                  "the chart inside its object");
+            free(t);
+        }
+    }
+    CHECK(odp2 && owf_import_deck_memory(odp2, on2, "fodp", &again, NULL, NULL) == OWF_OK, "the FODP read back");
+    o = chart_obj(again);
+    CHECK(o && o->chart, "a chart from the flat file");
+    if (o && o->chart) check_sales(o->chart, "FODP read back");
     free(odp);
     free(odp2);
     owf_deck_free(deck);
