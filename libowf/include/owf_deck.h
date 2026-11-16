@@ -67,12 +67,21 @@ typedef enum {
 #define OWF_AUTOFIT_SHRINK 1     /* the text shrinks to fit the box */
 #define OWF_AUTOFIT_GROW 2       /* the box grows with the text */
 
+/* owf_look.gradient: how the fill runs from fill to fill2 */
+#define OWF_GRADIENT_NONE 0      /* fill all over */
+#define OWF_GRADIENT_LINEAR 1    /* along gradient_angle across the box */
+#define OWF_GRADIENT_RADIAL 2    /* fill at the box's centre, fill2 at its corners */
+
 typedef struct {
     unsigned long fill;          /* OWF_SHADE(0xRRGGBB); 0: none */
     unsigned long line;          /* OWF_SHADE(0xRRGGBB); 0: none */
     int line_width;              /* twips; 0: the thinnest line */
     unsigned char line_style;    /* OWF_LINE_..., the workbook's border numbers */
     unsigned char arrows;        /* OWF_ARROW_START | OWF_ARROW_END */
+    unsigned char gradient;      /* OWF_GRADIENT_...; with a fill only */
+    int gradient_angle;          /* LINEAR: tenths of a degree anticlockwise from fill to fill2, 0 left
+                                    to right, 900 bottom to top; the object's rotation turns it too */
+    unsigned long fill2;         /* OWF_SHADE(0xRRGGBB): the gradient's other end */
 } owf_look;
 
 /* How one level of text looks: in a master, and in a frame's own list. */

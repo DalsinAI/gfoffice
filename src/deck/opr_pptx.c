@@ -69,6 +69,29 @@ static void put_colour(owf_buf *b, unsigned long rgb)
     owf_buf_printf(b, "<a:solidFill><a:srgbClr val=\"%06lX\"/></a:solidFill>", rgb & 0xFFFFFFUL);
 }
 
+/* an object's fill: a gradient (a:gradFill: a:lin's ang 60000ths of a degree clockwise, our angle
+ * anticlockwise; a radial one an a:path circle from the centre), plain, or none */
+static void put_fill(owf_buf *b, const owf_look *l)
+{
+    if (OWF_SHADE_SET(l->fill) && OWF_SHADE_SET(l->fill2) &&
+        (l->gradient == OWF_GRADIENT_LINEAR || l->gradient == OWF_GRADIENT_RADIAL)) {
+        owf_buf_printf(b, "<a:gradFill rotWithShape=\"1\"><a:gsLst><a:gs pos=\"0\"><a:srgbClr val=\"%06lX\"/></a:gs>"
+                          "<a:gs pos=\"100000\"><a:srgbClr val=\"%06lX\"/></a:gs></a:gsLst>",
+                       OWF_SHADE_RGB(l->fill), OWF_SHADE_RGB(l->fill2));
+        if (l->gradient == OWF_GRADIENT_RADIAL)
+            owf_buf_puts(b, "<a:path path=\"circle\"><a:fillToRect l=\"50000\" t=\"50000\" r=\"50000\" b=\"50000\"/>"
+                            "</a:path>");
+        else
+            owf_buf_printf(b, "<a:lin ang=\"%ld\" scaled=\"0\"/>",
+                           (long)((3600 - ((l->gradient_angle % 3600) + 3600) % 3600) % 3600) * 6000L);
+        owf_buf_puts(b, "</a:gradFill>");
+    } else if (OWF_SHADE_SET(l->fill)) {
+        put_colour(b, OWF_SHADE_RGB(l->fill));
+    } else {
+        owf_buf_puts(b, "<a:noFill/>");
+    }
+}
+
 static const char *font_name(const owf_deck *d, int font)
 {
     if (!d->res || font < 0 || font >= d->res->nfonts || !d->res->fonts[font].name)
@@ -490,13 +513,12 @@ static void put_object(pptxw *w, owf_buf *b, const owf_obj *o, const owf_obj *bo
     put_xfrm(b, "a", box);
     if (o->kind == OWF_OBJ_SHAPE) {
         owf_buf_printf(b, "<a:prstGeom prst=\"%s\"><a:avLst/></a:prstGeom>", preset(o));
-        if (OWF_SHADE_SET(o->look.fill) && o->shape != OWF_SHAPE_LINE) put_colour(b, OWF_SHADE_RGB(o->look.fill));
+        if (OWF_SHADE_SET(o->look.fill) && o->shape != OWF_SHAPE_LINE) put_fill(b, &o->look);
         else owf_buf_puts(b, "<a:noFill/>");
         put_line(b, &o->look);
     } else {
         owf_buf_puts(b, "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>");
-        if (OWF_SHADE_SET(o->look.fill)) put_colour(b, OWF_SHADE_RGB(o->look.fill));
-        else owf_buf_puts(b, "<a:noFill/>");
+        put_fill(b, &o->look);
         if (OWF_SHADE_SET(o->look.line)) put_line(b, &o->look);
     }
     owf_buf_puts(b, "</p:spPr>");

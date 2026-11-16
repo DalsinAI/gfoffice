@@ -519,10 +519,42 @@ static int colour_of(const colours *cc, const owf_xml_node *n, unsigned long *ou
     return 0;
 }
 
-/* A fill: a:solidFill, a:gradFill (its first stop), a:pattFill (its
- * foreground), a:noFill. 1 with *fill (OWF_SHADE, 0 for none) when n holds
- * one. */
-static int fill_of(reader *x, const colours *cc, const owf_xml_node *n, unsigned long *fill)
+/* a:gradFill into g: the first stop at the start (a linear one's start, a path one's centre), the
+ * last at the end; a:lin's ang (60000ths of a degree clockwise from left to right) as tenths
+ * anticlockwise; a:path (circle, rect, shape) drawn round from the centre. 0 without two stops. */
+static int gradient_of(const colours *cc, const owf_xml_node *f, unsigned long *fill, owf_look *g)
+{
+    const owf_xml_node *gs, *first = NULL, *last = NULL, *lin;
+    unsigned long a, b;
+    long long ang;
+    int n = 0;
+    for (gs = achild(f, "gsLst") ? achild(f, "gsLst")->first : NULL; gs; gs = gs->next)
+        if (isa(gs, "gs")) {
+            long long pos = number(att(gs, "pos"), 0);
+            if (!first || pos < number(att(first, "pos"), 0)) first = gs;
+            if (!last || pos >= number(att(last, "pos"), 0)) last = gs;
+            n++;
+        }
+    if (n < 2 || !colour_of(cc, first, &a) || !colour_of(cc, last, &b))
+        return 0;
+    *fill = OWF_SHADE(a);
+    g->fill2 = OWF_SHADE(b);
+    if (achild(f, "path")) {
+        g->gradient = OWF_GRADIENT_RADIAL;
+        g->gradient_angle = 0;
+    } else {
+        lin = achild(f, "lin");
+        ang = lin ? number(att(lin, "ang"), 0) / 6000 % 3600 : 0;
+        g->gradient = OWF_GRADIENT_LINEAR;
+        g->gradient_angle = (int)((3600 - ang) % 3600);
+    }
+    return 1;
+}
+
+/* A fill: a:solidFill, a:gradFill (into g when given, else its first
+ * stop), a:pattFill (its foreground), a:noFill. 1 with *fill (OWF_SHADE, 0
+ * for none) when n holds one. */
+static int fill_of(reader *x, const colours *cc, const owf_xml_node *n, unsigned long *fill, owf_look *g)
 {
     const owf_xml_node *f;
     unsigned long rgb;
@@ -537,6 +569,8 @@ static int fill_of(reader *x, const colours *cc, const owf_xml_node *n, unsigned
         }
         if (isa(f, "gradFill")) {
             const owf_xml_node *gs = achild(achild(f, "gsLst"), "gs");
+            if (g && gradient_of(cc, f, fill, g))
+                return 1;
             *fill = gs && colour_of(cc, gs, &rgb) ? OWF_SHADE(rgb) : 0;
             owf_report_add(x->report, OWF_NOTE_APPROX, "Gradient and pattern fills are drawn in one colour");
             return 1;
@@ -1594,13 +1628,16 @@ static void read_look(objctx *c, owf_obj *obj, const owf_xml_node *shape, const 
     unsigned long rgb, fill = 0;
     long long v;
     int i, has_fill = 0, has_line = 0, has_width = 0;
+    owf_look grad;
+
+    memset(&grad, 0, sizeof grad);
 
     from[0] = spPr;
     from[1] = lph ? sp_pr(lph) : NULL;
     from[2] = mph ? sp_pr(mph) : NULL;
     for (i = 0; i < 3 && !has_fill && !line_only; i++)
         if (from[i])
-            has_fill = fill_of(&c->x->r, &c->cc, from[i], &fill);
+            has_fill = fill_of(&c->x->r, &c->cc, from[i], &fill, &grad);
     if (!has_fill && !line_only && style) {
         const owf_xml_node *fr = achild(style, "fillRef");
         if (fr && number(att(fr, "idx"), 0) > 0 && colour_of(&c->cc, fr, &rgb)) {
@@ -1610,6 +1647,11 @@ static void read_look(objctx *c, owf_obj *obj, const owf_xml_node *shape, const 
         }
     }
     obj->look.fill = line_only ? 0 : fill;
+    if (!line_only && fill && grad.gradient) {
+        obj->look.gradient = grad.gradient;
+        obj->look.gradient_angle = grad.gradient_angle;
+        obj->look.fill2 = grad.fill2;
+    }
     for (i = 0; i < 3 && !ln; i++)
         ln = achild(from[i], "ln");
     if (ln) {
@@ -2001,7 +2043,7 @@ static void read_table(objctx *c, int index, const owf_xml_node *tbl)
                 merged = 1;
             tcPr = achild(tc, "tcPr");
             header = styled && first_row && nrows == 0;
-            if (!fill_of(&c->x->r, &c->cc, tcPr, &fill) && styled) {
+            if (!fill_of(&c->x->r, &c->cc, tcPr, &fill, NULL) && styled) {
                 if (header)
                     fill = OWF_SHADE(accent);
                 else
@@ -2179,7 +2221,7 @@ static int read_background(pptx *x, const colours *cc, const rels *r, const owf_
             *image = load_picture(x, r, ratt(blip, "embed"), x->deck->width, x->deck->height, NULL);
             return 1;
         }
-        if (fill_of(&x->r, cc, pr, &fill)) {
+        if (fill_of(&x->r, cc, pr, &fill, NULL)) {
             *colour = fill ? fill : OWF_SHADE(0xFFFFFF);
             return 1;
         }
