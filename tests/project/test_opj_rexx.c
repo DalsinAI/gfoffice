@@ -569,6 +569,53 @@ static void test_sort_find(void)
     CHECK_S(ok("GETCELL 2 Name"), "Foll");
 }
 
+/* FILTER, GROUP, LINES and LINE: the window's lines, worked out again after every command. */
+static void test_filter_group(void)
+{
+    opj_lines lines;
+    char want[80];
+    opj_doc_free(rx.doc);
+    rx.doc = opj_doc_new(NULL, AT(16, 8, 0));
+    CHECK(rx.doc != NULL);
+    if (!rx.doc) return;
+    ok("ADDTASK Pour DURATION 2d");
+    ok("ADDTASK Dig DURATION 1d");
+    ok("ADDTASK Ship DURATION 0d");
+    ok("ADDTASK Fill DURATION 2d");
+    CHECK_N(rx_do("FILTER Milestones"), OPJ_RX_NOW);                       /* no window */
+    CHECK_S(rx.lasterror, "FILTER: there is no window to filter or group");
+    opj_lines_init(&lines);
+    rx.lines = &lines;
+    CHECK_S(ok("LINES"), "4");
+    CHECK_S(ok("FILTER Milestones"), "1");
+    CHECK_S(ok("LINES"), "1");
+    CHECK_S(ok("LINE 1"), "3");
+    CHECK_S(ok("FILTER AutoFilter COLUMN Name TEXT i"), "3");              /* Dig, Ship, Fill */
+    CHECK_S(ok("FILTER AutoFilter COLUMN Name TEXT fill EXACT"), "1");
+    CHECK_S(ok("FILTER AutoFilter COLUMN Name TEXT d BEGINS"), "1");
+    CHECK_N(rx_do("FILTER AutoFilter"), OPJ_RX_ERROR);
+    CHECK_S(rx.lasterror, "FILTER: AutoFilter needs a COLUMN");
+    CHECK_N(rx_do("FILTER nope"), OPJ_RX_ERROR);
+    CHECK_S(rx.lasterror, "FILTER: no filter nope");
+    CHECK_S(ok("FILTER All"), "4");
+    CHECK_S(ok("GROUP BY Duration"), "3");                                 /* 0, 1 and 2 days */
+    CHECK_S(ok("LINES"), "7");
+    snprintf(want, sizeof want, "Duration: %s", ok("GETCELL 3 Duration"));
+    CHECK_S(ok("LINE 1"), want);
+    CHECK_S(ok("LINE 2"), "3");
+    CHECK_S(ok("GROUP BY Duration DESC"), "3");
+    CHECK_S(ok("LINE 2"), "1");                                            /* 2 days: Pour, Fill */
+    ok("SETCELL 2 Duration 2d");                                           /* the lines follow the edit */
+    CHECK_S(ok("LINES"), "6");
+    CHECK_N(rx_do("GROUP BY Colour"), OPJ_RX_ERROR);
+    CHECK_N(rx_do("LINE 9"), OPJ_RX_ERROR);
+    CHECK_S(rx.lasterror, "LINE: no line 9");
+    CHECK_S(ok("GROUP"), "0");
+    CHECK_S(ok("LINES"), "4");
+    rx.lines = NULL;
+    opj_lines_free(&lines);
+}
+
 int main(void)
 {
     if (!own_folder()) {
@@ -590,6 +637,7 @@ int main(void)
     test_replace();
     test_level();
     test_sort_find();
+    test_filter_group();
     if (!rx.doc) return 1;
     CHECK_N(opj_rexx_format("A.XML"), OWF_PFILE_MSPDI);
     CHECK_N(opj_rexx_format("plan.Csv"), OWF_PFILE_CSV);

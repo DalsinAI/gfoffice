@@ -1140,11 +1140,11 @@ int opj_clear_leveling(opj_doc *doc)
 
 /* ---- Sort ---- */
 
-/* A cell's value to sort by: 1 with *v for a date, duration, number or money; 0 for text; *na set for NA. */
-static int sort_value(const opj_doc *doc, int row, int column, long *v, int *na)
+int opj_cell_value(const opj_doc *doc, int row, int column, long *v, int *na)
 {
     const owf_ptask *t = &doc->plan->tasks[row];
     *na = 0;
+    *v = 0;
     switch (column) {
     case OPJ_COL_ID: *v = row; return 1;
     case OPJ_COL_DURATION: *v = t->duration; return 1;
@@ -1179,7 +1179,7 @@ static int lower(int c)
     return c >= 'A' && c <= 'Z' ? c + 32 : c;
 }
 
-static int text_cmp_ci(const char *a, const char *b)
+int opj_text_cmp(const char *a, const char *b)
 {
     for (; *a && lower((unsigned char)*a) == lower((unsigned char)*b); a++, b++)
         ;
@@ -1193,15 +1193,15 @@ static int sort_cmp(const opj_doc *doc, const opj_sort_key *k, int nk, int a, in
     for (i = 0; i < nk; i++) {
         long va = 0, vb = 0;
         int naa, nab, d;
-        if (sort_value(doc, a, k[i].column, &va, &naa)) {
-            sort_value(doc, b, k[i].column, &vb, &nab);
+        if (opj_cell_value(doc, a, k[i].column, &va, &naa)) {
+            opj_cell_value(doc, b, k[i].column, &vb, &nab);
             if (naa != nab) return naa ? 1 : -1;               /* NA last, either way */
             d = naa || va == vb ? 0 : va < vb ? -1 : 1;
         } else {
             char ta[160], tb[160];
             opj_cell_text(doc, a, k[i].column, ta, sizeof ta);
             opj_cell_text(doc, b, k[i].column, tb, sizeof tb);
-            d = text_cmp_ci(ta, tb);
+            d = opj_text_cmp(ta, tb);
             d = d < 0 ? -1 : d > 0 ? 1 : 0;
         }
         if (d) return k[i].descending ? -d : d;
@@ -1299,10 +1299,10 @@ static const char *find_ci(const char *hay, const char *needle)
     return NULL;
 }
 
-static int text_matches(const char *cell, const char *text, int how)
+int opj_text_matches(const char *cell, const char *text, int how)
 {
     switch (how) {
-    case OPJ_FIND_EQUALS: return text_cmp_ci(cell, text) == 0;
+    case OPJ_FIND_EQUALS: return opj_text_cmp(cell, text) == 0;
     case OPJ_FIND_BEGINS: return find_ci(cell, text) == cell;
     default: return find_ci(cell, text) != NULL;
     }
@@ -1323,7 +1323,7 @@ static int find_row(const opj_doc *doc, int resources, int column, const char *t
         else row = from < 0 ? k - 1 : (from + k) % n;
         if (resources) opj_resource_cell_text(doc, row, column, cell, sizeof cell);
         else opj_cell_text(doc, row, column, cell, sizeof cell);
-        if (text_matches(cell, text, how)) return row;
+        if (opj_text_matches(cell, text, how)) return row;
     }
     return -1;
 }

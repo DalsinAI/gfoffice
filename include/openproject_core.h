@@ -220,6 +220,68 @@ int opj_find_resource_row(const opj_doc *doc, int column, const char *text, int 
  * out of range. */
 int opj_replace_text(opj_doc *doc, int column, const char *find, const char *with, int first, int count,
                      int *changed, int *refused);
+/* A cell's value as Sort and Group By order it: 1 with *v for a date, duration, number or money (*na set for
+ * NA); 0 for a column ordered by its text. */
+int opj_cell_value(const opj_doc *doc, int row, int column, long *v, int *na);
+/* Text against text with case ignored, as strcmp; and whether cell matches text by how (an OPJ_FIND_). */
+int opj_text_cmp(const char *a, const char *b);
+int opj_text_matches(const char *cell, const char *text, int how);
+
+/* ---- Filters and groups (Project > Filtered For, the AutoFilter row, Project > Group By) ----
+ * A view shows a plan's tasks as lines: with no filter and no group, a line for each task in the sheet's
+ * order. A filter keeps the tasks it passes (and, with summaries set, the summaries above them, MS
+ * Project's "Show related summary rows"). Group By drops the outline: the summaries go, and the rest are
+ * gathered under a heading line for each value of the group's column, the headings in that column's sort
+ * order (ascending or descending) and the tasks under each in the sheet's order. Lines are worked out by
+ * opj_lines_update, again after any edit. */
+enum {
+    OPJ_FILTER_ALL,                      /* All Tasks */
+    OPJ_FILTER_CRITICAL,                 /* Critical */
+    OPJ_FILTER_MILESTONES,               /* Milestones */
+    OPJ_FILTER_INCOMPLETE,               /* Incomplete Tasks: under 100% (a summary: any subtask is) */
+    OPJ_FILTER_COMPLETED,                /* Completed Tasks: 100% (a summary: every subtask is) */
+    OPJ_FILTER_SUMMARY,                  /* Summary Tasks */
+    OPJ_FILTER_UNSTARTED,                /* Unstarted Tasks: 0% and no actual start (a summary: no subtask
+                                          * started) */
+    OPJ_FILTER_CELL,                     /* the AutoFilter: column's cell matches text by how */
+    OPJ_NFILTERS
+};
+typedef struct {
+    int kind;                            /* OPJ_FILTER_ */
+    int column;                          /* OPJ_FILTER_CELL: an OPJ_COL_ */
+    int how;                             /* OPJ_FILTER_CELL: an OPJ_FIND_ */
+    char text[80];                       /* OPJ_FILTER_CELL: what to match, as the sheet shows it */
+    int summaries;                       /* also the summaries above every task it keeps */
+} opj_filter;
+/* A filter's name as the Filtered For menu has it ("Critical"), "" out of range; a name (case ignored, an
+ * AutoFilter is "AutoFilter") back to its OPJ_FILTER_, -1 for none. */
+const char *opj_filter_name(int kind);
+int opj_filter_parse(const char *name);
+/* 1 when filter (NULL: All Tasks) keeps row on its own (summaries set or not). */
+int opj_filter_passes(const opj_doc *doc, const opj_filter *filter, int row);
+
+typedef struct {
+    opj_filter filter;                   /* set before opj_lines_update; kind OPJ_FILTER_ALL keeps every task */
+    int group;                           /* the Group By column, an OPJ_COL_, -1 none */
+    int group_descending;
+    /* worked out by opj_lines_update */
+    int n;                               /* how many lines */
+    int *task;                           /* each line's task row; -1 for a group's heading */
+    int *heading;                        /* each line's group (its heading's task row: the group's first) */
+    int ntasks;                          /* the plan's tasks when worked out */
+    int *line_of;                        /* each task's line, -1 when hidden */
+} opj_lines;
+/* Lines with no filter and no group (nothing worked out yet). */
+void opj_lines_init(opj_lines *lines);
+/* Works the lines out for doc from their filter and group. OWF_OK, OWF_ERR_MEMORY (lines as before), or
+ * OWF_ERR_FORMAT for a filter or group out of range. */
+int opj_lines_update(opj_lines *lines, const opj_doc *doc);
+void opj_lines_free(opj_lines *lines);
+/* 1 when lines filter or group anything (a view with them shows other than every task). */
+int opj_lines_active(const opj_lines *lines);
+/* A group's heading: the column's title and the group's value, "Duration: 5 days" ("Duration: " with no
+ * value); "" when line is no heading. */
+void opj_lines_heading_text(const opj_lines *lines, const opj_doc *doc, int line, char *out, size_t size);
 
 /* ---- The resource sheet ---- */
 
@@ -314,6 +376,9 @@ typedef struct {
                                           * the % Complete beside each bar in place of the resource names */
     int scroll_x, scroll_y;              /* the Network Diagram's scroll, in pixels */
     oldraw_font font;
+    const opj_lines *lines;              /* the Gantt view's filter and groups (worked out for doc); NULL: every
+                                          * task, a line each. first_row is then the top line shown; selected
+                                          * stays a task row */
 } opj_view;
 
 /* A view of doc, width by height pixels, rows row_height high, at a zoom, starting at the Monday on or
@@ -340,6 +405,12 @@ owf_ptime opj_view_time(const opj_view *v, long x);
 /* A row's top y (rows above first_row are above the view); rows shown. */
 int opj_row_y(const opj_view *v, int row);
 int opj_rows_shown(const opj_view *v);
+/* With v's lines: how many lines doc has in v, the task on a line (-1 for a heading or out of range) and a
+ * task's line (-1 hidden). Without, a line is a task. A hidden task has no bar, baseline, label or links,
+ * and its row's y is far above the view. */
+int opj_view_lines(const opj_view *v, const opj_doc *doc);
+int opj_view_line_task(const opj_view *v, const opj_doc *doc, int line);
+int opj_view_task_line(const opj_view *v, const opj_doc *doc, int task);
 
 /* What a task's bar looks like. */
 enum { OPJ_BAR_TASK, OPJ_BAR_SUMMARY, OPJ_BAR_MILESTONE };
@@ -379,6 +450,7 @@ int opj_link_path(const opj_view *v, const opj_doc *doc, int row, int link, opj_
 #define OPJ_COLOUR_LINK OLDRAW_RGB(0x3050A0)
 #define OPJ_COLOUR_NONWORKING OLDRAW_RGB(0xE4E4E4)
 #define OPJ_COLOUR_GRID OLDRAW_RGB(0xC8C8C8)
+#define OPJ_COLOUR_HEADING OLDRAW_RGB(0xFFF2CC)       /* a group's heading line (MS Project's yellow) */
 
 /* Draws what of the view crosses area (the view's own pixels) onto d. */
 void opj_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area);
@@ -523,10 +595,12 @@ void opj_print_draw(oldraw *d, const opj_print *pr, const opj_doc *doc, int page
 int opj_pdf_write(const opj_doc *doc, const opj_view *proto, unsigned char **data, size_t *length, int *pages);
 
 /* What is at a point. */
-enum { OPJ_HIT_NONE, OPJ_HIT_COLUMN_TITLE, OPJ_HIT_TIMESCALE, OPJ_HIT_CELL, OPJ_HIT_SPLIT, OPJ_HIT_BAR, OPJ_HIT_CHART };
+enum { OPJ_HIT_NONE, OPJ_HIT_COLUMN_TITLE, OPJ_HIT_TIMESCALE, OPJ_HIT_CELL, OPJ_HIT_SPLIT, OPJ_HIT_BAR, OPJ_HIT_CHART,
+       OPJ_HIT_HEADING };                /* HEADING: a group's heading line (row -1) */
 typedef struct {
     int what;                            /* OPJ_HIT_ */
     int row, column;                     /* CELL: both; COLUMN_TITLE: column; BAR, CHART: row (-1 below the rows) */
+    int line;                            /* CELL, BAR, CHART, HEADING: the view's line there, -1 below them */
     owf_ptime time;                      /* TIMESCALE, BAR, CHART: the time at the point */
     int part;                            /* BAR: 0 its middle (move), 1 its right end (stretch), 2 its done part */
 } opj_hit;
@@ -574,6 +648,9 @@ typedef struct {
     opj_view *view;                      /* the window's view: EXPORT FORMAT PDF prints its columns and zoom,
                                           * COLUMN shows and hides its columns; NULL: a fresh one at days zoom
                                           * for EXPORT, and COLUMN is not possible (5) */
+    opj_lines *lines;                    /* the window's filter and groups: FILTER and GROUP set them, and they
+                                          * are worked out again after every command; NULL: FILTER, GROUP,
+                                          * LINES and LINE are not possible (5) */
 } opj_rexx;
 
 /* A command, its answer into result (cut to size, "" when it has none). */
