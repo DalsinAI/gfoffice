@@ -2227,6 +2227,18 @@ static int same_text(const char *a, const char *b)
     return (!a && !b) || (a && b && !strcmp(a, b));
 }
 
+/* Insertion sort by xrev_order: owf.library has no qsort, and the list is short. */
+static void xrev_sort(xrev *r, int n)
+{
+    int i, j;
+    for (i = 1; i < n; i++) {
+        xrev t = r[i];
+        for (j = i; j > 0 && xrev_order(&r[j - 1], &t) > 0; j--)
+            r[j] = r[j - 1];
+        r[j] = t;
+    }
+}
+
 /* The changes in order, where each was made (NULL with *n 0 when there are none; *n -1: memory). */
 static xrev *xrev_list(const owf_book *book, int *n)
 {
@@ -2244,7 +2256,7 @@ static xrev *xrev_list(const owf_book *book, int *n)
         *n = -1;
         return NULL;
     }
-    qsort(r, (size_t)*n, sizeof *r, xrev_order);
+    xrev_sort(r, *n);
     xrev_places(r, *n);
     return r;
 }
