@@ -48,7 +48,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenProject 0.1.2 (15.11.2026)"
+#define VERSION_TEXT "GFOpenProject 0.1.3 (16.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenProject, the project planner of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -58,8 +58,10 @@ enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_XML, M_EXPORT_CSV, M_EXPORT_PDF, M_PRINT, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_EDIT, M_INSERT, M_DELETE, M_INDENT, M_OUTDENT, M_LINK, M_UNLINK,
     M_DAYS, M_WEEKS, M_MONTHS, M_QUARTERS, M_SHOW_BASELINE, M_RESOURCES, M_START, M_GANTT, M_USAGE,
-    M_SET_BASELINE, M_CLEAR_BASELINE
+    M_SET_BASELINE, M_CLEAR_BASELINE,
+    M_COLUMN                                 /* View > Columns: M_COLUMN + the column (OPJ_COL_) */
 };
+#define COLUMNS_ITEM 13                      /* View's item number of Columns */
 
 static struct NewMenu menus[] = {
     { NM_TITLE, "Project", NULL, 0, 0, NULL },
@@ -101,6 +103,21 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Gantt Chart", "G", CHECKIT | CHECKED, 1 << 11, (APTR)M_GANTT },
     { NM_ITEM, "Resource Usage", "W", CHECKIT, 1 << 10, (APTR)M_USAGE },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Columns", NULL, 0, 0, NULL },
+    { NM_SUB, "ID", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)(M_COLUMN + OPJ_COL_ID) },
+    { NM_SUB, "Task Name", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)(M_COLUMN + OPJ_COL_NAME) },
+    { NM_SUB, "Duration", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)(M_COLUMN + OPJ_COL_DURATION) },
+    { NM_SUB, "Start", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)(M_COLUMN + OPJ_COL_START) },
+    { NM_SUB, "Finish", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)(M_COLUMN + OPJ_COL_FINISH) },
+    { NM_SUB, "Predecessors", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)(M_COLUMN + OPJ_COL_PREDECESSORS) },
+    { NM_SUB, "% Complete", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_PERCENT) },
+    { NM_SUB, "WBS", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_WBS) },
+    { NM_SUB, "Resource Names", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_RESOURCES) },
+    { NM_SUB, "Baseline Start", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_BASELINE_START) },
+    { NM_SUB, "Baseline Finish", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_BASELINE_FINISH) },
+    { NM_SUB, "Start Var.", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_START_VARIANCE) },
+    { NM_SUB, "Finish Var.", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_FINISH_VARIANCE) },
     { NM_TITLE, "Tools", NULL, 0, 0, NULL },
     { NM_ITEM, "Set Baseline", NULL, 0, 0, (APTR)M_SET_BASELINE },
     { NM_ITEM, "Clear Baseline", NULL, 0, 0, (APTR)M_CLEAR_BASELINE },
@@ -845,6 +862,14 @@ static void menu_action(ULONG id, struct MenuItem *item)
                  : id == M_UNLINK ? OPJ_EDIT_UNLINK : OPJ_EDIT_NONE;
         if (!edit_allowed(edit)) return;
     }
+    if (id >= M_COLUMN && id < M_COLUMN + OPJ_NCOLS) {
+        int column = (int)(id - M_COLUMN), show = item && (item->Flags & CHECKED) ? 1 : 0;
+        if (!opj_view_show_column(&view, column, show)) set_status("The table keeps one column");
+        sel_col = opj_view_near_column(&view, sel_col);
+        tick_view();
+        redraw();
+        return;
+    }
     switch (id) {
     case M_NEW:
         if (may_drop() && run("NEW FORCE", NULL, 0) != OPJ_RX_OK) tell(rx.lasterror);
@@ -908,6 +933,7 @@ static void menu_action(ULONG id, struct MenuItem *item)
 static void tick_view(void)
 {
     struct MenuItem *g, *u;
+    int c;
     if (!win || !menu) return;
     g = ItemAddress(menu, FULLMENUNUM(2, 10, NOSUB));
     u = ItemAddress(menu, FULLMENUNUM(2, 11, NOSUB));
@@ -915,6 +941,12 @@ static void tick_view(void)
     ClearMenuStrip(win);
     if (usage_mode) { g->Flags &= ~CHECKED; u->Flags |= CHECKED; }
     else { u->Flags &= ~CHECKED; g->Flags |= CHECKED; }
+    for (c = 0; c < OPJ_NCOLS; c++) {                       /* View > Columns follows the table */
+        struct MenuItem *it = ItemAddress(menu, FULLMENUNUM(2, COLUMNS_ITEM, c));
+        if (!it) continue;
+        if (opj_view_column_shown(&view, c)) it->Flags |= CHECKED;
+        else it->Flags &= ~CHECKED;
+    }
     ResetMenuStrip(win, menu);
 }
 
@@ -1079,6 +1111,8 @@ static void rexx_messages(void)
             rm->rm_Result2 = (LONG)CreateArgstring((STRPTR)res, (LONG)strlen(res));
         ReplyMsg((struct Message *)rm);
     }
+    sel_col = opj_view_near_column(&view, sel_col);      /* COLUMN may have hidden it */
+    tick_view();
     if (win) redraw();
 }
 

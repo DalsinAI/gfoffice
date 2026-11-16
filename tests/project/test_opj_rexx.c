@@ -334,6 +334,35 @@ static int own_folder(void)
     return mkdir("build", 0777) == 0 && mkdir("build/host", 0777) == 0;
 }
 
+/* COLUMN, the column chooser: a column by title or alias, shown, hidden, and the table keeping one. */
+static void test_columns(void)
+{
+    opj_view v;
+    int c;
+    rx.view = NULL;
+    CHECK_N(rx_do("COLUMN Resources"), OPJ_RX_NOW);                      /* no window */
+    CHECK(strstr(rx.lasterror, "no window") != NULL);
+    opj_view_init(&v, rx.doc, 800, 400, 16, OPJ_ZOOM_DAYS);
+    rx.view = &v;
+    CHECK_S(ok("COLUMN \"Resource Names\""), "0");
+    CHECK_S(ok("COLUMN Resources SHOW"), "1");
+    CHECK_N(v.columns[OPJ_COL_RESOURCES], 140);
+    CHECK_S(ok("COLUMN resourcenames"), "1");
+    CHECK_S(ok("COLUMN Duration HIDE"), "0");
+    CHECK_N(v.columns[OPJ_COL_DURATION], 0);
+    CHECK_S(ok("COLUMN percent SHOW"), "1");
+    CHECK_N(rx_do("COLUMN Colour SHOW"), OPJ_RX_ERROR);
+    CHECK(strstr(rx.lasterror, "no column Colour") != NULL);
+    CHECK_N(rx_do("COLUMN WBS SHOW HIDE"), OPJ_RX_ERROR);
+    CHECK_N(rx_do("COLUMN"), OPJ_RX_ERROR);                              /* COLUMN/A */
+    for (c = 0; c < OPJ_NCOLS; c++)
+        if (c != OPJ_COL_NAME) opj_view_show_column(&v, c, 0);
+    CHECK_N(rx_do("COLUMN Name HIDE"), OPJ_RX_NOW);                      /* the last one shown */
+    CHECK_S(ok("COLUMN Name"), "1");
+    CHECK(strstr(ok("HELP COLUMN"), "COLUMN/A,SHOW/S,HIDE/S") != NULL);
+    rx.view = NULL;
+}
+
 int main(void)
 {
     if (!own_folder()) {
@@ -348,6 +377,7 @@ int main(void)
     test_resources_and_baseline();
     test_files();
     test_huge_numbers();
+    test_columns();
     CHECK_N(opj_rexx_format("A.XML"), OWF_PFILE_MSPDI);
     CHECK_N(opj_rexx_format("plan.Csv"), OWF_PFILE_CSV);
     CHECK_N(opj_rexx_format("plan"), OWF_PFILE_GFPROJ);

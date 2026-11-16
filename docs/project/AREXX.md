@@ -58,6 +58,7 @@ Amiga (start GFOpenProject, then `rx project.rexx RAM:`).
 | USAGE | `RESOURCE/A,FROM/A,TO/A` | the resource's work between two dates, `12h` |
 | FINISH | | the plan's finish, `Fri 20/11/26 17:00` |
 | CRITICAL | | the critical rows (not summaries), `1 2 3` |
+| COLUMN | `COLUMN/A,SHOW/S,HIDE/S` | `1` when the window's table shows the column, after SHOW or HIDE; 5 when it would hide the last column shown, or there is no window; 10 for no such column. The column by its title (`"Resource Names"`) or a short name (`Resources`, `Percent`, `StartVariance`) |
 
 Columns are named by their titles, with case, spaces and punctuation ignored. For example `Name`,
 `"Task Name"`, `Duration`, `Start`, `Finish`, `Predecessors`, `"% Complete"` or `percent`, `WBS`,
