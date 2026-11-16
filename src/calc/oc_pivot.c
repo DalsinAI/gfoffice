@@ -627,6 +627,14 @@ static const owf_cell *grouped(const owf_book *book, const owf_pivotdef *def, un
                                owf_cell *own)
 {
     const owf_pivot_group *group = owf_pivot_group_of(def, field);
+    const char *name = def->nmember ? owf_pivot_named_of(def, field, cell) : NULL;
+    if (name) {                              /* in a group made by hand: its name, as text */
+        memset(own, 0, sizeof *own);
+        own->type = OWF_VALUE_TEXT;
+        own->text = (char *)name;            /* def's, which outlives the table's making */
+        own->style = -1;
+        return own;
+    }
     if (!group || !cell || cell->type != OWF_VALUE_NUMBER)
         return cell;
     memset(own, 0, sizeof *own);

@@ -12,6 +12,22 @@
  * may be NULL. The same author, date and kind twice give the same number. */
 int owf_track_add(owf_doc *doc, int kind, const char *author, const char *date);
 
+/* 1.11: a format change for the document's list (owf_run.format_change's number), 0 when memory runs out.
+ * author and date may be NULL; before is the runs' format before the change. */
+int owf_track_format_add(owf_doc *doc, const char *author, const char *date, const owf_charfmt *before);
+
+/* 1.11: the runs a reader adds between begin and end get a format change (DOCX's w:rPrChange) that end adds
+ * to the document's list, only when there are runs to name it (a complex field's begin and code runs add none).
+ * Begin seals the paragraph's last run so that no changed text joins it (owf_para_add_text), and end opens
+ * it. End: the change's number, 0 when no run needed one, -1 when memory runs out. */
+typedef struct {
+    owf_story *story;
+    int para, from;          /* where the first changed run goes (para: nparas when no paragraph is open) */
+    int sealed;              /* the run before it, sealed (-1); owf_track_finish opens what end didn't */
+} owf_format_span;
+void owf_format_begin(owf_format_span *t, owf_builder *b);
+int owf_format_end(owf_format_span *t, owf_builder *b, const char *author, const char *date, const owf_charfmt *before);
+
 /* What a reader is putting into a builder: from where (story, paragraph and run) the runs it adds are
  * a change's (rev; 0: none). Begin it with the builder, switch it where the change changes; switching
  * marks the runs added since with the last change. With marks, the paragraphs ended between also have
@@ -36,8 +52,10 @@ owf_para *owf_builder_para(owf_builder *b);
 /* After a reader: changes it began but didn't number (-1) and numbers the document hasn't go. */
 void owf_track_finish(owf_doc *doc);
 
-/* Whether a document has a change anywhere (a run's or a paragraph mark's). */
+/* Whether a document has a change anywhere (a run's or a paragraph mark's; 1.11: a run's format change). */
 int owf_doc_has_changes(const owf_doc *doc);
+/* 1.11: whether a run anywhere has a tracked format change */
+int owf_doc_has_format_changes(const owf_doc *doc);
 
 /* The document as it is with every change accepted: inserted text kept, deleted text gone, paragraphs
  * whose ends were deleted joined. *view shares doc's text, fonts and pictures; free it with

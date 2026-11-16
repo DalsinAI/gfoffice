@@ -577,7 +577,7 @@ def main():
         f.write(docx_sample())
     text, report = convert(work, "word.docx", "txt")
     want = ("Heading here\n1.\tFirst\n2.\tSecond\n3.\tThird\n\u2022\tApple\nPage # and a link\n"
-            "Kept insert. Note1\n\u03b1 is alpha, bold and not\nA1\tB1\nA2\tB2\nBefore break\n\fAfter break\nBig red\nNotes\n1\tThe footnote text.\n")
+            "Kept insert. Note[1]\n\u03b1 is alpha, bold and not\nA1\tB1\nA2\tB2\nBefore break\n\fAfter break\nBig red\n\nNotes\n1\tThe footnote text.\n")
     check("docx text", text.decode() == want, repr(text.decode()))
     check("docx report lists", "Lists are kept as text" in report, report)
     check("docx report tables", "Tables are kept as rows" in report, report)
@@ -593,7 +593,7 @@ def main():
     with open(os.path.join(work, "flat.fodt"), "w", encoding="utf-8") as f:
         f.write(FODT)
     text, report = convert(work, "flat.fodt", "txt")
-    want = "A heading\nCentred and bold   spaced\nSome green italic text1.\na)\tone\na.1.\tinner\nb)\ttwo\nc1\tc2\nNotes\n1\tA note.\n"
+    want = "A heading\nCentred and bold   spaced\nSome green italic text[1].\na)\tone\na.1.\tinner\nb)\ttwo\nc1\tc2\n\nNotes\n1\tA note.\n"
     check("fodt text", text.decode() == want, repr(text.decode()))
     check("fodt report comments", "Comments were left out" in report, report)
     html, _ = convert(work, "flat.fodt", "html")

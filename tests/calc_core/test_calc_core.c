@@ -3007,6 +3007,26 @@ static int saved_has(const char *path, const char *part)
     return has;
 }
 
+/* Whether a saved file (a zip) holds a part with text in it. */
+static int saved_part_holds(const char *path, const char *part, const char *text)
+{
+    FILE *f = fopen(path, "rb");
+    unsigned char *data = NULL, *got = NULL;
+    size_t length = 0;
+    long n = 0;
+    int holds = 0;
+    owf_unzip zip;
+    if (f && fseek(f, 0, SEEK_END) == 0 && (n = ftell(f)) > 0 && fseek(f, 0, SEEK_SET) == 0 && (data = malloc((size_t)n)) &&
+        fread(data, 1, (size_t)n, f) == (size_t)n && owf_unzip_open(&zip, data, (size_t)n) &&
+        owf_unzip_read(&zip, part, &got, &length) == OWF_OK)
+        holds = strstr((const char *)got, text) != NULL;   /* owf_unzip_read puts a NUL after it */
+    if (f)
+        fclose(f);
+    owf_free(got);
+    free(data);
+    return holds;
+}
+
 /* A sheet's pictures and charts kept as they were (the book's kept parts
  * and the sheet's drawing): through a change and its undo, a sheet
  * deleted and brought back, and saving; a deleted sheet's not written. */
@@ -5129,6 +5149,82 @@ static void test_multiple_operations_auto(void)
     oc_core_free(core);
 }
 
+/* Past the live limits (here a 2100-trial table, 4200 results with its
+ * column), the tables are not worked out at once but marked behind, and the
+ * idle steps work them out a few at a time, quietly; a table bigger than a
+ * step's budget is left for Refresh, and a change in between starts them over. */
+static void test_multiple_operations_auto_big(void)
+{
+    oc_core *core = fresh();
+    owf_range selected;
+    char cell[16], value[16];
+    int i, steps;
+    if (!core)
+        return;
+    for (i = 1; i <= 2100; ++i) {
+        snprintf(cell, sizeof cell, "A%d", i);
+        snprintf(value, sizeof value, "%d", i);
+        enter_at(core, cell, value);
+    }
+    enter_at(core, "D1", "1");
+    enter_at(core, "D2", "2");
+    enter_at(core, "J1", "1");
+    enter_at(core, "J2", "2");
+    enter_at(core, "J3", "3");
+    enter_at(core, "H1", "0");                                  /* the input cell */
+    enter_at(core, "I1", "5");                                  /* the model's constant */
+    enter_at(core, "G1", "=H1*2+I1");                           /* the formula */
+    CHECK(oc_parse_range("A1:A2100", &selected));               /* table 1: 4200 results */
+    oc_core_select_range(core, &selected);
+    CHECK(oc_core_multiple_operations(core, 0, 0, 6, 0, 0, 7) == OWF_OK);
+    CHECK(oc_parse_range("D1:D2", &selected));                  /* table 2: 4 */
+    oc_core_select_range(core, &selected);
+    CHECK(oc_core_multiple_operations(core, 0, 0, 6, 0, 0, 7) == OWF_OK);
+    CHECK(oc_parse_range("J1:J3", &selected));                  /* table 3: 6 */
+    oc_core_select_range(core, &selected);
+    CHECK(oc_core_multiple_operations(core, 0, 0, 6, 0, 0, 7) == OWF_OK);
+    CHECK(num(core, "B2100") == 4205 && num(core, "E2") == 9 && num(core, "K3") == 11);
+    oc_core_auto_multiple_operations(core);
+    while (oc_core_auto_multiple_operations_step(core, 100))     /* caught up after the tables' own commands */
+        ;
+    CHECK(!oc_core_multiple_operations_behind(core));
+
+    /* the model changes: too big to work out at once, so behind, and nothing moved yet */
+    enter_at(core, "I1", "1000");
+    CHECK(oc_core_auto_multiple_operations(core) == 0 && oc_core_multiple_operations_behind(core));
+    CHECK(num(core, "B2100") == 4205 && num(core, "E2") == 9 && num(core, "K3") == 11);
+    /* a step of budget 8: table 1 (4200) is left for Refresh, table 2 (4) is done, table 3 (6) would pass 8 and waits */
+    CHECK(oc_core_auto_multiple_operations_step(core, 8) == 1);
+    CHECK(num(core, "E2") == 1004 && num(core, "K3") == 11 && num(core, "B2100") == 4205);
+    CHECK(oc_core_multiple_operations_behind(core));
+    /* a change before the next step: the steps start over from the first table */
+    enter_at(core, "I1", "7");
+    CHECK(oc_core_auto_multiple_operations_step(core, 8) == 1 && num(core, "E2") == 11 && num(core, "K3") == 11);
+    CHECK(oc_core_auto_multiple_operations_step(core, 8) == 1 && num(core, "K1") == 9 && num(core, "K3") == 13);
+    CHECK(!oc_core_multiple_operations_behind(core) && oc_core_auto_multiple_operations_step(core, 8) == 0);
+    CHECK(num(core, "B2100") == 4205);                          /* the big table: Refresh by hand */
+    CHECK(oc_parse_range("B5", &selected));
+    oc_core_select_range(core, &selected);
+    CHECK(oc_core_refresh_multiple_operations(core) == OWF_OK && num(core, "B2100") == 4207);
+    /* a budget the big table fits does all three in one step */
+    enter_at(core, "I1", "0");
+    for (steps = 0; oc_core_auto_multiple_operations_step(core, 100000UL) && steps < 10; ++steps)
+        ;
+    CHECK(steps == 1 && num(core, "B2100") == 4200 && num(core, "E2") == 4 && num(core, "K3") == 6);
+    /* quietly: Undo goes back over the user's change, not the tables' working out, and Redo is kept */
+    CHECK(oc_core_undo(core) == OWF_OK && num(core, "I1") == 7);
+    while (oc_core_auto_multiple_operations_step(core, OC_MULTIOP_STEP_TRIALS))
+        ;
+    CHECK(num(core, "E2") == 11 && num(core, "K3") == 13 && oc_core_can_redo(core));
+    CHECK(oc_core_is_dirty(core));
+    /* nothing while a cell is being edited */
+    enter_at(core, "I1", "2");
+    type(core, "3");
+    CHECK(oc_core_editing(core));
+    CHECK(oc_core_auto_multiple_operations_step(core, 100000UL) == 0 && num(core, "E2") == 11);
+    oc_core_free(core);
+}
+
 static void test_multiple_operations_2d(void)
 {
     oc_core *core = fresh();
@@ -6182,6 +6278,221 @@ static void test_pivot_show_as(void)
     oc_core_free(core);
 }
 
+/* Groups made by hand: a field's items put together under a name, the
+ * rest staying items of their own; moved, taken out (an empty group
+ * goes), hidden by name, kept in the definition's text, and refused
+ * beside a range grouping. Files save them ungrouped, with a note. */
+static void test_pivot_named(void)
+{
+    static const char *const rows[][5] = {
+        { "Region", "Sales", "", "", "" },
+        { "East", "10", "", "", "" }, { "Hills", "1", "", "", "" }, { "West", "20", "", "", "" },
+        { "East", "5", "", "", "" }, { "Lakes", "2", "", "", "" }
+    };
+    oc_core *core = fresh();
+    owf_range selected;
+    owf_pivotdef def, got, back;
+    owf_pivot_page east, west, hills;
+    owf_pivot_group g;
+    owf_cell cell;
+    char config[OWF_PIVOT_TEXT_MAX];
+    int k;
+    if (!core)
+        return;
+    pivot_table_at(core, rows, 6);
+    CHECK(oc_parse_range("A1:B6", &selected));
+    oc_core_select_range(core, &selected);
+    owf_pivot_init(&def);
+    def.nrow = 1; def.row[0] = 0;
+    def.ndata = 1; def.data[0].field = 1; def.data[0].function = OC_SUBTOTAL_SUM;
+    memset(&east, 0, sizeof east);
+    east.field = 0; east.kind = OWF_PIVOT_TEXT;
+    west = hills = east;
+    snprintf(east.text, sizeof east.text, "East");
+    snprintf(west.text, sizeof west.text, "West");
+    snprintf(hills.text, sizeof hills.text, "Hills");
+    CHECK(owf_pivot_set_named(&def, &east, "Coast") && owf_pivot_set_named(&def, &west, "Coast"));
+    CHECK(def.nnamed == 1 && def.nmember == 2);
+    memset(&cell, 0, sizeof cell);
+    cell.type = OWF_VALUE_TEXT;
+    cell.text = (char *)"West";
+    CHECK(owf_pivot_named_of(&def, 0, &cell) && !strcmp(owf_pivot_named_of(&def, 0, &cell), "Coast"));
+    cell.text = (char *)"Lakes";
+    CHECK(!owf_pivot_named_of(&def, 0, &cell) && !owf_pivot_named_of(&def, 1, &cell));
+    CHECK(oc_core_pivot_create(core, &def) == OWF_OK);
+    /* Coast (East 10 + West 20 + East 5), Hills 1, Lakes 2: in the source's order */
+    CHECK_STR(text(core, "A2"), "Coast");
+    CHECK_STR(text(core, "A3"), "Hills");
+    CHECK_STR(text(core, "A4"), "Lakes");
+    CHECK_STR(text(core, "A5"), "Grand Total");
+    CHECK(near(num(core, "B2"), 35.0) && near(num(core, "B3"), 1.0) && near(num(core, "B4"), 2.0) &&
+          near(num(core, "B5"), 38.0));
+    CHECK(oc_core_pivot_get(core, &got) && got.nnamed == 1 && got.nmember == 2);
+    CHECK(owf_pivot_config_text(&got, config, sizeof config) && strstr(config, ";m=Coast:0:tEast,Coast:0:tWest\""));
+
+    /* West and Hills to "Up: North" (a ':' in a name is kept); Coast is East alone */
+    CHECK(owf_pivot_set_named(&got, &west, "Up: North") && owf_pivot_set_named(&got, &hills, "Up: North"));
+    CHECK(got.nnamed == 2 && got.nmember == 3);
+    CHECK(oc_core_pivot_set_layout(core, &got) == OWF_OK);
+    CHECK_STR(text(core, "A2"), "Coast");
+    CHECK_STR(text(core, "A3"), "Up: North");
+    CHECK_STR(text(core, "A4"), "Lakes");
+    CHECK(near(num(core, "B2"), 15.0) && near(num(core, "B3"), 21.0));
+    CHECK(oc_core_pivot_get(core, &got) && owf_pivot_config_text(&got, config, sizeof config) &&
+          strstr(config, ";m=Coast:0:tEast,Up%3A North:0:tWest,Up%3A North:0:tHills\""));
+    {
+        owf_pivotdef parsed = got;
+        CHECK(owf_pivot_parse_config(config, &parsed) && parsed.nnamed == 2 && parsed.nmember == 3 &&
+              !strcmp(parsed.named[1].name, "Up: North") && parsed.member_of[2] == 1);
+    }
+
+    /* a group hidden by its name leaves out its rows */
+    {
+        owf_pivot_page item;
+        memset(&item, 0, sizeof item);
+        item.field = 0; item.kind = OWF_PIVOT_TEXT;
+        snprintf(item.text, sizeof item.text, "Up: North");
+        CHECK(owf_pivot_set_hidden(&got, &item, 1));
+        CHECK(oc_core_pivot_set_layout(core, &got) == OWF_OK);
+        CHECK_STR(text(core, "A2"), "Coast");
+        CHECK_STR(text(core, "A3"), "Lakes");
+        CHECK(near(num(core, "B4"), 17.0));
+        CHECK(owf_pivot_set_hidden(&got, &item, 0));
+    }
+
+    /* East out of Coast: Coast goes, and Up: North is renumbered */
+    CHECK(owf_pivot_set_named(&got, &east, NULL) && got.nnamed == 1 && got.nmember == 2 &&
+          !strcmp(got.named[0].name, "Up: North") && got.member_of[0] == 0 && got.member_of[1] == 0);
+    CHECK(owf_pivot_check(oc_core_book(core), &got));
+
+    /* a range grouping and groups by hand on one field: refused either way */
+    memset(&g, 0, sizeof g);
+    g.field = 0; g.by = OWF_PIVOT_GROUP_RANGE; g.start = 0; g.end = 9; g.step = 1;
+    CHECK(!owf_pivot_set_group(&got, &g) && got.ngroup == 0);
+    {
+        owf_pivotdef other;
+        owf_pivot_page n;
+        owf_pivot_init(&other);
+        g.field = 1;
+        CHECK(owf_pivot_set_group(&other, &g));
+        memset(&n, 0, sizeof n);
+        n.field = 1; n.kind = OWF_PIVOT_NUMBER; n.number = 5;
+        CHECK(!owf_pivot_set_named(&other, &n, "Five") && other.nmember == 0);
+        CHECK(!owf_pivot_set_named(&other, &east, "a name far longer than the forty-eight bytes a name may have"));
+        n.kind = OWF_PIVOT_ALL;
+        CHECK(!owf_pivot_set_named(&other, &n, "All"));
+    }
+    {
+        owf_pivotdef bad = got;
+        bad.member_of[1] = 5;
+        CHECK(!owf_pivot_check(oc_core_book(core), &bad));
+        bad = got;
+        bad.named[0].field = 9;
+        CHECK(!owf_pivot_check(oc_core_book(core), &bad));
+    }
+
+    /* files: saved ungrouped with a note, the table's cells as they are */
+    CHECK(oc_core_pivot_set_layout(core, &got) == OWF_OK);
+    {
+        static const char *const paths[] = { "/tmp/opencalc-pivot-named.ods", "/tmp/opencalc-pivot-named.xlsx" };
+        for (k = 0; k < 2; ++k) {
+            owf_book *round = NULL;
+            owf_report *report = owf_report_new();
+            CHECK(report && owf_export_book_file(oc_core_book(core), paths[k], NULL, report) == OWF_OK);
+            CHECK(report && owf_report_count(report) > 0);
+            owf_report_free(report);
+            CHECK(owf_import_book_file(paths[k], NULL, &round, NULL, NULL) == OWF_OK && round);
+            CHECK(round && owf_pivot_get(round, 1, &back) && back.nnamed == 0 && back.nmember == 0);
+            owf_book_free(round);
+            remove(paths[k]);
+        }
+    }
+    oc_core_free(core);
+}
+
+/* Grouped pivot fields in an Excel workbook: Excel's fieldGroup in the cache
+ * (rangePr and the group items, "<start" and ">end" round them), the
+ * pivotField's items pointing at the group items (a hidden group: h="1"),
+ * and read back; a field with text among its numbers saves ungrouped. */
+static void test_pivot_group_xlsx(void)
+{
+    static const char *const rows[][5] = {
+        { "Age", "Day", "Sales", "", "" },
+        { "3", "45658", "10", "", "" }, { "17", "45689", "20", "", "" }, { "12", "45748", "5", "", "" },
+        { "25", "46023", "15", "", "" }, { "-4", "45750", "1", "", "" }, { "n/a", "45690", "2", "", "" },
+        { "40", "45659", "4", "", "" }
+    };
+    static const char *const path = "/tmp/opencalc-pivot-group-range.xlsx";
+    static const char *const cache = "xl/pivotCache/pivotCacheDefinition1.xml";
+    oc_core *core = fresh();
+    owf_range selected;
+    owf_pivotdef def, back;
+    owf_pivot_group g;
+    owf_pivot_page item;
+    owf_book *round = NULL;
+    owf_cell five;
+    if (!core)
+        return;
+    pivot_table_at(core, rows, 8);
+    CHECK(oc_parse_range("A1:C8", &selected));
+    oc_core_select_range(core, &selected);
+    /* Sales to the rows, by fives from 0 to 19, with 5-9 hidden */
+    owf_pivot_init(&def);
+    def.nrow = 1; def.row[0] = 2;
+    def.ndata = 1; def.data[0].field = 1; def.data[0].function = OC_SUBTOTAL_COUNT;
+    memset(&g, 0, sizeof g);
+    g.field = 2; g.by = OWF_PIVOT_GROUP_RANGE; g.start = 0; g.end = 19; g.step = 5;
+    CHECK(owf_pivot_set_group(&def, &g));
+    memset(&item, 0, sizeof item);
+    item.field = 2; item.kind = OWF_PIVOT_NUMBER; item.number = 5.0;
+    CHECK(owf_pivot_set_hidden(&def, &item, 1));
+    CHECK(oc_core_pivot_create(core, &def) == OWF_OK);
+    /* 0-4 (1, 2, 4), 10-14 (10), 15-19 (15), >19 (20) */
+    CHECK_STR(text(core, "A2"), "0-4");
+    CHECK_STR(text(core, "A3"), "10-14");
+    CHECK_STR(text(core, "A4"), "15-19");
+    CHECK_STR(text(core, "A5"), ">19");
+    CHECK(owf_export_book_file(oc_core_book(core), path, NULL, NULL) == OWF_OK);
+    CHECK(saved_part_holds(path, cache,
+                           "<fieldGroup base=\"2\"><rangePr autoStart=\"0\" autoEnd=\"0\" startNum=\"0\" endNum=\"19\" "
+                           "groupInterval=\"5\"/><groupItems count=\"6\"><s v=\"&lt;0\"/><s v=\"0-4\"/><s v=\"5-9\"/>"
+                           "<s v=\"10-14\"/><s v=\"15-19\"/><s v=\"&gt;19\"/></groupItems></fieldGroup>"));
+    CHECK(saved_part_holds(path, "xl/pivotTables/pivotTable1.xml",
+                           "<item x=\"0\"/><item x=\"1\"/><item x=\"2\" h=\"1\"/><item x=\"3\"/>"
+                           "<item x=\"4\"/><item x=\"5\"/>"));   /* the six group items, 5-9 hidden */
+    CHECK(owf_import_book_file(path, NULL, &round, NULL, NULL) == OWF_OK && round);
+    CHECK(round && owf_pivot_get(round, 1, &back) && back.ngroup == 1 && back.group[0].field == 2 &&
+          back.group[0].by == OWF_PIVOT_GROUP_RANGE && back.group[0].start == 0.0 && back.group[0].end == 19.0 &&
+          back.group[0].step == 5.0);
+    memset(&five, 0, sizeof five);
+    five.type = OWF_VALUE_NUMBER; five.number = 5.0; five.style = -1;
+    CHECK(round && back.nhide == 1 && owf_pivot_is_hidden(&back, 2, &five));
+    owf_book_free(round);
+    round = NULL;
+    remove(path);
+
+    /* Age has "n/a" among its numbers: saved ungrouped, with a note */
+    CHECK(oc_core_pivot_get(core, &def));
+    def.row[0] = 0;
+    def.nhide = 0;
+    def.ngroup = 0;
+    g.field = 0; g.end = 29; g.step = 10;
+    CHECK(owf_pivot_set_group(&def, &g));
+    CHECK(oc_core_pivot_set_layout(core, &def) == OWF_OK);
+    {
+        owf_report *report = owf_report_new();
+        CHECK(report && owf_export_book_file(oc_core_book(core), path, NULL, report) == OWF_OK);
+        CHECK(report && owf_report_count(report) > 0);
+        owf_report_free(report);
+    }
+    CHECK(!saved_part_holds(path, cache, "<fieldGroup"));
+    CHECK(owf_import_book_file(path, NULL, &round, NULL, NULL) == OWF_OK && round);
+    CHECK(round && owf_pivot_get(round, 1, &back) && back.ngroup == 0);
+    owf_book_free(round);
+    remove(path);
+    oc_core_free(core);
+}
+
 static void test_pivot_group(void)
 {
     /* serials: 45658 is 2025-01-01, 45689 2025-02-01, 45748 2025-04-01, 46023 2026-01-01 */
@@ -6313,11 +6624,15 @@ static void test_pivot_group(void)
             owf_pivotdef back;
             CHECK(owf_export_book_file(oc_core_book(core), paths[k], NULL, NULL) == OWF_OK);
             CHECK(owf_import_book_file(paths[k], NULL, &round, NULL, NULL) == OWF_OK && round);
-            if (k == 0)
-                CHECK(round && owf_pivot_get(round, 1, &back) && back.ngroup == 1 && back.group[0].field == 1 &&
-                      back.group[0].by == OWF_PIVOT_GROUP_YEARS);
-            else                                 /* .xlsx: saved ungrouped, for now */
-                CHECK(round && owf_pivot_get(round, 1, &back) && back.ngroup == 0);
+            if (k == 1)                          /* Excel's fieldGroup, by years, over 2025 and 2026 */
+                CHECK(saved_part_holds(paths[k], "xl/pivotCache/pivotCacheDefinition1.xml",
+                                       "<fieldGroup base=\"1\"><rangePr groupBy=\"years\" autoStart=\"0\" "
+                                       "autoEnd=\"0\" startDate=\"2025-01-01T00:00:00\" "
+                                       "endDate=\"2026-12-31T00:00:00\"/><groupItems count=\"4\">"
+                                       "<s v=\"&lt;1/1/2025\"/><s v=\"2025\"/><s v=\"2026\"/>"
+                                       "<s v=\"&gt;12/31/2026\"/></groupItems></fieldGroup>"));
+            CHECK(round && owf_pivot_get(round, 1, &back) && back.ngroup == 1 && back.group[0].field == 1 &&
+                  back.group[0].by == OWF_PIVOT_GROUP_YEARS);
             owf_book_free(round);
             remove(paths[k]);
         }
@@ -7149,6 +7464,7 @@ int main(void)
     test_goal_seek();
     test_multiple_operations();
     test_multiple_operations_auto();
+    test_multiple_operations_auto_big();
     test_multiple_operations_2d();
     test_multiple_operations_multi();
     test_subtotals();
@@ -7162,6 +7478,8 @@ int main(void)
     test_pivot_show_as();
     test_pivot_group();
     test_pivot_subtotals();
+    test_pivot_group_xlsx();
+    test_pivot_named();
     test_pivot_definition_text();
     test_solver_lp();
     test_solver();
