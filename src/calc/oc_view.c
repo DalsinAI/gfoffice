@@ -1486,6 +1486,37 @@ static int comment_marks(drawing *d)
     return 1;
 }
 
+/* Tracked changes: a frame around each cell whose content was changed (not yet accepted or rejected), as
+ * LibreOffice shows them; a change inside rows or columns since deleted has no cell to show. */
+static int change_frames(drawing *d)
+{
+    const owf_book *b = d->core->book;
+    int k;
+    for (k = 0; k < b->nchanges; k++) {
+        const owf_change *c = &b->changes[k];
+        int x, y, w, h, i, j, qx, qy, qw, qh;
+        oc_draw_item *it;
+        if (c->kind != OWF_CHANGE_CELL || c->sheet < 0 || c->sheet >= b->nsheets || &b->sheets[c->sheet] != d->sheet ||
+            !cell_box(d, c->row, c->col, &x, &y, &w, &h))
+            continue;
+        i = line_of(d->rl, d->nr, c->row);
+        j = line_of(d->cl, d->nc, c->col);
+        if (i < 0 || j < 0)
+            continue;
+        quadrant(d, d->rl[i].pane, d->cl[j].pane, &qx, &qy, &qw, &qh);
+        if (!(it = add_box(d->list, OC_DRAW_FRAME, OC_ROLE_CHANGE, x - 1, y - 1, w + 1, h + 1)))
+            return 0;
+        it->line = 1;
+        it->row = c->row;
+        it->col = c->col;
+        it->clip_x = qx;
+        it->clip_y = qy;
+        it->clip_w = qw;
+        it->clip_h = qh;
+    }
+    return 1;
+}
+
 /* Whether the AutoFilter filters by the column at offset k of its range (a filterColumn colId="k"). */
 static int filters_by(const owf_sheet *s, unsigned k)
 {
@@ -2415,8 +2446,9 @@ static int build(drawing *d)
         oc_draw_list_free(&texts);
     }
 
-    /* comments' marks: a small red triangle in each commented cell's top right corner (a merged range's) */
-    if (!comment_marks(d) || !filter_buttons(d))
+    /* comments' marks: a small red triangle in each commented cell's top right corner (a merged range's);
+     * tracked changes' frames */
+    if (!comment_marks(d) || !change_frames(d) || !filter_buttons(d))
         return 0;
 
     /* charts, over the cells */

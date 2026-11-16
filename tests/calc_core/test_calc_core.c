@@ -8477,6 +8477,47 @@ static void test_consolidate_refresh(void)
     oc_core_free(core);
 }
 
+/* Tracked changes show on the sheet: a frame round each changed cell, a pixel outside it; none once accepted. */
+static int change_frames_in(const oc_draw_list *l, int *first)
+{
+    int i, n = 0;
+    *first = -1;
+    for (i = 0; i < l->n; i++)
+        if (l->items[i].kind == OC_DRAW_FRAME && l->items[i].role == OC_ROLE_CHANGE) {
+            if (*first < 0)
+                *first = i;
+            n++;
+        }
+    return n;
+}
+
+static void test_change_frames(void)
+{
+    oc_core *core = fresh();
+    oc_draw_list l;
+    int frame;
+    if (!core)
+        return;
+    oc_draw_list_init(&l);
+    enter_at(core, "C3", "1");                                 /* before recording: not a change */
+    CHECK(oc_view_draw(core, &l) == OWF_OK && change_frames_in(&l, &frame) == 0);
+    CHECK(oc_core_set_track_changes(core, 1) == OWF_OK);
+    enter_at(core, "B2", "10");
+    go(core, "H12");
+    CHECK(oc_view_draw(core, &l) == OWF_OK && change_frames_in(&l, &frame) == 1);
+    {
+        const oc_draw_item *f = &l.items[frame];
+        CHECK(f->x == 40 + 64 - 1 && f->y == 18 + 17 - 1 && f->w == 64 + 1 && f->h == 17 + 1 && f->line == 1);
+        CHECK(f->row == 1 && f->col == 1 && f->clip_x == 40 && f->clip_y == 18);
+    }
+    CHECK(oc_core_add_sheet(core, "Two") == 1 && oc_core_set_sheet(core, 1) == OWF_OK);   /* another sheet's: not here */
+    CHECK(oc_view_draw(core, &l) == OWF_OK && change_frames_in(&l, &frame) == 0);
+    CHECK(oc_core_set_sheet(core, 0) == OWF_OK && oc_core_accept_all_changes(core) == OWF_OK);
+    CHECK(oc_view_draw(core, &l) == OWF_OK && change_frames_in(&l, &frame) == 0);
+    oc_draw_list_free(&l);
+    oc_core_free(core);
+}
+
 /* The shown scenario's frame round each range and its name's tab, in the grid's draw list. */
 static int scenario_items(const oc_draw_list *l, int kind, int *first)
 {
@@ -8764,6 +8805,7 @@ int main(void)
     test_scenarios();
     test_consolidate_refresh();
     test_scenario_frame();
+    test_change_frames();
     test_consolidate();
     test_consolidate_names();
     test_pdf();
