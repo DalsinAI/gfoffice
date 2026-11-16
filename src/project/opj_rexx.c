@@ -25,7 +25,7 @@ enum {
     C_HELP, C_LASTERROR, C_ISDIRTY, C_GETFILE, C_NEW, C_OPEN, C_SAVE, C_SAVEAS, C_EXPORT, C_TASKS, C_ADDTASK,
     C_DELETETASK, C_GETCELL, C_SETCELL, C_INDENT, C_OUTDENT, C_LINK, C_UNLINK, C_UNDO, C_REDO, C_BASELINE,
     C_RESOURCES, C_ADDRESOURCE, C_DELETERESOURCE, C_GETRESOURCE, C_SETRESOURCE, C_ASSIGN, C_USAGE, C_FINISH,
-    C_CRITICAL, C_COLUMN, C_CALENDARS, C_ADDCALENDAR, C_WORKTIME, C_SETCALENDAR, C_UPDATE, C_BASELINES, C_REPLACE, NCOMMANDS
+    C_CRITICAL, C_COLUMN, C_CALENDARS, C_ADDCALENDAR, C_WORKTIME, C_SETCALENDAR, C_UPDATE, C_BASELINES, C_REPLACE, C_LEVEL, C_CLEARLEVELING, NCOMMANDS
 };
 
 static const command commands[NCOMMANDS] = {
@@ -67,6 +67,8 @@ static const command commands[NCOMMANDS] = {
     { "UPDATE", "STATUS/A,WHOLE/S" },
     { "BASELINES", "" },
     { "REPLACE", "ROW/A/N,FROM/A,TO/A,UNITS/K" },
+    { "LEVEL", "WITHINSLACK/S" },
+    { "CLEARLEVELING", "" },
 };
 
 /* ---- Words ---- */
@@ -273,6 +275,7 @@ static int find_column(const char *name, int resource_sheet)
         { "constraint", OPJ_COL_CONSTRAINT_TYPE }, { "actualstart", OPJ_COL_ACTUAL_START },
         { "actualfinish", OPJ_COL_ACTUAL_FINISH }, { "actualduration", OPJ_COL_ACTUAL_DURATION },
         { "remaining", OPJ_COL_REMAINING_DURATION }, { "remainingduration", OPJ_COL_REMAINING_DURATION }, { "earned", OPJ_COL_BCWP }, { "planned", OPJ_COL_BCWS },
+        { "leveldelay", OPJ_COL_LEVELING_DELAY }, { "delay", OPJ_COL_LEVELING_DELAY },
     }, res[] = {
         { "maxunits", OPJ_RCOL_MAX }, { "max", OPJ_RCOL_MAX }, { "rate", OPJ_RCOL_RATE },
         { "stdrate", OPJ_RCOL_RATE }, { "name", OPJ_RCOL_NAME },
@@ -680,6 +683,13 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
             return OPJ_RX_ERROR;
         }
         return edit_rc(rx, opj_set_assignment(doc, (int)row, r, a->value[2] ? a->num[2] : 100), "ASSIGN");
+    case C_LEVEL: {
+        int n = 0;
+        if ((rc = opj_level(doc, a->value[0] != NULL, &n)) != OWF_OK) return edit_rc(rx, rc, "LEVEL");
+        snprintf(result, size, "%d", n);
+        return OPJ_RX_OK;
+    }
+    case C_CLEARLEVELING: return edit_rc(rx, opj_clear_leveling(doc), "CLEARLEVELING");
     case C_REPLACE: {
         int to;
         if ((r = find_resource(p, a->value[1])) < 0 || (to = find_resource(p, a->value[2])) < 0) {

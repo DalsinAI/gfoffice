@@ -149,6 +149,7 @@ enum {
     OPJ_COL_ACWP,
     OPJ_COL_SV,                          /* NA without a status date */
     OPJ_COL_CV,
+    OPJ_COL_LEVELING_DELAY,              /* "0d"; a summary's is blank; typed: a duration, "3ed" elapsed */
     OPJ_NCOLS
 };
 
@@ -186,6 +187,12 @@ void opj_date_text(owf_ptime t, int with_time, char *out);
 /* "16/11/26", "16/11/2026", "Mon 16/11/26 13:00", "2026-11-16", "2026-11-16 13:00". A date with no time
  * gets default_minute (the start or end of a working day). 1 when it is one. */
 int opj_date_parse(const char *s, int default_minute, owf_ptime *t);
+
+/* Tools > Level Resources: owf_project_level (within_slack: only within each task's slack) as one edit;
+ * how many tasks it delayed in *delayed (when not NULL). Clear Leveling: every delay back to 0 (with none,
+ * nothing changes and there is no Undo step). */
+int opj_level(opj_doc *doc, int within_slack, int *delayed);
+int opj_clear_leveling(opj_doc *doc);
 
 /* ---- The resource sheet ---- */
 

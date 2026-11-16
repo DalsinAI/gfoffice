@@ -776,6 +776,55 @@ static void test_assign_dialog(void)
     opj_doc_free(doc);
 }
 
+/* Level Resources and Clear Leveling as edits, and the Leveling Delay column: Dale on Plan and on a new
+ * Check beside it, both on Monday. */
+static void test_level_cells(void)
+{
+    opj_doc *doc = three();
+    int n = -1;
+    CHECK_S(opj_column_title(OPJ_COL_LEVELING_DELAY), "Leveling Delay");
+    CHECK(opj_column_typed(OPJ_COL_LEVELING_DELAY));
+    CHECK_N(opj_insert_task(doc, 3, "Check"), OWF_OK);                    /* 1 day, no links */
+    CHECK_N(opj_add_resource(doc, "Dale", NULL), OWF_OK);
+    CHECK_N(opj_set_assignment(doc, 0, 0, 100), OWF_OK);
+    CHECK_N(opj_set_assignment(doc, 3, 0, 100), OWF_OK);
+    CHECK(doc->plan->resources[0].overallocated);
+    CHECK_S(cell_of(doc, 3, OPJ_COL_LEVELING_DELAY), "0d");
+    CHECK_N(opj_level(doc, 0, &n), OWF_OK);
+    CHECK_N(n, 1);
+    CHECK(!doc->plan->resources[0].overallocated);
+    CHECK_S(cell_of(doc, 3, OPJ_COL_LEVELING_DELAY), "2d");                /* after Plan's two days */
+    CHECK_S(cell_of(doc, 3, OPJ_COL_START), "Wed 18/11/26");
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK_S(cell_of(doc, 3, OPJ_COL_LEVELING_DELAY), "0d");
+    CHECK_N(opj_redo(doc), OWF_OK);
+    CHECK_N(opj_clear_leveling(doc), OWF_OK);
+    CHECK_S(cell_of(doc, 3, OPJ_COL_START), "Mon 16/11/26");
+    doc->dirty = 0;
+    CHECK_N(opj_clear_leveling(doc), OWF_OK);                              /* nothing to clear: no edit */
+    CHECK_N(doc->dirty, 0);
+    CHECK_N(opj_undo(doc), OWF_OK);                                        /* the Undo is the first Clear's */
+    CHECK_S(cell_of(doc, 3, OPJ_COL_LEVELING_DELAY), "2d");
+    CHECK_N(opj_clear_leveling(doc), OWF_OK);
+    /* typed */
+    CHECK_N(opj_set_cell(doc, 3, OPJ_COL_LEVELING_DELAY, "1d"), OWF_OK);
+    CHECK_S(cell_of(doc, 3, OPJ_COL_START), "Tue 17/11/26");
+    CHECK_N(opj_set_cell(doc, 3, OPJ_COL_LEVELING_DELAY, "2ed"), OWF_OK);
+    CHECK_S(cell_of(doc, 3, OPJ_COL_LEVELING_DELAY), "2ed");
+    CHECK_S(cell_of(doc, 3, OPJ_COL_START), "Wed 18/11/26");
+    CHECK_N(opj_set_cell(doc, 3, OPJ_COL_LEVELING_DELAY, "soon"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cell(doc, 3, OPJ_COL_LEVELING_DELAY, "0d"), OWF_OK);
+    CHECK_S(cell_of(doc, 3, OPJ_COL_START), "Mon 16/11/26");
+    /* a summary has none */
+    CHECK_N(opj_indent(doc, 3, 1, 1), OWF_OK);                             /* Ship becomes Check's summary */
+    CHECK_S(cell_of(doc, 2, OPJ_COL_LEVELING_DELAY), "");
+    CHECK_N(opj_set_cell(doc, 2, OPJ_COL_LEVELING_DELAY, "1d"), OWF_ERR_FORMAT);
+    CHECK_N(opj_level(NULL, 0, &n), OWF_ERR_FORMAT);
+    CHECK_N(n, 0);
+    CHECK_N(opj_clear_leveling(NULL), OWF_ERR_FORMAT);
+    opj_doc_free(doc);
+}
+
 /* Baselines 1 to 10 in the core: set, clear, Undo, which are saved, and the names the window takes. */
 static void test_baseline_n(void)
 {
@@ -1849,6 +1898,7 @@ int main(void)
     test_resources();
     test_baseline();
     test_baseline_n();
+    test_level_cells();
     test_assign_dialog();
     test_print();
     test_pdf();
