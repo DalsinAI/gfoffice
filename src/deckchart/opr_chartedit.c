@@ -305,3 +305,66 @@ int opr_chart_edit_take(oc_core *core, owf_chart *out)
         owf_chart_clear(out);
     return rc;
 }
+
+/* ---- The window's choices and keys ---- */
+
+const char *const opr_chart_kind_labels[OPR_CHART_KINDS + 1] = { "Column", "Bar", "Line", "Area", "Pie", "Scatter",
+                                                                  NULL };
+const char *const opr_chart_grouping_labels[OPR_CHART_GROUPINGS + 1] = { "Side by side", "Stacked", "100% stacked",
+                                                                          NULL };
+const char *const opr_chart_legend_labels[OPR_CHART_LEGENDS + 1] = { "No legend", "Right", "Left", "Top", "Bottom",
+                                                                      NULL };
+static const int kinds[OPR_CHART_KINDS] = { OWF_CHART_COLUMN, OWF_CHART_BAR, OWF_CHART_LINE, OWF_CHART_AREA,
+                                            OWF_CHART_PIE, OWF_CHART_SCATTER };
+static const char legends[OPR_CHART_LEGENDS] = { 0, 'r', 'l', 't', 'b' };
+
+int opr_chart_kind_choice(int kind)
+{
+    int i;
+    for (i = 0; i < OPR_CHART_KINDS; i++)
+        if (kinds[i] == kind)
+            return i;
+    return 0;
+}
+
+int opr_chart_choice_kind(int choice)
+{
+    return choice >= 0 && choice < OPR_CHART_KINDS ? kinds[choice] : OWF_CHART_COLUMN;
+}
+
+int opr_chart_legend_choice(int legend)
+{
+    int i;
+    for (i = 1; i < OPR_CHART_LEGENDS; i++)
+        if (legends[i] == legend)
+            return i;
+    return 0;
+}
+
+int opr_chart_choice_legend(int choice)
+{
+    return choice > 0 && choice < OPR_CHART_LEGENDS ? legends[choice] : 0;
+}
+
+int opr_chart_edit_char(oc_core *core, unsigned char c)
+{
+    char utf8[2];
+    if (!core)
+        return OWF_ERR_UNSUPPORTED;
+    switch (c) {
+    case 8: return oc_core_key(core, OC_KEY_BACKSPACE, 0);
+    case 9: return oc_core_key(core, OC_KEY_TAB, 0);
+    case 13: return oc_core_key(core, OC_KEY_RETURN, 0);
+    case 27: return oc_core_key(core, OC_KEY_ESCAPE, 0);
+    case 127: return oc_core_key(core, OC_KEY_DELETE, 0);
+    }
+    if (c < 32 || (c >= 128 && c < 160))
+        return OWF_ERR_UNSUPPORTED;
+    if (c < 128) {
+        utf8[0] = (char)c;
+        return oc_edit_type(core, utf8, 1);
+    }
+    utf8[0] = (char)(0xC0 | (c >> 6));
+    utf8[1] = (char)(0x80 | (c & 0x3F));
+    return oc_edit_type(core, utf8, 2);
+}
