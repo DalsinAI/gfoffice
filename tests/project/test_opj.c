@@ -1272,6 +1272,29 @@ static void test_update_task(void)
     /* Undo puts it back as one step */
     CHECK_N(opj_undo(doc), OWF_OK);
     CHECK(!doc->plan->tasks[0].has_actual_finish);
+    /* the Milestone flag stays as set: Build at 0 days is not one, Ship at 3 days still is */
+    CHECK_N(opj_update_task(doc, 1, NULL, "0d", "0d", NULL, NULL), OWF_OK);
+    CHECK_N(doc->plan->tasks[1].duration, 0);
+    CHECK_N(doc->plan->tasks[1].milestone, 0);
+    CHECK_N(doc->plan->tasks[2].milestone, 1);
+    /* elapsed: "2ed" done and "2ed" to go make Ship an elapsed 4ed task, half done */
+    CHECK_N(opj_update_task(doc, 2, NULL, "2ed", "2ed", NULL, NULL), OWF_OK);
+    CHECK_N(doc->plan->tasks[2].milestone, 1);
+    CHECK_N(doc->plan->tasks[2].elapsed, 1);
+    CHECK_N(doc->plan->tasks[2].duration, 4 * 24 * 60L);
+    CHECK_S(cell_of(doc, 2, OPJ_COL_DURATION), "4ed");
+    CHECK_S(cell_of(doc, 2, OPJ_COL_PERCENT), "50%");
+    before = doc->changes;                                     /* working and elapsed won't mix */
+    CHECK_N(opj_update_task(doc, 2, NULL, "1d", "1ed", NULL, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_update_task(doc, 2, NULL, NULL, "1d", NULL, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_update_task(doc, 2, NULL, "1d", NULL, NULL, NULL), OWF_ERR_FORMAT);   /* actual alone, too */
+    CHECK_N(opj_update_task(doc, 0, NULL, "1ed", NULL, NULL, NULL), OWF_ERR_FORMAT);  /* 1ed of Plan's 2d */
+    CHECK_S(cell_of(doc, 0, OPJ_COL_DURATION), "2d");
+    CHECK_N(doc->changes, before);
+    CHECK_N(opj_update_task(doc, 2, NULL, NULL, "1ed", NULL, NULL), OWF_OK);   /* 2ed done, 1ed to go */
+    CHECK_S(cell_of(doc, 2, OPJ_COL_DURATION), "3ed");
+    CHECK_N(opj_update_task(doc, 2, NULL, "3ed", NULL, NULL, NULL), OWF_OK);   /* the same kind: all done */
+    CHECK_S(cell_of(doc, 2, OPJ_COL_PERCENT), "100%");
     /* a summary takes only % Complete */
     CHECK_N(opj_insert_task(doc, 0, "Phase"), OWF_OK);
     CHECK_N(opj_indent(doc, 1, 3, 1), OWF_OK);
