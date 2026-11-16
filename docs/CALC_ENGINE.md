@@ -396,10 +396,10 @@ has both (an older GFOpenCalc's names and a newer table) takes the table.
   cells is found like a loop of two.
 - **Files.** `owf_calc_new` parses a book and calculates nothing: the
   cells show the results the file saved. A formula the engine cannot work
-  out (a function it does not have, a reference to another book) keeps the
-  file's value (`OWF_CALC_KEPT`), and what reads it uses that value, until
-  the user types the cell again; then it is `#NAME?` (another book's
-  reference: `#REF!`).
+  out (a function it does not have, a reference to another book it has no
+  values for) keeps the file's value (`OWF_CALC_KEPT`), and what reads it
+  uses that value, until the user types the cell again; then it is
+  `#NAME?` (another book's reference: `#REF!`).
 
 ## Formulas
 
@@ -409,8 +409,14 @@ has both (an older GFOpenCalc's names and a newer table) takes the table.
 - Cells and ranges, relative or absolute: `A1`, `$A$1`, `A$1`, `A1:B2`,
   whole columns `A:C`, whole rows `2:5`, up to `XFD1048576`.
 - Other sheets: `Sheet2!A1`, `'Q1 sales'!A1:B2`, 3-D `Sheet1:Sheet3!A1`
-  (and `'Sheet1:My sheet'!A1`); another book's (`[Book.xls]Sheet1!A1`)
-  is not read (`#REF!`, or the file's value). The book keeps each other
+  (and `'Sheet1:My sheet'!A1`); another book's (`[Book.xls]Sheet1!A1`,
+  `SUM([Book.xls]Sheet1!A:A)`) gives the values that book last had, as
+  the file kept them (`OP_XREF`: a cell, or an array cut at the last row
+  and column the values reach, one row or column at least; an area too
+  big to hold as values is `#NUM!`), so a formula on a book that is not there
+  still shows its value, not an error. A book or sheet the file kept no
+  values for, and another book's defined name, are `#REF!` (or, loaded,
+  the file's value). The book keeps each other
   book a formula links (`owf_book.extbooks`: its name as the formulas give
   it, its target as the file wrote it, its sheets and the values their
   cells last had): XLSX reads and writes them from an externalLink part's
