@@ -370,10 +370,11 @@ def test_hand_xlsx(work):
     notes = "\n".join(b["notes"])
     for want in ("Diagonal lines", "Patterned cell backgrounds", "gradient", "angle", "Text formatted in parts",
                  "Pivot tables", "Chart sheets", "comments on cells could not be read", "#SPILL!", "Data tables", "numbers could not be read",
-                 "Sheet protection", "Links in cells",
+                 "Links in cells",
                  "pictures, charts or drawings could not be kept", "Tables keep"):
         check("hand: note " + want, want in notes, notes)
     check("hand: conditional formatting read, not noted", "Conditional formatting" not in notes, notes)
+    check("hand: sheet protection read, not noted", "Sheet protection" not in notes, notes)
     data = b["sheets"][0]
     check("hand: conditional format", data.get("cfs") == [
         'cf type=0 op=4 priority=1 stop=0 ranges=1,1-2,1 set=0 flags=0 colour=- fill=- formula "2"'], data.get("cfs"))
@@ -729,10 +730,10 @@ def test_hand_ods(work):
     b = parse(out)
     check("hand.ods: book", b["line"] == "book format=ods sheets=3 active=2 date1904=0", b["line"])
     notes = "\n".join(b["notes"])
-    for want in ("angle", "Conditional formatting", "Sheet protection", "Err:502", "Some formulas could not",
+    for want in ("angle", "Conditional formatting", "Err:502", "Some formulas could not",
                  "Pictures on sheets", "split in two", "30 December 1899"):
         check("hand.ods: note " + want, want in notes, notes)
-    for gone in ("Data validation", "Comments on cells", "AutoFilter"):
+    for gone in ("Data validation", "Comments on cells", "AutoFilter", "Sheet protection"):
         check("hand.ods: read, not noted: " + gone, gone not in notes, notes)
     check("hand.ods: the merged cell's comment, not its text", 'comment 4,4 author "me" text "NOT THIS"' in out, out[-2000:])
     check("hand.ods: the AutoFilter's buttons", 'autofilter 0,0-1,7 ""' in out, out[-2000:])

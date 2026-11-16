@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define OW_CORE_VERSION "1.10.0"
+#define OW_CORE_VERSION "1.11.0"
 
 typedef struct ow_editor ow_editor;
 
@@ -232,6 +232,39 @@ int ow_label_sheet_count(void);
 const ow_label_sheet *ow_label_sheet_at(int i);
 int ow_editor_labels(ow_editor *editor, const ow_label_sheet *sheet, int first, int last, owf_doc **out);
 
+/* 2.0.37 (core 1.11): gap 4.2.
+ * A sheet of one's own: ow_label_sheet_check says whether its labels fit the page without overlapping (OWF_OK,
+ * else OWF_ERR_FORMAT; ow_editor_labels asks it too). ow_label_sheet_parse reads one from millimetres, the
+ * numbers in this order whatever is between them: page width and height, columns and rows (whole), label width
+ * and height, the first label's left and top, and (optionally) the pitch across and down, else the label's
+ * size; its name is "Custom". ow_label_sheet_format writes one the same way, to a hundredth of a millimetre. */
+int ow_label_sheet_check(const ow_label_sheet *sheet);
+int ow_label_sheet_parse(const char *text, ow_label_sheet *out);
+int ow_label_sheet_format(const ow_label_sheet *sheet, char *out, size_t size);
+/* Records to merge from text: "all" (or empty), "3", "2-5", "2 to 5", "4-" (to the end), numbered from 1; into
+ * first and last from 0, the last held to the records there are. OWF_ERR_FORMAT for anything else. */
+int ow_merge_range_parse(const char *text, int records, int *first, int *last);
+/* Envelopes, turned for printing across (the long side across), and where the address goes (twips). */
+typedef struct {
+    const char *name;
+    int width, height;
+    int address_left, address_top;
+} ow_envelope_size;
+int ow_envelope_count(void);
+const ow_envelope_size *ow_envelope_at(int i);
+/* The page set to the envelope with its address's margins (10 mm at the right and bottom), and the return
+ * address (lines between '\n'; NULL or "": none) as a 9 point text box 10 mm in from the top left, in place of one
+ * put there before: one Undo step. ow_editor_envelope_return_box: that box's frame, or -1. */
+int ow_editor_envelope(ow_editor *editor, const ow_envelope_size *env, const char *return_utf8);
+int ow_editor_envelope_return_box(const ow_editor *editor);
+/* Printing on the printer's envelope feed: a page narrower than the paper is widened to paper_width with what is
+ * on it moved to the feed's side (left, centre or right), page-placed frames with it. ow_doc_feed_shift answers
+ * how far it moved (twips), or -1 when it left the page as it was (as set, or not narrower);
+ * ow_doc_feed_unshift(doc, paper_width, the old width, that answer) puts it back. */
+typedef enum { OW_FEED_AS_SET, OW_FEED_LEFT, OW_FEED_CENTRE, OW_FEED_RIGHT } ow_envelope_feed;
+int ow_doc_feed_shift(owf_doc *doc, int paper_width, ow_envelope_feed feed);
+void ow_doc_feed_unshift(owf_doc *doc, int paper_width, int old_width, int dx);
+
 /* 2.9.0 (core 1.10): word completion. ow_editor_complete, after a letter is typed: when the word before the caret
  * (3 letters or more) starts a longer word of the body (min_word letters or more, at least 4), the rest of the one
  * used most is put in and selected (1; 0: none, <0: no memory); typing on replaces it, as any selection;
@@ -299,16 +332,25 @@ int ow_editor_render_page(const ow_editor *editor, int page_index,
  * keeps the setting (owf_doc.track_changes). Accepting or rejecting is undoable.
  *
  * A change, as these calls count them, is a row of text and paragraph ends in the caret's story that name
- * the same owf_revision. */
+ * the same owf_revision, or (libowf 1.11) a row of runs that name the same format change. */
 void ow_editor_set_track_changes(ow_editor *editor, int on);
+/* 2.0.37: the final view (Show Changes off): what the document is with its changes accepted, while they are
+ * still kept and recorded. Deleted text is not shown (ow_layout_new_view's OW_LAYOUT_FINAL), and caret moves
+ * step over it, never stopping inside it. The window's setting: not saved with the document. */
+void ow_editor_set_final_view(ow_editor *editor, int on);
+int ow_editor_final_view(const ow_editor *editor);
 int ow_editor_track_changes(const ow_editor *editor);
 /* The name new changes are made under; NULL or "" for none (an unknown author). */
 int ow_editor_set_review_author(ow_editor *editor, const char *utf8);
 const char *ow_editor_review_author(const ow_editor *editor);
 
+/* libowf 1.11: ow_change_info.kind for a tracked format change (owf_run.format_change); its runs count as a
+ * change of their own unless they are an insertion's or deletion's too */
+#define OW_CHANGE_FORMAT 3
+
 typedef struct {
     int index;               /* 0, 1... in the story */
-    int kind;                /* OWF_REV_INSERT or OWF_REV_DELETE */
+    int kind;                /* OWF_REV_INSERT, OWF_REV_DELETE or OW_CHANGE_FORMAT */
     const char *author;      /* the document's; NULL: unknown */
     const char *date;        /* ISO 8601; NULL: unknown */
     ow_position start, end;  /* where it is, as a selection */
@@ -341,6 +383,7 @@ typedef struct {
     int reply_to;            /* the index of the comment it answers; -1: none */
     int done;                /* marked done */
     ow_position start, end;  /* its text (start == end's place: a point) */
+    int shown;               /* 2.0.39: the author filter shows it (ow_editor_set_comment_filter) */
 } ow_comment_info;
 int ow_editor_comment_count(const ow_editor *editor);
 /* 1 and *info for the index-th comment, 0 when there is none. The strings are valid until the next edit. */
@@ -350,6 +393,18 @@ int ow_editor_current_comment(ow_editor *editor, ow_comment_info *info);
 /* Selects the next comment's text (or the one before): 1, 2 when it went round the story's end, 0: none.
  * Replies are passed over (they are where their comment is). */
 int ow_editor_next_comment(ow_editor *editor, int backwards);
+/* 2.0.40: selects comment index's text (a reply's too, which is where its comment is) and makes it the
+ * comment at the caret until the selection moves, so a click on its note in the margin can change, answer or
+ * mark that one. 1, 0: no such comment. */
+int ow_editor_select_comment(ow_editor *editor, int index);
+/* 2.0.39: show only one author's comments (NULL or "": everyone's, as at first). The margin draws a comment
+ * only when ow_comment_info.shown; Next and Previous Comment go only to comments whose thread has one shown.
+ * The document is not changed. */
+int ow_editor_set_comment_filter(ow_editor *editor, const char *author);
+const char *ow_editor_comment_filter(const ow_editor *editor);
+/* 2.0.39: the comments' authors, each once in the order first met ("" for an unknown one), up to max: the
+ * number put in names */
+int ow_editor_comment_authors(ow_editor *editor, char (*names)[72], int max);
 /* A comment of the review author's on the selection (or at the caret), made now; the caret after it. */
 int ow_editor_insert_comment(ow_editor *editor, const char *utf8);
 /* The review author's reply to the comment at the caret. OWF_ERR_UNSUPPORTED: no comment there. */

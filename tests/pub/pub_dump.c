@@ -74,10 +74,12 @@ static void put_story(const owf_doc *res, const owf_story *story, const char *in
                    p->fmt.align == OWF_ALIGN_RIGHT ? "right" : "justify");
         for (j = 0; j < p->nruns; j++) {
             const owf_run *run = &p->runs[j];
-            if (run->kind != OWF_RUN_TEXT || !run->text || !has_fmt(&run->fmt))
+            if (run->kind != OWF_RUN_TEXT || !run->text || (!has_fmt(&run->fmt) && !run->href))
                 continue;
             printf("%s  run %d \"%.24s\"", indent, j, run->text);
             put_fmt(res, &run->fmt);
+            if (run->href)
+                printf(" link \"%.60s\"", run->href);
             printf("\n");
         }
     }

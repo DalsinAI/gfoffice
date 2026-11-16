@@ -99,7 +99,8 @@ typedef struct {
     int image;               /* index into doc->images for OWF_RUN_IMAGE, doc->frames for OWF_RUN_FRAME */
     int revision;            /* 1.5: a tracked change: 1 + its index in doc->revisions (OWF_REV_INSERT: this
                                 run was inserted, OWF_REV_DELETE: deleted but kept, shown struck through);
-                                0: none */
+                                0: none. 1.12: a picture in the line (OWF_RUN_IMAGE) may be one; a frame's run
+                                never is */
     int comment;             /* 1.6: a comment's place (OWF_RUN_TEXT runs with no text, kept apart from the text
                                 round them): 1 + its index in doc->comments where it is anchored (shown, and where
                                 a range ends); -(1 + its index) where its range starts. 0: none */

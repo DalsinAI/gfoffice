@@ -468,7 +468,7 @@ static long change_id(const owf_doc *doc, const owf_story *story, const owf_para
     if (k > 900) k = 900;
     for (q = story->paras; q < para; ++q)
         before += q->nruns + 1;
-    return base + (long)k * 2000000L + (before + j) * 8L;    /* +1 to +3: a run's later pieces */
+    return base + (long)k * 2000000L + (before + j) * 8L;    /* +1 to +3: a run's later pieces, +4 to +7 their format changes */
 }
 
 static const owf_revision *run_change(const owf_doc *doc, int number)
@@ -742,8 +742,9 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
             put_note_mark(out, doc, story, run, report);
             continue;
         }
-        /* 1.5: a tracked change's run inside w:ins or w:del (a picture or frame is never one) */
-        const owf_revision *chg = run->kind != OWF_RUN_IMAGE && run->kind != OWF_RUN_FRAME ? run_change(doc, run->revision) : NULL;
+        /* 1.5: a tracked change's run inside w:ins or w:del (1.12: a picture in the line may be one; a frame
+         * never is) */
+        const owf_revision *chg = run->kind != OWF_RUN_FRAME ? run_change(doc, run->revision) : NULL;
         int del = chg && chg->kind == OWF_REV_DELETE;
         /* 1.11: its tracked format change, in each of its w:r's w:rPr */
         const owf_format_change *fc = run->kind != OWF_RUN_IMAGE && run->kind != OWF_RUN_FRAME ?
