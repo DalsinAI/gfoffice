@@ -158,7 +158,7 @@ test: inflate-test
 check: inflate-check
 
 # The compound file writer (libowf/src/owf_cfbw.c), the container for
-# GFOpenPublisher's .pub save; tests/cfb/test_cfbw.c reads what it writes
+# GFOpenPressmaster's .pub save; tests/cfb/test_cfbw.c reads what it writes
 # back through owf_cfb.c.
 $(OUT)/test-cfbw: $(OWF_SRC) libowf/src/owf_internal.h tests/cfb/test_cfbw.c
 	mkdir -p $(OUT)
@@ -502,7 +502,7 @@ check: deck-edit-check deck-show-check
 .PHONY: deck-edit-test deck-edit-check deck-show-test deck-show-check
 endif
 
-# GFOpenPublisher's .pub reader (libowf/src/in_pub.c): tests/pub/test_pub.py
+# GFOpenPressmaster's .pub reader (libowf/src/in_pub.c): tests/pub/test_pub.py
 # compares pub_dump's output with tests/pub/expected and reads cut-short and
 # changed copies of every sample (more of them under ASan/UBSan). The samples
 # are made by tools/pubgen/make_pub.py: no outside .pub files are kept.
@@ -551,9 +551,16 @@ pub-check: $(OUT)/pub-dump-asan $(OUT)/pub-resave-asan $(PUB_MADE)
 test: pub-test
 check: pub-check
 
-# GFOpenPublisher's mail merge on the page model (src/pub/opp_merge.c)
+# the publishing app's name, ARexx port and old-name alias (renamed from GFOpenPublisher, 16 Nov 2026)
+pressmaster-name-check:
+	python3 tests/pub/test_pressmaster_name.py
+
+test: pressmaster-name-check
+check: pressmaster-name-check
+
+# GFOpenPressmaster's mail merge on the page model (src/pub/opp_merge.c)
 PUB_MERGE_DEPS = $(OWF_SRC) src/pub/opp_merge.c src/core/ow_merge.c tests/pub/test_pub_merge.c \
-	include/openpublisher_merge.h include/ow_merge.h libowf/include/owf_deck.h
+	include/openpressmaster_merge.h include/ow_merge.h libowf/include/owf_deck.h
 
 $(OUT)/test-publisher-merge: $(PUB_MERGE_DEPS)
 	mkdir -p $(OUT)
@@ -577,9 +584,9 @@ check: publisher-merge-check
 
 .PHONY: publisher-merge-test publisher-merge-check
 
-# GFOpenPublisher's built-in publication templates (src/pub/opp_template.c)
+# GFOpenPressmaster's built-in publication templates (src/pub/opp_template.c)
 PUB_TEMPLATE_DEPS = $(OWF_SRC) src/pub/opp_template.c src/pub/opp_merge.c src/core/ow_merge.c \
-	tests/pub/test_pub_template.c include/openpublisher_template.h include/openpublisher_merge.h \
+	tests/pub/test_pub_template.c include/openpressmaster_template.h include/openpressmaster_merge.h \
 	include/ow_merge.h libowf/include/owf_deck.h
 
 $(OUT)/test-publisher-template: $(PUB_TEMPLATE_DEPS)
@@ -635,7 +642,7 @@ endif
 
 ifneq ($(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c),)
 PUB_CORE_SRC = src/pub/opp_import.c src/pub/opp_export.c src/deck/opr_layout.c src/deck/opr_pdf.c src/core/ow_layout.c
-PUB_CORE_DEPS = $(PUB_DEPS) $(PUB_CORE_SRC) include/openpublisher_core.h include/openpresentation_core.h \
+PUB_CORE_DEPS = $(PUB_DEPS) $(PUB_CORE_SRC) include/openpressmaster_core.h include/openpresentation_core.h \
 	libowf/include/owf_deck.h $(OPENLAYOUT_ENGINE_SRC)
 
 $(OUT)/test-publisher-core: $(PUB_CORE_DEPS) tests/pub/test_pub_core.c

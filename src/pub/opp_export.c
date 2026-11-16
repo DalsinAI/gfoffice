@@ -1,9 +1,9 @@
-/* GFOpenPublisher save: the suite's deck/page model back into libowf's
+/* GFOpenPressmaster save: the suite's deck/page model back into libowf's
  * Publisher model (owf_pub), which owf_pub_write writes as a .pub. The
  * inverse of opp_import.c: pages and masters, frames in their order with
  * their groups, boxes, looks, text (one story for each text flow), tables
  * and pictures. MIT, Copyright (c) 2026 AmiCradle Team. */
-#include "openpublisher_core.h"
+#include "openpressmaster_core.h"
 
 #include <stdio.h>
 #include <stdlib.h>

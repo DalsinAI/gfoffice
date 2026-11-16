@@ -1,4 +1,4 @@
-# The .pub corpus (OpenPublisher, phase 0)
+# The .pub corpus (OpenPressmaster, phase 0)
 
 Sample Microsoft Publisher files for learning the format and testing the
 reader (`libowf/src/in_pub.c`). Only the files were taken from these

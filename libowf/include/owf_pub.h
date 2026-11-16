@@ -1,7 +1,7 @@
 /*
- * libowf: Microsoft Publisher files (.pub), read for GFOpenPublisher.
+ * libowf: Microsoft Publisher files (.pub), read for GFOpenPressmaster.
  *
- * Phase 0's reader (docs/gfoffice/Design-OpenPublisher.md): it tells the
+ * Phase 0's reader (docs/gfoffice/Design-OpenPressmaster.md): it tells the
  * version, gives the page size, the pages and master pages, each page's
  * frames with their boxes and kinds, the text of text frames and tables as
  * paragraphs, the fonts the text names and the pictures. Phase 1 adds the

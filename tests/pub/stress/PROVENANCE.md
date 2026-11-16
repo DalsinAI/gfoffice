@@ -1,10 +1,10 @@
-# OpenPublisher's stress documents: where they come from
+# OpenPressmaster's stress documents: where they come from
 
 Team 5 (W142), 26 October 2026; govdocs1's file added 27 October. What they test, and what the reader gets
 out of them, is in [docs/gfoffice/STRESS-DOCS.md](../../../docs/gfoffice/STRESS-DOCS.md),
 sections 2 and 3. Nothing here is from a private document, and nothing was
 opened in another program that reads .pub (the clean room,
-`docs/gfoffice/Design-OpenPublisher.md`, section 2).
+`docs/gfoffice/Design-OpenPressmaster.md`, section 2).
 
 ## Microsoft Publisher: no longer checked in
 
