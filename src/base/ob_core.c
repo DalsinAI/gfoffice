@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <time.h>
 #include <sqlite3.h>
 #include "openbase_core.h"
 
@@ -1631,6 +1632,110 @@ int ob_relations(ob_project *p, ob_relation *out, int max)
     return n;
 }
 
+static void unique_name(const ob_table *t, char *name, size_t size);
+
+/* The table's design, every field keeping its rows (from = its name), into *t; 0 with the reason. */
+static int relate_design(ob_project *p, const char *table, ob_table **t)
+{
+    const ob_table *d;
+    int i;
+    if (!(d = design(p, table))) return 0;
+    if (!(*t = malloc(sizeof **t))) return fail(p, "Not enough memory");
+    memcpy(*t, d, sizeof **t);
+    for (i = 0; i < (*t)->nfields; i++) copy((*t)->fields[i].from, sizeof (*t)->fields[i].from, (*t)->fields[i].name);
+    return 1;
+}
+
+static int relate_change(ob_project *p, ob_table *t)
+{
+    char name[OB_NAME_MAX];
+    int good;
+    copy(name, sizeof name, t->name);
+    good = ob_table_change(p, name, t);
+    free(t);
+    return good;
+}
+
+int ob_relation_add(ob_project *p, const char *table, const char *field, const char *lookup,
+                    ob_on_delete rule, char *made, size_t size)
+{
+    const ob_table *to;
+    ob_table *t;
+    ob_field *f;
+    int i;
+    if (made && size) made[0] = 0;
+    if (rule != OB_DELETE_REFUSE && rule != OB_DELETE_CASCADE && rule != OB_DELETE_CLEAR) return fail(p, "No such rule on delete");
+    if (!(to = design(p, lookup))) return 0;
+    {
+        char tname[OB_NAME_MAX];
+        copy(tname, sizeof tname, to->name);
+        if (!relate_design(p, table, &t)) return 0;
+        if (field && *field) {
+            if ((i = ob_table_find_field(t, field)) < 0) { fail(p, "%s has no field %s", t->name, field); free(t); return 0; }
+            f = &t->fields[i];
+            if (f->type == OB_COUNTER || f->key) {
+                fail(p, "%s is %s's key: drag %s's key onto another field, or onto the table to add one", f->name, t->name, tname);
+                free(t);
+                return 0;
+            }
+            if (f->type != OB_INTEGER && f->type != OB_LOOKUP) {
+                fail(p, "%s is %s: only an Integer field, or a new one, can hold %s's key", f->name, ob_type_name(f->type), tname);
+                free(t);
+                return 0;
+            }
+        } else {
+            char nm[OB_NAME_MAX];
+            copy(nm, sizeof nm, tname);
+            unique_name(t, nm, sizeof nm);
+            if (!(f = ob_table_add_field(t, nm, OB_LOOKUP))) { fail(p, "%s has as many fields as a table can", t->name); free(t); return 0; }
+            f->from[0] = 0;                         /* a new field: empty */
+        }
+        f->type = OB_LOOKUP;
+        copy(f->lookup, sizeof f->lookup, tname);
+        f->on_delete = rule;
+        f->has_default = 0;
+        f->deflt[0] = 0;
+        if (made && size) copy(made, size, f->name);
+    }
+    return relate_change(p, t);
+}
+
+static ob_field *relate_lookup(ob_project *p, ob_table *t, const char *field)
+{
+    int i = ob_table_find_field(t, field);
+    if (i < 0) { fail(p, "%s has no field %s", t->name, field); return NULL; }
+    if (t->fields[i].type != OB_LOOKUP) { fail(p, "%s.%s doesn't look anything up", t->name, t->fields[i].name); return NULL; }
+    return &t->fields[i];
+}
+
+int ob_relation_set_rule(ob_project *p, const char *table, const char *field, ob_on_delete rule)
+{
+    ob_table *t;
+    ob_field *f;
+    if (rule != OB_DELETE_REFUSE && rule != OB_DELETE_CASCADE && rule != OB_DELETE_CLEAR) return fail(p, "No such rule on delete");
+    if (!relate_design(p, table, &t)) return 0;
+    if (!(f = relate_lookup(p, t, field))) { free(t); return 0; }
+    if (rule == OB_DELETE_CLEAR && f->required) {
+        fail(p, "%s.%s is required, so it can't be cleared: make it not required in the designer first", t->name, f->name);
+        free(t);
+        return 0;
+    }
+    f->on_delete = rule;
+    return relate_change(p, t);
+}
+
+int ob_relation_remove(ob_project *p, const char *table, const char *field)
+{
+    ob_table *t;
+    ob_field *f;
+    if (!relate_design(p, table, &t)) return 0;
+    if (!(f = relate_lookup(p, t, field))) { free(t); return 0; }
+    f->type = OB_INTEGER;
+    f->lookup[0] = 0;
+    f->on_delete = OB_DELETE_REFUSE;
+    return relate_change(p, t);
+}
+
 /* ---- Rows ---- */
 
 /* Whether a Lookup's value names a row of its table; 0 with the reason. */
@@ -2415,6 +2520,57 @@ int ob_children(ob_project *p, const char *table, ob_relation *out, int max)
     return n < 0 ? -1 : k;
 }
 
+/* A subform's rows: r's table filtered on its Lookup Equals the record. */
+void ob_child_view(ob_view *v, const ob_relation *r, ob_int parent)
+{
+    ob_view_init(v);
+    snprintf(v->field, sizeof v->field, "%s", r->field);
+    v->op = OB_FILTER_EQUALS;
+    snprintf(v->value, sizeof v->value, "%lld", (long long)parent);
+}
+
+static int child_key_cb(void *user, ob_int key, int n, const char *const *v)
+{
+    (void)n;
+    (void)v;
+    *(ob_int *)user = key;
+    return 1;
+}
+
+ob_int ob_child_key(ob_project *p, const ob_relation *r, ob_int parent, ob_int pos)
+{
+    ob_view v;
+    ob_int key = -1;
+    if (!r || !r->table[0] || !r->field[0]) { fail(p, "No subform"); return -2; }
+    if (parent <= 0 || pos < 0) return -1;
+    ob_child_view(&v, r, parent);
+    if (ob_view_rows(p, r->table, &v, pos, 1, child_key_cb, &key) < 0) return -2;
+    return key;
+}
+
+int ob_child_add(ob_project *p, const ob_relation *r, ob_int parent, int n, const char *const *fields,
+                 const char *const *values, ob_int *key)
+{
+    const char *f[OB_MAX_FIELDS], *v[OB_MAX_FIELDS];
+    char pk[24];
+    int i, k = 0;
+    if (!r || !r->table[0] || !r->field[0]) return fail(p, "No subform");
+    if (parent <= 0) return fail(p, "Save the record first: its rows in %s need its key", r->table);
+    if (n < 0 || n > OB_MAX_FIELDS) return fail(p, "Too many fields");
+    for (i = 0; i < n; i++) {
+        if (same(fields[i], r->field)) continue;     /* the link is the record's */
+        if (k >= OB_MAX_FIELDS - 1) return fail(p, "Too many fields");
+        f[k] = fields[i];
+        v[k] = values[i];
+        k++;
+    }
+    snprintf(pk, sizeof pk, "%lld", (long long)parent);
+    f[k] = r->field;
+    v[k] = pk;
+    k++;
+    return ob_row_add(p, r->table, k, f, v, key);
+}
+
 /* ---- CSV ---- */
 
 void ob_csv_opts_init(ob_csv_opts *o)
@@ -3054,6 +3210,680 @@ int ob_csv_guess(ob_project *p, const char *path, const char *name, ob_csv_opts 
     return ok(p);
 }
 
+/* ---- dBASE files (core 0.9, design 8) ----
+ * A 32-byte header (version, last update YY MM DD, records as 4 bytes, the
+ * header's and a record's lengths as 2, all low byte first), a 32-byte
+ * descriptor a column (its name in 11 bytes, its type, its length and
+ * decimals at 16 and 17), 0x0D, then the records, each a flag (' ' kept,
+ * '*' deleted) and its columns at their widths, then 0x1A. A memo column
+ * holds the number of its text's first 512-byte block in the .dbt; the
+ * text ends with 0x1A (dBASE III), or the block starts FF FF 08 00 and its
+ * length (dBASE IV). */
+
+#define DBF_COLS 128
+#define DBF_BLOCK 512
+#define DBF_MEMO_MAX (1L << 20)       /* a memo read is cut at 1 MB */
+
+typedef struct dbf_col {
+    char name[11];
+    char type;                      /* C N F D L M */
+    int len, dec;
+    int field;                      /* the table's field it is (export), goes to (import) */
+    int off;                        /* where it starts in a record, after the flag */
+    int neg, whole;                 /* export, measuring a Number: a sign, digits before the point */
+} dbf_col;
+
+static void put_le16(unsigned char *b, unsigned v)
+{
+    b[0] = (unsigned char)(v & 255);
+    b[1] = (unsigned char)((v >> 8) & 255);
+}
+
+static void put_le32(unsigned char *b, unsigned long v)
+{
+    put_le16(b, (unsigned)(v & 0xFFFF));
+    put_le16(b + 2, (unsigned)((v >> 16) & 0xFFFF));
+}
+
+static unsigned get_le16(const unsigned char *b)
+{
+    return (unsigned)b[0] | (unsigned)b[1] << 8;
+}
+
+static unsigned long get_le32(const unsigned char *b)
+{
+    return (unsigned long)get_le16(b) | (unsigned long)get_le16(b + 2) << 16;
+}
+
+/* name as dBASE keeps one, unlike the n before it. */
+static void dbf_name(const char *in, char out[11], const dbf_col *cols, int n)
+{
+    char base[11];
+    int i, j = 0, k, dup = 1;
+    for (i = 0; in[i] && j < 10; i++) {
+        unsigned char c = (unsigned char)in[i];
+        if (c < 128 && isalnum(c)) base[j++] = (char)toupper(c);
+        else if (j && base[j - 1] != '_') base[j++] = '_';
+    }
+    while (j && base[j - 1] == '_') j--;
+    base[j] = 0;
+    if (!j) copy(base, sizeof base, "FIELD");
+    else if (!isalpha((unsigned char)base[0])) {
+        char t[11];
+        snprintf(t, sizeof t, "F%.9s", base);
+        copy(base, sizeof base, t);
+    }
+    copy(out, 11, base);
+    for (k = 2; dup && k < 1000; k++) {
+        dup = 0;
+        for (i = 0; i < n; i++) if (same(cols[i].name, out)) dup = 1;
+        if (dup) {
+            char suf[8];
+            snprintf(suf, sizeof suf, "_%d", k);
+            snprintf(out, 11, "%.*s%s", 10 - (int)strlen(suf), base, suf);
+        }
+    }
+}
+
+/* The .dbt beside a .dbf: its .dbf (or .DBF) as .dbt (.DBT), or path with .dbt. */
+static void dbt_path(const char *path, char *out, size_t size)
+{
+    size_t n = strlen(path);
+    if (n >= 4 && path[n - 4] == '.' && sqlite3_stricmp(path + n - 3, "dbf") == 0) {
+        copy(out, size, path);
+        if (n - 1 < size) out[n - 1] = path[n - 1] == 'F' ? 'T' : 't';
+    } else {
+        snprintf(out, size, "%s.dbt", path);
+    }
+}
+
+typedef struct dbf_out {
+    FILE *f, *memo;
+    dbf_col cols[DBF_COLS];
+    int ncols, pass, bad, too_big;
+    unsigned char types[OB_MAX_FIELDS];
+    unsigned char *rec;
+    int reclen;
+    unsigned long block;            /* the .dbt's next free block */
+    ob_int rows;
+} dbf_out;
+
+/* pass 1: how wide each column must be; pass 2: the record. */
+static int dbf_row(void *user, ob_int key, int n, const char *const *values)
+{
+    dbf_out *o = user;
+    int c;
+    (void)key;
+    if (o->pass == 2) {
+        memset(o->rec, ' ', (size_t)o->reclen);
+        o->rec[0] = ' ';
+    }
+    for (c = 0; c < o->ncols; c++) {
+        dbf_col *k = &o->cols[c];
+        const char *v = k->field < n ? values[k->field] : NULL;
+        int t = o->types[k->field];
+        size_t len = v ? strlen(v) : 0;
+        char num[48];
+        unsigned char *at = o->rec + 1 + k->off;
+        if (t == OB_CURRENCY && v) {
+            ob_int pence;
+            if (ob_currency_parse(v, &pence)) {
+                unsigned long long a = pence < 0 ? 0ULL - (unsigned long long)pence : (unsigned long long)pence;
+                snprintf(num, sizeof num, "%s%llu.%02u", pence < 0 ? "-" : "", a / 100, (unsigned)(a % 100));
+                v = num;
+                len = strlen(num);
+            }
+        }
+        if (o->pass == 1) {
+            if (!v) continue;
+            if (k->type == 'C' || k->type == 'N') {
+                if (t == OB_NUMBER) {
+                    const char *dot = strchr(v, '.'), *e = strpbrk(v, "eE");
+                    double x = strtod(v, NULL);
+                    char w[48];
+                    int d = dot && !e ? (int)strlen(dot + 1) : e ? 6 : 0;
+                    while (d && dot && !e && dot[d] == '0') d--;     /* "2.50" needs 1 */
+                    if (d > k->dec) k->dec = d > 9 ? 9 : d;
+                    if (x < 0) { k->neg = 1; x = -x; }
+                    snprintf(w, sizeof w, "%.0f", x);
+                    if ((int)strlen(w) > k->whole) k->whole = (int)strlen(w);
+                } else if ((int)len > k->len) {
+                    if (k->type == 'C' && len > 254) { k->type = 'M'; k->len = 10; }
+                    else if (k->type != 'M') k->len = (int)len;
+                }
+            }
+            continue;
+        }
+        if (!v) {
+            if (k->type == 'L') *at = '?';
+            continue;
+        }
+        switch (k->type) {
+        case 'C':
+            memcpy(at, v, len < (size_t)k->len ? len : (size_t)k->len);
+            break;
+        case 'N':
+            if (t == OB_NUMBER) {
+                snprintf(num, sizeof num, "%.*f", k->dec, strtod(v, NULL));
+                v = num;
+                len = strlen(num);
+            }
+            if ((int)len > k->len) memset(at, '*', (size_t)k->len);
+            else memcpy(at + k->len - len, v, len);
+            break;
+        case 'D':
+            if (len >= 10) { memcpy(at, v, 4); memcpy(at + 4, v + 5, 2); memcpy(at + 6, v + 8, 2); }
+            break;
+        case 'L':
+            *at = v[0] == 'Y' || v[0] == 'y' ? 'T' : 'F';
+            break;
+        case 'M':
+            if (len) {
+                unsigned long blocks = (unsigned long)((len + 2 + DBF_BLOCK - 1) / DBF_BLOCK), pad;
+                snprintf(num, sizeof num, "%10lu", o->block);
+                memcpy(at, num, 10);
+                if (fwrite(v, 1, len, o->memo) != len || fputc(0x1A, o->memo) == EOF || fputc(0x1A, o->memo) == EOF)
+                    o->bad = 1;
+                for (pad = blocks * DBF_BLOCK - (unsigned long)(len + 2); pad; pad--) if (fputc(0, o->memo) == EOF) o->bad = 1;
+                o->block += blocks;
+            }
+            break;
+        }
+    }
+    if (o->pass == 2) {
+        if (fwrite(o->rec, 1, (size_t)o->reclen, o->f) != (size_t)o->reclen) { o->bad = 1; return 1; }
+    }
+    o->rows++;
+    return 0;
+}
+
+ob_int ob_dbf_export(ob_project *p, const char *table, const ob_view *v, const char *path)
+{
+    const ob_table *t;
+    dbf_out *o;
+    unsigned char h[32];
+    char mpath[1024];
+    int i, memo = 0, shut;
+    ob_int n = -1, written;
+    time_t now = time(NULL);
+    struct tm *tm = localtime(&now);
+    if (!(t = design(p, table))) return -1;
+    if (v && !ob_view_check(p, table, v)) return -1;
+    if (!(t = design(p, table))) return -1;
+    if (!(o = calloc(1, sizeof *o))) { fail(p, "Not enough memory"); return -1; }
+    for (i = 0; i < t->nfields && o->ncols < DBF_COLS; i++) {
+        const ob_field *f = &t->fields[i];
+        dbf_col *k = &o->cols[o->ncols];
+        o->types[i] = (unsigned char)f->type;
+        if (f->type == OB_OBJECT) continue;
+        dbf_name(f->name, k->name, o->cols, o->ncols);
+        k->field = i;
+        switch (f->type) {
+        case OB_COUNTER: case OB_INTEGER: case OB_LOOKUP: k->type = 'N'; k->len = 1; break;
+        case OB_NUMBER: k->type = 'N'; break;
+        case OB_CURRENCY: k->type = 'N'; k->len = 4; k->dec = 2; break;
+        case OB_DATE: k->type = 'D'; k->len = 8; break;
+        case OB_YESNO: k->type = 'L'; k->len = 1; break;
+        case OB_MEMO: k->type = 'M'; k->len = 10; break;
+        case OB_TIME: k->type = 'C'; k->len = 8; break;
+        case OB_DATETIME: k->type = 'C'; k->len = 19; break;
+        default: k->type = 'C'; k->len = 1; break;
+        }
+        o->ncols++;
+    }
+    if (!o->ncols) { free(o); fail(p, "%s has nothing a dBASE file can hold", table); return -1; }
+    /* how wide: every row once */
+    o->pass = 1;
+    if (rows_from(p, table, v, 0, 0, -1, dbf_row, o) < 0) { free(o); return -1; }
+    o->reclen = 1;
+    for (i = 0; i < o->ncols; i++) {
+        dbf_col *k = &o->cols[i];
+        if (o->types[k->field] == OB_NUMBER) {
+            k->len = k->neg + (k->whole ? k->whole : 1) + (k->dec ? k->dec + 1 : 0);
+            while (k->len > 20 && k->dec) { k->len--; if (--k->dec == 0) k->len--; }
+        }
+        if (k->type == 'N' && k->len > 20) {
+            fail(p, "%s has a number too long for a dBASE file", t->fields[k->field].name);
+            free(o);
+            return -1;
+        }
+        if (k->type == 'M') memo = 1;
+        k->off = o->reclen - 1;
+        o->reclen += k->len;
+    }
+    if (o->reclen > 65535 || 32 + 32 * o->ncols + 1 > 65535) { free(o); fail(p, "%s is too wide for a dBASE file", table); return -1; }
+    if (!(o->rec = malloc((size_t)o->reclen))) { free(o); fail(p, "Not enough memory"); return -1; }
+    if (!(o->f = fopen(path, "wb"))) { free(o->rec); free(o); fail(p, "%s could not be made", path); return -1; }
+    if (memo) {
+        unsigned char b0[DBF_BLOCK];
+        dbt_path(path, mpath, sizeof mpath);
+        if (!(o->memo = fopen(mpath, "wb"))) {
+            fclose(o->f);
+            free(o->rec);
+            free(o);
+            fail(p, "%s could not be made", mpath);
+            return -1;
+        }
+        memset(b0, 0, sizeof b0);
+        b0[16] = 0x03;
+        if (fwrite(b0, 1, sizeof b0, o->memo) != sizeof b0) o->bad = 1;
+        o->block = 1;
+    }
+    memset(h, 0, sizeof h);
+    h[0] = memo ? 0x83 : 0x03;
+    h[1] = (unsigned char)(tm && tm->tm_year >= 0 && tm->tm_year <= 255 ? tm->tm_year : 0);   /* years from 1900: 126 for 2026 */
+    h[2] = (unsigned char)(tm ? tm->tm_mon + 1 : 1);
+    h[3] = (unsigned char)(tm ? tm->tm_mday : 1);
+    put_le32(h + 4, (unsigned long)o->rows);
+    put_le16(h + 8, (unsigned)(32 + 32 * o->ncols + 1));
+    put_le16(h + 10, (unsigned)o->reclen);
+    if (fwrite(h, 1, 32, o->f) != 32) o->bad = 1;
+    for (i = 0; i < o->ncols; i++) {
+        unsigned char d[32];
+        memset(d, 0, sizeof d);
+        memcpy(d, o->cols[i].name, strlen(o->cols[i].name));
+        d[11] = (unsigned char)o->cols[i].type;
+        d[16] = (unsigned char)o->cols[i].len;
+        d[17] = (unsigned char)o->cols[i].dec;
+        if (fwrite(d, 1, 32, o->f) != 32) o->bad = 1;
+    }
+    if (fputc(0x0D, o->f) == EOF) o->bad = 1;
+    written = o->rows;
+    o->rows = 0;
+    o->pass = 2;
+    n = rows_from(p, table, v, 0, 0, -1, dbf_row, o);
+    if (fputc(0x1A, o->f) == EOF) o->bad = 1;
+    if (n >= 0 && o->rows != written) {          /* not as measured: say how many there are */
+        put_le32(h + 4, (unsigned long)o->rows);
+        if (fseek(o->f, 0, SEEK_SET) != 0 || fwrite(h, 1, 32, o->f) != 32) o->bad = 1;
+    }
+    shut = fclose(o->f);
+    if (o->memo) {
+        unsigned char b[4];
+        put_le32(b, o->block);
+        if (fseek(o->memo, 0, SEEK_SET) != 0 || fwrite(b, 1, 4, o->memo) != 4) o->bad = 1;
+        if (fclose(o->memo) != 0) o->bad = 1;
+    }
+    if (n >= 0 && (o->bad || shut != 0)) { fail(p, "%s could not be written: is the disk full?", path); n = -1; }
+    else if (n >= 0) { n = o->rows; ok(p); }
+    free(o->rec);
+    free(o);
+    return n;
+}
+
+typedef struct dbf_in {
+    FILE *f, *memo;
+    dbf_col cols[DBF_COLS];
+    int ncols, version, reclen, hdrlen, memo_block;
+    int lang;                       /* the language driver byte (29): 0 when not said */
+    unsigned long nrecs;
+    unsigned char *rec;
+    char *val;                      /* one column's value, as text */
+    size_t valcap;
+    char mpath[1024];
+} dbf_in;
+
+static void dbf_close(dbf_in *r)
+{
+    if (!r) return;
+    if (r->f) fclose(r->f);
+    if (r->memo) fclose(r->memo);
+    free(r->rec);
+    free(r->val);
+    free(r);
+}
+
+static dbf_in *dbf_open(ob_project *p, const char *path)
+{
+    dbf_in *r;
+    unsigned char h[32];
+    int i, has_memo = 0, off = 0;
+    if (!(r = calloc(1, sizeof *r))) { fail(p, "Not enough memory"); return NULL; }
+    if (!(r->f = fopen(path, "rb"))) { free(r); fail(p, "%s could not be opened", path); return NULL; }
+    if (fread(h, 1, 32, r->f) != 32) { fail(p, "%s is not a dBASE file", path); goto bad; }
+    r->version = h[0];
+    r->lang = h[29];
+    if (r->version == 0x30 || r->version == 0x31 || r->version == 0x32) {
+        fail(p, "%s is a Visual FoxPro table, which GFOpenBase can't read: save it as dBASE III or IV", path);
+        goto bad;
+    }
+    if (r->version == 0xF5 || r->version == 0xFB) {
+        fail(p, "%s is a FoxPro table, which GFOpenBase can't read: save it as dBASE III or IV", path);
+        goto bad;
+    }
+    if (r->version != 0x03 && r->version != 0x83 && r->version != 0x8B && r->version != 0x04) {
+        fail(p, "%s is not a dBASE III or IV file", path);
+        goto bad;
+    }
+    r->nrecs = get_le32(h + 4);
+    r->hdrlen = (int)get_le16(h + 8);
+    r->reclen = (int)get_le16(h + 10);
+    if (r->hdrlen < 33 || r->reclen < 1) { fail(p, "%s is not a dBASE file", path); goto bad; }
+    for (i = 0; 32 + 32 * (i + 1) < r->hdrlen + 1; i++) {
+        unsigned char d[32];
+        dbf_col *k;
+        int c = fgetc(r->f);
+        if (c == 0x0D || c == EOF) break;
+        d[0] = (unsigned char)c;
+        if (fread(d + 1, 1, 31, r->f) != 31) { fail(p, "%s ends inside its list of fields", path); goto bad; }
+        if (r->ncols >= DBF_COLS) { fail(p, "%s has more than %d fields", path, DBF_COLS); goto bad; }
+        k = &r->cols[r->ncols++];
+        {
+            char raw[11];
+            memcpy(raw, d, 10);
+            raw[10] = 0;
+            trimmed(raw, k->name, sizeof k->name);
+        }
+        k->type = (char)toupper(d[11]);
+        k->len = d[16];
+        k->dec = d[17];
+        k->off = off;
+        off += k->len;
+        if (!strchr("CNFDLM", k->type) || !k->type) {
+            fail(p, "%s: the field %s is of type %c, which GFOpenBase can't read", path, k->name, k->type ? k->type : '?');
+            goto bad;
+        }
+        if (k->type == 'M') has_memo = 1;
+    }
+    if (!r->ncols) { fail(p, "%s has no fields", path); goto bad; }
+    if (off + 1 != r->reclen) { fail(p, "%s: its record length doesn't match its fields", path); goto bad; }
+    if (fseek(r->f, r->hdrlen, SEEK_SET) != 0) { fail(p, "%s could not be read", path); goto bad; }
+    if (!(r->rec = malloc((size_t)r->reclen)) || !(r->val = malloc(r->valcap = 256))) { fail(p, "Not enough memory"); goto bad; }
+    r->memo_block = DBF_BLOCK;
+    if (has_memo) {
+        unsigned char b[24];
+        dbt_path(path, r->mpath, sizeof r->mpath);
+        if (!(r->memo = fopen(r->mpath, "rb"))) {
+            char other[1024];
+            size_t n = strlen(r->mpath);
+            copy(other, sizeof other, r->mpath);
+            if (n >= 3) {   /* the other case: .dbt or .DBT */
+                other[n - 3] = (char)(islower((unsigned char)other[n - 3]) ? 'D' : 'd');
+                other[n - 2] = (char)(islower((unsigned char)other[n - 2]) ? 'B' : 'b');
+                other[n - 1] = (char)(islower((unsigned char)other[n - 1]) ? 'T' : 't');
+            }
+            if (!(r->memo = fopen(other, "rb"))) { fail(p, "%s has memos, but its memo file %s isn't there", path, r->mpath); goto bad; }
+        }
+        if (r->version == 0x8B && fread(b, 1, sizeof b, r->memo) == sizeof b && get_le16(b + 20) >= 64)
+            r->memo_block = (int)get_le16(b + 20);
+    }
+    return r;
+bad:
+    dbf_close(r);
+    return NULL;
+}
+
+static int dbf_val_room(dbf_in *r, size_t n)
+{
+    char *b;
+    if (n < r->valcap) return 1;
+    if (!(b = realloc(r->val, n + 1))) return 0;
+    r->val = b;
+    r->valcap = n + 1;
+    return 1;
+}
+
+/* Column c of the record read, as the field's own text; NULL when empty,
+ * "\x01" when memory ran out. */
+static const char *dbf_text(dbf_in *r, int c)
+{
+    const dbf_col *k = &r->cols[c];
+    const unsigned char *at = r->rec + 1 + k->off;
+    int i, n = k->len;
+    while (n && (at[n - 1] == ' ' || at[n - 1] == 0)) n--;
+    if (k->type == 'M') {
+        unsigned long block = 0;
+        size_t len = 0;
+        int ch;
+        for (i = 0; i < n; i++) if (at[i] >= '0' && at[i] <= '9') block = block * 10 + (unsigned long)(at[i] - '0');
+        if (!block || !r->memo || fseek(r->memo, (long)(block * (unsigned long)r->memo_block), SEEK_SET) != 0) return NULL;
+        {
+            unsigned char b[8];
+            size_t got = fread(b, 1, 8, r->memo);
+            long want = -1;
+            if (got == 8 && b[0] == 0xFF && b[1] == 0xFF && b[2] == 0x08 && b[3] == 0x00) want = (long)get_le32(b + 4) - 8;
+            else if (fseek(r->memo, (long)(block * (unsigned long)r->memo_block), SEEK_SET) != 0) return NULL;
+            while (len < (size_t)DBF_MEMO_MAX && (want < 0 || (long)len < want) && (ch = fgetc(r->memo)) != EOF) {
+                if (want < 0 && ch == 0x1A) break;
+                if (!dbf_val_room(r, len + 1)) return "\x01";
+                r->val[len++] = (char)ch;
+            }
+        }
+        r->val[len] = 0;
+        return len ? r->val : NULL;
+    }
+    if (!dbf_val_room(r, (size_t)k->len + 16)) return "\x01";
+    switch (k->type) {
+    case 'C':
+        memcpy(r->val, at, (size_t)n);
+        r->val[n] = 0;
+        return n ? r->val : NULL;
+    case 'N': case 'F':
+        for (i = 0; i < n && at[i] == ' '; i++) ;
+        if (i == n || at[i] == '*') return NULL;               /* empty, or too big for its width */
+        memcpy(r->val, at + i, (size_t)(n - i));
+        r->val[n - i] = 0;
+        return r->val;
+    case 'D':
+        for (i = 0; i < n && (at[i] == ' ' || at[i] == '0'); i++) ;
+        if (i == n || n != 8) return NULL;
+        snprintf(r->val, r->valcap, "%.4s-%.2s-%.2s", (const char *)at, (const char *)at + 4, (const char *)at + 6);
+        return r->val;
+    case 'L':
+        if (!n) return NULL;
+        if (strchr("TtYy", at[0])) return "Yes";
+        if (strchr("FfNn", at[0])) return "No";
+        return NULL;
+    }
+    return NULL;
+}
+
+/* 1: the next record kept; 0: no more; -1: the file ends inside one. Records
+ * marked deleted are passed over and counted. */
+static int dbf_next(dbf_in *r, unsigned long *at, ob_int *deleted)
+{
+    for (;;) {
+        size_t got;
+        if (*at >= r->nrecs) return 0;
+        got = fread(r->rec, 1, (size_t)r->reclen, r->f);
+        (*at)++;
+        if (got == 0 || r->rec[0] == 0x1A) return -1;   /* the header promised more */
+        if (got != (size_t)r->reclen) return -1;
+        if (r->rec[0] == '*') { (*deleted)++; continue; }
+        return 1;
+    }
+}
+
+ob_int ob_dbf_import(ob_project *p, const char *table, const char *path, ob_csv_opts *o)
+{
+    const ob_table *t;
+    dbf_in *r = NULL;
+    char (*names)[OB_NAME_MAX] = NULL;
+    const char *fields[OB_MAX_FIELDS], *vals[OB_MAX_FIELDS];
+    char *copies[OB_MAX_FIELDS];
+    int map[DBF_COLS];
+    int nf, i, j, rc, by_name = 1, good = 0, began = 0, ncols;
+    unsigned long at = 0;
+    ob_int added = 0, nkeys = 0, capkeys = 0, *keys = NULL;
+    char tname[OB_NAME_MAX];
+    ob_csv_opts dflt;
+
+    if (!o) { ob_csv_opts_init(&dflt); o = &dflt; }
+    o->bad = 0;
+    o->deleted = 0;
+    o->report[0] = 0;
+    memset(copies, 0, sizeof copies);
+    if (!(t = design(p, table))) return -1;
+    if (p->readonly) { fail(p, "The project is open read-only"); return -1; }
+    copy(tname, sizeof tname, t->name);
+    nf = t->nfields;
+    if (!(names = malloc(sizeof *names * (size_t)(nf ? nf : 1)))) { fail(p, "Not enough memory"); goto out; }
+    for (i = 0; i < nf; i++) copy(names[i], sizeof names[i], t->fields[i].name);
+    if (!(r = dbf_open(p, path))) goto out;
+    if (r->lang) {     /* GFOpenBase takes the text as it is: say so */
+        static const struct { int id; const char *name; } langs[] = {
+            { 0x01, "DOS code page 437" }, { 0x02, "DOS code page 850" }, { 0x03, "Windows code page 1252" },
+            { 0x57, "Windows code page 1252" }, { 0x64, "DOS code page 852" }, { 0x65, "DOS code page 866" },
+            { 0xC8, "Windows code page 1250" }, { 0xC9, "Windows code page 1251" }
+        };
+        const char *name = NULL;
+        for (i = 0; i < (int)(sizeof langs / sizeof langs[0]); i++) if (langs[i].id == r->lang) name = langs[i].name;
+        if (name) snprintf(o->report, sizeof o->report, "The file's text is in %s; it was read as ISO-8859-1, so accented letters may be wrong.\n", name);
+        else snprintf(o->report, sizeof o->report, "The file names its text's code page as %02X; it was read as ISO-8859-1, so accented letters may be wrong.\n", r->lang);
+    }
+    if (!(t = design(p, tname))) goto out;
+    /* by name: each column names a field (as itself, as dBASE would name it, or by label) */
+    for (i = 0; i < r->ncols && by_name; i++) {
+        int found = -1;
+        for (j = 0; j < nf && found < 0; j++) {
+            const ob_field *f = &t->fields[j];
+            char dn[11];
+            int m, used = 0;
+            dbf_name(f->name, dn, NULL, 0);
+            if (!same(r->cols[i].name, f->name) && !same(r->cols[i].name, dn) && !(f->label[0] && same(r->cols[i].name, f->label)))
+                continue;
+            for (m = 0; m < i; m++) if (map[m] == j) used = 1;
+            if (!used) found = j;
+        }
+        if (found < 0) by_name = 0;
+        else map[i] = found;
+    }
+    ncols = r->ncols;
+    if (by_name) {
+        for (i = 0; i < ncols; i++)
+            if (t->fields[map[i]].type == OB_OBJECT) { fail(p, "%s holds Datatype objects, which dBASE can't carry", names[map[i]]); goto out; }
+    } else {
+        int n = 0, skip_counter;
+        for (i = 0; i < nf; i++) if (t->fields[i].type != OB_OBJECT) n++;
+        skip_counter = ncols < n && nf && t->fields[0].type == OB_COUNTER;   /* a Counter fills itself */
+        if (ncols > n) { fail(p, "%s has %d fields: %s takes %d", path, ncols, tname, n); goto out; }
+        n = 0;
+        for (i = 0; i < nf && n < ncols; i++) {
+            if (t->fields[i].type == OB_OBJECT) continue;
+            if (skip_counter && t->fields[i].type == OB_COUNTER) { skip_counter = 0; continue; }
+            map[n++] = i;
+        }
+    }
+
+    if (!step_begin(p)) goto out;
+    began = 1;
+    p->undo_off++;
+    while ((rc = dbf_next(r, &at, &o->deleted)) == 1) {
+        ob_int key;
+        int n = 0, oom = 0;
+        for (i = 0; i < ncols; i++) {
+            const char *v = dbf_text(r, i);
+            free(copies[i]);
+            copies[i] = NULL;
+            if (v && v[0] == '\x01' && !v[1]) { oom = 1; break; }
+            if (v && !(copies[i] = malloc(strlen(v) + 1))) { oom = 1; break; }
+            if (v) strcpy(copies[i], v);
+            fields[n] = names[map[i]];
+            vals[n] = copies[i];
+            n++;
+        }
+        if (oom) { fail(p, "Not enough memory"); goto out_undo; }
+        if (!ob_row_add(p, tname, n, fields, vals, &key)) {
+            char e[OB_ERR_MAX];
+            copy(e, sizeof e, p->err);
+            if (o->skip_bad) {
+                char why[OB_ERR_MAX + 32];
+                size_t len = strlen(o->report);
+                snprintf(why, sizeof why, "Record %lu: %s\n", at, e);
+                o->bad++;
+                if (len + strlen(why) < sizeof o->report - 4) copy(o->report + len, sizeof o->report - len, why);
+                else if (!strstr(o->report, "...")) copy(o->report + len, sizeof o->report - len, "...");
+                continue;
+            }
+            fail(p, "Record %lu: %s", at, e);
+            goto out_undo;
+        }
+        if (nkeys == capkeys) {
+            ob_int cap = capkeys ? capkeys * 2 : 64, *k = realloc(keys, sizeof *keys * (size_t)cap);
+            if (!k) { fail(p, "Not enough memory"); goto out_undo; }
+            keys = k;
+            capkeys = cap;
+        }
+        keys[nkeys++] = key;
+        added++;
+    }
+    if (rc < 0) { fail(p, "%s ends inside record %lu", path, at); goto out_undo; }
+    if (ferror(r->f)) { fail(p, "%s could not be read", path); goto out_undo; }
+    good = 1;
+out_undo:
+    p->undo_off--;
+out:
+    if (began) good = step_end(p, good);
+    for (i = 0; i < OB_MAX_FIELDS; i++) free(copies[i]);
+    dbf_close(r);
+    free(names);
+    if (!good) { free(keys); return -1; }
+    if (added) {
+        undo_step *u = undo_new(p, U_IMPORT, tname, 0);
+        if (u) { u->keys = keys; u->nkeys = nkeys; keys = NULL; undo_push(p, u); }
+        else ob_undo_clear(p);
+    }
+    free(keys);
+    ok(p);
+    return added;
+}
+
+int ob_dbf_guess(ob_project *p, const char *path, const char *name, ob_table *out)
+{
+    dbf_in *r;
+    char tname[OB_NAME_MAX];
+    int i, id_col = -1;
+    if (!(r = dbf_open(p, path))) return 0;
+    if (r->ncols >= OB_MAX_FIELDS) { dbf_close(r); return fail(p, "A table has at most %d fields besides its Counter", OB_MAX_FIELDS - 1); }
+    if (name && *name) name_from(name, tname, sizeof tname);
+    else {
+        const char *leafname = path, *c;
+        char base[OB_NAME_MAX];
+        for (c = path; *c; c++) if (*c == '/' || *c == ':') leafname = c + 1;
+        copy(base, sizeof base, leafname);
+        if (strrchr(base, '.')) *strrchr(base, '.') = 0;
+        name_from(base, tname, sizeof tname);
+        if (tname[0]) {     /* SALES as Sales */
+            for (i = 1; tname[i]; i++) tname[i] = (char)tolower((unsigned char)tname[i]);
+            tname[0] = (char)toupper((unsigned char)tname[0]);
+        }
+    }
+    if (!tname[0]) copy(tname, sizeof tname, "Imported");
+    ob_table_init(out, tname);
+    for (i = 0; i < r->ncols && id_col < 0; i++)
+        if (same(r->cols[i].name, "id") && r->cols[i].type == 'N' && r->cols[i].dec == 0) id_col = i;
+    {
+        int clash = 0;
+        for (i = 0; i < r->ncols; i++) if (i != id_col && same(r->cols[i].name, "id")) clash = 1;
+        if (out->nfields && out->fields[0].type == OB_COUNTER)
+            copy(out->fields[0].name, sizeof out->fields[0].name, id_col >= 0 ? "ID" : clash ? "Key" : "id");
+    }
+    for (i = 0; i < r->ncols; i++) {
+        const dbf_col *k = &r->cols[i];
+        char fname[OB_NAME_MAX];
+        ob_type type;
+        ob_field *f;
+        int j;
+        if (i == id_col) continue;
+        name_from(k->name, fname, sizeof fname);
+        for (j = 1; fname[j]; j++) fname[j] = (char)tolower((unsigned char)fname[j]);
+        if (!fname[0]) snprintf(fname, sizeof fname, "Field %d", i + 1);
+        unique_name(out, fname, sizeof fname);
+        switch (k->type) {
+        case 'C': type = OB_TEXT; break;
+        case 'N': type = k->dec == 0 ? (k->len <= 18 ? OB_INTEGER : OB_NUMBER) : k->dec == 2 ? OB_CURRENCY : OB_NUMBER; break;
+        case 'D': type = OB_DATE; break;
+        case 'L': type = OB_YESNO; break;
+        case 'M': type = OB_MEMO; break;
+        default: type = OB_NUMBER; break;
+        }
+        if (!(f = ob_table_add_field(out, fname, type))) break;
+        if (type == OB_TEXT) f->max_len = k->len;
+    }
+    dbf_close(r);
+    return ok(p);
+}
+
 /* ---- Queries (design 5) ---- */
 
 static const char *const total_names[OB_TOTALS] = { "", "Group", "Sum", "Count", "Average", "Min", "Max" };
@@ -3085,10 +3915,48 @@ void ob_query_remove_column(ob_query *q, int i)
     q->ncolumns--;
 }
 
+void ob_query_remove_join(ob_query *q, int i)
+{
+    if (i < 0 || i >= q->njoins) return;
+    memmove(&q->joins[i], &q->joins[i + 1], sizeof q->joins[0] * (size_t)(q->njoins - i - 1));
+    q->njoins--;
+}
+
+int ob_query_add_join(ob_query *q, const char *left, const char *lfield, const char *right, const char *rfield,
+                      ob_join kind)
+{
+    int i;
+    ob_qjoin *k;
+    if (!left || !lfield || !right || !rfield || !*left || !*lfield || !*right || !*rfield) return -1;
+    if (q->njoins < 0 || q->njoins >= OB_QUERY_JOINS || (unsigned)kind >= OB_JOINS || same(left, right)) return -1;
+    for (i = 0; i < q->njoins; i++) {
+        const ob_qjoin *o = &q->joins[i];
+        if ((same(o->left, left) && same(o->lfield, lfield) && same(o->right, right) && same(o->rfield, rfield))
+            || (same(o->left, right) && same(o->lfield, rfield) && same(o->right, left) && same(o->rfield, lfield)))
+            return -1;
+    }
+    k = &q->joins[q->njoins];
+    memset(k, 0, sizeof *k);
+    copy(k->left, sizeof k->left, left);
+    copy(k->lfield, sizeof k->lfield, lfield);
+    copy(k->right, sizeof k->right, right);
+    copy(k->rfield, sizeof k->rfield, rfield);
+    k->kind = kind;
+    return q->njoins++;
+}
+
+const char *ob_join_name(ob_join k)
+{
+    static const char *const names[OB_JOINS] = { "Inner", "Left", "Right" };
+    return (unsigned)k < OB_JOINS ? names[k] : "";
+}
+
 void ob_query_remove_table(ob_query *q, int i)
 {
     int c;
     if (i < 0 || i >= q->ntables) return;
+    for (c = q->njoins - 1; c >= 0; c--)
+        if (same(q->joins[c].left, q->tables[i]) || same(q->joins[c].right, q->tables[i])) ob_query_remove_join(q, c);
     for (c = q->ncolumns - 1; c >= 0; c--)
         if (q->columns[c].table[0] && same(q->columns[c].table, q->tables[i])) ob_query_remove_column(q, c);
     memmove(q->tables[i], q->tables[i + 1], OB_NAME_MAX * (size_t)(q->ntables - i - 1));
@@ -3357,6 +4225,60 @@ static int add_out(ob_project *p, qplan *pl, const char *heading, int type)
     return 1;
 }
 
+/* The table of a join's side: its index in the query; 0 with the reason. */
+static int join_side(ob_project *p, const ob_query *q, const ob_table *tabs, const char *t, const char *f, int *ti)
+{
+    int i;
+    for (i = 0; i < q->ntables && !same(tabs[i].name, t); i++) ;
+    if (i == q->ntables) return fail(p, "%s: a join uses %s, which isn't in the query", qname(q), t);
+    if (ob_table_find_field(&tabs[i], f) < 0) return fail(p, "%s: a join uses %s.%s, which isn't there", qname(q), t, f);
+    *ti = i;
+    return 1;
+}
+
+/* FROM's joins as drawn: from the first table, each next one that a join
+ * reaches from the tables placed so far, ON every join between it and them;
+ * the first join's kind, turned round when the new table is its left side. */
+static int joins_from(ob_project *p, const ob_query *q, const ob_table *tabs, sqlite3_str *from)
+{
+    int placed[OB_QUERY_TABLES] = { 0 }, jl[OB_QUERY_JOINS], jr[OB_QUERY_JOINS];
+    int n, j, t;
+    if (q->njoins < 0 || q->njoins > OB_QUERY_JOINS) return fail(p, "%s: too many joins", qname(q));
+    for (j = 0; j < q->njoins; j++) {
+        const ob_qjoin *k = &q->joins[j];
+        if ((unsigned)k->kind >= OB_JOINS) return fail(p, "%s: a join of no kind", qname(q));
+        if (!join_side(p, q, tabs, k->left, k->lfield, &jl[j]) || !join_side(p, q, tabs, k->right, k->rfield, &jr[j]))
+            return 0;
+        if (jl[j] == jr[j]) return fail(p, "%s: a join goes from %s to itself", qname(q), tabs[jl[j]].name);
+    }
+    placed[0] = 1;
+    for (n = 1; n < q->ntables; n++) {
+        int pick = -1, first = -1, any = 0;
+        ob_join kind;
+        for (t = 1; t < q->ntables && pick < 0; t++) {
+            if (placed[t]) continue;
+            for (j = 0; j < q->njoins; j++)
+                if ((jl[j] == t && placed[jr[j]]) || (jr[j] == t && placed[jl[j]])) { pick = t; first = j; break; }
+        }
+        if (pick < 0) {
+            for (t = 1; placed[t]; t++) ;
+            return fail(p, "%s isn't joined to the query's other tables: draw a join to it", tabs[t].name);
+        }
+        kind = q->joins[first].kind;
+        if (kind != OB_JOIN_INNER && jl[first] == pick) kind = kind == OB_JOIN_LEFT ? OB_JOIN_RIGHT : OB_JOIN_LEFT;
+        sqlite3_str_appendf(from, " %sJOIN \"%w\" ON ",
+                            kind == OB_JOIN_LEFT ? "LEFT " : kind == OB_JOIN_RIGHT ? "RIGHT " : "", tabs[pick].name);
+        for (j = 0; j < q->njoins; j++)
+            if ((jl[j] == pick && placed[jr[j]]) || (jr[j] == pick && placed[jl[j]])) {
+                sqlite3_str_appendf(from, "%s\"%w\".\"%w\" = \"%w\".\"%w\"", any ? " AND " : "",
+                                    tabs[jl[j]].name, q->joins[j].lfield, tabs[jr[j]].name, q->joins[j].rfield);
+                any = 1;
+            }
+        placed[pick] = 1;
+    }
+    return 1;
+}
+
 static qplan *plan_make(ob_project *p, const ob_query *q)
 {
     qplan *pl = calloc(1, sizeof *pl);
@@ -3391,7 +4313,9 @@ static qplan *plan_make(ob_project *p, const ob_query *q)
     order = sqlite3_str_new(NULL);
     /* FROM, each table joined to one before it by a relationship */
     sqlite3_str_appendf(from, " FROM \"%w\"", tabs[0].name);
-    if (q->ntables > 1) {
+    if (q->ntables > 1 && q->njoins > 0) {
+        if (!joins_from(p, q, tabs, from)) goto bad;
+    } else if (q->ntables > 1) {
         nrels = ob_relations(p, NULL, 0);
         if (nrels < 0) goto bad;
         rels = calloc((size_t)(nrels ? nrels : 1), sizeof *rels);
@@ -3600,6 +4524,39 @@ int ob_query_check(ob_project *p, const ob_query *q)
     if (!pl) return 0;
     plan_free(pl);
     return ok(p);
+}
+
+static int joined(const ob_query *q, const char *a, const char *b)
+{
+    int i;
+    for (i = 0; i < q->njoins; i++)
+        if ((same(q->joins[i].left, a) && same(q->joins[i].right, b)) || (same(q->joins[i].left, b) && same(q->joins[i].right, a)))
+            return 1;
+    return 0;
+}
+
+int ob_query_relation_joins(ob_project *p, ob_query *q)
+{
+    static ob_table pt;
+    ob_relation *rels;
+    int n, i, j, r, added = 0;
+    if ((n = ob_relations(p, NULL, 0)) < 0) return -1;
+    if (!(rels = calloc((size_t)(n ? n : 1), sizeof *rels))) { fail(p, "Not enough memory"); return -1; }
+    n = ob_relations(p, rels, n);
+    for (i = 0; i < q->ntables; i++)
+        for (j = 0; j < q->ntables; j++) {
+            if (i == j || joined(q, q->tables[i], q->tables[j])) continue;
+            for (r = 0; r < n; r++) {
+                const char *key;
+                if (!same(rels[r].table, q->tables[i]) || !same(rels[r].lookup, q->tables[j])) continue;
+                if (!ob_table_get(p, rels[r].lookup, &pt) || !(key = counter_of(&pt))) continue;
+                if (ob_query_add_join(q, q->tables[i], rels[r].field, q->tables[j], key, OB_JOIN_INNER) >= 0) added++;
+                break;
+            }
+        }
+    free(rels);
+    ok(p);
+    return added;
 }
 
 int ob_query_sql(ob_project *p, const ob_query *q, char *out, size_t size)
@@ -3813,7 +4770,7 @@ static char *grid_text(const ob_query *q)
 {
     sqlite3_str *s = sqlite3_str_new(NULL);
     int i, r;
-    sqlite3_str_appendall(s, "oadb query 1\n");
+    sqlite3_str_appendall(s, q->njoins > 0 ? "oadb query 2\n" : "oadb query 1\n");
     for (i = 0; i < q->ntables; i++) {
         sqlite3_str_appendall(s, "table");
         put_escaped(s, q->tables[i]);
@@ -3829,6 +4786,15 @@ static char *grid_text(const ob_query *q)
         sqlite3_str_appendf(s, "\t%d\t%d\t%d", c->show ? 1 : 0, c->sort, (int)c->total);
         for (r = 0; r < OB_QUERY_OR; r++) put_escaped(s, c->criteria[r]);
         sqlite3_str_appendall(s, "\n");
+    }
+    for (i = 0; i < q->njoins && i < OB_QUERY_JOINS; i++) {
+        const ob_qjoin *k = &q->joins[i];
+        sqlite3_str_appendall(s, "join");
+        put_escaped(s, k->left);
+        put_escaped(s, k->lfield);
+        put_escaped(s, k->right);
+        put_escaped(s, k->rfield);
+        sqlite3_str_appendf(s, "\t%d\n", (int)k->kind);
     }
     return sqlite3_str_finish(s);
 }
@@ -3855,7 +4821,7 @@ static int grid_read(const char *text, ob_query *q)
 {
     const char *s = text;
     char word[16], num[16];
-    if (strncmp(s, "oadb query 1\n", 13)) return 0;
+    if (strncmp(s, "oadb query 1\n", 13) && strncmp(s, "oadb query 2\n", 13)) return 0;
     s += 13;
     while (*s) {
         grid_cell(&s, word, sizeof word);
@@ -3875,6 +4841,15 @@ static int grid_read(const char *text, ob_query *q)
             grid_cell(&s, num, sizeof num); c->total = (ob_total)atoi(num);
             if ((unsigned)c->total >= OB_TOTALS) c->total = OB_TOTAL_NONE;
             for (r = 0; r < OB_QUERY_OR; r++) grid_cell(&s, c->criteria[r], sizeof c->criteria[r]);
+        } else if (!strcmp(word, "join") && q->njoins < OB_QUERY_JOINS) {
+            ob_qjoin *k = &q->joins[q->njoins++];
+            memset(k, 0, sizeof *k);
+            grid_cell(&s, k->left, sizeof k->left);
+            grid_cell(&s, k->lfield, sizeof k->lfield);
+            grid_cell(&s, k->right, sizeof k->right);
+            grid_cell(&s, k->rfield, sizeof k->rfield);
+            grid_cell(&s, num, sizeof num); k->kind = (ob_join)atoi(num);
+            if ((unsigned)k->kind >= OB_JOINS) k->kind = OB_JOIN_INNER;
         }
         while (*s && *s != '\n') s++;
         if (*s == '\n') s++;
@@ -3951,4 +4926,111 @@ int ob_query_delete(ob_project *p, const char *name)
 {
     if (!query_exists(p, name)) return fail(p, "There is no query named %s", name);
     return runf(p, "DELETE FROM oadb_queries WHERE name = %Q", name) && ok(p);
+}
+
+/* ---- Reports kept in the project (oadb_reports; include/openbase_report.h) ----
+ * The core keeps each report's text under its name and never reads it: ob_report.c writes and parses
+ * it. Names are a query's kind of name, and no table has one. */
+
+#define REPORTS_SQL "CREATE TABLE IF NOT EXISTS oadb_reports(name TEXT PRIMARY KEY COLLATE NOCASE, def TEXT NOT NULL)"
+
+static char report_name_buf[OB_NAME_MAX];  /* ob_report_name's answer: one task, one at a time */
+
+static int has_reports(ob_project *p)
+{
+    return scalar(p, "SELECT count(*) FROM sqlite_schema WHERE name = 'oadb_reports'", 0) == 1;
+}
+
+static int report_exists(ob_project *p, const char *name)
+{
+    sqlite3_stmt *st;
+    int found;
+    if (!has_reports(p) || !(st = prep(p, "SELECT 1 FROM oadb_reports WHERE name = ?1"))) return 0;
+    sqlite3_bind_text(st, 1, name, -1, SQLITE_TRANSIENT);
+    found = sqlite3_step(st) == SQLITE_ROW;
+    sqlite3_finalize(st);
+    return found;
+}
+
+static int report_name_ok(ob_project *p, const char *name, const char *old)
+{
+    char why[OB_ERR_MAX];
+    if (!name_ok(name, why, sizeof why, "report")) return fail(p, "%s", why);
+    if (table_exists(p, name)) return fail(p, "There is a table named %s: give the report another name", name);
+    if (old && !same(old, name) && report_exists(p, name))
+        return fail(p, "There is a report named %s already", name);
+    return 1;
+}
+
+int ob_report_count(ob_project *p)
+{
+    return has_reports(p) ? (int)scalar(p, "SELECT count(*) FROM oadb_reports", 0) : 0;
+}
+
+const char *ob_report_name(ob_project *p, int i)
+{
+    sqlite3_stmt *st;
+    const char *r = NULL;
+    if (i < 0 || !has_reports(p)) return NULL;
+    if (!(st = prep(p, "SELECT name FROM oadb_reports ORDER BY name COLLATE NOCASE LIMIT 1 OFFSET ?1"))) return NULL;
+    sqlite3_bind_int(st, 1, i);
+    if (sqlite3_step(st) == SQLITE_ROW) {
+        copy(report_name_buf, sizeof report_name_buf, (const char *)sqlite3_column_text(st, 0));
+        r = report_name_buf;
+    }
+    sqlite3_finalize(st);
+    return r;
+}
+
+int ob_report_get_text(ob_project *p, const char *name, char *out, size_t size)
+{
+    sqlite3_stmt *st;
+    int rc = 0;
+    if (size) out[0] = 0;
+    if (!report_exists(p, name)) return fail(p, "There is no report named %s", name);
+    if (!(st = prep(p, "SELECT def FROM oadb_reports WHERE name = ?1"))) return 0;
+    sqlite3_bind_text(st, 1, name, -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(st) == SQLITE_ROW) {
+        const char *def = (const char *)sqlite3_column_text(st, 0);
+        size_t n = def ? strlen(def) : 0;
+        if (n < size) { memcpy(out, def ? def : "", n + 1); rc = ok(p); }
+        else rc = fail(p, "Report %s is too big to read", name);
+    } else {
+        rc = fail(p, "There is no report named %s", name);
+    }
+    sqlite3_finalize(st);
+    return rc;
+}
+
+int ob_report_put_text(ob_project *p, const char *name, const char *text)
+{
+    sqlite3_stmt *st;
+    int rc;
+    if (!report_name_ok(p, name, NULL)) return 0;
+    if (!has_reports(p) && !run(p, REPORTS_SQL)) return 0;
+    /* replacing keeps the name as it was first given */
+    if (report_exists(p, name)) {
+        if (!(st = prep(p, "UPDATE oadb_reports SET def = ?2 WHERE name = ?1"))) return 0;
+    } else if (!(st = prep(p, "INSERT INTO oadb_reports(name, def) VALUES(?1, ?2)"))) {
+        return 0;
+    }
+    sqlite3_bind_text(st, 1, name, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 2, text ? text : "", -1, SQLITE_TRANSIENT);
+    rc = sqlite3_step(st);
+    sqlite3_finalize(st);
+    if (rc != SQLITE_DONE) return sql_fail(p, NULL, rc);
+    return ok(p);
+}
+
+int ob_report_rename(ob_project *p, const char *old_name, const char *new_name)
+{
+    if (!report_exists(p, old_name)) return fail(p, "There is no report named %s", old_name);
+    if (!report_name_ok(p, new_name, old_name)) return 0;
+    return runf(p, "UPDATE oadb_reports SET name = %Q WHERE name = %Q", new_name, old_name) && ok(p);
+}
+
+int ob_report_delete(ob_project *p, const char *name)
+{
+    if (!report_exists(p, name)) return fail(p, "There is no report named %s", name);
+    return runf(p, "DELETE FROM oadb_reports WHERE name = %Q", name) && ok(p);
 }

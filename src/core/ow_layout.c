@@ -5,6 +5,7 @@
  */
 #include "ow_layout.h"
 #include "owf_pagenum_impl.h"
+#include "owf_notenum_impl.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -141,6 +142,31 @@ static int hidden_deletion(const ow_layout *l, const owf_doc *doc, const owf_run
         return 0;
     rv = OWF_DOC_REVISION(doc, r->revision);
     return rv && rv->kind == OWF_REV_DELETE;
+}
+
+/* libowf 1.11: a tracked format change's text in its author's colour (not underlined or struck: the format
+ * shown is the new one). The author's place: among the changes' authors, then the format changes' before it. */
+static int same_author(const char *a, const char *b)
+{
+    return (!a && !b) || (a && b && !strcmp(a, b));
+}
+
+static void format_change_style(const owf_doc *doc, int number, ol_style *s)
+{
+    static const unsigned long colours[] = { 0x1F5FBF, 0xB0306A, 0x2E7D32, 0x8E44AD, 0xC0601A, 0x00838F };
+    const owf_format_change *fc = OWF_DOC_FORMAT_CHANGE(doc, number);
+    int i, k, author = 0, total = doc->nrevisions + number - 1;
+    if (!fc) return;
+    for (i = 0; i < total; ++i) {
+        const char *a = i < doc->nrevisions ? doc->revisions[i].author : doc->format_changes[i - doc->nrevisions].author;
+        int seen = 0;
+        if (same_author(a, fc->author)) break;
+        for (k = 0; k < i && !seen; ++k)
+            seen = same_author(a, k < doc->nrevisions ? doc->revisions[k].author
+                                                       : doc->format_changes[k - doc->nrevisions].author);
+        if (!seen) ++author;
+    }
+    s->foreground = argb(colours[author % (int)(sizeof colours / sizeof colours[0])]);
 }
 
 static void run_style(const owf_doc *doc, const owf_charfmt *fmt, int line_spacing, ol_style *s)
@@ -360,24 +386,6 @@ static const owf_story *note_story(const owf_doc *doc, int n)
     return n >= 0 && n < doc->nframes ? &doc->frames[n].story : NULL;
 }
 
-static void roman(int number, char *out, size_t size)
-{
-    static const int values[] = {1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1};
-    static const char *const digits[] = {"m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"};
-    size_t at = 0;
-    int k;
-    out[0] = 0;
-    if (number < 1 || number > 3999) { snprintf(out, size, "%d", number); return; }
-    for (k = 0; k < 13; ++k)
-        while (number >= values[k]) {
-            size_t len = strlen(digits[k]);
-            if (at + len >= size) return;
-            memcpy(out + at, digits[k], len + 1);
-            at += len;
-            number -= values[k];
-        }
-}
-
 /* Every note's mark into marks (doc->nnotes of them; "" for a note no run names) */
 static void number_notes(const owf_doc *doc, char (*marks)[16])
 {
@@ -393,8 +401,10 @@ static void number_notes(const owf_doc *doc, char (*marks)[16])
                 note = &doc->notes[m - 1];
                 if (note->label) { snprintf(marks[m - 1], sizeof marks[m - 1], "%s", note->label); continue; }
                 ++count[note->endnote ? 1 : 0];
-                if (note->endnote) roman(count[1], marks[m - 1], sizeof marks[m - 1]);
-                else snprintf(marks[m - 1], sizeof marks[m - 1], "%d", count[0]);
+                /* libowf 1.12.1: the page's format and first number */
+                owf_note_format_impl(owf_note_kind_format_impl(doc, note->endnote), note->endnote,
+                                       count[note->endnote ? 1 : 0] + owf_note_kind_start_impl(doc, note->endnote) - 1,
+                                       marks[m - 1], sizeof marks[m - 1]);
             }
 }
 
@@ -425,11 +435,16 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
 
 /* A note's text as paragraphs appended to parent (NULL: the root), smaller than the text, the first with the
  * note's mark raised. 1, or 0 when memory runs out. */
+static int add_note_story(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *parent, int note,
+                          const owf_story *st);
+
 static int add_note_text(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *parent, int note)
 {
     const char *t = doc->notes[note].text ? doc->notes[note].text : "";
     const char *nl;
     int first = 1;
+    const owf_story *st = OWF_DOC_NOTE_STORY(doc, note);
+    if (st) return add_note_story(l, doc, od, parent, note, st);   /* libowf 1.12.2: with its formats */
     for (;; t = nl + 1, first = 0) {
         owf_para np;
         owf_run runs[2];
@@ -460,6 +475,66 @@ static int add_note_text(ow_layout *l, const owf_doc *doc, ol_document *od, ol_n
         free(piece);
         if (!ok) return 0;
         if (!nl) break;
+    }
+    return 1;
+}
+
+/* libowf 1.12.2: a formatted note's paragraphs (owf_doc.note_stories), its runs' formats kept and sized as a
+ * plain note is: its text's size (the first text run's) at five sixths of the document's, the others in
+ * proportion; the first paragraph starts with the mark raised and a space. 1, or 0 when memory runs out. */
+static int add_note_story(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node *parent, int note,
+                          const owf_story *st)
+{
+    int base = (doc->base.size > 0 ? doc->base.size : DEFAULT_SIZE), small = base * 5 / 6, own = 0, i, j;
+    for (i = 0; i < st->nparas && !own; ++i)
+        for (j = 0; j < st->paras[i].nruns && !own; ++j)
+            if (st->paras[i].runs[j].kind == OWF_RUN_TEXT && st->paras[i].runs[j].text && st->paras[i].runs[j].text[0])
+                own = st->paras[i].runs[j].fmt.size > 0 ? st->paras[i].runs[j].fmt.size : base;
+    if (own <= 0) own = base;
+    for (i = 0; i < st->nparas; ++i) {
+        const owf_para *sp = &st->paras[i];
+        owf_para np;
+        owf_run *runs;
+        int n = 0, lead = i == 0 ? 2 : 0;
+        ol_node *ok;
+        runs = (owf_run *)calloc((size_t)(sp->nruns + lead + 1), sizeof(*runs));
+        if (!runs) return 0;
+        np = *sp;
+        np.table_id = -1;
+        np.section_columns = np.section_gap = 0;
+        np.style = np.bookmarks = NULL;
+        np.mark_revision = 0;
+        if (lead) {
+            runs[0].kind = runs[1].kind = OWF_RUN_TEXT;
+            runs[0].fmt = doc->base;
+            runs[0].fmt.size = small;
+            runs[1].fmt = runs[0].fmt;
+            runs[0].fmt.flags |= OWF_SUPER;
+            runs[0].text = (char *)(l && l->note_marks ? l->note_marks[note] : "");
+            runs[1].text = (char *)" ";
+            n = 2;
+        }
+        for (j = 0; j < sp->nruns; ++j) {
+            owf_run r = sp->runs[j];
+            if (r.note || r.comment) continue;
+            r.fmt.size = (int)((long)(r.fmt.size > 0 ? r.fmt.size : base) * small / own);
+            if (r.fmt.size <= 0) r.fmt.size = small;
+            r.href = NULL;
+            r.revision = r.format_change = 0;
+            runs[n++] = r;
+        }
+        if (!n) {                                    /* an empty paragraph keeps its line */
+            runs[0].kind = OWF_RUN_TEXT;
+            runs[0].fmt = doc->base;
+            runs[0].fmt.size = small;
+            runs[0].text = (char *)"";
+            n = 1;
+        }
+        np.runs = runs;
+        np.nruns = np.capruns = n;
+        ok = add_paragraph(l, 0, doc, od, parent, &np, -1, NULL);
+        free(runs);
+        if (!ok) return 0;
     }
     return 1;
 }
@@ -663,6 +738,7 @@ static ol_node *add_paragraph(ow_layout *l, int record, const owf_doc *doc, ol_d
         if (l && (l->view & OW_LAYOUT_FINAL)) {
             /* 2.0.37: the final view: no change colours */
         } else if (r->revision) change_style(doc, r->revision, &rs);
+        else if (r->format_change > 0) format_change_style(doc, r->format_change, &rs);
         if (l && record == 1 && r->comment) {
             /* 2.2.0: a comment's range: its text highlighted from its start to its place */
             int k, idx = r->comment > 0 ? r->comment - 1 : -r->comment - 1;
@@ -1667,3 +1743,25 @@ ol_document *ow_layout_footnotes(const ow_layout *l, int page, ol_unit *x, ol_un
     return od;
 }
 
+
+/* 2.0.40: where a comment's place shows: its run has nothing laid out, so the end of the text before it in its
+ * paragraph (else the paragraph's start, as ow_layout_caret answers) */
+int ow_layout_comment_place(const ow_layout *l, ow_position pos, int *page, ol_rect *box)
+{
+    const owf_story *story = l && !pos.box ? &l->doc->body : NULL;
+    int j;
+    if (story && pos.paragraph >= 0 && pos.paragraph < story->nparas) {
+        const owf_para *p = &story->paras[pos.paragraph];
+        for (j = pos.run - 1; j >= 0 && j < p->nruns; --j) {
+            const owf_run *r = &p->runs[j];
+            if (r->kind == OWF_RUN_TEXT && !r->comment && r->text && r->text[0]) {
+                ow_position at = pos;
+                at.run = j;
+                at.byte_offset = strlen(r->text);
+                if (ow_layout_caret(l, at, page, box)) return 1;
+                break;
+            }
+        }
+    }
+    return ow_layout_caret(l, pos, page, box);
+}

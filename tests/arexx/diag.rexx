@@ -175,6 +175,11 @@ CALL want 'SAVEAS "'dir'lab-diag-as.pdf"', 10
 CALL want 'EXPORT "'dir'lab-diag.eps"', 0
 CALL want 'EXPORT "'dir'lab-diag-eps.out" FORMAT EPS', 0
 CALL want 'SAVEAS "'dir'lab-diag-as.eps"', 10
+/* The page as a graph for Mermaid or Graphviz to lay out again; export only */
+CALL want 'EXPORT "'dir'lab-diag.mmd"', 0
+CALL want 'EXPORT "'dir'lab-diag.dot"', 0
+CALL want 'EXPORT "'dir'lab-diag-dot.out" FORMAT DOT', 0
+CALL want 'SAVEAS "'dir'lab-diag-as.mmd"', 10
 /* The page drawn as a picture (cybergraphics.library): PNG with the diagram inside opens again; ILBM is export only */
 CALL want 'EXPORT "'dir'lab-diag.png"', 0
 CALL want 'EXPORT "'dir'lab-diag.iff"', 0

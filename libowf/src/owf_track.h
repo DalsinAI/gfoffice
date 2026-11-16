@@ -16,15 +16,17 @@ int owf_track_add(owf_doc *doc, int kind, const char *author, const char *date);
  * author and date may be NULL; before is the runs' format before the change. */
 int owf_track_format_add(owf_doc *doc, const char *author, const char *date, const owf_charfmt *before);
 
-/* 1.11: the runs a reader adds between begin and end have format change number (DOCX's w:rPrChange). Begin
- * seals the paragraph's last run so that no changed text joins it (owf_para_add_text), and end opens it. */
+/* 1.11: the runs a reader adds between begin and end get a format change (DOCX's w:rPrChange) that end adds
+ * to the document's list, only when there are runs to name it (a complex field's begin and code runs add none).
+ * Begin seals the paragraph's last run so that no changed text joins it (owf_para_add_text), and end opens
+ * it. End: the change's number, 0 when no run needed one, -1 when memory runs out. */
 typedef struct {
     owf_story *story;
     int para, from;          /* where the first changed run goes (para: nparas when no paragraph is open) */
     int sealed;              /* the run before it, sealed (-1); owf_track_finish opens what end didn't */
 } owf_format_span;
 void owf_format_begin(owf_format_span *t, owf_builder *b);
-void owf_format_end(owf_format_span *t, owf_builder *b, int number);
+int owf_format_end(owf_format_span *t, owf_builder *b, const char *author, const char *date, const owf_charfmt *before);
 
 /* What a reader is putting into a builder: from where (story, paragraph and run) the runs it adds are
  * a change's (rev; 0: none). Begin it with the builder, switch it where the change changes; switching

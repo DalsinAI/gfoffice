@@ -1,0 +1,223 @@
+/* GFOpenPublisher's mail merge on the page model (src/pub/opp_merge.c). MIT, Copyright (c) 2026 AmiCradle Team. */
+#include <stdio.h>
+#include <string.h>
+#include "openpublisher_merge.h"
+
+static int checks, failed;
+
+#define CHECK(c) do { ++checks; if (!(c)) { ++failed; fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #c); } } while (0)
+
+static ow_merge_table *table(const char *text)
+{
+    int memory = 0;
+    ow_merge_table *t = ow_merge_table_from_text(text, strlen(text), &memory);
+    CHECK(t && !memory);
+    return t;
+}
+
+static owf_obj *text_frame(owf_slide *slide, const char *text)
+{
+    owf_obj *o = owf_slide_add(slide, OWF_OBJ_TEXT);
+    owf_parafmt pf;
+    owf_charfmt cf;
+    owf_para *p;
+    if (!o) return NULL;
+    owf_parafmt_init(&pf);
+    owf_charfmt_init(&cf);
+    if (!(p = owf_story_add(&o->text, &pf))) return NULL;
+    if (text && owf_para_add_text(p, &cf, text, strlen(text)) != OWF_OK) return NULL;
+    return o;
+}
+
+/* A frame's text as one line: line breaks as '|' */
+static const char *frame_text(const owf_obj *o)
+{
+    static char out[512];
+    size_t n = 0;
+    int i, j;
+    out[0] = 0;
+    for (i = 0; i < o->text.nparas; ++i) {
+        if (i && n + 1 < sizeof out) out[n++] = '/';
+        for (j = 0; j < o->text.paras[i].nruns; ++j) {
+            const owf_run *r = &o->text.paras[i].runs[j];
+            const char *s = r->kind == OWF_RUN_LINEBREAK ? "|" : r->text ? r->text : "";
+            if (r->kind == OWF_RUN_FIELD && n + 1 < sizeof out) out[n++] = '{';
+            while (*s && n + 1 < sizeof out) out[n++] = *s++;
+            if (r->kind == OWF_RUN_FIELD && n + 1 < sizeof out) out[n++] = '}';
+        }
+    }
+    out[n] = 0;
+    return out;
+}
+
+static int same(const char *a, const char *b)
+{
+    if (strcmp(a, b)) { fprintf(stderr, "  got \"%s\", want \"%s\"\n", a, b); return 0; }
+    return 1;
+}
+
+static int field_runs(const owf_deck *d)
+{
+    return opp_merge_fields(d, NULL, NULL);
+}
+
+/* A letter: page 1 "Dear <Name>," + a flow of two frames, page 2 the town; a master with a field too */
+static owf_deck *letter(void)
+{
+    owf_deck *d = owf_deck_new_empty();
+    owf_slide *s;
+    owf_obj *o;
+    owf_master *m;
+    if (!d) return NULL;
+    if (!(s = owf_deck_add_slide(d, -1, -1))) goto bad;
+    if (!(o = text_frame(s, "Dear "))) goto bad;
+    if (opp_merge_insert_field(o, -1, "Name", NULL) != OWF_OK) goto bad;
+    if (owf_para_add_text(&o->text.paras[0], &o->text.paras[0].runs[0].fmt, ",", 1) != OWF_OK) goto bad;
+    if (!(o = text_frame(s, "flow one"))) goto bad;
+    o->flow_story = 0;
+    if (!(o = text_frame(s, "flow two"))) goto bad;
+    o->flow_story = 0;
+    if (!(s = owf_deck_add_slide(d, -1, -1))) goto bad;
+    if (!(o = text_frame(s, NULL))) goto bad;
+    if (opp_merge_insert_field(o, 0, "Town", NULL) != OWF_OK) goto bad;
+    if (!(o = text_frame(s, "no fields"))) goto bad;
+    o->flow_story = 3;
+    if (!(m = owf_deck_add_master(d, "Master"))) goto bad;
+    if (!(o = owf_master_add(m, OWF_OBJ_TEXT))) goto bad;
+    if (opp_merge_insert_field(o, -1, "Name", NULL) != OWF_OK) goto bad;   /* adds the paragraph */
+    return d;
+bad:
+    owf_deck_free(d);
+    return NULL;
+}
+
+static void insert_and_count(void)
+{
+    owf_deck *d = letter();
+    ow_merge_table *t = table("Name,Post\nAl,x\n");
+    int missing = -1;
+    CHECK(d != NULL);
+    if (!d) return;
+    CHECK(same(frame_text(&d->slides[0].objs[0]), "Dear {\xC2\xABName\xC2\xBB},"));
+    CHECK(same(frame_text(&d->masters[0].objs[0]), "{\xC2\xABName\xC2\xBB}"));
+    CHECK(same(d->slides[1].objs[0].text.paras[0].runs[0].href, "Town"));
+    CHECK(opp_merge_fields(d, t, &missing) == 3 && missing == 1);   /* no Town */
+    CHECK(opp_merge_fields(d, NULL, &missing) == 3 && missing == 0);
+    CHECK(opp_merge_fields(NULL, t, &missing) == 0 && missing == 0);
+    CHECK(opp_merge_insert_field(&d->slides[0].objs[0], 5, "Name", NULL) == OWF_ERR_FORMAT);
+    CHECK(opp_merge_insert_field(&d->slides[0].objs[0], 0, "", NULL) == OWF_ERR_FORMAT);
+    CHECK(opp_merge_insert_field(NULL, 0, "Name", NULL) == OWF_ERR_FORMAT);
+    ow_merge_table_free(t);
+    owf_deck_free(d);
+}
+
+static void show(void)
+{
+    owf_deck *d = letter();
+    ow_merge_table *t = table("name,Town\nJo Smith,Leeds\nAl,\n");
+    int set = -1;
+    if (!d || !t) { owf_deck_free(d); ow_merge_table_free(t); CHECK(0); return; }
+    CHECK(opp_merge_show(d, t, 0, &set) == OWF_OK && set == 3);
+    CHECK(same(frame_text(&d->slides[0].objs[0]), "Dear {Jo Smith},"));   /* the column's case does not matter */
+    CHECK(same(frame_text(&d->slides[1].objs[0]), "{Leeds}"));
+    CHECK(same(frame_text(&d->masters[0].objs[0]), "{Jo Smith}"));
+    CHECK(opp_merge_show(d, t, 1, &set) == OWF_OK && set == 3);
+    CHECK(same(frame_text(&d->slides[1].objs[0]), "{}"));                 /* an empty cell */
+    CHECK(opp_merge_show(d, t, -1, &set) == OWF_OK);
+    CHECK(same(frame_text(&d->slides[0].objs[0]), "Dear {\xC2\xABName\xC2\xBB},"));
+    CHECK(opp_merge_show(d, t, 2, &set) == OWF_ERR_UNSUPPORTED && set == 0);
+    CHECK(opp_merge_show(d, t, -2, NULL) == OWF_ERR_UNSUPPORTED);
+    CHECK(opp_merge_show(d, NULL, 0, NULL) == OWF_ERR_UNSUPPORTED);
+    CHECK(opp_merge_show(d, NULL, -1, &set) == OWF_OK && set == 3);
+    CHECK(opp_merge_show(NULL, t, 0, NULL) == OWF_ERR_FORMAT);
+    CHECK(field_runs(d) == 3);                                           /* showing keeps them fields */
+    ow_merge_table_free(t);
+    owf_deck_free(d);
+}
+
+static void pages(void)
+{
+    owf_deck *d = letter();
+    ow_merge_table *t = table("Name,Town\nJo,Leeds\nAl,\"Upper\r\nDale\"\nKim,York\n");
+    if (!d || !t) { owf_deck_free(d); ow_merge_table_free(t); CHECK(0); return; }
+    CHECK(opp_merge_pages(d, t, -1, -1) == OWF_OK);
+    CHECK(d->nslides == 6);
+    CHECK(same(frame_text(&d->slides[0].objs[0]), "Dear Jo,"));
+    CHECK(same(frame_text(&d->slides[1].objs[0]), "Leeds"));
+    CHECK(same(frame_text(&d->slides[2].objs[0]), "Dear Al,"));
+    CHECK(same(frame_text(&d->slides[3].objs[0]), "Upper|Dale"));         /* the line break, CR left out */
+    CHECK(d->slides[3].objs[0].text.paras[0].nruns == 3);
+    CHECK(d->slides[3].objs[0].text.paras[0].runs[1].kind == OWF_RUN_LINEBREAK);
+    CHECK(same(frame_text(&d->slides[5].objs[0]), "York"));
+    CHECK(same(frame_text(&d->slides[4].objs[1]), "flow one"));
+    CHECK(opp_merge_fields(d, NULL, NULL) == 1);                         /* the master's is left */
+    /* each record's flows are flows of their own, numbered from the first's */
+    CHECK(d->slides[0].objs[1].flow_story == 0 && d->slides[0].objs[2].flow_story == 0);
+    CHECK(d->slides[1].objs[1].flow_story == 3);
+    CHECK(d->slides[2].objs[1].flow_story == 4 && d->slides[2].objs[2].flow_story == 4);
+    CHECK(d->slides[3].objs[1].flow_story == 7);
+    CHECK(d->slides[4].objs[1].flow_story == 8 && d->slides[5].objs[1].flow_story == 11);
+    CHECK(d->slides[0].objs[0].flow_story == -1);
+    owf_deck_free(d);
+
+    d = letter();
+    CHECK(d && opp_merge_pages(d, t, 1, 1) == OWF_OK && d->nslides == 2);
+    if (d) CHECK(same(frame_text(&d->slides[0].objs[0]), "Dear Al,"));
+    if (d) CHECK(d->slides[0].objs[1].flow_story == 0 && d->slides[1].objs[1].flow_story == 3);
+    owf_deck_free(d);
+
+    d = letter();
+    CHECK(d && opp_merge_pages(d, t, 2, 1) == OWF_ERR_UNSUPPORTED);
+    CHECK(d && opp_merge_pages(d, t, 0, 3) == OWF_ERR_UNSUPPORTED);
+    CHECK(d && opp_merge_pages(d, t, -2, 0) == OWF_ERR_UNSUPPORTED);
+    CHECK(d && opp_merge_pages(d, NULL, -1, -1) == OWF_ERR_UNSUPPORTED);
+    CHECK(d && d->nslides == 2 && field_runs(d) == 3);                   /* refused: as it was */
+    ow_merge_table_free(t);
+    t = table("Name\n");                                                 /* no records */
+    CHECK(d && opp_merge_pages(d, t, -1, -1) == OWF_ERR_UNSUPPORTED);
+    owf_deck_free(d);
+    d = owf_deck_new_empty();                                            /* no pages */
+    CHECK(d && opp_merge_pages(d, t, -1, -1) == OWF_ERR_UNSUPPORTED);
+    owf_deck_free(d);
+    ow_merge_table_free(t);
+}
+
+static void missing_column(void)
+{
+    owf_deck *d = letter();
+    ow_merge_table *t = table("Name\nJo\n");                             /* no Town */
+    if (!d || !t) { owf_deck_free(d); ow_merge_table_free(t); CHECK(0); return; }
+    CHECK(opp_merge_pages(d, t, -1, -1) == OWF_OK && d->nslides == 2);
+    CHECK(same(frame_text(&d->slides[1].objs[0]), "\xC2\xABTown\xC2\xBB")); /* shows its name, as plain text */
+    CHECK(d->slides[1].objs[0].text.paras[0].runs[0].kind == OWF_RUN_TEXT);
+    CHECK(d->slides[1].objs[0].text.paras[0].runs[0].href == NULL);
+    ow_merge_table_free(t);
+    owf_deck_free(d);
+
+    /* a column name with line breaks (a quoted header, or a field from another source) shows as its name */
+    d = letter();
+    t = table("Name\nAnn\nBob\n");
+    if (!d || !t) { owf_deck_free(d); ow_merge_table_free(t); CHECK(0); return; }
+    {
+        int k;
+        for (k = 0; k < 4; ++k) CHECK(opp_merge_insert_field(&d->slides[1].objs[0], -1, "a\nb\nc\nd\ne", NULL) == OWF_OK);
+    }
+    CHECK(opp_merge_pages(d, t, -1, -1) == OWF_OK && d->nslides == 4);
+    CHECK(same(frame_text(&d->slides[1].objs[0]),
+               "\xC2\xABTown\xC2\xBB"
+               "\xC2\xAB" "a|b|c|d|e\xC2\xBB\xC2\xAB" "a|b|c|d|e\xC2\xBB\xC2\xAB" "a|b|c|d|e\xC2\xBB\xC2\xAB" "a|b|c|d|e\xC2\xBB"));
+    CHECK(d->slides[1].objs[0].text.paras[0].nruns == 1 + 4 * 9);
+    ow_merge_table_free(t);
+    owf_deck_free(d);
+}
+
+int main(void)
+{
+    insert_and_count();
+    show();
+    pages();
+    missing_column();
+    if (failed) { fprintf(stderr, "publisher merge: %d of %d checks failed\n", failed, checks); return 1; }
+    printf("publisher merge tests passed (%d checks)\n", checks);
+    return 0;
+}
