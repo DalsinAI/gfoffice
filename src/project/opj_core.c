@@ -1455,11 +1455,34 @@ int opj_assign_resource(opj_doc *doc, int task, int resource, const char *units)
     return commit(doc, work);
 }
 
+int opj_find_resource(const opj_doc *doc, const char *name)
+{
+    char want[128];
+    size_t n;
+    long row = 0;
+    int i, digits = 1;
+    if (!doc || !name) return -1;
+    while (*name == ' ') name++;
+    n = strlen(name);
+    while (n && name[n - 1] == ' ') n--;
+    if (!n || n >= sizeof want) return -1;
+    memcpy(want, name, n);
+    want[n] = 0;
+    for (i = 0; i < doc->plan->nresources; i++)
+        if (doc->plan->resources[i].name && same_name(doc->plan->resources[i].name, want)) return i;
+    for (i = 0; want[i]; i++) {
+        if (want[i] < '0' || want[i] > '9' || i > 6) digits = 0;
+        else row = row * 10 + (want[i] - '0');
+    }
+    return digits && row >= 1 && row <= doc->plan->nresources ? (int)row - 1 : -1;
+}
+
 int opj_remove_resource(opj_doc *doc, int task, int resource)
 {
     owf_project *work;
     int rc;
-    if (!doc || task < 0 || task >= doc->plan->ntasks || find_assign(doc->plan, task, resource) < 0)
+    if (!doc || task < 0 || task >= doc->plan->ntasks || resource < 0 || resource >= doc->plan->nresources ||
+        find_assign(doc->plan, task, resource) < 0)
         return OWF_ERR_FORMAT;
     if (!(work = begin(doc, task, &rc))) return rc;
     owf_project_unassign(work, task, resource);

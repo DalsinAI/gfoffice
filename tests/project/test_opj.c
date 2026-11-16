@@ -759,6 +759,17 @@ static void test_assign_dialog(void)
     CHECK_N(opj_remove_resource(doc, 1, 3), OWF_OK);
     CHECK_N(opj_remove_resource(doc, 1, 3), OWF_ERR_FORMAT);
     CHECK_N(opj_remove_resource(doc, 1, 9), OWF_ERR_FORMAT);
+    CHECK_N(opj_remove_resource(doc, 1, -1), OWF_ERR_FORMAT);
+    /* the name Replace... asks for */
+    CHECK_N(opj_find_resource(doc, "dale"), 0);
+    CHECK_N(opj_find_resource(doc, "  STEEL "), 2);
+    CHECK_N(opj_find_resource(doc, "4"), 3);
+    CHECK_N(opj_find_resource(doc, "5"), -1);
+    CHECK_N(opj_find_resource(doc, "0"), -1);
+    CHECK_N(opj_find_resource(doc, "Dal"), -1);
+    CHECK_N(opj_find_resource(doc, ""), -1);
+    CHECK_N(opj_find_resource(doc, NULL), -1);
+    CHECK_N(opj_find_resource(doc, "99999999"), -1);
     CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Dale[75%]");
     CHECK_N(opj_undo(doc), OWF_OK);
     CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Dale[75%],Travel[120.00]");

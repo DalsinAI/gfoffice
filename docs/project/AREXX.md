@@ -53,7 +53,7 @@ Amiga (start GFOpenProject, then `rx project.rexx RAM:`).
 | UNDO, REDO | | |
 | BASELINE | `ROW/N,COUNT/N,CLEAR/S,NUMBER/K/N` | sets (or with CLEAR clears) the baseline; no ROW: the whole plan. NUMBER=1 to 10: Baseline 1 to 10 (0, the default, is Baseline) |
 | BASELINES | | the baselines some task has saved, as `0 3 10`, or `none` |
-| REPLACE | `ROW/A/N,FROM/A,TO/A,UNITS/K` | Assign Resources' Replace: the row's assignment of FROM goes to TO, keeping its units unless UNITS gives them ("50%", "2.5", "120.00") |
+| REPLACE | `ROW/A/N,FROM/A,TO/A,UNITS/K` | Assign Resources' Replace: the row's assignment of FROM goes to TO, keeping its units unless UNITS gives them ("50%", "2.5", "120.00"); to another kind of resource, one unit of it |
 | RESOURCES | | how many resources |
 | ADDRESOURCE | `NAME/A` | the new resource's number |
 | DELETERESOURCE | `ROW/A/N,COUNT/N` | |
