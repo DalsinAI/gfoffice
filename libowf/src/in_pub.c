@@ -1829,6 +1829,24 @@ static void read_scheme(reader *r)
     }
 }
 
+/* Whether page chunk pc of the page list is a master: field 0x10 is 3 (the
+   first samples), or another page of the list names it in its field
+   0x0D (the masters whose 0x10 is 1 or 0, PUB-FORMAT.md 5.4). */
+static int is_master_page(reader *r, span list, long pc)
+{
+    size_t at = 0;
+    field item;
+    if (field_value(chunk_body(r, pc), 0x10, 0) == 3)
+        return 1;
+    while (next_field(list, &at, &item) > 0) {
+        long other = (long)item.value;
+        if (other != pc && other >= 0 && other < r->nchunks && r->chunks[other].kind == 0x43 &&
+            field_value(chunk_body(r, other), 0x0D, -1) == pc)
+            return 1;
+    }
+    return 0;
+}
+
 static void read_modern(reader *r)
 {
     owf_pub *pub = r->pub;
@@ -1873,7 +1891,8 @@ static void read_modern(reader *r)
         r->failed = 1;
         return;
     }
-    /* masters first (field 0x10 is 3) */
+    /* masters first: field 0x10 is 3, or another page names it as its master
+       (field 0x0D): some files' masters have 0x10 1 or 0 (PUB-FORMAT.md 5.4) */
     {
         size_t at = 0;
         field item;
@@ -1882,8 +1901,7 @@ static void read_modern(reader *r)
             span pb = chunk_body(r, pc);
             field name, pos;
             owf_pub_page *page;
-            if (pc < 0 || pc >= r->nchunks || r->chunks[pc].kind != 0x43 ||
-                field_value(pb, 0x10, 0) != 3)
+            if (pc < 0 || pc >= r->nchunks || r->chunks[pc].kind != 0x43 || !is_master_page(r, f.body, pc))
                 continue;
             if (!(page = add_page(r, 1)))
                 break;
@@ -1915,7 +1933,7 @@ static void read_modern(reader *r)
             field f6, pos;
             owf_pub_page *page;
             int k;
-            if (pc < 0 || pc >= r->nchunks || r->chunks[pc].kind != 0x43 || field_value(pb, 0x10, 0) == 3)
+            if (pc < 0 || pc >= r->nchunks || r->chunks[pc].kind != 0x43 || is_master_page(r, f.body, pc))
                 continue;
             if (!find_field(pb, 0x06, &f6) || !f6.value ||
                 (nmasters && find_field(pb, 0x05, &pos) && field_value(pos.body, 0x02, 0) != master_y)) {
