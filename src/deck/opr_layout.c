@@ -871,24 +871,76 @@ int opr_frame_text_overflow(opr_slide *s, int frame,
     return f->text_overflow;
 }
 
-/* A table's column widths onto its grid. */
+/* A table's k-th child of a role (its rows, or a row's cells), or NULL. */
+static ol_node *table_child(const ol_node *parent, ol_role role, int k)
+{
+    const ol_node *c;
+    if (!parent || k < 0)
+        return NULL;
+    for (c = ol_node_first_child(parent); c; c = ol_node_next_sibling(c))
+        if (ol_node_role(c) == role && k-- == 0)
+            return (ol_node *)c;    /* ours: built just now in this document */
+    return NULL;
+}
+
+static ol_node *table_cell(const ol_node *table, int row, int col)
+{
+    return table_child(table_child(table, OL_ROLE_ROW, row), OL_ROLE_CELL, col);
+}
+
+/* A table's column widths, row heights and merged cells onto its grid: a
+ * row at least its height, a merged cell across its columns and down its
+ * rows, the cells it covers not drawn. */
 static void table_columns(builder *b, const opr_frame *f, const owf_obj *o)
 {
     ol_id id;
     ol_unit widths[OL_MAX_COLUMNS];
+    ol_node *table = NULL;
     int i, n;
-    if (!o->col_widths || o->ncols <= 0)
-        return;
-    n = o->ncols < OL_MAX_COLUMNS ? o->ncols : OL_MAX_COLUMNS;
-    for (i = 0; i < n; i++)
-        widths[i] = TW(o->col_widths[i]);
-    for (id = f->first; id < f->end; id++) {
+    for (id = f->first; id < f->end && !table; id++) {
         const ol_node *node = ol_node_by_id(b->out->doc, id);
-        if (node && ol_node_role(node) == OL_ROLE_TABLE) {
-            /* ours: built just now in this document */
-            ol_node_set_columns((ol_node *)node, n, widths);
-            break;
-        }
+        if (node && ol_node_role(node) == OL_ROLE_TABLE)
+            table = (ol_node *)node;    /* ours: built just now in this document */
+    }
+    if (!table)
+        return;
+    if (o->col_widths && o->ncols > 0) {
+        n = o->ncols < OL_MAX_COLUMNS ? o->ncols : OL_MAX_COLUMNS;
+        for (i = 0; i < n; i++)
+            widths[i] = TW(o->col_widths[i]);
+        ol_node_set_columns(table, n, widths);
+    }
+    for (i = 0; o->row_heights && i < o->nrows; i++) {
+        ol_node *row = table_child(table, OL_ROLE_ROW, i);
+        ol_box_style box;
+        if (!row || o->row_heights[i] <= 0)
+            continue;
+        box = *ol_node_box(row);
+        box.size = sizeof box;
+        box.height = TW(o->row_heights[i]);
+        ol_node_set_box(row, &box);
+    }
+    for (i = 0; o->merges && i < o->nmerges; i++) {
+        const owf_table_merge *m = &o->merges[i];
+        ol_node *cell = table_cell(table, m->row, m->col);
+        ol_box_style box;
+        int r, c;
+        if (!cell)
+            continue;
+        box = *ol_node_box(cell);
+        box.size = sizeof box;
+        box.column_span = m->cols;
+        box.row_span = m->rows;
+        ol_node_set_box(cell, &box);
+        for (r = m->row; r < m->row + m->rows; r++)
+            for (c = m->col; c < m->col + m->cols; c++) {
+                ol_node *covered = r == m->row && c == m->col ? NULL : table_cell(table, r, c);
+                if (covered) {
+                    ol_style s = *ol_node_style(covered);
+                    s.display = OL_DISPLAY_NONE;
+                    ol_node_set_style(covered, &s);
+                }
+            }
     }
 }
 
