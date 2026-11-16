@@ -83,6 +83,9 @@ enum {
     M_MAP = 300                          /* M_MAP + odg_mind_key */
 };
 
+/* The menus' numbers, in the order their titles come in the strip below: keep the two in step. */
+enum { MENU_PROJECT, MENU_EDIT, MENU_ARRANGE, MENU_VIEW, MENU_TOOL, MENU_SHAPES, MENU_MAP };
+
 #define TOOL_ITEM(name, key, t) \
     { NM_ITEM, name, key, CHECKIT | ((t) == 0 ? CHECKED : 0), 0x7F & ~(1L << (t)), (APTR)(M_TOOL + (t)) }
 
@@ -412,7 +415,7 @@ static void sync_tool_menu(void)
     if (!win || !menu) return;
     ClearMenuStrip(win);
     for (t = 0; t < ODG_TOOL_SHAPE; t++)     /* the palette's shapes are the Shapes menu's, not ticked */
-        if ((item = ItemAddress(menu, FULLMENUNUM(3, t, NOSUB))) != NULL) {
+        if ((item = ItemAddress(menu, FULLMENUNUM(MENU_TOOL, t, NOSUB))) != NULL) {
             if (t == (int)ed.tool) item->Flags |= CHECKED;
             else item->Flags &= ~CHECKED;
         }
