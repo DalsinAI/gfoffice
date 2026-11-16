@@ -1365,6 +1365,96 @@ static void test_undo(void)
     ob_close(p);
 }
 
+/* Relationships drawn in the view: made, changed, removed (ob_relation_*) */
+static int rel_rule(ob_project *p, const char *table, const char *field, ob_on_delete *rule, char *lookup)
+{
+    ob_relation r[16];
+    int n = ob_relations(p, r, 16), i;
+    for (i = 0; i < n && i < 16; i++)
+        if (!strcmp(r[i].table, table) && !strcmp(r[i].field, field)) {
+            if (rule) *rule = r[i].on_delete;
+            if (lookup) strcpy(lookup, r[i].lookup);
+            return 1;
+        }
+    return 0;
+}
+
+static void test_relation_draw(void)
+{
+    ob_project *p = fresh("reldraw.oadb");
+    static ob_table t, o;
+    ob_field *f;
+    ob_on_delete rule;
+    char made[OB_NAME_MAX], lk[OB_NAME_MAX];
+    const char *cf[] = { "Name" }, *cv[] = { "Ann" }, *of[] = { "Cust", "Total" }, *ov[] = { "1", "5.00" }, *ov2[] = { "9", "1.00" };
+    ob_int key;
+    if (!p) return;
+    customers(&t);
+    CHECK(ob_table_create(p, &t), "Customers: %s", ob_error(p));
+    ob_table_init(&o, "Orders");
+    ob_table_add_field(&o, "Cust", OB_INTEGER);
+    f = ob_table_add_field(&o, "Total", OB_CURRENCY);
+    ob_table_add_field(&o, "Note", OB_TEXT);
+    (void)f;
+    CHECK(ob_table_create(p, &o), "Orders: %s", ob_error(p));
+    CHECK(ob_row_add(p, "Customers", 1, cf, cv, &key) && key == 1, "Ann is 1");
+    CHECK(ob_row_add(p, "Orders", 2, of, ov, NULL), "an order for 1: %s", ob_error(p));
+    CHECK(ob_relations(p, NULL, 0) == 0, "no relationships yet");
+
+    /* the key dragged onto Orders.Cust */
+    CHECK(ob_relation_add(p, "Orders", "cust", "customers", OB_DELETE_CASCADE, made, sizeof made) && !strcmp(made, "Cust"),
+          "Cust looks up Customers: %s", ob_error(p));
+    CHECK(rel_rule(p, "Orders", "Cust", &rule, lk) && rule == OB_DELETE_CASCADE && !strcmp(lk, "Customers"), "listed, cascade");
+    CHECK(ob_table_get(p, "Orders", &o) && o.fields[1].type == OB_LOOKUP && !strcmp(o.fields[1].lookup, "Customers"), "a Lookup now");
+    CHECK(ob_row_total(p, "Orders") == 1, "the order kept");
+    CHECK(!ob_row_add(p, "Orders", 2, of, ov2, NULL), "an order for 9 is refused now");
+
+    /* its rule changed, then cleared */
+    CHECK(ob_relation_set_rule(p, "Orders", "Cust", OB_DELETE_CLEAR) && rel_rule(p, "Orders", "Cust", &rule, NULL)
+          && rule == OB_DELETE_CLEAR, "clear: %s", ob_error(p));
+    CHECK(ob_row_delete(p, "Customers", 1) && ob_row_total(p, "Orders") == 1, "Ann deleted, her order kept, cleared: %s", ob_error(p));
+    CHECK(ob_row_add(p, "Customers", 1, cf, cv, &key), "Ann again: %lld", (long long)key);
+    CHECK(ob_relation_set_rule(p, "Orders", "Cust", OB_DELETE_REFUSE) && rel_rule(p, "Orders", "Cust", &rule, NULL)
+          && rule == OB_DELETE_REFUSE, "refuse");
+    CHECK(!ob_relation_set_rule(p, "Orders", "Cust", (ob_on_delete)7), "no such rule");
+    CHECK(!ob_relation_set_rule(p, "Orders", "Note", OB_DELETE_CASCADE) && strstr(ob_error(p), "doesn't look anything up"), "Note isn't one");
+
+    /* onto the table: a new Lookup field */
+    CHECK(ob_relation_add(p, "Orders", NULL, "Customers", OB_DELETE_REFUSE, made, sizeof made) && !strcmp(made, "Customers"),
+          "a new field Customers: %s", ob_error(p));
+    CHECK(ob_relation_add(p, "Orders", "", "Customers", OB_DELETE_REFUSE, made, sizeof made) && !strcmp(made, "Customers 2"),
+          "and Customers 2: %s %s", made, ob_error(p));
+    CHECK(ob_relations(p, NULL, 0) == 3, "three now");
+    CHECK(ob_row_total(p, "Orders") == 1, "the order kept again");
+
+    /* refused, nothing changed */
+    CHECK(!ob_relation_add(p, "Orders", "Note", "Customers", OB_DELETE_REFUSE, NULL, 0) && strstr(ob_error(p), "only an Integer"),
+          "Text can't: %s", ob_error(p));
+    CHECK(!ob_relation_add(p, "Orders", "id", "Customers", OB_DELETE_REFUSE, NULL, 0) && strstr(ob_error(p), "key"), "the Counter can't: %s", ob_error(p));
+    CHECK(!ob_relation_add(p, "Orders", "Nosuch", "Customers", OB_DELETE_REFUSE, NULL, 0), "no such field");
+    CHECK(!ob_relation_add(p, "Orders", "Cust", "Nosuch", OB_DELETE_REFUSE, NULL, 0), "no such table");
+    CHECK(!ob_relation_add(p, "Nosuch", "Cust", "Customers", OB_DELETE_REFUSE, NULL, 0), "no such table to change");
+    {
+        /* a number that isn't a key: refused with the reason, the field still an Integer */
+        static ob_table x;
+        const char *xf[] = { "Who" }, *xv[] = { "42" };
+        ob_table_init(&x, "Visits");
+        ob_table_add_field(&x, "Who", OB_INTEGER);
+        CHECK(ob_table_create(p, &x) && ob_row_add(p, "Visits", 1, xf, xv, NULL), "Visits: %s", ob_error(p));
+        CHECK(!ob_relation_add(p, "Visits", "Who", "Customers", OB_DELETE_REFUSE, NULL, 0) && strstr(ob_error(p), "aren't there"),
+              "42 isn't a customer: %s", ob_error(p));
+        CHECK(ob_table_get(p, "Visits", &x) && x.fields[1].type == OB_INTEGER && ob_row_total(p, "Visits") == 1, "unchanged");
+    }
+
+    /* removed: an Integer again, the keys kept */
+    CHECK(ob_relation_remove(p, "Orders", "Cust") && !rel_rule(p, "Orders", "Cust", NULL, NULL), "removed: %s", ob_error(p));
+    CHECK(ob_table_get(p, "Orders", &o) && o.fields[1].type == OB_INTEGER && !o.fields[1].lookup[0], "an Integer");
+    CHECK(ob_row_add(p, "Orders", 2, of, ov2, NULL), "an order for 9 goes in now: %s", ob_error(p));
+    CHECK(!ob_relation_remove(p, "Orders", "Cust") && strstr(ob_error(p), "doesn't look"), "not twice");
+    CHECK(ob_relations(p, NULL, 0) == 2, "two left");
+    ob_close(p);
+}
+
 /* A file's bytes (made up here, or written by the core); its length in *n. */
 static unsigned char *bytes_of(const char *file, long *n)
 {
@@ -2430,7 +2520,7 @@ static void test_queries(void)
 }
 
 /* A query's rows as CSV, a query as a view, saved queries following a
- * table's rename (core 0.12.1) */
+ * table's rename (core 0.13.1) */
 static void test_query_out(void)
 {
     ob_project *p = fresh("qout.oadb");
@@ -2690,6 +2780,7 @@ int main(int argc, char **argv)
     test_csv();
     test_undo();
     test_csv_options();
+    test_relation_draw();
     test_dbf();
     test_rexx_rows();
     test_queries();

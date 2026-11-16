@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.12.1"
+#define OB_CORE_VERSION "0.13.1"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -209,6 +209,21 @@ int ob_table_sql(const ob_table *t, const char *as_name, char *out, size_t size)
  * in table and field order: up to max into out. Returns how many there are
  * (which may be more than max), -1 on error. */
 int ob_relations(ob_project *p, ob_relation *out, int max);
+
+/* Drawn in the relationships view (core 0.11.0), each one table change
+ * (ob_table_change: rows kept, refused with the reason if a row would look
+ * up a row that isn't there):
+ * ob_relation_add: table.field, an Integer or a Lookup, now looks up
+ * lookup's key (a Counter), rule on delete. field NULL or "": a new Lookup
+ * field, named lookup (or "lookup 2" when that is taken), its name in made
+ * (when not NULL). A table's Counter or key can't look up.
+ * ob_relation_set_rule: what deleting a looked-up row does to its rows.
+ * ob_relation_remove: no longer a relationship; the field is an Integer
+ * holding the same keys. */
+int ob_relation_add(ob_project *p, const char *table, const char *field, const char *lookup,
+                    ob_on_delete rule, char *made, size_t size);
+int ob_relation_set_rule(ob_project *p, const char *table, const char *field, ob_on_delete rule);
+int ob_relation_remove(ob_project *p, const char *table, const char *field);
 
 /* ---- Rows ----
  * Values are text in the field's own form, as a datasheet cell or a form's
@@ -608,7 +623,7 @@ int ob_query_save(ob_project *p, const ob_query *q);
 int ob_query_rename(ob_project *p, const char *old_name, const char *new_name);
 int ob_query_delete(ob_project *p, const char *name);
 
-/* ---- A query's rows as CSV, a query as a view (core 0.12.1) ----
+/* ---- A query's rows as CSV, a query as a view (core 0.13.1) ----
  * CSV: a header of the result's headings, then every row the query gives,
  * as ob_csv_export_with writes a table's (o: separator and charset; NULL is
  * a comma and ISO-8859-1). Datatype object columns are left out. The answers

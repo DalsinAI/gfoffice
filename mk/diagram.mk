@@ -64,20 +64,33 @@ $(OUT)/test-deps-asan: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_deps.c
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
 		-Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) tests/diagram/test_deps.c -lz -o $@
 
-diagram-test: $(OUT)/test-diagram $(OUT)/test-diagram-nozlib $(OUT)/test-dexport $(OUT)/test-doutline $(OUT)/test-dpdf $(OUT)/test-deps
+# Step D6: Mermaid and DOT.
+$(OUT)/test-dgraph: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dgraph.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		tests/diagram/test_dgraph.c -lz -o $@
+
+$(OUT)/test-dgraph-asan: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dgraph.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) tests/diagram/test_dgraph.c -lz -o $@
+
+diagram-test: $(OUT)/test-diagram $(OUT)/test-diagram-nozlib $(OUT)/test-dexport $(OUT)/test-doutline $(OUT)/test-dpdf $(OUT)/test-deps $(OUT)/test-dgraph
 	$(OUT)/test-diagram
 	$(OUT)/test-diagram-nozlib
 	$(OUT)/test-dexport
 	$(OUT)/test-doutline
 	$(OUT)/test-dpdf
 	$(OUT)/test-deps
+	$(OUT)/test-dgraph
 
-diagram-check: $(OUT)/test-diagram-asan $(OUT)/test-dexport-asan $(OUT)/test-doutline-asan $(OUT)/test-dpdf-asan $(OUT)/test-deps-asan
+diagram-check: $(OUT)/test-diagram-asan $(OUT)/test-dexport-asan $(OUT)/test-doutline-asan $(OUT)/test-dpdf-asan $(OUT)/test-deps-asan $(OUT)/test-dgraph-asan
 	$(OUT)/test-diagram-asan
 	$(OUT)/test-dexport-asan
 	$(OUT)/test-doutline-asan
 	$(OUT)/test-dpdf-asan
 	$(OUT)/test-deps-asan
+	$(OUT)/test-dgraph-asan
 
 test: diagram-test
 check: diagram-check

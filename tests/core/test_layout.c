@@ -1829,6 +1829,56 @@ static void test_picture_changes(void)
     owf_doc_free(doc);
 }
 
+/* 2.0.38: a tracked frame: its edge in its author's colour; the final view shows an inserted one as it is
+ * and leaves a deleted one out */
+static int rules_of(const ol_document *od, uint32_t argb)
+{
+    const ol_display_op *op;
+    int n, count = 0;
+    for (n = 0; (op = nth_op(od, 0, OL_OP_RULE, n, NULL)) != NULL; ++n)
+        if (op->u.rule.argb == argb) ++count;
+    return count;
+}
+
+static void test_frame_changes(void)
+{
+    owf_doc *doc = owf_doc_new();
+    owf_para *p = para(doc, NULL, 0, "Body", 240);
+    owf_charfmt cf = p->runs[0].fmt;
+    owf_frame fr[2];
+    int add = owf_track_add(doc, OWF_REV_INSERT, "Ann", NULL), del = owf_track_add(doc, OWF_REV_DELETE, "Bob", NULL);
+    int k, idx[2];
+    ow_layout *shown, *final;
+    memset(fr, 0, sizeof fr);
+    for (k = 0; k < 2; ++k) {
+        owf_para *q;
+        fr[k].width = 2880;
+        fr[k].height = 1440;
+        fr[k].y = k * 2000;
+        fr[k].image = -1;
+        q = owf_story_add(&fr[k].story, NULL);
+        CHECK(q && owf_para_add_text(q, &cf, k ? "Gone" : "Added", k ? 4 : 5) == 0);
+        idx[k] = owf_doc_add_frame(doc, &fr[k]);
+        CHECK(idx[k] == k && owf_para_add_frame(p, &cf, idx[k]) == 0);
+    }
+    if (doc->nframes != 2 || p->nruns != 3) { owf_doc_free(doc); return; }
+    p->runs[1].revision = add;
+    p->runs[2].revision = del;
+    shown = ow_layout_new(doc, measure, NULL);
+    final = ow_layout_new_view(doc, measure, NULL, 0, OW_LAYOUT_FINAL);
+    CHECK(shown && final);
+    if (shown && final) {
+        CHECK(rules_of(ow_layout_body(shown), 0xFF1F5FBFu) >= 4);    /* Ann's blue all round the first */
+        CHECK(rules_of(ow_layout_body(shown), 0xFFB0306Au) >= 4);    /* Bob's red round the deleted one */
+        CHECK(!rules_of(ow_layout_body(final), 0xFF1F5FBFu) && !rules_of(ow_layout_body(final), 0xFFB0306Au));
+        CHECK(text_on(ow_layout_body(shown), 0, "Gone", NULL) && !text_on(ow_layout_body(final), 0, "Gone", NULL));
+        CHECK(text_on(ow_layout_body(final), 0, "Added", NULL) != NULL);
+    }
+    ow_layout_free(shown);
+    ow_layout_free(final);
+    owf_doc_free(doc);
+}
+
 int main(int argc, char **argv)
 {
     int i;
@@ -1838,6 +1888,7 @@ int main(int argc, char **argv)
     test_generated_toc();
     test_final_view();
     test_picture_changes();
+    test_frame_changes();
     test_format_change_colour();
     test_issue9();
     for (i = 1; i < argc; ++i) test_sample(argv[i]);

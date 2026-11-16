@@ -1710,6 +1710,110 @@ int ob_relations(ob_project *p, ob_relation *out, int max)
     return n;
 }
 
+static void unique_name(const ob_table *t, char *name, size_t size);
+
+/* The table's design, every field keeping its rows (from = its name), into *t; 0 with the reason. */
+static int relate_design(ob_project *p, const char *table, ob_table **t)
+{
+    const ob_table *d;
+    int i;
+    if (!(d = design(p, table))) return 0;
+    if (!(*t = malloc(sizeof **t))) return fail(p, "Not enough memory");
+    memcpy(*t, d, sizeof **t);
+    for (i = 0; i < (*t)->nfields; i++) copy((*t)->fields[i].from, sizeof (*t)->fields[i].from, (*t)->fields[i].name);
+    return 1;
+}
+
+static int relate_change(ob_project *p, ob_table *t)
+{
+    char name[OB_NAME_MAX];
+    int good;
+    copy(name, sizeof name, t->name);
+    good = ob_table_change(p, name, t);
+    free(t);
+    return good;
+}
+
+int ob_relation_add(ob_project *p, const char *table, const char *field, const char *lookup,
+                    ob_on_delete rule, char *made, size_t size)
+{
+    const ob_table *to;
+    ob_table *t;
+    ob_field *f;
+    int i;
+    if (made && size) made[0] = 0;
+    if (rule != OB_DELETE_REFUSE && rule != OB_DELETE_CASCADE && rule != OB_DELETE_CLEAR) return fail(p, "No such rule on delete");
+    if (!(to = design(p, lookup))) return 0;
+    {
+        char tname[OB_NAME_MAX];
+        copy(tname, sizeof tname, to->name);
+        if (!relate_design(p, table, &t)) return 0;
+        if (field && *field) {
+            if ((i = ob_table_find_field(t, field)) < 0) { fail(p, "%s has no field %s", t->name, field); free(t); return 0; }
+            f = &t->fields[i];
+            if (f->type == OB_COUNTER || f->key) {
+                fail(p, "%s is %s's key: drag %s's key onto another field, or onto the table to add one", f->name, t->name, tname);
+                free(t);
+                return 0;
+            }
+            if (f->type != OB_INTEGER && f->type != OB_LOOKUP) {
+                fail(p, "%s is %s: only an Integer field, or a new one, can hold %s's key", f->name, ob_type_name(f->type), tname);
+                free(t);
+                return 0;
+            }
+        } else {
+            char nm[OB_NAME_MAX];
+            copy(nm, sizeof nm, tname);
+            unique_name(t, nm, sizeof nm);
+            if (!(f = ob_table_add_field(t, nm, OB_LOOKUP))) { fail(p, "%s has as many fields as a table can", t->name); free(t); return 0; }
+            f->from[0] = 0;                         /* a new field: empty */
+        }
+        f->type = OB_LOOKUP;
+        copy(f->lookup, sizeof f->lookup, tname);
+        f->on_delete = rule;
+        f->has_default = 0;
+        f->deflt[0] = 0;
+        if (made && size) copy(made, size, f->name);
+    }
+    return relate_change(p, t);
+}
+
+static ob_field *relate_lookup(ob_project *p, ob_table *t, const char *field)
+{
+    int i = ob_table_find_field(t, field);
+    if (i < 0) { fail(p, "%s has no field %s", t->name, field); return NULL; }
+    if (t->fields[i].type != OB_LOOKUP) { fail(p, "%s.%s doesn't look anything up", t->name, t->fields[i].name); return NULL; }
+    return &t->fields[i];
+}
+
+int ob_relation_set_rule(ob_project *p, const char *table, const char *field, ob_on_delete rule)
+{
+    ob_table *t;
+    ob_field *f;
+    if (rule != OB_DELETE_REFUSE && rule != OB_DELETE_CASCADE && rule != OB_DELETE_CLEAR) return fail(p, "No such rule on delete");
+    if (!relate_design(p, table, &t)) return 0;
+    if (!(f = relate_lookup(p, t, field))) { free(t); return 0; }
+    if (rule == OB_DELETE_CLEAR && f->required) {
+        fail(p, "%s.%s is required, so it can't be cleared: make it not required in the designer first", t->name, f->name);
+        free(t);
+        return 0;
+    }
+    f->on_delete = rule;
+    return relate_change(p, t);
+}
+
+int ob_relation_remove(ob_project *p, const char *table, const char *field)
+{
+    ob_table *t;
+    ob_field *f;
+    if (!relate_design(p, table, &t)) return 0;
+    if (!(f = relate_lookup(p, t, field))) { free(t); return 0; }
+    f->type = OB_INTEGER;
+    f->lookup[0] = 0;
+    f->on_delete = OB_DELETE_REFUSE;
+    return relate_change(p, t);
+}
+
 /* ---- Rows ---- */
 
 /* Whether a Lookup's value names a row of its table; 0 with the reason. */

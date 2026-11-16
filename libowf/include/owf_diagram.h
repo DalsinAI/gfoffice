@@ -225,6 +225,17 @@ int owf_dpdf_write(const owf_diagram *d, int page, unsigned char **data, size_t 
 /* page as EPS, into owf_malloc'd *data. OWF_OK; OWF_ERR_FORMAT when there is no such page; OWF_ERR_MEMORY. */
 int owf_deps_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
 
+/* ---- Graphs in text: Mermaid and Graphviz DOT ----
+ * One page as a graph for tools that lay it out themselves: shapes as nodes (the nearest shape the format has),
+ * shapes with shapes inside as subgraphs (DOT clusters), connectors joined at both ends as edges with their labels,
+ * dashes and arrowheads, and colours. Places are not kept. */
+
+/* page as a Mermaid flowchart, into owf_malloc'd *data. OWF_OK; OWF_ERR_FORMAT when there is no such page;
+ * OWF_ERR_MEMORY. */
+int owf_dmermaid_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
+/* page as a Graphviz DOT digraph; as owf_dmermaid_write. */
+int owf_ddot_write(const owf_diagram *d, int page, unsigned char **data, size_t *length);
+
 #ifdef __cplusplus
 }
 #endif
