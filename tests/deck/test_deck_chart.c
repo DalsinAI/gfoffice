@@ -19,63 +19,7 @@ static int checks, failures;
 #define CHECK(cond, ...) do { checks++; if (!(cond)) { failures++; printf("FAIL %s:%d: ", __FILE__, __LINE__); \
     printf(__VA_ARGS__); printf("\n"); } } while (0)
 
-/* Columns of two series over three quarters, as PowerPoint writes a chart part (with an embedded workbook's
- * cells in <c:f>, and their caches). */
-static const char chart_xml[] =
-    "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
-    "<c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" "
-    "xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" "
-    "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">"
-    "<c:chart><c:title><c:tx><c:rich><a:bodyPr/><a:p><a:r><a:t>Sales</a:t></a:r></a:p></c:rich></c:tx></c:title>"
-    "<c:autoTitleDeleted val=\"0\"/><c:plotArea><c:layout/>"
-    "<c:barChart><c:barDir val=\"col\"/><c:grouping val=\"clustered\"/><c:varyColors val=\"0\"/>"
-    "<c:ser><c:idx val=\"0\"/><c:order val=\"0\"/>"
-    "<c:tx><c:strRef><c:f>Sheet1!$B$1</c:f><c:strCache><c:ptCount val=\"1\"/><c:pt idx=\"0\"><c:v>North</c:v></c:pt>"
-    "</c:strCache></c:strRef></c:tx>"
-    "<c:cat><c:strRef><c:f>Sheet1!$A$2:$A$4</c:f><c:strCache><c:ptCount val=\"3\"/>"
-    "<c:pt idx=\"0\"><c:v>Q1</c:v></c:pt><c:pt idx=\"1\"><c:v>Q2</c:v></c:pt><c:pt idx=\"2\"><c:v>Q3</c:v></c:pt>"
-    "</c:strCache></c:strRef></c:cat>"
-    "<c:val><c:numRef><c:f>Sheet1!$B$2:$B$4</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val=\"3\"/>"
-    "<c:pt idx=\"0\"><c:v>4.3</c:v></c:pt><c:pt idx=\"1\"><c:v>2.5</c:v></c:pt><c:pt idx=\"2\"><c:v>3.5</c:v></c:pt>"
-    "</c:numCache></c:numRef></c:val></c:ser>"
-    "<c:ser><c:idx val=\"1\"/><c:order val=\"1\"/>"
-    "<c:tx><c:strRef><c:f>Sheet1!$C$1</c:f><c:strCache><c:ptCount val=\"1\"/><c:pt idx=\"0\"><c:v>South</c:v></c:pt>"
-    "</c:strCache></c:strRef></c:tx>"
-    "<c:cat><c:strRef><c:f>Sheet1!$A$2:$A$4</c:f><c:strCache><c:ptCount val=\"3\"/>"
-    "<c:pt idx=\"0\"><c:v>Q1</c:v></c:pt><c:pt idx=\"1\"><c:v>Q2</c:v></c:pt><c:pt idx=\"2\"><c:v>Q3</c:v></c:pt>"
-    "</c:strCache></c:strRef></c:cat>"
-    "<c:val><c:numRef><c:f>Sheet1!$C$2:$C$4</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val=\"3\"/>"
-    "<c:pt idx=\"0\"><c:v>2.4</c:v></c:pt><c:pt idx=\"2\"><c:v>1.8</c:v></c:pt>"
-    "</c:numCache></c:numRef></c:val></c:ser>"
-    "<c:axId val=\"1\"/><c:axId val=\"2\"/></c:barChart>"
-    "<c:catAx><c:axId val=\"1\"/><c:crossAx val=\"2\"/></c:catAx><c:valAx><c:axId val=\"2\"/><c:crossAx val=\"1\"/>"
-    "<c:majorGridlines/></c:valAx></c:plotArea>"
-    "<c:legend><c:legendPos val=\"b\"/></c:legend><c:plotVisOnly val=\"1\"/></c:chart></c:chartSpace>";
-
-static int near(double a, double b) { return a - b < 1e-9 && b - a < 1e-9; }
-
-/* The chart above, as read: columns, "Sales", the legend at the bottom, two series of three quarters. */
-static void check_sales(const owf_chart *c, const char *what)
-{
-    CHECK(c->kind == OWF_CHART_COLUMN && c->grouping == OWF_CHART_CLUSTERED, "%s: kind %d %d", what, c->kind,
-          c->grouping);
-    CHECK(c->title && !strcmp(c->title, "Sales"), "%s: title [%s]", what, c->title ? c->title : "(none)");
-    CHECK(c->legend == 'b', "%s: legend %d", what, c->legend);
-    CHECK(c->nseries == 2, "%s: %d series", what, c->nseries);
-    if (c->nseries != 2) return;
-    CHECK(c->series[0].name && !strcmp(c->series[0].name, "North") && c->series[1].name &&
-          !strcmp(c->series[1].name, "South"), "%s: series names", what);
-    CHECK(c->series[0].npoints == 3 && c->series[1].npoints == 3, "%s: points %d %d", what, c->series[0].npoints,
-          c->series[1].npoints);
-    if (c->series[0].npoints != 3 || c->series[1].npoints != 3) return;
-    CHECK(c->series[0].points[0].label && !strcmp(c->series[0].points[0].label, "Q1") && c->series[0].points[2].label &&
-          !strcmp(c->series[0].points[2].label, "Q3"), "%s: categories", what);
-    CHECK(c->series[0].points[0].has_value && near(c->series[0].points[0].value, 4.3) &&
-          near(c->series[0].points[1].value, 2.5) && near(c->series[0].points[2].value, 3.5), "%s: North's values", what);
-    CHECK(c->series[1].points[0].has_value && near(c->series[1].points[0].value, 2.4) && !c->series[1].points[1].has_value &&
-          c->series[1].points[2].has_value && near(c->series[1].points[2].value, 1.8), "%s: South's values, a gap in Q2",
-          what);
-}
+#include "chart_sales.h"
 
 static void test_part(void)
 {
@@ -266,10 +210,85 @@ static void test_pptx_slide(void)
     owf_deck_free(deck);
 }
 
+/* A cell of the embedded workbook's first sheet: its text, or its number printed, "" when empty. */
+static const char *cell_at(const owf_book *book, unsigned row, unsigned col)
+{
+    static char buf[64];
+    const owf_cell *c = book && book->nsheets ? owf_sheet_find(&book->sheets[0], row, col) : NULL;
+    if (!c || c->type == OWF_VALUE_EMPTY) return "";
+    if (c->type == OWF_VALUE_TEXT) return c->text ? c->text : "";
+    if (c->type == OWF_VALUE_NUMBER) { snprintf(buf, sizeof buf, "%g", c->number); return buf; }
+    return "?";
+}
+
+/* A slide's chart as PowerPoint keeps it (owf_chart_pptx_parts): its part, its series pointing at the cells of
+ * the workbook embedded with it, and that workbook: categories down column A, a series a column from B, the
+ * names in row 1, a gap an empty cell. */
+static void test_embedded(void)
+{
+    owf_chart c, e;
+    owf_buf part, xlsx;
+    owf_book *book = NULL;
+    memset(&c, 0, sizeof c);
+    CHECK(owf_chart_from_part(chart_xml, strlen(chart_xml), &c) == OWF_OK, "read for embedding");
+    /* as a deck's chart holds it: no cells of its own */
+    free(c.series[0].values); c.series[0].values = NULL;
+    free(c.series[1].categories); c.series[1].categories = NULL;
+    owf_buf_init(&part);
+    owf_buf_init(&xlsx);
+    CHECK(owf_chart_pptx_parts(&c, "rId1", &part, &xlsx) == OWF_OK && part.length && xlsx.length, "the parts");
+    CHECK(c.series[0].values == NULL, "the chart given is not changed");
+    owf_buf_putc(&part, 0);
+    CHECK(part.data && strstr((const char *)part.data, "<c:externalData r:id=\"rId1\">"), "the part names its data");
+    CHECK(part.data && strstr((const char *)part.data, "<c:f>Sheet1!$C$2:$C$4</c:f>") &&
+          strstr((const char *)part.data, "<c:f>Sheet1!$A$2:$A$4</c:f>") &&
+          strstr((const char *)part.data, "<c:f>Sheet1!$B$1</c:f>"), "its series point at the workbook's cells");
+    memset(&e, 0, sizeof e);
+    CHECK(part.data && owf_chart_from_part((const char *)part.data, part.length - 1, &e) == OWF_OK, "the part read back");
+    check_sales(&e, "embedded, read back");
+    CHECK(e.nseries == 2 && e.series[1].values && !strcmp(e.series[1].values, "Sheet1!$C$2:$C$4"), "its cells read back");
+    owf_chart_clear(&e);
+
+    CHECK(owf_import_book_memory(xlsx.data, xlsx.length, "xlsx", &book, NULL, NULL) == OWF_OK && book, "the workbook reads");
+    if (book) {
+        CHECK(book->nsheets == 1 && book->sheets[0].name && !strcmp(book->sheets[0].name, "Sheet1"), "one sheet, Sheet1");
+        CHECK(!strcmp(cell_at(book, 0, 0), ""), "A1 empty [%s]", cell_at(book, 0, 0));
+        CHECK(!strcmp(cell_at(book, 0, 1), "North") && !strcmp(cell_at(book, 0, 2), "South"), "the names in row 1");
+        CHECK(!strcmp(cell_at(book, 1, 0), "Q1") && !strcmp(cell_at(book, 3, 0), "Q3"), "the categories down A");
+        CHECK(!strcmp(cell_at(book, 1, 1), "4.3") && !strcmp(cell_at(book, 3, 1), "3.5"), "North's values in B [%s]",
+              cell_at(book, 1, 1));
+        CHECK(!strcmp(cell_at(book, 1, 2), "2.4") && !strcmp(cell_at(book, 2, 2), "") &&
+              !strcmp(cell_at(book, 3, 2), "1.8"), "South's in C, its gap empty");
+        owf_book_free(book);
+    }
+    owf_buf_free(&part);
+    owf_buf_free(&xlsx);
+
+    /* a name with markup in it: still well-formed, still read */
+    free(c.series[0].name);
+    c.series[0].name = malloc(16);
+    if (c.series[0].name) strcpy(c.series[0].name, "A&B <x>");
+    owf_buf_init(&part);
+    owf_buf_init(&xlsx);
+    CHECK(owf_chart_pptx_parts(&c, "rId1", &part, &xlsx) == OWF_OK, "markup in a name");
+    book = NULL;
+    CHECK(owf_import_book_memory(xlsx.data, xlsx.length, "xlsx", &book, NULL, NULL) == OWF_OK && book &&
+          !strcmp(cell_at(book, 0, 1), "A&B <x>"), "the name in the workbook");
+    if (book) owf_book_free(book);
+    memset(&e, 0, sizeof e);
+    CHECK(owf_chart_from_part((const char *)part.data, part.length, &e) == OWF_OK && e.nseries == 2 &&
+          e.series[0].name && !strcmp(e.series[0].name, "A&B <x>"), "the name in the part");
+    owf_chart_clear(&e);
+    owf_buf_free(&part);
+    owf_buf_free(&xlsx);
+    owf_chart_clear(&c);
+}
+
 int main(void)
 {
     test_part();
     test_pptx_slide();
+    test_embedded();
     printf("test_deck_chart: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

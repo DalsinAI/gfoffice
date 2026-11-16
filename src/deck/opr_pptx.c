@@ -3,10 +3,11 @@
  * XML, ECMA-376). Written from the model as GFOpenPresentation keeps it:
  * every slide with its objects placed where they are drawn (boxes resolved
  * from layouts and masters), text with its runs' look and its outline
- * levels, pictures, shapes, a background, hidden slides, a transition and
- * the speaker notes; one slide master a deck master, each with one layout
- * holding its title and body boxes, and the text levels as the master's
- * text styles. What PPTX cannot hold from the model is listed in the report.
+ * levels, pictures, charts (each with its data as an embedded workbook),
+ * shapes, a background, hidden slides, a transition and the speaker notes;
+ * one slide master a deck master, each with one layout holding its title
+ * and body boxes, and the text levels as the master's text styles. What
+ * PPTX cannot hold from the model is listed in the report.
  *
  * Plain C99, no floating point. MIT, Copyright (c) 2026 AmiCradle Team.
  */
@@ -32,6 +33,7 @@ typedef struct {
     int failed;
     int *image_used;             /* per res image: its media number, 0: not written yet */
     int nmedia;
+    int ncharts;                 /* charts written: ppt/charts/chart<n>.xml, each with its workbook */
     int lost_tables, lost_groups, lost_other, lost_transition;
 } pptxw;
 
@@ -341,7 +343,8 @@ static int media_of(pptxw *w, int image)
     return w->nmedia;
 }
 
-/* The pictures a part uses, for its relationships: rId (first_rid + k) is media[k]. */
+/* The pictures a part uses, for its relationships: rId (first_rid + k) is media[k]; a chart's is minus its
+ * number. */
 typedef struct {
     int nmedia, cap;
     int *media;
@@ -369,6 +372,11 @@ static void put_rels_media(pptxw *w, owf_buf *b, const rels *r, int first_rid)
     int i, k;
     for (i = 0; i < r->nmedia; i++) {
         const char *ext = "png";
+        if (r->media[i] < 0) {
+            owf_buf_printf(b, "<Relationship Id=\"rId%d\" Type=\"" REL "chart\" Target=\"../charts/chart%d.xml\"/>",
+                           first_rid + i, -r->media[i]);
+            continue;
+        }
         for (k = 0; k < w->deck->res->nimages; k++)
             if (w->image_used[k] == r->media[i]) {
                 ext = pic_ext(&w->deck->res->images[k]);
@@ -392,12 +400,57 @@ static void put_nv(owf_buf *b, const char *kind, int id, const owf_obj *o, const
     owf_buf_puts(b, "/>");
 }
 
+/* A chart with its data (Presentation gap 2): a graphic frame where it is, its chart part, and the workbook
+ * PowerPoint's Edit Data opens, embedded with its relationship. */
+static void put_chart(pptxw *w, owf_buf *b, const owf_obj *o, const owf_obj *box, int id, rels *r, int first_rid)
+{
+    owf_buf part, xlsx, rb;
+    char name[64];
+    int n = w->ncharts + 1, rid;
+    owf_buf_init(&part);
+    owf_buf_init(&xlsx);
+    if (owf_chart_pptx_parts(o->chart, "rId1", &part, &xlsx) != OWF_OK || (rid = rel_of(r, -n, first_rid)) < 0) {
+        owf_buf_free(&part);
+        owf_buf_free(&xlsx);
+        w->failed = 1;
+        return;
+    }
+    w->ncharts = n;
+    snprintf(name, sizeof name, "ppt/charts/chart%d.xml", n);
+    add_part(w, name, &part);
+    snprintf(name, sizeof name, "ppt/embeddings/Microsoft_Excel_Worksheet%d.xlsx", n);
+    if (owf_zip_add(w->zip, name, xlsx.data, xlsx.length, 0) < 0)
+        w->failed = 1;
+    owf_buf_free(&xlsx);
+    owf_buf_init(&rb);
+    xml_head(&rb);
+    owf_buf_printf(&rb, "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+                        "<Relationship Id=\"rId1\" Type=\"" REL "package\" "
+                        "Target=\"../embeddings/Microsoft_Excel_Worksheet%d.xlsx\"/></Relationships>", n);
+    snprintf(name, sizeof name, "ppt/charts/_rels/chart%d.xml.rels", n);
+    add_part(w, name, &rb);
+
+    snprintf(name, sizeof name, "Chart %d", id);
+    owf_buf_puts(b, "<p:graphicFrame>");
+    put_nv(b, "GraphicFrame", id, o, name);
+    owf_buf_puts(b, "<p:cNvGraphicFramePr><a:graphicFrameLocks noGrp=\"1\"/></p:cNvGraphicFramePr><p:nvPr/>"
+                    "</p:nvGraphicFramePr>");
+    put_xfrm(b, "p", box);
+    owf_buf_printf(b, "<a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">"
+                      "<c:chart xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" r:id=\"rId%d\"/>"
+                      "</a:graphicData></a:graphic></p:graphicFrame>", rid);
+}
+
 static void put_object(pptxw *w, owf_buf *b, const owf_obj *o, const owf_obj *box, int id, rels *r, int first_rid,
                        int on_master)
 {
     const owf_deck *d = w->deck;
     const char *ph = on_master || o->placeholder != OWF_PH_NONE ? ph_type(o->placeholder) : NULL;
     char name[48];
+    if (o->kind == OWF_OBJ_CHART && o->chart) {
+        put_chart(w, b, o, box, id, r, first_rid);
+        return;
+    }
     if (o->kind == OWF_OBJ_PICTURE || ((o->kind == OWF_OBJ_OTHER || o->kind == OWF_OBJ_CHART) && o->image >= 0)) {
         int media = media_of(w, o->image), rid;
         if (media <= 0 || (rid = rel_of(r, media, first_rid)) < 0)
@@ -786,6 +839,7 @@ static void put_package(pptxw *w)
         "<Default Extension=\"gif\" ContentType=\"image/gif\"/><Default Extension=\"bmp\" ContentType=\"image/bmp\"/>"
         "<Default Extension=\"svg\" ContentType=\"image/svg+xml\"/><Default Extension=\"emf\" ContentType=\"image/x-emf\"/>"
         "<Default Extension=\"wmf\" ContentType=\"image/x-wmf\"/>"
+        "<Default Extension=\"xlsx\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\"/>"
         "<Override PartName=\"/ppt/presentation.xml\" ContentType=\"" CT "presentation.main+xml\"/>"
         "<Override PartName=\"/ppt/notesMasters/notesMaster1.xml\" ContentType=\"" CT "notesMaster+xml\"/>"
         "<Override PartName=\"/ppt/theme/theme1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.theme+xml\"/>"
@@ -803,6 +857,9 @@ static void put_package(pptxw *w)
         owf_buf_printf(&b, "<Override PartName=\"/ppt/notesSlides/notesSlide%d.xml\" ContentType=\"" CT "notesSlide+xml\"/>",
                        i + 1);
     }
+    for (i = 0; i < w->ncharts; i++)
+        owf_buf_printf(&b, "<Override PartName=\"/ppt/charts/chart%d.xml\" "
+                           "ContentType=\"application/vnd.openxmlformats-officedocument.drawingml.chart+xml\"/>", i + 1);
     owf_buf_puts(&b, "</Types>");
     add_part(w, "[Content_Types].xml", &b);
 
@@ -850,7 +907,6 @@ int opr_export_pptx(const owf_deck *deck, unsigned char **data, size_t *length, 
         free(w.image_used);
         return OWF_ERR_MEMORY;
     }
-    put_package(&w);
     put_presentation(&w);
     put_theme(&w, "ppt/theme/theme1.xml");
     for (i = 0; i < deck->nmasters; i++)
@@ -860,6 +916,7 @@ int opr_export_pptx(const owf_deck *deck, unsigned char **data, size_t *length, 
         put_slide(&w, i);
         put_notes_slide(&w, i);
     }
+    put_package(&w);                 /* last: its content types name the charts written */
     if (owf_zip_finish(w.zip) < 0)
         w.failed = 1;
     free(w.image_used);
