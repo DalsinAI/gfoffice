@@ -913,6 +913,7 @@ typedef enum {
     SNAP_ANIMS,
     SNAP_MASTERS,
     SNAP_SLIDE_MASTER,
+    SNAP_BACKGROUND,
     SNAP_GROUP
 } snapshot_kind;
 
@@ -952,7 +953,8 @@ typedef struct snapshot {
     unsigned box_flags;
     /* SNAP_OBJ_ROTATION: the shape's rotation in tenths of a degree. */
     int rotation;
-    /* SNAP_OBJ_LOOK: complete fill/stroke appearance. */
+    /* SNAP_OBJ_LOOK: complete fill/stroke appearance. SNAP_BACKGROUND: the
+     * slide's background fields (OWF_BACKGROUND_LOOK) belonging to the saved state. */
     owf_look look;
     /* SNAP_OBJ_COLUMNS: complete text-frame columns, gap and insets. */
     int text_columns, text_column_gap;
@@ -1469,6 +1471,15 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
             return -1;
         look = o->look;
         o->look = s->look;
+        s->look = look;
+    } else if (s->kind == SNAP_BACKGROUND) {
+        owf_slide *sl;
+        owf_look look;
+        if (!deck || s->slide < 0 || s->slide >= deck->nslides)
+            return -1;
+        sl = &deck->slides[s->slide];
+        OWF_BACKGROUND_LOOK(sl, &look);
+        OWF_BACKGROUND_SET(sl, &s->look);
         s->look = look;
     } else if (s->kind == SNAP_OBJ_COLUMNS) {
         owf_obj *o = object(deck, s->slide, s->obj);
@@ -2459,12 +2470,142 @@ static int valid_shade(unsigned long shade)
     return !shade || (OWF_SHADE_SET(shade) && !(shade & ~0x1ffffffUL));
 }
 
+/* The fill fields an object and a background share: colour, gradient's second colour, transparency,
+   hatching. */
+static int valid_area(const owf_look *look)
+{
+    return valid_shade(look->fill) && valid_shade(look->fill2) && look->transparency <= 100 &&
+           look->hatch <= OWF_HATCH_TRIPLE && valid_shade(look->hatch_colour) &&
+           look->hatch_distance >= 0 && look->hatch_distance <= 20000 &&
+           look->hatch_angle > -36000 && look->hatch_angle < 36000;
+}
+
 static int valid_look(const owf_look *look)
 {
-    return look && valid_shade(look->fill) && valid_shade(look->line) &&
+    return look && valid_area(look) && valid_shade(look->line) &&
            look->line_width >= 0 && look->line_width <= 10000 &&
            look->line_style <= OWF_LINE_SLANTED_DASH_DOT &&
-           !(look->arrows & ~(OWF_ARROW_START | OWF_ARROW_END));
+           !(look->arrows & ~(OWF_ARROW_START | OWF_ARROW_END)) &&
+           look->shadow <= 1 && look->shadow_transparency <= 100 && valid_shade(look->shadow_colour) &&
+           look->shadow_dx >= -20000 && look->shadow_dx <= 20000 &&
+           look->shadow_dy >= -20000 && look->shadow_dy <= 20000;
+}
+
+static int tenths_of_turn(int angle)
+{
+    angle %= 3600;
+    return angle < 0 ? angle + 3600 : angle;
+}
+
+void opr_area_get(const owf_look *look, opr_area *area)
+{
+    if (!area)
+        return;
+    memset(area, 0, sizeof *area);
+    area->hatch_spacing = OWF_HATCH_DISTANCE;
+    area->shadow_colour = OWF_SHADE_RGB(OWF_SHADOW_COLOUR);
+    area->shadow_dx = area->shadow_dy = OPR_AREA_SHADOW_OFFSET;
+    if (!look)
+        return;
+    area->transparency = look->transparency;
+    if (look->hatch != OWF_HATCH_NONE) {
+        area->hatch = look->hatch;
+        area->hatch_colour = OWF_SHADE_RGB(look->hatch_colour);
+        area->hatch_degrees = tenths_of_turn(look->hatch_angle) / 10;
+        if (look->hatch_distance > 0)
+            area->hatch_spacing = look->hatch_distance;
+    }
+    if (look->shadow) {
+        area->shadow = 1;
+        if (OWF_SHADE_SET(look->shadow_colour))
+            area->shadow_colour = OWF_SHADE_RGB(look->shadow_colour);
+        area->shadow_dx = look->shadow_dx;
+        area->shadow_dy = look->shadow_dy;
+        area->shadow_transparency = look->shadow_transparency;
+    }
+}
+
+/* old if it already shows rgb (unset showing fallback), else rgb as a set shade */
+static unsigned long kept_shade(unsigned long old, unsigned long rgb, unsigned long fallback)
+{
+    unsigned long shown = OWF_SHADE_SET(old) ? OWF_SHADE_RGB(old) : fallback;
+    return shown == rgb ? old : OWF_SHADE(rgb);
+}
+
+int opr_area_put(owf_look *look, const opr_area *area)
+{
+    if (!look || !area)
+        return -1;
+    if (area->transparency < 0 || area->transparency > 100 || area->hatch < 0 ||
+        area->hatch > OPR_HATCH_TRIPLE || (area->hatch_colour & ~0xffffffUL) ||
+        area->hatch_degrees < 0 || area->hatch_degrees > 359 ||
+        area->hatch_spacing < 10 || area->hatch_spacing > 10000 || area->shadow < 0 || area->shadow > 1 ||
+        (area->shadow_colour & ~0xffffffUL) || area->shadow_dx < -10000 || area->shadow_dx > 10000 ||
+        area->shadow_dy < -10000 || area->shadow_dy > 10000 || area->shadow_transparency < 0 ||
+        area->shadow_transparency > 100)
+        return -2;
+    look->transparency = (unsigned char)area->transparency;
+    if (area->hatch) {
+        int had = look->hatch != OWF_HATCH_NONE;
+        if (!had || tenths_of_turn(look->hatch_angle) / 10 != area->hatch_degrees)
+            look->hatch_angle = area->hatch_degrees * 10;
+        if (!had || (look->hatch_distance > 0 ? look->hatch_distance : OWF_HATCH_DISTANCE) != area->hatch_spacing)
+            look->hatch_distance = area->hatch_spacing;
+        look->hatch_colour = had ? kept_shade(look->hatch_colour, area->hatch_colour, 0) : OWF_SHADE(area->hatch_colour);
+        look->hatch = (unsigned char)area->hatch;
+    } else {
+        look->hatch = OWF_HATCH_NONE;
+        look->hatch_angle = look->hatch_distance = 0;
+        look->hatch_colour = 0;
+    }
+    if (area->shadow) {
+        look->shadow_colour = look->shadow ? kept_shade(look->shadow_colour, area->shadow_colour,
+                                                         OWF_SHADE_RGB(OWF_SHADOW_COLOUR))
+                                           : OWF_SHADE(area->shadow_colour);
+        look->shadow = 1;
+        look->shadow_dx = area->shadow_dx;
+        look->shadow_dy = area->shadow_dy;
+        look->shadow_transparency = (unsigned char)area->shadow_transparency;
+    } else {
+        look->shadow = look->shadow_transparency = 0;
+        look->shadow_dx = look->shadow_dy = 0;
+        look->shadow_colour = 0;
+    }
+    return 0;
+}
+
+int opr_slide_set_background(opr_undo *u, owf_deck *deck, int slide, const owf_look *background)
+{
+    snapshot s;
+    owf_slide *sl;
+    owf_look now, wanted;
+    if (!u || !deck || !background || slide < 0 || slide >= deck->nslides)
+        return -1;
+    if (!valid_area(background))
+        return -2;
+    sl = &deck->slides[slide];
+    OWF_BACKGROUND_LOOK(sl, &now);
+    memset(&wanted, 0, sizeof wanted);
+    wanted.fill = background->fill;
+    wanted.gradient = background->gradient;
+    wanted.gradient_angle = background->gradient_angle;
+    wanted.fill2 = background->fill2;
+    wanted.transparency = background->transparency;
+    wanted.hatch = background->hatch;
+    wanted.hatch_angle = background->hatch_angle;
+    wanted.hatch_distance = background->hatch_distance;
+    wanted.hatch_colour = background->hatch_colour;
+    if (!memcmp(&now, &wanted, sizeof now))
+        return 0;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_BACKGROUND;
+    s.slide = slide;
+    s.obj = -1;
+    s.focus = s.other_focus = slide;
+    s.look = now;
+    OWF_BACKGROUND_SET(sl, &wanted);
+    structural_push(u, &s);
+    return 0;
 }
 
 int opr_obj_insert_shape(opr_undo *u, owf_deck *deck, int slide,
