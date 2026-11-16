@@ -1630,6 +1630,107 @@ static void saved(owf_deck *d)
     free(data);
 }
 
+/* A paragraph's runs as text: fields as {column}, breaks as | */
+static const char *runs_of(const owf_para *p)
+{
+    static char out[256];
+    size_t n = 0;
+    int j;
+    for (j = 0; j < p->nruns; j++) {
+        const owf_run *r = &p->runs[j];
+        const char *t = r->kind == OWF_RUN_FIELD ? (r->href ? r->href : "#") : r->kind == OWF_RUN_LINEBREAK ? "|"
+                      : r->text ? r->text : "";
+        if (r->kind == OWF_RUN_FIELD && n + 1 < sizeof out) out[n++] = '{';
+        while (*t && n + 1 < sizeof out) out[n++] = *t++;
+        if (r->kind == OWF_RUN_FIELD && n + 1 < sizeof out) out[n++] = '}';
+    }
+    out[n] = 0;
+    return out;
+}
+
+static void add_field(owf_para *p, const char *column)
+{
+    owf_charfmt cf;
+    owf_charfmt_init(&cf);
+    if (owf_para_add_special(p, &cf, OWF_RUN_FIELD, OWF_FIELD_MERGE) == 0) {
+        size_t n = strlen(column) + 1;
+        p->runs[p->nruns - 1].href = owf_malloc(n);
+        if (p->runs[p->nruns - 1].href) memcpy(p->runs[p->nruns - 1].href, column, n);
+    }
+}
+
+/* Fields take no room in a place: Backspace takes the one drawn before the caret, Delete the one after it at a
+ * paragraph's end, and a selection the ones drawn inside it. */
+static void field_editing(void)
+{
+    owf_deck *d = owf_deck_new_empty();
+    owf_slide *sl = d ? owf_deck_add_slide(d, -1, -1) : NULL;
+    owf_obj *o = sl ? owf_slide_add(sl, OWF_OBJ_TEXT) : NULL;
+    owf_parafmt pf;
+    owf_charfmt cf;
+    owf_para *p;
+    opr_pos at;
+    opr_selection sel;
+    CHECK(o != NULL, "a deck to edit");
+    if (!o) { owf_deck_free(d); return; }
+    owf_parafmt_init(&pf);
+    owf_charfmt_init(&cf);
+    /* "Dear {A}{B}friend{Z}" / "{C}x" */
+    p = owf_story_add(&o->text, &pf);
+    owf_para_add_text(p, &cf, "Dear ", 5);
+    add_field(p, "A");
+    add_field(p, "B");
+    owf_para_add_text(p, &cf, "friend", 6);
+    add_field(p, "Z");
+    p = owf_story_add(&o->text, &pf);
+    add_field(p, "C");
+    owf_para_add_text(p, &cf, "x", 1);
+    o = &d->slides[0].objs[0];
+    CHECK(!strcmp(runs_of(&o->text.paras[0]), "Dear {A}{B}friend{Z}"), "start: %s", runs_of(&o->text.paras[0]));
+
+    at.para = 0; at.offset = 5;                      /* drawn after {A}{B}: Backspace takes {B}, then {A} */
+    CHECK(!opr_text_backspace(d, 0, 0, &at) && at.offset == 5, "backspace a field: offset %lu", (unsigned long)at.offset);
+    CHECK(!strcmp(runs_of(&o->text.paras[0]), "Dear {A}friend{Z}"), "{B} gone: %s", runs_of(&o->text.paras[0]));
+    CHECK(!opr_text_backspace(d, 0, 0, &at) && at.offset == 5, "backspace the other field");
+    CHECK(!strcmp(runs_of(&o->text.paras[0]), "Dear friend{Z}"), "{A} gone: %s", runs_of(&o->text.paras[0]));
+    CHECK(!opr_text_backspace(d, 0, 0, &at) && at.offset == 4, "then text");
+    CHECK(!strcmp(runs_of(&o->text.paras[0]), "Dearfriend{Z}"), "the space gone: %s", runs_of(&o->text.paras[0]));
+
+    at.offset = 10;                                  /* the end: {Z} is drawn after the caret */
+    CHECK(!opr_text_backspace(d, 0, 0, &at) && at.offset == 9, "backspace at the end takes text");
+    CHECK(!strcmp(runs_of(&o->text.paras[0]), "Dearfrien{Z}"), "the d gone: %s", runs_of(&o->text.paras[0]));
+    CHECK(!opr_text_delete(d, 0, 0, &at) && at.offset == 9, "delete at the end takes the field");
+    CHECK(!strcmp(runs_of(&o->text.paras[0]), "Dearfrien"), "{Z} gone: %s", runs_of(&o->text.paras[0]));
+
+    at.para = 1; at.offset = 0;                      /* {C} is drawn before the caret at the start */
+    CHECK(!opr_text_delete(d, 0, 0, &at), "delete before x");
+    CHECK(!strcmp(runs_of(&o->text.paras[1]), "{C}"), "x gone, {C} kept: %s", runs_of(&o->text.paras[1]));
+    CHECK(!opr_text_delete(d, 0, 0, &at), "delete the field alone in its paragraph");
+    CHECK(o->text.paras[1].nruns == 1 && o->text.paras[1].runs[0].kind == OWF_RUN_TEXT &&
+          o->text.paras[1].runs[0].text && !o->text.paras[1].runs[0].text[0], "an empty run keeps its look");
+
+    /* a selection takes the fields drawn inside it */
+    p = &o->text.paras[0];
+    add_field(p, "Y");                               /* "Dearfrien{Y}" */
+    sel.anchor.para = 0; sel.anchor.offset = 4;
+    sel.focus.para = 0; sel.focus.offset = 9;
+    CHECK(!opr_text_delete_selection(d, 0, 0, &sel), "delete a selection to the end");
+    CHECK(!strcmp(runs_of(&o->text.paras[0]), "Dear{Y}"), "the end's field kept: %s", runs_of(&o->text.paras[0]));
+    owf_para_add_text(&o->text.paras[0], &cf, "abc", 3);   /* "Dear{Y}abc" */
+    sel.anchor.offset = 2; sel.focus.offset = 4;
+    CHECK(!opr_text_delete_selection(d, 0, 0, &sel), "delete a selection ending at a field");
+    CHECK(!strcmp(runs_of(&o->text.paras[0]), "Deabc"), "a field drawn inside the selection's end gone: %s", runs_of(&o->text.paras[0]));
+    p = &o->text.paras[1];                           /* "ab{Q}cd" in the second paragraph */
+    owf_para_add_text(p, &cf, "ab", 2);
+    add_field(p, "Q");
+    owf_para_add_text(p, &cf, "cd", 2);
+    CHECK(!strcmp(runs_of(&o->text.paras[1]), "ab{Q}cd"), "second paragraph: %s", runs_of(&o->text.paras[1]));
+    sel.anchor.para = sel.focus.para = 1; sel.anchor.offset = 1; sel.focus.offset = 3;
+    CHECK(!opr_text_delete_selection(d, 0, 0, &sel), "delete a selection across a field");
+    CHECK(!strcmp(runs_of(&o->text.paras[1]), "ad"), "the field inside gone: %s", runs_of(&o->text.paras[1]));
+    owf_deck_free(d);
+}
+
 int main(int argc, char **argv)
 {
     owf_deck *d = NULL;
@@ -1654,6 +1755,7 @@ int main(int argc, char **argv)
     picture_insertion();
     object_clipboard_paste();
     object_wrapping();
+    field_editing();
     printf("test_opr_edit: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }
