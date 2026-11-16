@@ -2225,11 +2225,19 @@ static int holds_text(ob_type t)
 static int view_order(ob_project *p, const ob_table *t, const ob_view *v, sqlite3_str *s)
 {
     const ob_field *f;
+    int i;
     if (v && v->sort[0]) {
         if (!(f = field_named(t, v->sort))) return fail(p, "%s has no field %s", t->name, v->sort);
-        sqlite3_str_appendf(s, " ORDER BY \"%w\"%s%s, rowid", f->name,
+        sqlite3_str_appendf(s, " ORDER BY \"%w\"%s%s", f->name,
                             holds_text(f->type) ? " COLLATE NOCASE" : "", v->desc ? " DESC" : "");
+        for (i = 0; i < OB_VIEW_THEN && v->then[i][0]; i++) {
+            if (!(f = field_named(t, v->then[i]))) return fail(p, "%s has no field %s", t->name, v->then[i]);
+            sqlite3_str_appendf(s, ", \"%w\"%s%s", f->name, holds_text(f->type) ? " COLLATE NOCASE" : "",
+                                v->desc ? " DESC" : "");
+        }
+        sqlite3_str_appendall(s, ", rowid");
     } else {
+        if (v && v->then[0][0]) return fail(p, "then by %s needs a sort", v->then[0]);
         sqlite3_str_appendall(s, " ORDER BY rowid");
     }
     return 1;

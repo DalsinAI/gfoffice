@@ -178,7 +178,7 @@ static void read_strings(struct Gadget **gad)
 static void open_kept(int i)
 {
     char err[OB_ERR_MAX];
-    ob_report r;
+    static ob_report r;             /* 4.5 KB: not on the stack */
     if (i < 0 || i >= nkept) return;
     if (ob_report_load(env->proj, kept_names[i], &r, err, sizeof err)) { say(err); return; }
     rr = r;
@@ -443,7 +443,8 @@ void ob_report_window(const ob_rwin_env *e)
                 if (class != IDCMP_GADGETUP && class != IDCMP_GADGETDOWN) continue;
                 {
                     /* edits that change the report (not the draft column's strings) */
-                    ob_report before = rr;
+                    static ob_report before;     /* 4.5 KB: not on the stack */
+                    before = rr;
                     read_strings(gad);
                     if (memcmp(&before, &rr, sizeof rr)) dirty = 1;
                 }
