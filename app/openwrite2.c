@@ -54,6 +54,7 @@
 #include <time.h>
 #include <clib/alib_protos.h>
 
+#include "owf_ifform.h"
 #include "openwrite_core.h"
 #include "owf_open.h"
 #include "ow_layout.h"
@@ -79,7 +80,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenWrite 2.0.45 (16.11.2026)"
+#define VERSION_TEXT "GFOpenWrite 2.0.48 (16.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -116,6 +117,7 @@ enum {
     M_COMMENT_FILTER,                                /* 2.0.39 */
     M_FIELD_TITLE, M_FIELD_AUTHOR, M_FIELD_SUBJECT, M_FIELD_FILENAME, M_FIELD_WORDS, M_FIELD_CHAPTER, M_FIELD_USER,
     M_CROSS_REF, M_DOC_INFO, M_USER_FIELDS, M_UPDATE_FIELDS, M_FIELD_SEQ,
+    M_FIELD_IF,                                      /* 2.0.48 */
     M_FOOTNOTE, M_ENDNOTE, M_NOTE_NEXT, M_NOTE_PREV, M_NOTE_EDIT, M_NOTE_CONVERT, M_NOTE_DELETE, M_NOTE_NUMBERING,
     M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_DOC, M_MERGE_FILES,
     M_INDEX_ENTRY, M_INDEX,
@@ -209,6 +211,7 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Chapter", NULL, 0, 0, (APTR)M_FIELD_CHAPTER },
     { NM_SUB, "User Field...", NULL, 0, 0, (APTR)M_FIELD_USER },
     { NM_SUB, "Number Range...", NULL, 0, 0, (APTR)M_FIELD_SEQ },   /* 2.0.43: Figure 1, Table 2 */
+    { NM_SUB, "Conditional Text...", NULL, 0, 0, (APTR)M_FIELD_IF }, /* 2.0.48: Word's IF */
     { NM_ITEM, "Cross-reference...", NULL, 0, 0, (APTR)M_CROSS_REF },
 
     { NM_TITLE, "Format", NULL, 0, 0, NULL },
@@ -4660,6 +4663,38 @@ static char *comment_utf8(const char *latin1);
 
 /* 2.0.43 (libowf 1.12.6): Insert > Fields > Number Range...: a numbered field of a name (Figure, Table), its number
  * the count of that name's fields up to it, renumbered as they move */
+/* 2.0.48 (libowf 1.16): Insert > Field > Conditional Text...: an IF field on a user field (or a mail merge
+ * column, "MERGEFIELD name"): its value compared with a text, one text shown when it holds, another when not */
+static void do_conditional_text(void)
+{
+    static char field[64] = "", op[4] = "=", value[64] = "", yes[96] = "", no[96] = "";
+    char form[400], code[80];
+    owf_if_form f;
+    char *u;
+    if (!editor) return;
+    if (!text_requester("Conditional Text", "If user field (or MERGEFIELD column):", field, field, sizeof field) ||
+        !field[0] || !text_requester("Conditional Text", "is (= <> < > <= >=):", op, op, sizeof op) ||
+        !text_requester("Conditional Text", "this value:", value, value, sizeof value) ||
+        !text_requester("Conditional Text", "show:", yes, yes, sizeof yes) ||
+        !text_requester("Conditional Text", "otherwise show:", no, no, sizeof no))
+        return;
+    memset(&f, 0, sizeof f);
+    if (!strncasecmp(field, "MERGEFIELD ", 11)) snprintf(code, sizeof code, "MERGEFIELD %s", field + 11);
+    else snprintf(code, sizeof code, "DOCVARIABLE \"%s\"", field);
+    snprintf(f.a, sizeof f.a, "%s", code);
+    f.a_field = 1;
+    snprintf(f.op, sizeof f.op, "%s", op);
+    snprintf(f.b, sizeof f.b, "%s", value);
+    snprintf(f.yes, sizeof f.yes, "%s", yes);
+    snprintf(f.no, sizeof f.no, "%s", no);
+    owf_if_format(&f, form, sizeof form);
+    if (!(u = comment_utf8(form))) { DisplayBeep(scr); return; }
+    if (editor_result(ow_editor_insert_field_arg(editor, OWF_FIELD_IF, u),
+                      "Conditional text inserted.")) fields_update();
+    else editor_repaint("Conditional text: the operator is one of = <> < > <= >=.");
+    free(u);
+}
+
 static void do_number_range(void)
 {
     static char last[48] = "Figure";
@@ -5495,6 +5530,7 @@ static void menu_action(ULONG id)
     case M_USER_FIELDS: do_user_field(0); break;
     case M_CROSS_REF: do_cross_reference(); break;
     case M_FIELD_SEQ: do_number_range(); break;
+    case M_FIELD_IF: do_conditional_text(); break;   /* 2.0.48 */
     case M_DOC_INFO: do_doc_info(); break;
     case M_UPDATE_FIELDS:
         if (editor) { fields_update(); set_status("Fields updated."); request_document_redraw(); }
@@ -5942,7 +5978,8 @@ static int rexx_do_command(const char *command, char **result_out)
         while(*rest&&*rest!=' '&&n<15){kind[n++]=(char)toupper((unsigned char)*rest++);}kind[n]=0;rest=skip_space(rest);
         for(k=0;k<13&&strcmp(kinds[k],kind);++k);
         if(k==13&&!strcmp(kind,"SEQ"))k=OWF_FIELD_SEQ;   /* 2.0.43: INSERTFIELD SEQ name, a number range */
-        if(!editor||k==13){ok=0;snprintf(result,sizeof result,"INSERTFIELD takes PAGE PAGES DATE TIME TITLE AUTHOR SUBJECT FILENAME WORDS CHAPTER, or USER, REF, REFPAGE or SEQ and a name");}
+        if(k==13&&!strcmp(kind,"IF"))k=OWF_FIELD_IF;     /* 2.0.48: INSERTFIELD IF form, Word's ({DOCVARIABLE x} = "1" "yes" "no") */
+        if(!editor||k==13){ok=0;snprintf(result,sizeof result,"INSERTFIELD takes PAGE PAGES DATE TIME TITLE AUTHOR SUBJECT FILENAME WORDS CHAPTER, or USER, REF, REFPAGE or SEQ and a name, or IF and its form");}
         else{if(*rest)u=comment_utf8(rest);rc=ow_editor_insert_field_arg(editor,(owf_field)k,u&&*u?u:NULL);free(u);if(rc==OWF_ERR_FORMAT){ok=0;snprintf(result,sizeof result,"%s",k==OWF_FIELD_SEQ&&*rest?"A number range's name is a letter, then letters, digits and _, 40 at most":k>=10?"That field needs a name":"That field takes no name");}else{ok=editor_result(rc,"Field inserted.");if(ok)fields_update();snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}}
     else if(starts_word_ci(command,"DOCINFO",&arg)){char what[16];const char *rest=arg;int n=0,k;while(*rest&&*rest!=' '&&n<15){what[n++]=(char)toupper((unsigned char)*rest++);}what[n]=0;rest=skip_space(rest);
         k=!strcmp(what,"TITLE")?0:!strcmp(what,"AUTHOR")?1:!strcmp(what,"SUBJECT")?2:-1;

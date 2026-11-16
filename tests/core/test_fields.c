@@ -29,7 +29,8 @@ static int checks, failures;
 static const char *dump(const owf_doc *doc)
 {
     static const char *const names[] = { "PAGE", "PAGES", "DATE", "TIME", "TITLE", "AUTHOR", "SUBJECT", "FILENAME",
-                                         "WORDS", "CHAPTER", "USER", "REF", "REFPAGE", "MERGE", "INDEX", "SEQ" };
+                                         "WORDS", "CHAPTER", "USER", "REF", "REFPAGE", "MERGE", "INDEX", "SEQ",
+                                         "IF" };
     static char out[2048];
     size_t used = 0;
     int i, j;
@@ -610,6 +611,92 @@ static void test_caption_refs(void)
     owf_doc_free(doc);
 }
 
+/* libowf 1.16 (2.0.48): conditional text (IF): Word's form kept, its value worked out from a user field
+ * (numbers as numbers, * in text); DOCX with its field nested in its code, ODT text:conditional-text; Word's
+ * own form with a MERGEFIELD in it */
+static void test_if(void)
+{
+    static const char *const names[] = { "[Content_Types].xml", "_rels/.rels", "word/document.xml" };
+    static const char *const parts[] = {
+        "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+        "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+        "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+        "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>"
+        "</Types>",
+        "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+        "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>"
+        "</Relationships>",
+        "<?xml version=\"1.0\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>"
+        "<w:p><w:r><w:t xml:space=\"preserve\">Hello </w:t></w:r>"
+        "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText xml:space=\"preserve\"> IF </w:instrText></w:r>"
+        "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText xml:space=\"preserve\"> MERGEFIELD Title </w:instrText></w:r>"
+        "<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>Dr</w:t></w:r><w:r><w:fldChar w:fldCharType=\"end\"/></w:r>"
+        "<w:r><w:instrText xml:space=\"preserve\"> = \"Dr\" \"Doctor\" \"friend\" </w:instrText></w:r>"
+        "<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>Doctor</w:t></w:r><w:r><w:fldChar w:fldCharType=\"end\"/></w:r>"
+        "<w:r><w:t>!</w:t></w:r></w:p>"
+        "<w:sectPr/></w:body></w:document>" };
+    static const char *const fmts[] = { "docx", "odt" };
+    owf_doc *doc = doc_of(), *word = NULL, *back = NULL;
+    ow_editor *ed = doc ? ow_editor_new(doc) : NULL;
+    static const char *const want =
+        "Getting started|Plug it in and wait.{IF:{DOCVARIABLE Gender} = \"F*\" \"Ms\" \"Mr\"=Ms}|Using it|Press the button.";
+    int k;
+    CHECK(ed != NULL, "editor");
+    if (!ed) { owf_doc_free(doc); return; }
+    CHECK(ow_editor_set_user_field(ed, "Gender", "Female") == OWF_OK, "user field");
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_IF, "{DOCVARIABLE Gender} \"F\" \"Ms\"") == OWF_ERR_FORMAT,
+          "no operator: refused");
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_IF, "{DOCVARIABLE Gender} =") == OWF_ERR_FORMAT, "no texts: refused");
+    caret_end(ed, 1);
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_IF, "{DOCVARIABLE Gender} = \"F*\" \"Ms\" \"Mr\"") == OWF_OK, "IF");
+    CHECK(!strcmp(dump(doc), want), dump(doc));
+    CHECK(ow_editor_set_user_field(ed, "Gender", "Male") == OWF_OK && ow_editor_update_fields(ed) >= 0 &&
+          strstr(dump(doc), "\"Mr\"=Mr}"), dump(doc));
+    ow_editor_set_user_field(ed, "Gender", "Female");
+    ow_editor_update_fields(ed);
+    caret_end(ed, 3);                                /* numbers as numbers: 10 > 9, though "10" < "9" as text */
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_IF, "10 > 9 \"big\" \"small\"") == OWF_OK &&
+          strstr(dump(doc), "=big}"), dump(doc));
+    CHECK(ow_editor_undo(ed) == 1 && !strcmp(dump(doc), want), dump(doc));
+    for (k = 0; k < 2; ++k) {
+        const owf_format *f = owf_format_named(fmts[k]);
+        unsigned char *data = NULL;
+        size_t length = 0;
+        CHECK(f && f->export(doc, &data, &length, NULL) == OWF_OK && data, fmts[k]);
+        if (!data) continue;
+        {
+            owf_unzip zip;
+            unsigned char *xml = NULL;
+            size_t n = 0;
+            CHECK(owf_unzip_open(&zip, data, length) &&
+                  owf_unzip_read(&zip, k ? "content.xml" : "word/document.xml", &xml, &n) == OWF_OK, "part");
+            if (xml) {
+                if (k) CHECK(strstr((char *)xml, "<text:conditional-text text:condition=\"ooow:Gender == &quot;F*&quot;\" "
+                                                 "text:string-value-if-true=\"Ms\" text:string-value-if-false=\"Mr\" "
+                                                 "text:current-value=\"true\">Ms</text:conditional-text>") != NULL,
+                             "text:conditional-text");
+                else CHECK(strstr((char *)xml, "<w:instrText xml:space=\"preserve\"> DOCVARIABLE Gender </w:instrText>") &&
+                           strstr((char *)xml, " IF </w:instrText>"), "IF with its field nested");
+                owf_free(xml);
+            }
+        }
+        CHECK(owf_import_memory(data, length, NULL, &back, NULL, NULL) == OWF_OK && back, fmts[k]);
+        if (back) {
+            CHECK(!strcmp(dump(back), want), dump(back));
+            owf_doc_free(back);
+            back = NULL;
+        }
+        free(data);
+    }
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+    CHECK(zip_import(names, parts, 3, &word) == OWF_OK && word, "Word's IF");
+    if (word) {
+        CHECK(!strcmp(dump(word), "Hello {IF:{MERGEFIELD Title} = \"Dr\" \"Doctor\" \"friend\"=Doctor}!"), dump(word));
+        owf_doc_free(word);
+    }
+}
+
 int main(void)
 {
     test_editing();
@@ -621,6 +708,7 @@ int main(void)
     test_odf_form();
     test_seq();
     test_caption_refs();
+    test_if();
     printf("fields: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

@@ -57,13 +57,16 @@
  * owf_para grew, so the three libraries go together again.
  * 3.17: libowf 1.12.6, 3.15's number ranges (OWF_FIELD_SEQ) on top of 3.16: #292 was numbered 3.15 before
  * #255's 3.16 merged first, so the library that knows SEQ is 3.17. No new calls and no structure grew.
+ * 3.21: libowf 1.16 (3.18 to 3.20, libowf 1.13 to 1.15, are #368's, #373's and #375's), conditional text
+ * (OWF_FIELD_IF, owf_ifform.h): DOCX IF with its fields nested in its code, and ODT text:conditional-text,
+ * in and out. No new calls and no structure grew, so owfpub and owfpresent stay.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 17
-#define OWF_LIB_VERS "3.17"
+#define OWF_LIB_REVISION 21
+#define OWF_LIB_VERS "3.21"
 #define OWF_LIB_DATE "16.11.2026"
 #define OWF_LIB_CALLS_H "owfwrite_calls.h"
 #include "owf_libbase.h"
