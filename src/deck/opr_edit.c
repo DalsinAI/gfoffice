@@ -836,6 +836,7 @@ typedef enum {
     SNAP_OBJ_COLUMNS,
     SNAP_OBJ_WRAP,
     SNAP_OBJ_CROP,
+    SNAP_OBJ_CHART,
     SNAP_OBJ_FLOW,
     SNAP_OBJ_PARENT,
     SNAP_ANIMS,
@@ -885,6 +886,8 @@ typedef struct snapshot {
     int wrap_gap[4];
     /* SNAP_OBJ_CROP: left/top/right/bottom thousandths removed. */
     int crop[4];
+    /* SNAP_OBJ_CHART: the chart object's chart (malloc'd, or NULL) belonging to the saved state. */
+    owf_chart *chart;
     /* SNAP_OBJ_FLOW: the one or two flow identities changed atomically. */
     int flow_count, flow_slide[2], flow_obj[2], flow_story[2];
     /* SNAP_OBJ_PRESENCE: the detached object when it is absent from the slide. */
@@ -1002,6 +1005,9 @@ static void snap_free(snapshot *s)
         owf_free(s->transitions);
     } else if (s->kind == SNAP_OBJ_PRESENCE && s->saved_obj_present) {
         owf_obj_clear(&s->saved_obj);
+    } else if (s->kind == SNAP_OBJ_CHART && s->chart) {
+        owf_chart_clear(s->chart);
+        free(s->chart);
     } else if (s->kind == SNAP_ANIMS) {
         int i;
         for (i = 0; i < s->nanims; i++)
@@ -1380,6 +1386,14 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
         memcpy(crop, o->crop, sizeof crop);
         memcpy(o->crop, s->crop, sizeof o->crop);
         memcpy(s->crop, crop, sizeof s->crop);
+    } else if (s->kind == SNAP_OBJ_CHART) {
+        owf_obj *o = object(deck, s->slide, s->obj);
+        owf_chart *chart;
+        if (!o || o->kind != OWF_OBJ_CHART)
+            return -1;
+        chart = o->chart;
+        o->chart = s->chart;
+        s->chart = chart;
     } else if (s->kind == SNAP_OBJ_FLOW) {
         int i;
         if (s->flow_count < 1 || s->flow_count > 2)
@@ -3286,6 +3300,33 @@ int opr_obj_set_picture_crop(opr_undo *u, owf_deck *deck, int slide, int obj,
     return 0;
 }
 
+int opr_obj_set_chart(opr_undo *u, owf_deck *deck, int slide, int obj, const owf_chart *chart)
+{
+    snapshot s;
+    owf_obj *o = object(deck, slide, obj);
+    owf_chart *copy;
+    if (!u)
+        return -1;
+    if (!o || !chart || obj == OPR_NOTES || o->parent >= 0 || o->kind != OWF_OBJ_CHART)
+        return -2;
+    copy = malloc(sizeof *copy);
+    if (!copy)
+        return -1;
+    if (owf_chart_copy(copy, chart) != OWF_OK) {
+        free(copy);
+        return -1;
+    }
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_OBJ_CHART;
+    s.slide = slide;
+    s.obj = obj;
+    s.focus = s.other_focus = slide;
+    s.chart = o->chart;
+    o->chart = copy;
+    structural_push(u, &s);
+    return 0;
+}
+
 static int story_has_content(const owf_story *story)
 {
     int p, r;
@@ -3457,7 +3498,7 @@ static int step(snapshot *from, int *nfrom, snapshot *to, int *nto, owf_deck *de
     if (obj) {
         if (s->kind == SNAP_TEXT || s->kind == SNAP_OBJ_BOX || s->kind == SNAP_OBJ_ROTATION ||
             s->kind == SNAP_OBJ_LOOK || s->kind == SNAP_OBJ_COLUMNS || s->kind == SNAP_OBJ_WRAP ||
-            s->kind == SNAP_OBJ_CROP)
+            s->kind == SNAP_OBJ_CROP || s->kind == SNAP_OBJ_CHART)
             *obj = s->obj;
         else if (s->kind == SNAP_OBJ_ORDER)
             *obj = s->from;
