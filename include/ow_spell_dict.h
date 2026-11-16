@@ -16,6 +16,10 @@ void ow_spell_close(ow_spell *spell);
 /* User dictionary words are kept in memory and appended to user_path. */
 int ow_spell_add(ow_spell *spell, const char *word);
 
+/* Ignore All: the word passes until the dictionary is closed; it is not
+ * written to user_path. */
+int ow_spell_ignore(ow_spell *spell, const char *word);
+
 /* Small edit-distance suggestions. Returns the number written. */
 int ow_spell_suggest(ow_spell *spell, const char *word,
                      char suggestions[][48], int max_suggestions);
