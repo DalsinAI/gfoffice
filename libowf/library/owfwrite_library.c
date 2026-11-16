@@ -57,13 +57,16 @@
  * owf_para grew, so the three libraries go together again.
  * 3.17: libowf 1.12.6, 3.15's number ranges (OWF_FIELD_SEQ) on top of 3.16: #292 was numbered 3.15 before
  * #255's 3.16 merged first, so the library that knows SEQ is 3.17. No new calls and no structure grew.
+ * 3.20: libowf 1.15 (3.18 and 3.19, libowf 1.13 and 1.14, are #368's and #373's), input fields
+ * (OWF_FIELD_FILLIN): DOCX FILLIN and ODT text:text-input in and out. No new calls and no structure grew,
+ * so owfpub and owfpresent stay.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 17
-#define OWF_LIB_VERS "3.17"
+#define OWF_LIB_REVISION 20
+#define OWF_LIB_VERS "3.20"
 #define OWF_LIB_DATE "16.11.2026"
 #define OWF_LIB_CALLS_H "owfwrite_calls.h"
 #include "owf_libbase.h"

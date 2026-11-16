@@ -495,7 +495,8 @@ static int odf_field(const owf_xml_node *c)
     if (owf_xml_is(c, NS_TEXT, "alphabetical-index-mark") && owf_xml_attr(c, NS_TEXT, "string-value") &&
         *owf_xml_attr(c, NS_TEXT, "string-value")) return OWF_FIELD_INDEX;                 /* 1.10 */
     if (owf_xml_is(c, NS_TEXT, "sequence") && owf_xml_attr(c, NS_TEXT, "name") &&
-        *owf_xml_attr(c, NS_TEXT, "name")) return OWF_FIELD_SEQ;                           /* 1.12.6 */
+        *owf_xml_attr(c, NS_TEXT, "name")) return OWF_FIELD_SEQ;
+    if (owf_xml_is(c, NS_TEXT, "text-input")) return OWF_FIELD_FILLIN;                     /* 1.15 */                           /* 1.12.6 */
     if ((owf_xml_is(c, NS_TEXT, "bookmark-ref") || owf_xml_is(c, NS_TEXT, "reference-ref")) &&
         owf_xml_attr(c, NS_TEXT, "ref-name")) {
         form = owf_xml_attr(c, NS_TEXT, "reference-format");
@@ -996,6 +997,7 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
         const char *arg = NULL;
         owf_field field = (owf_field)odf_field(c);
         if (field == OWF_FIELD_USER || field == OWF_FIELD_SEQ) arg = owf_xml_attr(c, NS_TEXT, "name");
+        else if (field == OWF_FIELD_FILLIN) arg = owf_xml_attr(c, NS_TEXT, "description");   /* 1.15: its prompt */
         else if (field == OWF_FIELD_REF || field == OWF_FIELD_REF_PAGE) arg = owf_xml_attr(c, NS_TEXT, "ref-name");
         else if (field == OWF_FIELD_INDEX) {         /* 1.10: the entry, under its main entry (key1) */
             const char *key = owf_xml_attr(c, NS_TEXT, "key1"), *value = owf_xml_attr(c, NS_TEXT, "string-value");

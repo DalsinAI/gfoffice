@@ -612,7 +612,8 @@ static void put_field(owf_buf *out, const owf_doc *doc, const owf_run *run)
 {
     static const char *const names[] = { "title", "initial-creator", "subject", "file-name", "word-count",
                                          "chapter", "user-field-get", "bookmark-ref", "bookmark-ref",
-                                         "database-display", "alphabetical-index-mark", "sequence" };
+                                         "database-display", "alphabetical-index-mark", "sequence",
+                                         "text-input" };
     const char *name = run->field >= OWF_FIELD_TITLE && run->field <= OWF_FIELD_LAST
                      ? names[run->field - OWF_FIELD_TITLE] : NULL;
     if (!name) return;
@@ -647,6 +648,11 @@ static void put_field(owf_buf *out, const owf_doc *doc, const owf_run *run)
                     owf_buf_putc(out, '_');
         }
         owf_buf_puts(out, "+1\" style:num-format=\"1\"");
+    }
+    if (run->field == OWF_FIELD_FILLIN && run->href && *run->href) {   /* 1.15: its prompt */
+        owf_buf_puts(out, " text:description=\"");
+        owf_buf_puts_xml(out, run->href);
+        owf_buf_puts(out, "\"");
     }
     if (run->field == OWF_FIELD_USER) {
         owf_buf_puts(out, " text:name=\"");
