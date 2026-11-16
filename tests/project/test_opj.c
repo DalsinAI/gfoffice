@@ -1505,6 +1505,73 @@ static void test_worktime(void)
     CHECK_N(opj_find_calendar(NULL, "Standard"), -1);
 }
 
+/* Change Working Time's days line: weekdays, a date, a range; the hours shown for it; setting them. */
+static void test_worktime_days(void)
+{
+    opj_doc *doc = opj_doc_new(NULL, AT(16, 8, 0));
+    int wd = -1;
+    long a = -1, b = -1, mon = AT(16, 0, 0) / 1440;
+    char text[80];
+    CHECK(doc != NULL);
+    if (!doc) return;
+    CHECK_N(opj_days_parse("Mon", &wd, &a, &b), 1);
+    CHECK_N(wd, 1);
+    CHECK_N(opj_days_parse(" saturday ", &wd, NULL, NULL), 1);
+    CHECK_N(wd, 6);
+    CHECK_N(opj_days_parse("WED", &wd, NULL, NULL), 1);
+    CHECK_N(wd, 3);
+    CHECK_N(opj_days_parse("Mo", &wd, NULL, NULL), 0);                /* too short */
+    CHECK_N(opj_days_parse("Mond", &wd, NULL, NULL), 0);              /* neither three letters nor the name */
+    CHECK_N(opj_days_parse("Fridays", &wd, NULL, NULL), 0);
+    CHECK_N(opj_days_parse("24/12/26", &wd, &a, &b), 2);
+    CHECK_N(a, mon + 38);
+    CHECK_N(b, a);
+    CHECK_N(opj_days_parse("24/12/26 - 1/1/27", NULL, &a, &b), 2);
+    CHECK_N(b - a, 8);
+    CHECK_N(opj_days_parse("16/11/26 to 18/11/26", NULL, &a, &b), 2);
+    CHECK_N(a, mon);
+    CHECK_N(b, mon + 2);
+    CHECK_N(opj_days_parse("2026-11-16 TO 2026-11-17", NULL, &a, &b), 2);   /* ISO dates keep their dashes */
+    CHECK_N(b, mon + 1);
+    CHECK_N(opj_days_parse("18/11/26 - 16/11/26", NULL, &a, &b), 0);  /* backwards */
+    CHECK_N(opj_days_parse("16/11/26 13:00", NULL, &a, &b), 0);       /* a time is not a day */
+    CHECK_N(opj_days_parse("1/1/26 - 1/1/40", NULL, &a, &b), 0);      /* over 3660 days */
+    CHECK_N(opj_days_parse("", NULL, NULL, NULL), 0);
+    CHECK_N(opj_days_parse(NULL, NULL, NULL, NULL), 0);
+    CHECK_N(opj_days_parse("someday", NULL, NULL, NULL), 0);
+    /* The hours they work now. */
+    opj_days_hours_text(doc->plan, 0, "Mon", text);
+    CHECK_S(text, "08:00-12:00, 13:00-17:00");
+    opj_days_hours_text(doc->plan, 0, "Sun", text);
+    CHECK_S(text, "off");
+    opj_days_hours_text(doc->plan, 0, "21/11/26", text);              /* a Saturday */
+    CHECK_S(text, "off");
+    opj_days_hours_text(doc->plan, 3, "Mon", text);
+    CHECK_S(text, "");
+    opj_days_hours_text(doc->plan, 0, "nonsense", text);
+    CHECK_S(text, "");
+    /* Setting them: a weekday, a range of holidays, back to default; default is for dates only. */
+    CHECK_N(opj_set_days_hours(doc, 0, "Fri", "08:00-12:00"), OWF_OK);
+    opj_days_hours_text(doc->plan, 0, "Friday", text);
+    CHECK_S(text, "08:00-12:00");
+    CHECK_N(opj_set_days_hours(doc, 0, "24/12/26 - 1/1/27", "off"), OWF_OK);
+    CHECK_N(doc->plan->calendars[0].nexceptions, 9);
+    opj_days_hours_text(doc->plan, 0, "28/12/26", text);
+    CHECK_S(text, "off");
+    CHECK_N(opj_set_days_hours(doc, 0, "28/12/26", " Default "), OWF_OK);
+    CHECK_N(doc->plan->calendars[0].nexceptions, 8);
+    opj_days_hours_text(doc->plan, 0, "28/12/26", text);
+    CHECK_S(text, "08:00-12:00, 13:00-17:00");
+    CHECK_N(opj_set_days_hours(doc, 0, "Mon", "default"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_days_hours(doc, 0, "someday", "off"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_days_hours(doc, 0, "Mon", "12-8"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_days_hours(doc, 0, "Mon", NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_days_hours(doc, 5, "Mon", "off"), OWF_ERR_FORMAT);
+    CHECK_N(opj_undo(doc), OWF_OK);                                   /* the default undone */
+    CHECK_N(doc->plan->calendars[0].nexceptions, 9);
+    opj_doc_free(doc);
+}
+
 int main(void)
 {
     test_dates();
@@ -1528,6 +1595,7 @@ int main(void)
     test_network();
     test_drag();
     test_worktime();
+    test_worktime_days();
     if (fails) {
         printf("project view tests: %d of %d checks failed\n", fails, checks);
         return 1;

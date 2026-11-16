@@ -559,6 +559,93 @@ int opj_set_day_hours(opj_doc *doc, int cal, long first, long last, const char *
     return commit(doc, work);
 }
 
+static int weekday_named(const char *s, size_t n)
+{
+    static const char *const names[7] = { "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday" };
+    int d;
+    size_t i;
+    if (n < 3) return -1;
+    for (d = 0; d < 7; d++) {
+        for (i = 0; i < n && names[d][i]; i++) {
+            int c = s[i] >= 'A' && s[i] <= 'Z' ? s[i] + 32 : s[i];
+            if (c != names[d][i]) break;
+        }
+        if (i == n && (n == 3 || !names[d][i])) return d;
+    }
+    return -1;
+}
+
+int opj_days_parse(const char *text, int *weekday, long *first, long *last)
+{
+    char a[40], b[40];
+    const char *s, *sep = NULL;
+    size_t n;
+    owf_ptime t1, t2;
+    if (!text) return 0;
+    while (*text == ' ') text++;
+    n = strlen(text);
+    while (n && text[n - 1] == ' ') n--;
+    if (!n || n >= sizeof a) return 0;
+    if (weekday_named(text, n) >= 0) {
+        if (weekday) *weekday = weekday_named(text, n);
+        return 1;
+    }
+    for (s = text; s < text + n; s++)
+        if ((*s == '-' && s > text && s[-1] == ' ') || ((s[0] == 't' || s[0] == 'T') && (s[1] == 'o' || s[1] == 'O') &&
+                                                         s > text && s[-1] == ' ' && s[2] == ' ')) {
+            sep = s;
+            break;
+        }
+    if (sep) {
+        memcpy(a, text, (size_t)(sep - text));
+        a[sep - text] = 0;
+        s = sep + (*sep == '-' ? 1 : 2);
+        memcpy(b, s, (size_t)(text + n - s));
+        b[text + n - s] = 0;
+    } else {
+        memcpy(a, text, n);
+        a[n] = 0;
+        strcpy(b, a);
+    }
+    {   /* dates only, no times */
+        size_t k = strlen(a);
+        while (k && a[k - 1] == ' ') a[--k] = 0;
+    }
+    if (!opj_date_parse(a, 0, &t1) || !opj_date_parse(b, 0, &t2)) return 0;
+    if (t1 % 1440 || t2 % 1440 || t2 < t1 || t2 / 1440 - t1 / 1440 >= 3660) return 0;
+    if (first) *first = t1 / 1440;
+    if (last) *last = t2 / 1440;
+    return 2;
+}
+
+void opj_days_hours_text(const owf_project *p, int cal, const char *text, char *out)
+{
+    int wd;
+    long first, last;
+    int kind = opj_days_parse(text, &wd, &first, &last);
+    out[0] = 0;
+    if (!p || cal < 0 || cal >= p->ncalendars || !kind) return;
+    opj_hours_text(kind == 1 ? &p->calendars[cal].week[wd] : owf_pcal_day(&p->calendars[cal], first), out);
+}
+
+int opj_set_days_hours(opj_doc *doc, int cal, const char *days, const char *hours)
+{
+    int wd, kind = opj_days_parse(days, &wd, NULL, NULL), def;
+    long first, last;
+    const char *h = hours;
+    if (!kind || !hours) return OWF_ERR_FORMAT;
+    while (*h == ' ') h++;
+    {   /* "default" with spaces around it */
+        char word[16];
+        size_t n = strlen(h);
+        while (n && h[n - 1] == ' ') n--;
+        def = n < sizeof word && (memcpy(word, h, n), word[n] = 0, same_name_ci(word, "default"));
+    }
+    if (kind == 1) return def ? OWF_ERR_FORMAT : opj_set_week_hours(doc, cal, wd, hours);
+    opj_days_parse(days, NULL, &first, &last);
+    return opj_set_day_hours(doc, cal, first, last, def ? NULL : hours);
+}
+
 int opj_set_plan_calendar(opj_doc *doc, int cal)
 {
     int rc;
