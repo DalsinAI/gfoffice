@@ -8,7 +8,7 @@
  * swapped in as one Undo step; the settings stay on the sheet it was run from
  * in a hidden name, _GF_CONSOLIDATE, for the window to offer again, with
  * the table's size and, in _GF_CONSOLIDATE_S1.. and _GF_CONSOLIDATE_D, its
- * sources and destination as references, which follow rows and columns put
+ * sources and the table's cells as references, which follow rows and columns put
  * in or taken out as any name's do: Refresh runs it again over the sources
  * as they are now, so a table grows with them.
  * MIT, Copyright (c) 2026 AmiCradle Team.
@@ -24,7 +24,7 @@
 
 #define CONSOLIDATE_NAME "_GF_CONSOLIDATE"
 #define CONSOLIDATE_SOURCE "_GF_CONSOLIDATE_S"   /* _S1.. each source typed as a range, as a reference that follows */
-#define CONSOLIDATE_DEST "_GF_CONSOLIDATE_D"     /* the destination's first cell, the same way */
+#define CONSOLIDATE_DEST "_GF_CONSOLIDATE_D"     /* the table's cells, the same way */
 #define CONSOLIDATE_KEYS 4096u            /* labels on one side, at most */
 
 typedef struct {
@@ -259,14 +259,17 @@ static int put_settings(owf_book *book, int sheet, const oc_consolidate_spec *sp
             drop_hidden(book, sheet, name);
         }
     }
-    if (!ref_text(book, dest_sheet, dest_row, dest_col, dest_row, dest_col, ref, sizeof ref))
+    /* the whole table, so that a row or column put in inside it is emptied on Refresh too */
+    if (!ref_text(book, dest_sheet, dest_row, dest_col, dest_row + (out_rows ? out_rows - 1u : 0u),
+                  dest_col + (out_cols ? out_cols - 1u : 0u), ref, sizeof ref))
         return OWF_ERR_UNSUPPORTED;
     return set_hidden(book, sheet, CONSOLIDATE_DEST, oc_strdup(ref));
 }
 
 /* A reference kept in a hidden name, as one types it: "B2:D9" on the sheet the settings are on, else
- * "'Q1'!A1:C20". 0 when there is none or it no longer reads (its cells were taken out). */
-static int followed(const oc_core *core, const char *name, char *out, size_t size)
+ * "'Q1'!A1:C20" (first: its first cell only); its range into *range when given. 0 when there is none or it
+ * no longer reads (its cells were taken out). */
+static int followed(const oc_core *core, const char *name, int first, char *out, size_t size, owf_range *range)
 {
     const char *f = hidden_formula(core->book, core->sheet, name);
     char a[16], b[16], quoted[OC_CONSOLIDATE_REF];
@@ -276,6 +279,12 @@ static int followed(const oc_core *core, const char *name, char *out, size_t siz
     size_t q = 0, i;
     if (!f || !oc_sheet_range(core->book, f, core->sheet, &s2, &r) || s2 < 0 || s2 >= core->book->nsheets)
         return 0;
+    if (range)
+        *range = r;
+    if (first) {
+        r.last_row = r.first_row;
+        r.last_col = r.first_col;
+    }
     oc_cell_name(r.first_row, r.first_col, a);
     oc_cell_name(r.last_row, r.last_col, b);
     quoted[0] = 0;
@@ -352,13 +361,19 @@ static int read_settings(const oc_core *core, oc_consolidate_spec *spec, unsigne
     for (k = 0; k < spec->nsources; k++) {
         char name[40], now[OC_CONSOLIDATE_REF];
         snprintf(name, sizeof name, CONSOLIDATE_SOURCE "%d", k + 1);
-        if (followed(core, name, now, sizeof now))
+        if (followed(core, name, 0, now, sizeof now, NULL))
             memcpy(spec->source[k], now, sizeof now);
     }
     {
         char now[OC_CONSOLIDATE_REF];
-        if (followed(core, CONSOLIDATE_DEST, now, sizeof now))
+        owf_range table;
+        if (followed(core, CONSOLIDATE_DEST, 1, now, sizeof now, &table)) {
             memcpy(spec->dest, now, sizeof now);
+            if (*out_rows && *out_cols) {            /* the table as it is now: rows put in inside it count */
+                *out_rows = table.last_row - table.first_row + 1u;
+                *out_cols = table.last_col - table.first_col + 1u;
+            }
+        }
     }
     return spec->nsources > 0;
 }

@@ -7270,6 +7270,14 @@ static void test_consolidate_refresh(void)
     CHECK(oc_core_consolidate_refresh(core) == OWF_OK);
     CHECK_STR(text(core, "A13"), "Central");
     CHECK(num(core, "B13") == 7 && num(core, "B14") == 200 && num(core, "B15") == 6 && empty(core, "A16"));
+    remove("build/host/calc-core-consolidate.xlsx");
+    /* a row put in inside the table: Refresh empties it too, nothing of the old table left below */
+    oc_core_select_cell(core, 13, 0, 0, 0);
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    CHECK_STR(text(core, "A16"), "West");                  /* the old last row, pushed down */
+    CHECK(oc_core_consolidate_refresh(core) == OWF_OK);
+    CHECK_STR(text(core, "A15"), "West");
+    CHECK(empty(core, "A16") && empty(core, "B16"));
     /* another sheet has none */
     CHECK(oc_core_set_sheet(core, 1) == OWF_OK && oc_core_consolidate_refresh(core) == OWF_ERR_UNSUPPORTED);
     oc_core_free(core);
