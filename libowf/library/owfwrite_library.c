@@ -58,9 +58,6 @@
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 14
-#define OWF_LIB_VERS "3.14"
-#define OWF_LIB_DATE "15.11.2026"
 #define OWF_LIB_REVISION 16
 #define OWF_LIB_VERS "3.16"
 #define OWF_LIB_DATE "16.11.2026"
