@@ -229,10 +229,20 @@ Masters needn't have 0x10 = 3 [V tdf100639 (2010); tdf67299, tdf69080 x2
 (2002/2003)]: their 0x10 is 1 (or 0), and only the pages naming them in
 0x0D show they are masters. In tdf100639 the page list starts with two
 pages named "A" (0x0E) whose 0x10 is 1 and 0, and the 13 pages' 0x0D name
-them in turn (the first page the 0x10 = 0 one). Those masters carry the
-0x03 field the pages lack, and no 0x0D. [H: the two halves of a master for
-facing pages, right and left.] The reader takes a page as a master when its
-0x10 is 3 or another page of the list names it in 0x0D. Each of tdf100639's
+them in turn, the first page the 0x10 = 1 one. Those masters carry the
+0x03 field the pages lack, and no 0x0D. The reader takes a page as a master
+when its 0x10 is 3 or another page of the list names it in 0x0D.
+
+Such a pair is one two-page master: 0x10 = 1 is its right page and 0 its
+left, and both have the same name (0x0F) [V 3: tdf69080's pair is named
+"Default Master" with the letters (0x0E) "R" on the 0x10 = 1 page and "L"
+on the 0 one; in tdf69080, tdf67299 and tdf100639 page 1, the first right
+page, takes the 0x10 = 1 one, and the pages after it take the two in
+turn]. tdf100639 and tdf67299 give both halves the letter "A". The reader
+pairs a left and a right master of one name (a half without its pair is a
+one-page master) and then shows the pages as facing; the writer writes a
+pair's 0x10 as 1 and 0 and both halves with one letter. Whether a
+publication can face its pages without a two-page master is not known. Each of tdf100639's
 two masters holds a right-aligned text box near the foot whose text is " #"
 in the dump [H: a page number field, not decoded yet].
 

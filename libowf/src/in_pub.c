@@ -324,6 +324,7 @@ static owf_pub_page *add_page(reader *r, int master)
     p = &(*arr)[(*n)++];
     memset(p, 0, sizeof *p);
     p->master = -1;
+    p->pair = -1;
     return p;
 }
 
@@ -1878,6 +1879,32 @@ static void mark_named_masters(reader *r, span list, unsigned char *named)
 /* Whether page chunk pc is a master: field 0x10 is 3 (the first samples), or
    another page names it in 0x0D (the masters whose 0x10 is 1 or 0,
    PUB-FORMAT.md 5.4). */
+/* A two-page master's left and right pages: one of each with the same
+ * name, each paired with the first free one (PUB-FORMAT.md 5.4). A half
+ * left without its other page is a one-page master. */
+static void pair_masters(owf_pub *pub)
+{
+    int i, k;
+    for (i = 0; i < pub->nmasters; i++) {
+        owf_pub_page *a = &pub->masters[i];
+        if (a->side != OWF_PUB_LEFT || a->pair >= 0)
+            continue;
+        for (k = 0; k < pub->nmasters; k++) {
+            owf_pub_page *b = &pub->masters[k];
+            if (b->side == OWF_PUB_RIGHT && b->pair < 0 &&
+                ((!a->name && !b->name) || (a->name && b->name && !strcmp(a->name, b->name)))) {
+                a->pair = k;
+                b->pair = i;
+                pub->facing = 1;
+                break;
+            }
+        }
+    }
+    for (i = 0; i < pub->nmasters; i++)
+        if (pub->masters[i].pair < 0)
+            pub->masters[i].side = OWF_PUB_ONE_PAGE;
+}
+
 static int is_master_page(reader *r, const unsigned char *named, long pc)
 {
     return named[pc] || field_value(chunk_body(r, pc), 0x10, 0) == 3;
@@ -1962,9 +1989,14 @@ static void read_modern(reader *r)
             }
             if (nmasters == 1 && find_field(pb, 0x05, &pos))
                 master_y = field_value(pos.body, 0x02, 0);
+            {                            /* 0x10: 1 a two-page master's right page, 0 its left (PUB-FORMAT.md 5.4) */
+                long kind = field_value(pb, 0x10, 3);
+                page->side = kind == 1 ? OWF_PUB_RIGHT : kind == 0 ? OWF_PUB_LEFT : OWF_PUB_ONE_PAGE;
+            }
             place_shapes(r, pc, page);
         }
     }
+    pair_masters(pub);
     /* then the document's pages: not masters, field 0x06 set, at the
        masters' height on the workspace (the scratch area sits half a page
        up: PUB-FORMAT.md 5.4, a hypothesis on the corpus) */
