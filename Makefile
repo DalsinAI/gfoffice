@@ -83,17 +83,17 @@ check: merge-table-check
 
 .PHONY: merge-table-test merge-table-check
 
-$(OUT)/test-spell: $(OWF_SRC) $(CORE_SRC) app/ow_spell.c tests/core/test_spell.c include/openwrite_core.h app/ow_spell.h
+$(OUT)/test-spell: $(OWF_SRC) $(CORE_SRC) app/ow_spell.c src/core/ow_spell_dict.c tests/core/test_spell.c include/openwrite_core.h app/ow_spell.h include/ow_spell_dict.h
 	mkdir -p $(OUT)
-	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Iapp -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) app/ow_spell.c tests/core/test_spell.c -lz -o $@
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Iapp -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) app/ow_spell.c src/core/ow_spell_dict.c tests/core/test_spell.c -lz -o $@
 
 spell-test: $(OUT)/test-spell
 	$(OUT)/test-spell
 
-$(OUT)/test-spell-asan: $(OWF_SRC) $(CORE_SRC) app/ow_spell.c tests/core/test_spell.c include/openwrite_core.h app/ow_spell.h
+$(OUT)/test-spell-asan: $(OWF_SRC) $(CORE_SRC) app/ow_spell.c src/core/ow_spell_dict.c tests/core/test_spell.c include/openwrite_core.h app/ow_spell.h include/ow_spell_dict.h
 	mkdir -p $(OUT)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-		-DOWF_HAVE_ZLIB -Iinclude -Iapp -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) app/ow_spell.c tests/core/test_spell.c -lz -o $@
+		-DOWF_HAVE_ZLIB -Iinclude -Iapp -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(CORE_SRC) app/ow_spell.c src/core/ow_spell_dict.c tests/core/test_spell.c -lz -o $@
 
 spell-check: $(OUT)/test-spell-asan
 	$(OUT)/test-spell-asan
@@ -396,7 +396,7 @@ check: calc-expect
 # the fixtures (odfpy and pypdf when installed, for the tests only). With
 # GFOpenLayout (OPENLAYOUT_SRC), OWConvert exports decks to PDF and the PDF
 # and layout tests run too; without it they are skipped, and say so.
-DECK_SRC = $(wildcard src/deck/*.c) src/core/ow_layout.c
+DECK_SRC = $(wildcard src/deck/*.c) src/core/ow_layout.c src/core/ow_spell_dict.c
 DECK_DEPS = $(OWF_SRC) libowf/include/owf.h libowf/include/owf_deck.h libowf/include/owf_pdf.h libowf/src/owf_internal.h \
 	libowf/src/owf_deck_int.h
 ifneq ($(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c),)
@@ -456,6 +456,28 @@ deck-edit-test: $(OUT)/test-opr-edit
 
 deck-edit-check: $(OUT)/test-opr-edit-asan
 	$(OUT)/test-opr-edit-asan tests/deck/fixtures/pptx-talk.pptx
+
+# Spelling through a deck (src/deck/opr_spell.c) with GFOpenWrite's dictionary.
+$(OUT)/test-opr-spell: $(DECK_DEPS) $(DECK_SRC) include/openpresentation_core.h include/ow_spell_dict.h tests/deck/test_opr_spell.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) \
+		tests/deck/test_opr_spell.c -lz -o $@
+
+$(OUT)/test-opr-spell-asan: $(DECK_DEPS) $(DECK_SRC) include/openpresentation_core.h include/ow_spell_dict.h tests/deck/test_opr_spell.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) tests/deck/test_opr_spell.c -lz -o $@
+
+deck-spell-test: $(OUT)/test-opr-spell
+	$(OUT)/test-opr-spell
+
+deck-spell-check: $(OUT)/test-opr-spell-asan
+	$(OUT)/test-opr-spell-asan
+
+test: deck-spell-test
+check: deck-spell-check
+
+.PHONY: deck-spell-test deck-spell-check
 
 $(OUT)/test-opr-show: $(DECK_DEPS) $(DECK_SRC) include/openpresentation_core.h tests/deck/test_opr_show.c
 	mkdir -p $(OUT)
