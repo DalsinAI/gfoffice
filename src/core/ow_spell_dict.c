@@ -18,6 +18,8 @@ struct ow_spell {
     int nwords;
     char **user;
     int nuser, capuser;
+    char **ignored;                /* Ignore All: this session only, never saved */
+    int nignored, capignored;
     char user_path[256];
 };
 
@@ -89,21 +91,26 @@ static int load_words_file(const char *path, char **blob_out, char ***words_out)
     return n;
 }
 
-static int user_add_mem(ow_spell *s, const char *word)
+static int list_add(char ***list, int *n, int *cap, const char *word)
 {
     char **u, *copy;
-    if (s->nuser == s->capuser) {
-        int cap = s->capuser ? s->capuser * 2 : 32;
-        u = (char **)realloc(s->user, (size_t)cap * sizeof(*u));
+    if (*n == *cap) {
+        int want = *cap ? *cap * 2 : 32;
+        u = (char **)realloc(*list, (size_t)want * sizeof(*u));
         if (!u) return 0;
-        s->user = u; s->capuser = cap;
+        *list = u; *cap = want;
     }
     copy = (char *)malloc(strlen(word) + 1);
     if (!copy) return 0;
     strcpy(copy, word);
-    s->user[s->nuser++] = copy;
-    qsort(s->user, (size_t)s->nuser, sizeof(s->user[0]), cmp_word_ptr);
+    (*list)[(*n)++] = copy;
+    qsort(*list, (size_t)*n, sizeof((*list)[0]), cmp_word_ptr);
     return 1;
+}
+
+static int user_add_mem(ow_spell *s, const char *word)
+{
+    return list_add(&s->user, &s->nuser, &s->capuser, word);
 }
 
 static void load_user(ow_spell *s)
@@ -147,6 +154,8 @@ void ow_spell_close(ow_spell *s)
     if (!s) return;
     for (i = 0; i < s->nuser; ++i) free(s->user[i]);
     free(s->user);
+    for (i = 0; i < s->nignored; ++i) free(s->ignored[i]);
+    free(s->ignored);
     free(s->words);
     free(s->blob);
     free(s);
@@ -155,7 +164,8 @@ void ow_spell_close(ow_spell *s)
 static int spell_has(ow_spell *s, const char *word)
 {
     if (!s || !word || !*word) return 1;
-    return dict_has(s->words, s->nwords, word) || dict_has(s->user, s->nuser, word);
+    return dict_has(s->words, s->nwords, word) || dict_has(s->user, s->nuser, word) ||
+           dict_has(s->ignored, s->nignored, word);
 }
 
 static int word_char(unsigned char c)
@@ -211,7 +221,8 @@ int ow_spell_add(ow_spell *s, const char *word)
     FILE *f;
     if (!s || !word || !*word) return 0;
     lower_word(lower, sizeof lower, word, strlen(word));
-    if (spell_has(s, lower)) return 1;
+    /* an ignored word is still saved when it is added */
+    if (dict_has(s->words, s->nwords, lower) || dict_has(s->user, s->nuser, lower)) return 1;
     if (!user_add_mem(s, lower)) return 0;
     if (!s->user_path[0]) return 1;
     f = fopen(s->user_path, "a");
@@ -219,6 +230,14 @@ int ow_spell_add(ow_spell *s, const char *word)
     fprintf(f, "%s\n", lower);
     fclose(f);
     return 1;
+}
+
+int ow_spell_ignore(ow_spell *s, const char *word)
+{
+    char lower[96];
+    if (!s || !word || !*word) return 0;
+    lower_word(lower, sizeof lower, word, strlen(word));
+    return spell_has(s, lower) || list_add(&s->ignored, &s->nignored, &s->capignored, lower);
 }
 
 static int edit_distance_le3(const char *a, const char *b)

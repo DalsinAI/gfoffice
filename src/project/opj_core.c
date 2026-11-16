@@ -971,6 +971,33 @@ owf_ptime opj_period_next(int zoom, owf_ptime start)
     }
 }
 
+void opj_task_usage_text(const opj_doc *doc, int task, int assign, owf_ptime from, owf_ptime to, char *out,
+                         size_t size)
+{
+    const owf_project *p;
+    char text[24];
+    long work = 0;
+    int i, last;
+    if (!out || !size) return;
+    out[0] = 0;
+    if (!doc || task < 0 || task >= doc->plan->ntasks || to <= from) return;
+    p = doc->plan;
+    if (assign >= 0) {
+        if (assign >= p->nassigns || p->assigns[assign].task != task) return;
+        work = owf_passign_work(p, assign, from, to);
+    } else {
+        for (last = task + 1; last < p->ntasks && p->tasks[last].level > p->tasks[task].level; last++) {}
+        for (i = 0; i < p->nassigns; i++)            /* its own and its subtasks' (a summary's) */
+            if (p->assigns[i].task >= task && p->assigns[i].task < last) {
+                work += owf_passign_work(p, i, from, to);
+                if (work > 2000000000L) work = 2000000000L;
+            }
+    }
+    if (!work) return;
+    opj_work_text(work, text);
+    copy_out(text, out, size);
+}
+
 void opj_usage_text(const opj_doc *doc, int resource, int assign, owf_ptime from, owf_ptime to, char *out,
                     size_t size, int *over)
 {

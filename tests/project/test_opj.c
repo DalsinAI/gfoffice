@@ -795,6 +795,92 @@ static void test_usage(void)
     opj_doc_free(doc);
 }
 
+/* Task Usage, from test_usage's plan: each task, then who works on it, and the work each day. */
+static void test_task_usage(void)
+{
+    opj_doc *doc = three();
+    opj_view v;
+    oldraw *d;
+    char out[64];
+    int t = -1, a = -2, e;
+    unsigned long bg;
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_RESOURCES, "Dale,Bob[50%]"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_RESOURCES, "Dale"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_PREDECESSORS, ""), OWF_OK);
+    /* Rows: Plan, its Dale and Bob; Build, its Dale; Ship. */
+    CHECK_N(opj_task_usage_rows(doc), 6);
+    CHECK(opj_task_usage_row(doc, 0, &t, &a) && t == 0 && a == -1);
+    CHECK(opj_task_usage_row(doc, 2, &t, &a) && t == 0 && a >= 0 && doc->plan->assigns[a].resource == 1);
+    CHECK(opj_task_usage_row(doc, 3, &t, &a) && t == 1 && a == -1);
+    CHECK(opj_task_usage_row(doc, 4, &t, &a) && t == 1 && doc->plan->assigns[a].resource == 0);
+    CHECK(opj_task_usage_row(doc, 5, &t, &a) && t == 2 && a == -1);
+    CHECK_N(opj_task_usage_row(doc, 6, &t, &a), 0);
+    CHECK_N(opj_task_usage_row(doc, -1, &t, &a), 0);
+    CHECK_N(opj_task_usage_rows(NULL), 0);
+    /* The table: a task's ID, name and work; an assignment's resource and work. */
+    CHECK_S(opj_task_usage_column_title(OPJ_UCOL_NAME), "Task Name");
+    CHECK_S(opj_task_usage_column_title(-1), "");
+    opj_task_usage_cell_text(doc, 0, OPJ_UCOL_ID, out, sizeof out);
+    CHECK_S(out, "1");
+    opj_task_usage_cell_text(doc, 0, OPJ_UCOL_WORK, out, sizeof out);
+    CHECK_S(out, "24h");                                                   /* Dale's 16h and Bob's 8h */
+    opj_task_usage_cell_text(doc, 1, OPJ_UCOL_NAME, out, sizeof out);
+    CHECK_S(out, "Dale");
+    opj_task_usage_cell_text(doc, 1, OPJ_UCOL_ID, out, sizeof out);
+    CHECK_S(out, "");
+    opj_task_usage_cell_text(doc, 2, OPJ_UCOL_WORK, out, sizeof out);
+    CHECK_S(out, "8h");
+    opj_task_usage_cell_text(doc, 5, OPJ_UCOL_NAME, out, sizeof out);
+    CHECK_S(out, "Ship");
+    opj_task_usage_cell_text(doc, 9, OPJ_UCOL_NAME, out, sizeof out);
+    CHECK_S(out, "");
+    /* Work on Monday the 16th: Plan's 8h and 4h; Build's 8h; Ship none */
+    opj_task_usage_text(doc, 0, -1, AT(16, 0, 0), AT(17, 0, 0), out, sizeof out);
+    CHECK_S(out, "12h");
+    opj_task_usage_text(doc, 1, -1, AT(16, 0, 0), AT(17, 0, 0), out, sizeof out);
+    CHECK_S(out, "8h");
+    CHECK(opj_task_usage_row(doc, 2, &t, &a));
+    opj_task_usage_text(doc, 0, a, AT(16, 0, 0), AT(17, 0, 0), out, sizeof out);
+    CHECK_S(out, "4h");
+    opj_task_usage_text(doc, 1, a, AT(16, 0, 0), AT(17, 0, 0), out, sizeof out);   /* not Build's */
+    CHECK_S(out, "");
+    opj_task_usage_text(doc, 2, -1, AT(16, 0, 0), AT(30, 0, 0), out, sizeof out);
+    CHECK_S(out, "");
+    opj_task_usage_text(doc, 0, -1, AT(17, 0, 0), AT(16, 0, 0), out, sizeof out);   /* backwards */
+    CHECK_S(out, "");
+    /* Drawn: its own titles, names, each day's work; a task's row shaded across the chart. */
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    d = cur = oldraw_new(&ops, NULL, W, H, NULL);
+    CHECK(d != NULL);
+    bg = oldraw_resolve(d, OLDRAW_PEN(OLDRAW_PEN_BACKGROUND)) & 0xFFFFFFUL;
+    memset(px, 0, sizeof px);
+    ntexts = 0;
+    opj_task_usage_draw(d, &v, doc, NULL);
+    CHECK(drew("Task Name") && drew("Work") && drew("Plan") && drew("Dale") && drew("Bob") && drew("Ship"));
+    CHECK(drew("12h") && drew("4h"));
+    CHECK(!drew("Resource Name"));
+    CHECK_X(px[40][300], 0xF0F0F0);                                        /* Plan's row */
+    CHECK_X(px[56][300], bg);                                              /* its Dale's */
+    /* a summary's row holds its subtasks' work */
+    CHECK_N(opj_insert_task(doc, 0, "Phase"), OWF_OK);
+    CHECK_N(opj_indent(doc, 1, 3, 1), OWF_OK);
+    CHECK_N(opj_task_usage_rows(doc), 7);
+    opj_task_usage_text(doc, 0, -1, AT(16, 0, 0), AT(17, 0, 0), out, sizeof out);
+    CHECK_S(out, "20h");
+    opj_task_usage_text(doc, 1, -1, AT(16, 0, 0), AT(17, 0, 0), out, sizeof out);
+    CHECK_S(out, "12h");
+    ntexts = 0;
+    opj_task_usage_draw(d, &v, doc, NULL);
+    CHECK(drew("Phase") && drew("20h"));
+    /* read only, with its own reason */
+    for (e = OPJ_EDIT_CELL; e < OPJ_NEDITS; ++e)
+        CHECK(opj_edit_refused(OPJ_VIEW_TASK_USAGE, e) != NULL &&
+              !strcmp(opj_edit_refused(OPJ_VIEW_TASK_USAGE, e), "Task Usage is read only: Gantt Chart (G) edits tasks"));
+    CHECK(opj_edit_refused(OPJ_VIEW_TASK_USAGE, OPJ_EDIT_NONE) == NULL);
+    oldraw_free(d);
+    opj_doc_free(doc);
+}
+
 static int has_bytes(const unsigned char *data, size_t n, const char *what)
 {
     size_t k = strlen(what), i;
@@ -1104,6 +1190,115 @@ static void test_pdf(void)
     opj_doc_free(doc);
 }
 
+/* The Network Diagram: Plan, then Build and Docs (both after Plan), then Ship (after Build). */
+static void test_network(void)
+{
+    opj_doc *doc = three();
+    opj_network net;
+    opj_view v;
+    opj_path path;
+    oldraw_rect b;
+    oldraw *d;
+    char text[80];
+    int w, h;
+    unsigned long bg;
+    CHECK_N(opj_insert_task(doc, 3, "Docs"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 3, OPJ_COL_DURATION, "1d"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 3, OPJ_COL_PREDECESSORS, "1"), OWF_OK);
+    CHECK_N(opj_network_layout(doc, &net), OWF_OK);
+    CHECK_N(net.ntasks, 4);
+    CHECK_N(net.columns, 3);
+    CHECK_N(net.lines, 2);
+    CHECK_N(net.column[0], 0); CHECK_N(net.line[0], 0);
+    CHECK_N(net.column[1], 1); CHECK_N(net.line[1], 0);
+    CHECK_N(net.column[2], 2); CHECK_N(net.line[2], 0);
+    CHECK_N(net.column[3], 1); CHECK_N(net.line[3], 1);
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    CHECK(opj_network_box(&v, &net, 3, &b));
+    CHECK_N(b.x, 216); CHECK_N(b.y, 100); CHECK_N(b.w, 160); CHECK_N(b.h, 68);
+    CHECK(!opj_network_box(&v, &net, 4, &b));
+    opj_network_size(&v, &net, &w, &h);
+    CHECK_N(w, 592);
+    CHECK_N(h, 184);
+    CHECK_N(opj_network_hit(&v, &net, 20, 20), 0);
+    CHECK_N(opj_network_hit(&v, &net, 200, 20), -1);         /* between the columns */
+    CHECK_N(opj_network_hit(&v, &net, 220, 110), 3);
+    CHECK_N(opj_network_hit(&v, &net, -1, 20), -1);
+    /* links: straight along a line, or down in the gap before the successor's column */
+    CHECK(opj_network_link_path(&v, &net, doc, 1, 0, &path));
+    CHECK_N(path.n, 2);
+    CHECK_N(path.x[0], 176); CHECK_N(path.y[0], 50); CHECK_N(path.x[1], 215); CHECK_N(path.y[1], 50);
+    CHECK(opj_network_link_path(&v, &net, doc, 3, 0, &path));
+    CHECK_N(path.n, 4);
+    CHECK_N(path.x[1], 195); CHECK_N(path.y[2], 134); CHECK_N(path.x[3], 215);
+    CHECK(!opj_network_link_path(&v, &net, doc, 0, 0, &path));   /* Plan has no predecessor */
+    CHECK(!opj_network_link_path(&v, &net, doc, 1, 1, &path));
+    /* the boxes' text */
+    opj_network_line_text(doc, 1, 0, text, sizeof text);
+    CHECK_S(text, "Build");
+    opj_network_line_text(doc, 1, 1, text, sizeof text);
+    CHECK_S(text, "ID: 2  Dur: 3d");
+    opj_network_line_text(doc, 1, 2, text, sizeof text);
+    CHECK_S(text, "Start: Wed 18/11/26");
+    opj_network_line_text(doc, 1, 3, text, sizeof text);
+    CHECK_S(text, "Finish: Fri 20/11/26");
+    opj_network_line_text(doc, 9, 0, text, sizeof text);
+    CHECK_S(text, "");
+    /* scrolling stays on the diagram; reveal shows a box whole */
+    v.width = 300;
+    v.height = 120;
+    opj_network_reveal(&v, &net, 2);
+    CHECK_N(v.scroll_x, 292);
+    CHECK_N(v.scroll_y, 0);
+    CHECK_N(opj_network_hit(&v, &net, 130, 20), 2);
+    opj_network_reveal(&v, &net, 0);
+    CHECK_N(v.scroll_x, 0);
+    opj_network_scroll(&v, &net, 1000, 1000);
+    CHECK_N(v.scroll_x, 292);
+    CHECK_N(v.scroll_y, 64);
+    opj_network_scroll(&v, &net, -5000, -5);
+    CHECK_N(v.scroll_x, 0);
+    CHECK_N(v.scroll_y, 59);
+    /* drawing: Plan critical and finished (crossed), Docs not critical, Build selected */
+    CHECK_N(opj_set_percent(doc, 0, 100), OWF_OK);
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    v.selected = 1;
+    d = cur = oldraw_new(&ops, NULL, W, H, NULL);
+    CHECK(d != NULL);
+    bg = oldraw_resolve(d, OLDRAW_PEN(OLDRAW_PEN_BACKGROUND)) & 0xFFFFFFUL;
+    memset(px, 0, sizeof px);
+    ntexts = 0;
+    opj_network_draw(d, &v, &net, doc, NULL);
+    CHECK_X(px[16][16], 0xD03030);                        /* Plan's edge: critical */
+    CHECK_X(px[17][17], 0xD03030);                        /* two pixels thick */
+    CHECK_X(px[18][18], 0xC8C8C8);                        /* finished: crossed, down */
+    CHECK_X(px[81][18], 0xC8C8C8);                        /* and up */
+    CHECK_X(px[100][216], 0x4A7BD0);                      /* Docs's edge: not critical */
+    CHECK_X(px[40][300], oldraw_resolve(d, OLDRAW_PEN(OLDRAW_PEN_FILL)) & 0xFFFFFFUL);   /* Build: selected */
+    CHECK_X(px[50][190], 0xD03030);                       /* Plan to Build: both critical */
+    CHECK_X(px[90][195], 0x3050A0);                       /* Plan to Docs */
+    CHECK_X(px[60][200], bg);                             /* beside Docs's line, where it turns down */
+    CHECK_X(px[195][700], bg);
+    CHECK(drew("Plan") && drew("Build") && drew("Docs") && drew("Ship"));
+    CHECK(drew("ID: 2  Dur: 3d") && drew("Start: Wed 18/11/26"));
+    oldraw_free(d);
+    cur = NULL;
+    opj_network_free(&net);
+    CHECK(net.column == NULL && net.ntasks == 0);
+    /* a summary has no box, and the boxes under it keep their order */
+    CHECK_N(opj_insert_task(doc, 0, "Phase"), OWF_OK);
+    CHECK_N(opj_indent(doc, 1, 4, 1), OWF_OK);
+    CHECK_N(opj_network_layout(doc, &net), OWF_OK);
+    CHECK_N(net.column[0], -1);
+    CHECK(!opj_network_box(&v, &net, 0, &b));
+    CHECK_N(net.column[1], 0);
+    CHECK_N(net.column[4], 1);
+    CHECK_N(net.line[4], 1);
+    opj_network_free(&net);
+    CHECK_N(opj_network_layout(NULL, &net), OWF_ERR_FORMAT);
+    opj_doc_free(doc);
+}
+
 int main(void)
 {
     test_dates();
@@ -1119,8 +1314,10 @@ int main(void)
     test_pdf();
     test_usage();
     test_usage_edits();
+    test_task_usage();
     test_columns();
     test_task_info();
+    test_network();
     test_drag();
     if (fails) {
         printf("project view tests: %d of %d checks failed\n", fails, checks);
