@@ -75,6 +75,28 @@ int opj_set_notes(opj_doc *doc, int row, const char *notes);
 int opj_set_baseline(opj_doc *doc, int first, int count);
 int opj_clear_baseline(opj_doc *doc, int first, int count);
 
+/* ---- Change Working Time: calendars (one Undo step each, the plan scheduled again) ----
+ * cal is an index into plan->calendars. */
+
+/* Working hours as typed: spans "08:00-12:00, 13:00-17:00" (commas or spaces between them, "8-12" whole
+ * hours too), or "off" (or "") for no working time. 1 and *out set, or 0 when it isn't hours. */
+int opj_hours_parse(const char *text, owf_pday *out);
+/* The other way: "08:00-12:00, 13:00-17:00", or "off". out holds at least 80 bytes. */
+void opj_hours_text(const owf_pday *h, char *out);
+/* A calendar by its name (case ignored) or its number from 1; -1 when there is none. */
+int opj_find_calendar(const owf_project *p, const char *name);
+/* A new base calendar called name, a copy of calendar from (its week and its exceptions; -1: Standard's
+ * hours), its index in *index. OWF_ERR_FORMAT for an empty name or one a calendar has already. */
+int opj_add_calendar(opj_doc *doc, const char *name, int from, int *index);
+/* The hours of one weekday (0 Sunday) in every week of the calendar. */
+int opj_set_week_hours(opj_doc *doc, int cal, int weekday, const char *hours);
+/* The hours of the days first..last (days since 1 Jan 2000, at most 3660 of them): hours, "off" for
+ * holidays, or NULL to give them back the week's hours. */
+int opj_set_day_hours(opj_doc *doc, int cal, long first, long last, const char *hours);
+/* The plan's calendar (Project > Project Information's), or a task's own (-1: the plan's). */
+int opj_set_plan_calendar(opj_doc *doc, int cal);
+int opj_set_task_calendar(opj_doc *doc, int row, int cal);
+
 /* ---- The task sheet ---- */
 
 enum {

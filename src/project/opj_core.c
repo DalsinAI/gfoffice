@@ -376,6 +376,209 @@ int opj_set_notes(opj_doc *doc, int row, const char *notes)
     return commit(doc, work);
 }
 
+/* ---- Change Working Time ---- */
+
+static const char *skip_blanks(const char *s)
+{
+    while (*s == ' ' || *s == ',' || *s == ';' || *s == '\t') s++;
+    return s;
+}
+
+/* "8", "08:00", "17:30", "24:00" into minutes after midnight; 1 when it is one. */
+static int take_clock(const char **s, long *minutes)
+{
+    const char *p = *s;
+    long h = 0, m = 0;
+    int k = 0;
+    while (*p >= '0' && *p <= '9' && k < 3) h = h * 10 + (*p++ - '0'), k++;
+    if (!k) return 0;
+    if (*p == ':' || *p == '.') {
+        p++;
+        if (!(p[0] >= '0' && p[0] <= '5' && p[1] >= '0' && p[1] <= '9')) return 0;
+        m = (p[0] - '0') * 10 + (p[1] - '0');
+        p += 2;
+    }
+    if (h > 24 || (h == 24 && m)) return 0;
+    *minutes = h * 60 + m;
+    *s = p;
+    return 1;
+}
+
+static int word_ci(const char *s, const char *w)
+{
+    while (*w && (*s == *w || *s == *w - 32)) s++, w++;
+    return !*w && !*skip_blanks(s);
+}
+
+int opj_hours_parse(const char *text, owf_pday *out)
+{
+    unsigned short pairs[2 * OWF_PCAL_SPANS];
+    owf_pday day;
+    int n = 0;
+    const char *s;
+    if (!text || !out) return 0;
+    s = skip_blanks(text);
+    if (!*s || word_ci(s, "off")) {
+        memset(out, 0, sizeof *out);
+        return 1;
+    }
+    while (*s) {
+        long a, b;
+        if (n == OWF_PCAL_SPANS || !take_clock(&s, &a)) return 0;
+        while (*s == ' ') s++;
+        if (*s != '-') return 0;
+        s++;
+        while (*s == ' ') s++;
+        if (!take_clock(&s, &b) || b <= a || (n && a < pairs[2 * n - 1])) return 0;
+        pairs[2 * n] = (unsigned short)a;
+        pairs[2 * n + 1] = (unsigned short)b;
+        n++;
+        if (*s && *s != ' ' && *s != ',' && *s != ';' && *s != '\t') return 0;
+        s = skip_blanks(s);
+    }
+    memset(&day, 0, sizeof day);
+    day.nspans = (unsigned char)n;
+    for (n = 0; n < day.nspans; n++) {
+        day.from[n] = pairs[2 * n];
+        day.to[n] = pairs[2 * n + 1];
+    }
+    *out = day;
+    return 1;
+}
+
+void opj_hours_text(const owf_pday *h, char *out)
+{
+    int i;
+    size_t at = 0;
+    if (!h || !h->nspans) {
+        strcpy(out, "off");
+        return;
+    }
+    for (i = 0; i < h->nspans && i < OWF_PCAL_SPANS; i++)
+        at += (size_t)sprintf(out + at, "%s%02u:%02u-%02u:%02u", i ? ", " : "", h->from[i] / 60u, h->from[i] % 60u,
+                              h->to[i] / 60u, h->to[i] % 60u);
+}
+
+static int same_name_ci(const char *a, const char *b)
+{
+    int x, y;
+    if (!a || !b) return 0;
+    for (;; a++, b++) {
+        x = *a >= 'A' && *a <= 'Z' ? *a + 32 : *a;
+        y = *b >= 'A' && *b <= 'Z' ? *b + 32 : *b;
+        if (x != y) return 0;
+        if (!x) return 1;
+    }
+}
+
+int opj_find_calendar(const owf_project *p, const char *name)
+{
+    const char *s;
+    long n = 0;
+    int i, k = 0;
+    if (!p || !name) return -1;
+    for (s = name; *s >= '0' && *s <= '9' && k < 6; s++, k++) n = n * 10 + (*s - '0');
+    if (k && !*s) return n >= 1 && n <= p->ncalendars ? (int)n - 1 : -1;
+    for (i = 0; i < p->ncalendars; i++)
+        if (same_name_ci(p->calendars[i].name, name)) return i;
+    return -1;
+}
+
+/* A copy to edit for calendar cal, or NULL as begin. */
+static owf_project *begin_cal(opj_doc *doc, int cal, int *rc)
+{
+    owf_project *work;
+    *rc = OWF_ERR_FORMAT;
+    if (!doc || cal < 0 || cal >= doc->plan->ncalendars) return NULL;
+    if (!(work = owf_project_copy(doc->plan))) *rc = OWF_ERR_MEMORY;
+    return work;
+}
+
+static int pairs_of(const owf_pday *h, unsigned short *pairs)
+{
+    int i;
+    for (i = 0; i < h->nspans; i++) pairs[2 * i] = h->from[i], pairs[2 * i + 1] = h->to[i];
+    return h->nspans;
+}
+
+int opj_add_calendar(opj_doc *doc, const char *name, int from, int *index)
+{
+    owf_project *work;
+    owf_pcal *c;
+    const char *s = name;
+    int at, i;
+    if (!doc || !name) return OWF_ERR_FORMAT;
+    while (*s == ' ') s++;
+    if (!*s || opj_find_calendar(doc->plan, name) >= 0 || (from >= doc->plan->ncalendars) || from < -1)
+        return OWF_ERR_FORMAT;
+    for (i = 0; s[i]; i++)
+        if (s[i] < '0' || s[i] > '9') break;
+    if (!s[i]) return OWF_ERR_FORMAT;    /* a number alone would be read as a calendar's number */
+    if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
+    if ((at = owf_project_add_calendar(work, name)) < 0) return fail(work, OWF_ERR_MEMORY);
+    c = &work->calendars[at];
+    if (from >= 0) {
+        const owf_pcal *f = &work->calendars[from];
+        unsigned short pairs[2 * OWF_PCAL_SPANS];
+        int d;
+        for (d = 0; d < 7; d++) owf_pcal_set_week(c, d, pairs_of(&f->week[d], pairs), pairs);
+        for (i = 0; i < f->nexceptions; i++)
+            if (owf_pcal_set_exception(c, f->exceptions[i].day, pairs_of(&f->exceptions[i].hours, pairs), pairs) != OWF_OK)
+                return fail(work, OWF_ERR_MEMORY);
+    }
+    if (index) *index = at;
+    return commit(doc, work);
+}
+
+int opj_set_week_hours(opj_doc *doc, int cal, int weekday, const char *hours)
+{
+    owf_pday h;
+    unsigned short pairs[2 * OWF_PCAL_SPANS];
+    int rc;
+    owf_project *work;
+    if (weekday < 0 || weekday > 6 || !opj_hours_parse(hours, &h)) return OWF_ERR_FORMAT;
+    if (!(work = begin_cal(doc, cal, &rc))) return rc;
+    if ((rc = owf_pcal_set_week(&work->calendars[cal], weekday, pairs_of(&h, pairs), pairs)) != OWF_OK) return fail(work, rc);
+    return commit(doc, work);
+}
+
+int opj_set_day_hours(opj_doc *doc, int cal, long first, long last, const char *hours)
+{
+    owf_pday h;
+    unsigned short pairs[2 * OWF_PCAL_SPANS];
+    int rc, n = 0;
+    long d;
+    owf_project *work;
+    if (first < 0 || last < first || last - first >= 3660 || (hours && !opj_hours_parse(hours, &h))) return OWF_ERR_FORMAT;
+    if (!(work = begin_cal(doc, cal, &rc))) return rc;
+    if (hours) n = pairs_of(&h, pairs);
+    for (d = first; d <= last; d++) {
+        if (!hours) owf_pcal_clear_exception(&work->calendars[cal], d);
+        else if ((rc = owf_pcal_set_exception(&work->calendars[cal], d, n, pairs)) != OWF_OK) return fail(work, rc);
+    }
+    return commit(doc, work);
+}
+
+int opj_set_plan_calendar(opj_doc *doc, int cal)
+{
+    int rc;
+    owf_project *work = begin_cal(doc, cal, &rc);
+    if (!work) return rc;
+    work->calendar = cal;
+    return commit(doc, work);
+}
+
+int opj_set_task_calendar(opj_doc *doc, int row, int cal)
+{
+    int rc;
+    owf_project *work;
+    if (!doc || cal < -1 || cal >= doc->plan->ncalendars) return OWF_ERR_FORMAT;
+    if (!(work = begin(doc, row, &rc))) return rc;
+    if (work->tasks[row].summary) return fail(work, OWF_ERR_FORMAT);
+    work->tasks[row].calendar = cal;
+    return commit(doc, work);
+}
+
 /* ---- Dates as the sheet shows them ---- */
 
 static const char weekday_names[7][4] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };

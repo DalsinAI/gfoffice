@@ -62,6 +62,10 @@ Amiga (start GFOpenProject, then `rx project.rexx RAM:`).
 | FINISH | | the plan's finish, `Fri 20/11/26 17:00` |
 | CRITICAL | | the critical rows (not summaries), `1 2 3` |
 | COLUMN | `COLUMN/A,SHOW/S,HIDE/S` | `1` when the window's table shows the column, after SHOW or HIDE; 5 when it would hide the last column shown, or there is no window; 10 for no such column. The column by its title (`"Resource Names"`) or a short name (`Resources`, `Percent`, `StartVariance`, `Constraint`) |
+| CALENDARS | | how many base calendars |
+| ADDCALENDAR | `NAME/A,FROM/K` | a new calendar's number; a copy of calendar FROM (its week and holidays), or Standard's hours. 10 for a name in use, empty, or a number |
+| WORKTIME | `CALENDAR/A,DAY/A,TO/K,HOURS/F` | Change Working Time. DAY is a weekday (`Mon`, `Friday`: every week) or a date (that day, or through TO). HOURS is `08:00-12:00, 13:00-17:00`, `off`, or for dates `DEFAULT` (back to the week's hours). Without HOURS: the day's hours, `08:00-12:00, 13:00-17:00` or `off`. CALENDAR by name or number |
+| SETCALENDAR | `CALENDAR/A,ROW/K/N` | the plan's calendar, or with ROW that task's own (CALENDAR `""` or `-`: the plan's again) |
 
 Columns are named by their titles, with case, spaces and punctuation ignored. For example `Name`,
 `"Task Name"`, `Duration`, `Start`, `Finish`, `Predecessors`, `"% Complete"` or `percent`, `WBS`,
