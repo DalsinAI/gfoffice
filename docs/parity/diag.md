@@ -17,11 +17,12 @@ other sheets.
 
 | Date | Main | Version | Against draw.io | Against Dia | What moved it |
 | --- | --- | --- | ---: | ---: | --- |
+| 16 Nov 2026 | a49df06 | GFOpenDiag 0.1.0 | **63%** | **69%** | #207, #208, #210 and #314 (Mermaid, DOT, GraphML and Excalidraw export); #316 (Cut, Copy, Paste, Duplicate), #317 (drawing order, Group, Ungroup), #318 (Align, Distribute) and #320 (their Edit and Arrange menus and ARexx commands) |
 | 16 Nov 2026 | e646263 | GFOpenDiag 0.1.0 | **54%** | **59%** | First score. D1 and D2 (the model, `.drawio` read and write, SVG and PNG with the diagram inside), #189 (D3, the editing core), #192 (D4, the canvas), #195 (Style window), #196 (layers), #197 (shapes palette), #198, #199, #200 and #201 (D5: mind map, its keys, outlines, Import and Export Outline), #202 (PDF), #203 (ARexx fixes), #204 (PNG and IFF ILBM), #205 (EPS) |
 
 The Dia score is higher because Dia has no pages, no mind maps and a smaller
-shape library, so GFOpenDiag already meets it in those rows. Dia is ahead in
-arranging (group, align, z-order), connector kinds and its own file format.
+shape library, so GFOpenDiag already meets it in those rows. Dia is still ahead
+in connector kinds and its own file format.
 
 ## Feature rows
 
@@ -36,14 +37,14 @@ The credit is how much of that area GFOpenDiag does against each comparator.
 | Connectors | 12 | Part | 60% | 60% | Connector tool joins two shapes or leaves an end loose; ends stay glued and follow when shapes move; elbow (orthogonal) routing from the facing sides or named ports; arrowheads; connector labels | Straight and curved kinds to pick; dragging waypoints and bends; picking a port by mouse; jumps at crossings; routing round shapes |
 | Text and labels | 6 | Part | 50% | 70% | Double-click or Return types a label; labels wrap and align as draw.io's; font size and colour; draw.io's HTML labels shown as text | Bold, italic and mixed runs in a label; rotated text; spelling |
 | Style | 8 | Part | 55% | 70% | Style window for one or many cells: fill, line colour, line width, font colour, font size, dashed, rounded; one OK is one Undo step | Shadow, opacity, gradients, rotation and flip, line ends to choose, copy style |
-| Arrange and clipboard | 10 | Gap | 0% | 0% | | Cut, Copy, Paste and Duplicate; group and ungroup; bring to front and send to back; align and distribute; rotate |
+| Arrange and clipboard | 10 | Part | 85% | 90% | Cut, Copy, Paste and Duplicate, keeping connectors (one to a shape left behind keeps its end loose), and between diagrams; Bring to Front, Send to Back, Bring Forward and Send Backward; Group and Ungroup, as draw.io writes groups; Align (sides, centres, middles) and Distribute across or down; each one Undo step, in the Edit and Arrange menus and by ARexx | Rotate; copying to other programs through the Amiga clipboard |
 | Pages and layers | 6 | Part | 80% | 100% | Several pages, Add Page, Next and Previous Page; a Layers window to add, rename, show, hide and lock layers (nothing new lands on a hidden or locked layer) | Deleting, renaming and reordering pages in the window. Dia has no pages, so it is met there |
 | Layout and mind maps | 6 | Part | 50% | 80% | Mind-map mode: new map, add child and siblings, fold, move up and down, delete a branch, lay out (one Undo step), keys as in the design, locked nodes kept in place | Tree, layered and organic layouts for ordinary diagrams |
-| Export | 8 | Part | 80% | 70% | SVG and PNG with the diagram inside (both reopen as diagrams), PDF, EPS, IFF ILBM; outlines as FreeMind `.mm`, OPML and Markdown | JPEG, HTML, VSDX; a page size and scale requester |
-| Import and other formats | 6 | Part | 40% | 30% | `.drawio` and `.xml`, draw.io's own SVG and PNG, outlines from `.mm`, OPML and Markdown | VSDX, `.dia`, ODG, CSV; Mermaid, DOT, GraphML and Excalidraw in (they are export only, and waiting to merge) |
+| Export | 8 | Part | 90% | 80% | SVG and PNG with the diagram inside (both reopen as diagrams), PDF, EPS, IFF ILBM; Mermaid, Graphviz DOT, GraphML and Excalidraw; outlines as FreeMind `.mm`, OPML and Markdown | JPEG, HTML, VSDX; a page size and scale requester |
+| Import and other formats | 6 | Part | 40% | 30% | `.drawio` and `.xml`, draw.io's own SVG and PNG, outlines from `.mm`, OPML and Markdown | VSDX, `.dia`, ODG, CSV; Mermaid, DOT, GraphML and Excalidraw in (they are export only) |
 | Print | 2 | Gap | 0% | 0% | ARexx PRINT says to export and print the SVG | Printing from the window |
 | Find | 2 | Gap | 0% | 0% | | Find and replace in labels |
-| **Total** | **100** | | **54%** | **59%** | | |
+| **Total** | **100** | | **63%** | **69%** | | |
 
 The ARexx port (about 60 commands, tested by `tests/arexx/diag.rexx`) is not
 counted: draw.io and Dia have no ARexx, and their plugin and Python scripting
@@ -51,17 +52,12 @@ is outside the everyday workflow scored here.
 
 ## Waiting to merge
 
-These are open PRs, so they are not scored yet:
-
-- #207: Mermaid and Graphviz DOT export.
-- #208: GraphML export.
-- #210: Excalidraw export, with a follow-up branch (`team2/gfopendiag-d6excalfix-20261114`).
-
-When all three land, Export moves from 80% to about 90% of its row, which is
-about one point more on each total.
+Nothing for GFOpenDiag is waiting to merge. The menus from #320 still owe a lab
+run, and the m68k build of #316 to #320 is owed until the os32-gcc16 stove is
+back after the re-wire.
 
 ## The three biggest gaps
 
-1. Arrange and clipboard: Cut, Copy, Paste, Duplicate, group, z-order, align and distribute (10 points).
-2. Shapes and stencils: only 8 flowchart shapes; no UML, network or Amiga sets and no pictures (9 points against draw.io).
-3. Connectors: no straight or curved kind, no waypoint editing and no port picking by mouse (5 points).
+1. Shapes and stencils: only 8 flowchart shapes; no UML, network or Amiga sets and no pictures (9 points against draw.io).
+2. Connectors: no straight or curved kind, no waypoint editing and no port picking by mouse (5 points).
+3. Style: no shadow, opacity, gradients, rotation or line ends to choose (4 points against draw.io).
