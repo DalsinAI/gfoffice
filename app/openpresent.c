@@ -74,10 +74,10 @@
 #include "openpresentation_core.h"
 #include "ow_spell_dict.h"
 #include "ow_clipboard.h"
-#ifdef OPENPUBLISHER
-#include "openpublisher_core.h"
-#include "openpublisher_merge.h"
-#include "openpublisher_template.h"
+#ifdef OPENPRESSMASTER
+#include "openpressmaster_core.h"
+#include "openpressmaster_merge.h"
+#include "openpressmaster_template.h"
 #endif
 #include "ow_layout.h"
 #include "owf_pdf.h"
@@ -101,10 +101,11 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#ifdef OPENPUBLISHER
-#define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.30 (15.11.2026)"
-#define REXX_PORT_NAME "GFOPENPUBLISHER"
+#ifdef OPENPRESSMASTER
+#define PROGRAM "GFOpenPressmaster"
+#define VERSION_TEXT "GFOpenPressmaster 0.3.31 (16.11.2026)"
+#define REXX_PORT_NAME "GFOPENPRESSMASTER"
+#define REXX_OLD_PORT_NAME "GFOPENPUBLISHER"         /* the name before 16 Nov 2026, kept so old scripts run */
 #define UNIT "Page"
 #define UNIT_UPPER "PAGE"
 #define UNIT_LOWER "page"
@@ -168,7 +169,7 @@ enum {
 static struct NewMenu menus[] = {
     { NM_TITLE, "Project", NULL, 0, 0, NULL },
     { NM_ITEM, "New", "N", 0, 0, (APTR)M_NEW },
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     { NM_ITEM, "New from Template...", NULL, 0, 0, (APTR)M_NEW_TEMPLATE },
 #endif
     { NM_ITEM, "Open...", "O", 0, 0, (APTR)M_OPEN },
@@ -177,11 +178,11 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Print...", "P", 0, 0, (APTR)M_PRINT },
     { NM_ITEM, "Export PDF...", NULL, 0, 0, (APTR)M_PDF },
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     { NM_ITEM, "Export PDF for a Printer...", NULL, 0, 0, (APTR)M_PDF_PRINTER },
 #endif
     { NM_ITEM, "Export as Pictures...", NULL, 0, 0, (APTR)M_PICTURES },
-#ifndef OPENPUBLISHER
+#ifndef OPENPRESSMASTER
     { NM_ITEM, "Export Handouts...", NULL, 0, 0, (APTR)M_HANDOUTS },
 #endif
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -273,7 +274,7 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Insert Column Right", NULL, 0, 0, (APTR)M_TABLE_INSERT_COLUMN },
     { NM_SUB, "Delete Current Column", NULL, 0, 0, (APTR)M_TABLE_DELETE_COLUMN },
     { NM_ITEM, "Table Cell Style...", NULL, 0, 0, (APTR)M_TABLE_STYLE },
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Text Wrapping", NULL, 0, 0, NULL },
     { NM_SUB, "None", NULL, 0, 0, (APTR)M_WRAP_NONE },
@@ -295,7 +296,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Hide " UNIT, NULL, 0, 0, (APTR)M_HIDE_SLIDE },
     { NM_ITEM, "Show " UNIT, NULL, 0, 0, (APTR)M_SHOW_SLIDE },
     { NM_ITEM, UNIT " Transition...", NULL, 0, 0, (APTR)M_TRANSITION },
-#ifndef OPENPUBLISHER
+#ifndef OPENPRESSMASTER
     { NM_ITEM, "Custom Animation...", NULL, 0, 0, (APTR)M_CUSTOM_ANIMATION },
     { NM_ITEM, UNIT " Design...", NULL, 0, 0, (APTR)M_SLIDE_DESIGN },
     { NM_ITEM, "Insert " UNIT "s from File...", NULL, 0, 0, (APTR)M_INSERT_FILE },
@@ -309,7 +310,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Outline", NULL, CHECKIT, ~8 & 15, (APTR)M_VIEW_OUTLINE },
     { NM_ITEM, UNIT " Sorter", NULL, CHECKIT, ~2 & 15, (APTR)M_VIEW_SORTER },
     { NM_ITEM, "Notes", NULL, CHECKIT, ~4 & 15, (APTR)M_VIEW_NOTES },
-#ifndef OPENPUBLISHER
+#ifndef OPENPRESSMASTER
     { NM_ITEM, "Master " UNIT "s", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)M_VIEW_MASTER },
 #endif
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -346,7 +347,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Spelling...", "L", 0, 0, (APTR)M_SPELLING },
     { NM_ITEM, "Spelling as You Type", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)M_SPELL_AS_YOU_TYPE },
 
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     { NM_TITLE, "Mailings", NULL, 0, 0, NULL },
     { NM_ITEM, "Data Source...", NULL, 0, 0, (APTR)M_MERGE_SOURCE },
     { NM_ITEM, "Insert Merge Field...", NULL, 0, 0, (APTR)M_MERGE_FIELD },
@@ -406,6 +407,9 @@ static int quit_now;
 static int rexx_busy, rexx_noted;
 static char rexx_noting[300], rexx_lasterror[300];
 static struct MsgPort *rexx_port;
+#ifdef REXX_OLD_PORT_NAME
+static struct MsgPort *rexx_old_port;               /* the old name, sharing rexx_port's signal */
+#endif
 static char rexx_name[24];                           /* GFOPENPRESENTATION, or .2 for a second copy */
 
 /* src into dst (n bytes), cut short to fit */
@@ -1082,7 +1086,7 @@ out:
     return ok;
 }
 
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
 static int wrap_distance_requester(int gap[4])
 {
     struct Gadget *list = NULL, *last, *gtop, *gright, *gbottom, *gleft, *gok, *gcancel;
@@ -3204,7 +3208,7 @@ static void edit_current_transition(void)
 static const char *anim_start_words[] = { "CLICK", "WITH", "AFTER" };
 static const char *anim_dir_words[] = { "LEFT", "RIGHT", "TOP", "BOTTOM" };
 
-#ifndef OPENPUBLISHER
+#ifndef OPENPRESSMASTER
 /* An object's name in lists: its own, else its kind and number ("3 Title", "5 Shape"). */
 static void anim_obj_label(const owf_slide *sl, int k, char *out, size_t cap)
 {
@@ -3250,7 +3254,7 @@ static void anim_label(const owf_deck *d, int slide, int i, char *out, size_t ca
     snprintf(out, cap, "%d. %s: %s, %s", i + 1, obj, label ? label : (a->preset ? a->preset : "Kept effect"),
              starts[a->start <= OWF_START_AFTER ? a->start : 0]);
 }
-#endif /* OPENPUBLISHER */
+#endif /* OPENPRESSMASTER */
 
 static void anim_changed(const char *message)
 {
@@ -3261,7 +3265,7 @@ static void anim_changed(const char *message)
     update_edit_tools();
 }
 
-#ifndef OPENPUBLISHER
+#ifndef OPENPRESSMASTER
 #define ANIM_LIST_MAX 64
 
 static void custom_animation_window(void)
@@ -3447,7 +3451,7 @@ out:
     if (changed) draw_all();
 }
 
-#endif /* OPENPUBLISHER */
+#endif /* OPENPRESSMASTER */
 
 /* ---- The slide sorter's commands: on every picked slide, each one Undo step ---- */
 
@@ -3945,7 +3949,7 @@ static int slides_paste(void)
     return 0;
 }
 
-#ifndef OPENPUBLISHER
+#ifndef OPENPRESSMASTER
 static int ask_file(int save, const char *title, const char *initial, char *out, size_t out_size);
 
 /* Slide > Insert Slides from File...: every slide of another ODP or PPTX
@@ -6502,7 +6506,7 @@ static void edit_selected_text_frame(void)
     draw_status();
 }
 
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
 static void set_selected_wrap(owf_frame_wrap wrap)
 {
     owf_obj *o;
@@ -7541,21 +7545,21 @@ static void open_deck(const char *path)
     master_view_leave();
     owf_deck *d = NULL;
     owf_report *report = owf_report_new();
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     int version = OWF_PUB_UNKNOWN;
 #else
     const owf_deck_format *used = NULL;
 #endif
     char msg[600];
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     int rc = opp_import_pub_file(path, &d, report, &version);
 #else
     int rc = owf_import_deck_file(path, NULL, &d, report, &used);
 #endif
     if (rc != OWF_OK || !d) {
         snprintf(msg, sizeof msg, PROGRAM " could not open %.200s.\n\n%.200s", leaf(path),
-#ifdef OPENPUBLISHER
-                 rc == OWF_ERR_FORMAT ? "It is not a Microsoft Publisher file GFOpenPublisher reads." : owf_error_text(rc));
+#ifdef OPENPRESSMASTER
+                 rc == OWF_ERR_FORMAT ? "It is not a Microsoft Publisher file GFOpenPressmaster reads." : owf_error_text(rc));
 #else
                  rc == OWF_ERR_FORMAT ? "It is not a presentation GFOpenPresentation reads (ODP or PPTX)." : owf_error_text(rc));
 #endif
@@ -7563,7 +7567,7 @@ static void open_deck(const char *path)
         owf_report_free(report);
         return;
     }
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     set_deck(d, path, "PUB");
     snprintf(msg, sizeof msg, "%s, %d page%s%s.", owf_pub_version_name(version), d->nslides,
              d->nslides == 1 ? "" : "s", owf_report_count(report) ? "; some parts shown simpler" : "");
@@ -7576,7 +7580,7 @@ static void open_deck(const char *path)
     owf_report_free(report);
 }
 
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
 /* ---- Mailings: mail merge (src/pub/opp_merge.c) ----
  * The data source is a CSV file whose first line names the columns. Merge fields show the column's name in
  * guillemets, or the values of the record shown; Merge to New Publication makes the pages once for each record
@@ -7832,7 +7836,7 @@ static void new_deck(void)
     owf_deck *d;
     if (!confirm_discard()) return;
     d = owf_deck_new(
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
                      11906, 16838
 #else
                      OWF_DECK_16_9_WIDTH, OWF_DECK_16_9_HEIGHT
@@ -7848,7 +7852,7 @@ static void new_deck(void)
     relayout();
 }
 
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
 /* A new publication from built-in template i: OWF_OK or the error */
 static int template_now(int i)
 {
@@ -7901,7 +7905,7 @@ static int has_extension(const char *path, const char *ext)
 /* The format a name saves as: PPTX for ".pptx" (GFOpenPresentation), ODP otherwise. */
 static const char *format_for(const char *path)
 {
-#ifndef OPENPUBLISHER
+#ifndef OPENPRESSMASTER
     if (has_extension(path, ".pptx")) return "PPTX";
 #endif
     (void)path;
@@ -7922,7 +7926,7 @@ static int save_to(const char *path)
     const char *format = format_for(path);
     char msg[600];
     int rc, simpler;
-#ifndef OPENPUBLISHER
+#ifndef OPENPRESSMASTER
     if (!strcmp(format, "PPTX")) {
         unsigned char *data = NULL;
         size_t length = 0;
@@ -7964,7 +7968,7 @@ static void do_save_as(void)
     if (!deck) return;
     with_extension(current_path, ext, name, sizeof name);
     if (ask_file(1, "Save the " DOCUMENT_LOWER " (.odp"
-#ifndef OPENPUBLISHER
+#ifndef OPENPRESSMASTER
                  " or .pptx"
 #endif
                  ")", name, path, sizeof path)) {
@@ -8031,7 +8035,7 @@ static void do_export_pdf(void)
     draw_status();
 }
 
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
 /* Project > Export PDF for a Printer...: crop marks and a 3 mm bleed round every page */
 static void do_export_pdf_printer(void)
 {
@@ -8209,10 +8213,10 @@ static int do_print(void)
 static void about(void)
 {
     char text[400];
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     snprintf(text, sizeof text,
              VERSION_TEXT "\nThe GFOffice Suite's desktop publisher.\n\nOpens Microsoft Publisher files as positioned pages,\n"
-             "saves ODP, exports PDF and prints through GFOpenPrint.\n\nPublisher core %s, presentation core %s, libowf %s, GFOpenLayout %s.\n"
+             "saves ODP, exports PDF and prints through GFOpenPrint.\n\nPressmaster core %s, presentation core %s, libowf %s, GFOpenLayout %s.\n"
              "MIT, Copyright (c) 2026 AmiCradle Team.",
              OPP_CORE_VERSION, OPR_CORE_VERSION, OWF_VERSION, OL_VERSION);
 #else
@@ -8337,14 +8341,14 @@ static void menu_action(ULONG id)
     case M_VIEW_NORMAL: master_view_leave(); set_view(0); break;
     case M_VIEW_MASTER: if (mview) master_view_leave(); else master_view_enter(); break;
     case M_SLIDE_DESIGN: slide_design(); break;
-#ifndef OPENPUBLISHER
+#ifndef OPENPRESSMASTER
     case M_INSERT_FILE: insert_from_file(NULL); break;
 #endif
     case M_VIEW_SORTER: set_view(1); break;
     case M_VIEW_NOTES: set_view(2); break;
     case M_VIEW_OUTLINE: set_view(3); break;
     case M_NEW: new_deck(); break;
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     case M_NEW_TEMPLATE: new_from_template(); break;
 #endif
     case M_OPEN: do_open(); break;
@@ -8352,7 +8356,7 @@ static void menu_action(ULONG id)
     case M_SAVE_AS: do_save_as(); break;
     case M_PRINT: pdf_pages = notes_view ? OPR_PDF_NOTES : OPR_PDF_SLIDES; do_print(); pdf_pages = OPR_PDF_SLIDES; break;
     case M_PDF: do_export_pdf(); break;
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     case M_PDF_PRINTER: do_export_pdf_printer(); break;
 #endif
     case M_PICTURES: export_pictures(NULL, 0, 0); break;
@@ -8429,14 +8433,14 @@ static void menu_action(ULONG id)
     case M_TABLE_INSERT_COLUMN: edit_table_column(0); break;
     case M_TABLE_DELETE_COLUMN: edit_table_column(1); break;
     case M_TABLE_STYLE: edit_table_style(); break;
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     case M_WRAP_NONE: set_selected_wrap(OWF_WRAP_NONE); break;
     case M_WRAP_SQUARE: set_selected_wrap(OWF_WRAP_SQUARE); break;
     case M_WRAP_TIGHT: set_selected_wrap(OWF_WRAP_TIGHT); break;
     case M_WRAP_TOP_BOTTOM: set_selected_wrap(OWF_WRAP_TOP_BOTTOM); break;
     case M_WRAP_DISTANCE: edit_selected_wrap_distance(); break;
     case M_LINK_TEXT_NEXT: link_selected_text_frame(); break;
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     case M_MERGE_SOURCE: case M_MERGE_FIELD: case M_MERGE_NEXT: case M_MERGE_PREV: case M_MERGE_NAMES:
     case M_MERGE_PAGES: case M_MERGE_CATALOG: do_merge((int)id); break;
 #endif
@@ -8451,7 +8455,7 @@ static void menu_action(ULONG id)
     case M_HIDE_SLIDE: set_current_hidden(1); break;
     case M_SHOW_SLIDE: set_current_hidden(0); break;
     case M_TRANSITION: edit_current_transition(); break;
-#ifndef OPENPUBLISHER
+#ifndef OPENPRESSMASTER
     case M_CUSTOM_ANIMATION: custom_animation_window(); break;
 #endif
     case M_MOVE_SLIDE_UP: move_slide(-1); break;
@@ -8747,7 +8751,7 @@ static void events(void)
 
 /* The part of the screen a window may have: below the title bar, less GFOpenDock's strip when it publishes
  * one (ENV:GFOpenDock/Free), as GFOpenWrite's free_area. */
-/* ---- ARexx: the GFOPENPRESENTATION port (GFOPENPUBLISHER in GFOpenPublisher) ---- */
+/* ---- ARexx: the GFOPENPRESENTATION port (GFOPENPRESSMASTER in GFOpenPressmaster) ---- */
 
 static const char *skip_space(const char *s)
 {
@@ -8797,7 +8801,7 @@ static int rexx_do_command(const char *command, char **result_out)
                   "SAVEAS EXPORT PRINT " UNIT_UPPER "S " UNIT_UPPER " NEW" UNIT_UPPER " DELETE" UNIT_UPPER " VIEW OUTLINE GETNOTES SETNOTES PICK PICKED MOVEPICKED COPYPICKED DELETEPICKED HIDEPICKED "
                   "SHOWPICKED OBJECTS PICKOBJECTS PICKEDOBJECTS OBJECTBOX MOVEOBJECTS ALIGN DISTRIBUTE GROUP UNGROUP DELETEOBJECTS GETTEXT "
                   "SETTEXT SPELL UNDO REDO QUIT"
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
                   " MERGESOURCE MERGEFIELD MERGEFIELDS MERGERECORD MERGEPAGES MERGECATALOG NEWTEMPLATE"
 #endif
                   );
@@ -8900,7 +8904,7 @@ static int rexx_do_command(const char *command, char **result_out)
                                                               : notes_view ? "NOTES" : outline_view ? "OUTLINE"
                                                               : mview ? "MASTER" : "NORMAL");
         else if (!strcasecmp(arg, "MASTER")) {
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
             ok = 0; rexx_copy(result_text, sizeof result_text, "No Master view here");
 #else
             master_view_enter(); ok = mview != NULL;
@@ -8938,7 +8942,7 @@ static int rexx_do_command(const char *command, char **result_out)
         ok = slides_paste() == 0;
         if (ok) snprintf(result_text, sizeof result_text, "%d", current + 1);
         else rexx_copy(result_text, sizeof result_text, "Nothing to paste");
-#ifndef OPENPUBLISHER
+#ifndef OPENPRESSMASTER
     } else if (starts_word_ci(command, "INSERTFILE", &arg)) {    /* INSERTFILE path: its slides after this one */
         int n = *arg ? insert_from_file(arg) : -1;
         ok = n >= 0;
@@ -9331,7 +9335,7 @@ static int rexx_do_command(const char *command, char **result_out)
             }
             rexx_copy(result_text, sizeof result_text, ok ? "OK" : "Out of memory");
         }
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     } else if (starts_word_ci(command, "MERGESOURCE", &arg)) {   /* MERGESOURCE path: a CSV data source */
         char msg[240];
         int rc;
@@ -9444,10 +9448,20 @@ static int rexx_do_command(const char *command, char **result_out)
     return ok ? RX_OK : rc_fail;
 }
 
+/* the next message on the port, or on the old-name port */
+static struct RexxMsg *rexx_next(void)
+{
+    struct RexxMsg *rm = rexx_port ? (struct RexxMsg *)GetMsg(rexx_port) : NULL;
+#ifdef REXX_OLD_PORT_NAME
+    if (!rm && rexx_old_port) rm = (struct RexxMsg *)GetMsg(rexx_old_port);
+#endif
+    return rm;
+}
+
 static void rexx_messages(void)
 {
     struct RexxMsg *rm;
-    while (rexx_port && (rm = (struct RexxMsg *)GetMsg(rexx_port)) != NULL) {
+    while ((rm = rexx_next()) != NULL) {
         char *res = NULL;
         int rc;
         rexx_busy = 1;
@@ -9479,6 +9493,22 @@ static void rexx_open(void)
     if (n == 10) { Permit(); DeleteMsgPort(p); return; }
     p->mp_Node.ln_Name = rexx_name;
     AddPort(p);
+#ifdef REXX_OLD_PORT_NAME
+    /* the first copy also answers to the old name; the port signals the same bit, so one Wait covers both */
+    if (n == 1 && !FindPort((STRPTR)REXX_OLD_PORT_NAME)) {
+        struct MsgPort *o = (struct MsgPort *)AllocVec(sizeof *o, MEMF_PUBLIC | MEMF_CLEAR);
+        if (o) {
+            o->mp_Node.ln_Type = NT_MSGPORT;
+            o->mp_Node.ln_Name = (char *)REXX_OLD_PORT_NAME;
+            o->mp_Flags = PA_SIGNAL;
+            o->mp_SigBit = p->mp_SigBit;
+            o->mp_SigTask = FindTask(NULL);
+            NewList(&o->mp_MsgList);
+            AddPort(o);
+            rexx_old_port = o;
+        }
+    }
+#endif
     Permit();
     rexx_port = p;
 }
@@ -9488,13 +9518,20 @@ static void rexx_close(void)
     struct RexxMsg *rm;
     if (!rexx_port) return;
     RemPort(rexx_port);
-    while ((rm = (struct RexxMsg *)GetMsg(rexx_port)) != NULL) {
+#ifdef REXX_OLD_PORT_NAME
+    if (rexx_old_port) RemPort(rexx_old_port);
+#endif
+    while ((rm = rexx_next()) != NULL) {
         rm->rm_Result1 = RC_FATAL;
         rm->rm_Result2 = 0;
         ReplyMsg((struct Message *)rm);
     }
     DeleteMsgPort(rexx_port);
     rexx_port = NULL;
+#ifdef REXX_OLD_PORT_NAME
+    if (rexx_old_port) FreeVec(rexx_old_port);       /* its signal bit is rexx_port's, freed above */
+    rexx_old_port = NULL;
+#endif
 }
 
 static void free_area(int *l, int *t, int *w, int *h)
@@ -9607,7 +9644,7 @@ static int window_main(int argc, char **argv)
     }
     {
         owf_deck *d = owf_deck_new(
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
                                       11906, 16838
 #else
                                       OWF_DECK_16_9_WIDTH, OWF_DECK_16_9_HEIGHT

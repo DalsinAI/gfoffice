@@ -1,5 +1,5 @@
 /*
- * libowf: a Windows metafile player (Design-OpenPublisher.md, 7). There is no metafile datatype for OS 3.2, so a
+ * libowf: a Windows metafile player (Design-OpenPressmaster.md, 7). There is no metafile datatype for OS 3.2, so a
  * picture in WMF form (Publisher's .pub, PowerPoint's and OpenOffice's slides) is played here: its records become
  * lines, polygons, rectangles, ellipses and text in a box, which the caller draws (the page PDF writer, owf_pdf.c;
  * GFOpenLayout's screen next). Written from the format's published specification ([MS-WMF], Windows Metafile

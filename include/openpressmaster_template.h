@@ -1,12 +1,12 @@
 /*
- * GFOpenPublisher's built-in publication templates (src/pub/opp_template.c):
+ * GFOpenPressmaster's built-in publication templates (src/pub/opp_template.c):
  * a new publication of a known kind (flyer, postcard, business card, folded
  * card, newsletter, letterhead, catalog page), its page size and its frames
  * made here, with the suite's own placeholder text and colours. MIT,
  * Copyright (c) 2026 AmiCradle Team.
  */
-#ifndef OPENPUBLISHER_TEMPLATE_H
-#define OPENPUBLISHER_TEMPLATE_H
+#ifndef OPENPRESSMASTER_TEMPLATE_H
+#define OPENPRESSMASTER_TEMPLATE_H
 #include "owf_deck.h"
 #ifdef __cplusplus
 extern "C" {

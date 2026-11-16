@@ -1,6 +1,6 @@
-/* GFOpenPublisher's mail merge on the shared page model (include/openpublisher_merge.h).
+/* GFOpenPressmaster's mail merge on the shared page model (include/openpressmaster_merge.h).
  * MIT, Copyright (c) 2026 AmiCradle Team. */
-#include "openpublisher_merge.h"
+#include "openpressmaster_merge.h"
 
 #include <stdio.h>
 #include <string.h>

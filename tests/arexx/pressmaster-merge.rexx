@@ -1,13 +1,13 @@
-/* tests/arexx/publisher-merge.rexx: GFOpenPublisher's mail merge through its ARexx port (ARexx-RULE.md return
+/* tests/arexx/pressmaster-merge.rexx: GFOpenPressmaster's mail merge through its ARexx port (ARexx-RULE.md return
    codes 0/5/10/20, no requester holds up a command): a data source, a merge field, records, merge to pages.
-   rx tests/arexx/publisher-merge.rexx csv   (GFOpenPublisher running with a publication open whose first page
+   rx tests/arexx/pressmaster-merge.rexx csv   (GFOpenPressmaster running with a publication open whose first page
    has a text box; csv: a data source with a Name column and 2 records; prints PASS/FAIL lines, then ALL PASS
    or n FAILED) */
 OPTIONS RESULTS
 PARSE ARG csv
-port = 'GFOPENPUBLISHER'
+port = 'GFOPENPRESSMASTER'
 IF ~SHOW('P', port) THEN DO
-    SAY 'FAIL' port 'is not there: start GFOpenPublisher first'
+    SAY 'FAIL' port 'is not there: start GFOpenPressmaster first'
     EXIT 20
 END
 ADDRESS VALUE port

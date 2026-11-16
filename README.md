@@ -7,7 +7,7 @@ one document library, **libowf**. Its apps keep their GFOpen names:
 - **GFOpenCalc**, the spreadsheet (an early Amiga application with its formula
   engine and portable core);
 - **GFOpenPresentation**, the early slide viewer and editor;
-- **GFOpenPublisher**, an early desktop-publishing viewer that opens Microsoft
+- **GFOpenPressmaster**, an early desktop-publishing viewer that opens Microsoft
   Publisher pages through the suite's shared layout, PDF and printing stack;
 - **GFOpenBase**, the database, currently at the design stage;
 - **GFOpenDraw**, the DPaint-inspired indexed paint editor from
@@ -35,7 +35,7 @@ or LibreOffice's. The designs are in `docs/gfoffice/`.
 This repository was called `openamigawrite` until 25 October 2026. GitHub
 redirects the old name.
 
-GFOpenPublisher 0.3.23 is the current P1 application. Its portable core turns
+GFOpenPressmaster 0.3.23 is the current P1 application. Its portable core turns
 the clean-room `.pub` model into the shared positioned-page/deck model without
 borrowing the source model's memory. The native window opens `.pub` directly,
 pages through the publication, renders its existing plain text and supported
@@ -108,7 +108,7 @@ remain later P1 work.
 
 # GFOpenWrite
 
-GFOpenWrite 2.0.45 is a native word processor for AmigaOS 3.2.
+GFOpenWrite 2.0.46 is a native word processor for AmigaOS 3.2.
 
 ![GFOpenWrite on AmigaOS 3.2.3: a Word document written in Word, opened as it is](docs/screenshot.png)
 
@@ -262,7 +262,7 @@ libowf is split along the programs' lines into four shared Amiga libraries
 | --- | --- | --- |
 | `owfwrite.library` | GFOpenWrite | documents and their formats, PDF out |
 | `owfcalc.library` | GFOpenCalc | workbooks, their formats, charts, the formula engine |
-| `owfpub.library` | GFOpenPublisher | the .pub reader |
+| `owfpub.library` | GFOpenPressmaster | the .pub reader |
 | `owfpresent.library` | GFOpenPresentation | decks, ODP, the page PDF writer |
 
 `./build-library.sh [OUT_DIR]` builds them: libowf once into an archive,

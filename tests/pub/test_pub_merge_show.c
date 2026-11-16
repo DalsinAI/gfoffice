@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "openpresentation_core.h"
-#include "openpublisher_merge.h"
+#include "openpressmaster_merge.h"
 
 static int checks, failed;
 

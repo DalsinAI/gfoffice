@@ -425,6 +425,34 @@ static void test_calendars(void)
     CHECK(strstr(ok("HELP WORKTIME"), "CALENDAR/A,DAY/A,TO/K,HOURS/F") != NULL);
 }
 
+/* UPDATE: Update Project through a status date, the tasks changed; the tracking columns by short names. */
+static void test_update(void)
+{
+    opj_doc_free(rx.doc);
+    rx.doc = opj_doc_new(NULL, AT(16, 8, 0));
+    CHECK(rx.doc != NULL);
+    if (!rx.doc) return;
+    ok("ADDTASK Dig DURATION 2d");
+    ok("ADDTASK Fill DURATION 2d");
+    ok("LINK 1");
+    CHECK_S(ok("UPDATE 17/11/26"), "1");                                  /* 17:00 when no time is given */
+    CHECK_S(ok("GETCELL 1 ActualFinish"), "Tue 17/11/26");
+    CHECK_S(ok("GETCELL 1 Percent"), "100%");
+    CHECK_S(ok("UPDATE \"18/11/26 12:00\""), "1");
+    CHECK_S(ok("GETCELL 2 Percent"), "25%");
+    CHECK_S(ok("GETCELL 2 ActualDuration"), "4h");
+    CHECK_S(ok("GETCELL 2 Remaining"), "12h");
+    ok("UNDO");
+    CHECK_S(ok("UPDATE \"18/11/26 12:00\" WHOLE"), "1");
+    CHECK_S(ok("GETCELL 2 Percent"), "0%");
+    CHECK_S(ok("GETCELL 2 ActualStart"), "Wed 18/11/26");
+    ok("SETCELL 2 ActualStart NA");
+    CHECK_S(ok("GETCELL 2 \"Actual Start\""), "NA");
+    CHECK_N(rx_do("UPDATE soon"), OPJ_RX_ERROR);
+    CHECK_S(rx.lasterror, "UPDATE: soon is not a date");
+    CHECK_N(rx_do("SETCELL 2 ActualDuration 1d"), OPJ_RX_ERROR);
+}
+
 int main(void)
 {
     if (!own_folder()) {
@@ -441,6 +469,7 @@ int main(void)
     test_huge_numbers();
     test_columns();
     test_calendars();
+    test_update();
     if (!rx.doc) return 1;
     CHECK_N(opj_rexx_format("A.XML"), OWF_PFILE_MSPDI);
     CHECK_N(opj_rexx_format("plan.Csv"), OWF_PFILE_CSV);

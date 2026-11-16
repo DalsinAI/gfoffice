@@ -1,7 +1,7 @@
 /*
  * A mail merge's data source as a table: CSV, semicolon- or tab-separated
  * text (UTF-8, or Latin-1 made UTF-8), its first row the columns' names.
- * GFOpenWrite's mail merge (editor.c, 2.5.0) and GFOpenPublisher's use it.
+ * GFOpenWrite's mail merge (editor.c, 2.5.0) and GFOpenPressmaster's use it.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "ow_merge.h"

@@ -1,5 +1,5 @@
 /*
- * GFOpenPresentation's and GFOpenPublisher's gradient fills as plain polygons (openpresentation_core.h,
+ * GFOpenPresentation's and GFOpenPressmaster's gradient fills as plain polygons (openpresentation_core.h,
  * opr_gradient_band), for screens that fill polygons but cannot clip to one: each band of the gradient is
  * the shape's outline cut by the band's own edges (two parallel lines for a linear gradient, an ellipse
  * for a radial one), with the band's colour. The PDF clips instead (owf_pdf_gradient). Integer only.

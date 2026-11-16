@@ -1916,6 +1916,143 @@ static void test_row_changes(void)
     owf_doc_free(doc);
 }
 
+/* 2.0.46 (libowf 1.14): hidden text (OWF_HIDDEN): left out of the layout unless the view shows it
+ * (OW_LAYOUT_SHOW_HIDDEN, underlined); kept through DOCX, ODT and RTF; left out of PDF and Markdown, kept
+ * with display: none in HTML; the caret, Backspace and typing step over it while it isn't shown */
+static const char *hidden_dump(const owf_doc *doc)
+{
+    static char buf[256];
+    size_t used = 0;
+    int i, j;
+    buf[0] = 0;
+    for (i = 0; i < doc->body.nparas; ++i)
+        for (j = 0; j < doc->body.paras[i].nruns && used < sizeof buf; ++j) {
+            const owf_run *r = &doc->body.paras[i].runs[j];
+            if (r->kind != OWF_RUN_TEXT || !r->text) continue;
+            used += (size_t)snprintf(buf + used, sizeof buf - used, (r->fmt.flags & OWF_HIDDEN) ? "[%s]" : "%s",
+                                     r->text);
+        }
+    return buf;
+}
+
+static unsigned char *file_bytes(const char *path, size_t *n)
+{
+    FILE *f = fopen(path, "rb");
+    unsigned char *d = NULL;
+    long size;
+    *n = 0;
+    if (f && !fseek(f, 0, SEEK_END) && (size = ftell(f)) > 0 && !fseek(f, 0, SEEK_SET) &&
+        (d = (unsigned char *)malloc((size_t)size + 1)) && fread(d, 1, (size_t)size, f) == (size_t)size) {
+        *n = (size_t)size;
+        d[*n] = 0;
+    }
+    if (f) fclose(f);
+    return d;
+}
+
+static int bytes_have(const unsigned char *d, size_t n, const char *s)
+{
+    size_t k, m = strlen(s);
+    for (k = 0; d && k + m <= n; ++k)
+        if (!memcmp(d + k, s, m)) return 1;
+    return 0;
+}
+
+static void test_hidden_text(void)
+{
+    static const char *const formats[] = { "docx", "odt", "rtf" };
+    owf_doc *doc = owf_doc_new();
+    owf_para *p = para(doc, NULL, 0, "Keep ", 240);
+    owf_charfmt cf = p->runs[0].fmt, hid = cf;
+    ow_layout *plain, *shown;
+    const ol_display_op *a, *b;
+    ow_position pos = { 0, 1, 3, 0 };
+    ol_text_position tp;
+    ow_editor *ed;
+    ow_selection sel;
+    unsigned char *d;
+    size_t n;
+    int i;
+    hid.flags |= OWF_HIDDEN;
+    CHECK(owf_para_add_text(p, &hid, "secret", 6) == 0 && owf_para_add_text(p, &cf, " end", 4) == 0 && p->nruns == 3);
+    CHECK(!strcmp(hidden_dump(doc), "Keep [secret] end"));
+
+    /* the layout: no room unless shown, and then underlined; the caret in it at its node's start */
+    plain = ow_layout_new(doc, measure, NULL);
+    shown = ow_layout_new_view(doc, measure, NULL, 0, OW_LAYOUT_SHOW_HIDDEN);
+    CHECK(plain && shown);
+    if (plain && shown) {
+        a = text_on(ow_layout_body(shown), 0, " end", NULL);
+        b = text_on(ow_layout_body(plain), 0, " end", NULL);
+        CHECK(a && b && b->u.text.bounds.x < a->u.text.bounds.x);
+        CHECK(!text_on(ow_layout_body(plain), 0, "secret", NULL));
+        a = text_on(ow_layout_body(shown), 0, "secret", NULL);
+        CHECK(a && (a->u.text.style.text_flags & OL_TEXT_UNDERLINE));
+        CHECK(ow_layout_to_text(plain, pos, &tp) && tp.offset == 0);
+        CHECK(ow_layout_to_text(shown, pos, &tp) && tp.offset == 3);
+    }
+    ow_layout_free(plain);
+    ow_layout_free(shown);
+
+    /* out and back: DOCX w:vanish, ODT text:display="none", RTF \v */
+    for (i = 0; i < 3; ++i) {
+        char path[64];
+        owf_doc *back = NULL;
+        snprintf(path, sizeof path, "/tmp/openwrite-hidden.%s", formats[i]);
+        CHECK(owf_export_file(doc, path, formats[i], NULL) == OWF_OK);
+        CHECK(owf_import_file(path, formats[i], &back, NULL, NULL) == OWF_OK && back);
+        if (back) {
+            if (strcmp(hidden_dump(back), "Keep [secret] end")) printf("%s: %s\n", formats[i], hidden_dump(back));
+            CHECK(!strcmp(hidden_dump(back), "Keep [secret] end"));
+            owf_doc_free(back);
+        }
+    }
+    /* left out of PDF and Markdown; HTML keeps it, not shown */
+    CHECK(owf_export_file(doc, "/tmp/openwrite-hidden.pdf", "pdf", NULL) == OWF_OK);
+    d = file_bytes("/tmp/openwrite-hidden.pdf", &n);
+    CHECK(d && bytes_have(d, n, "Keep") && !bytes_have(d, n, "secret"));
+    free(d);
+    CHECK(owf_export_file(doc, "/tmp/openwrite-hidden.md", "markdown", NULL) == OWF_OK);
+    d = file_bytes("/tmp/openwrite-hidden.md", &n);
+    CHECK(d && bytes_have(d, n, "Keep") && bytes_have(d, n, "end") && !bytes_have(d, n, "secret"));
+    free(d);
+    CHECK(owf_export_file(doc, "/tmp/openwrite-hidden.html", "html", NULL) == OWF_OK);
+    d = file_bytes("/tmp/openwrite-hidden.html", &n);
+    CHECK(d && bytes_have(d, n, "display: none\">secret"));
+    free(d);
+
+    /* the editor, hidden text not shown: Right from after "Keep " passes " " of " end", not "secret";
+     * Backspace there takes that space; typing after "Keep " isn't hidden */
+    ed = ow_editor_new(doc);
+    CHECK(ed != NULL);
+    if (ed) {
+        CHECK(!ow_editor_show_hidden(ed));
+        memset(&sel, 0, sizeof sel);
+        sel.anchor.run = sel.focus.run = 0;
+        sel.anchor.byte_offset = sel.focus.byte_offset = 5;
+        ow_editor_set_selection(ed, &sel);
+        ow_editor_move_caret(ed, OW_MOVE_RIGHT, 0);
+        sel = ow_editor_selection(ed);
+        CHECK(sel.focus.run == 2 && sel.focus.byte_offset == 1);
+        CHECK(ow_editor_backspace(ed) == OWF_OK);
+        CHECK(!strcmp(hidden_dump(doc), "Keep [secret]end"));
+        ow_editor_move_caret(ed, OW_MOVE_LEFT, 0);   /* over "secret", past the space before it */
+        sel = ow_editor_selection(ed);
+        CHECK(sel.focus.run == 0 && sel.focus.byte_offset == 4);
+        memset(&sel, 0, sizeof sel);
+        sel.anchor.run = sel.focus.run = 1;          /* at the hidden text's start: what is typed isn't hidden */
+        ow_editor_set_selection(ed, &sel);
+        CHECK(ow_editor_insert_utf8(ed, "!", 1) == OWF_OK);
+        if (strcmp(hidden_dump(doc), "Keep ![secret]end")) printf("typed: %s\n", hidden_dump(doc));
+        CHECK(!strcmp(hidden_dump(doc), "Keep ![secret]end"));
+        /* shown: the caret goes into it again */
+        ow_editor_set_show_hidden(ed, 1);
+        CHECK(ow_editor_show_hidden(ed));
+        ow_editor_free(ed);
+    }
+    owf_doc_free(doc);
+}
+
 int main(int argc, char **argv)
 {
     int i;
@@ -1924,6 +2061,7 @@ int main(int argc, char **argv)
     test_columns();
     test_generated_toc();
     test_final_view();
+    test_hidden_text();
     test_picture_changes();
     test_frame_changes();
     test_row_changes();

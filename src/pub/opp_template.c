@@ -1,5 +1,5 @@
-/* GFOpenPublisher's built-in publication templates. MIT, Copyright (c) 2026 AmiCradle Team. */
-#include "openpublisher_template.h"
+/* GFOpenPressmaster's built-in publication templates. MIT, Copyright (c) 2026 AmiCradle Team. */
+#include "openpressmaster_template.h"
 #include <string.h>
 #include <strings.h>
 

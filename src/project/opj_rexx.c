@@ -25,7 +25,7 @@ enum {
     C_HELP, C_LASTERROR, C_ISDIRTY, C_GETFILE, C_NEW, C_OPEN, C_SAVE, C_SAVEAS, C_EXPORT, C_TASKS, C_ADDTASK,
     C_DELETETASK, C_GETCELL, C_SETCELL, C_INDENT, C_OUTDENT, C_LINK, C_UNLINK, C_UNDO, C_REDO, C_BASELINE,
     C_RESOURCES, C_ADDRESOURCE, C_DELETERESOURCE, C_GETRESOURCE, C_SETRESOURCE, C_ASSIGN, C_USAGE, C_FINISH,
-    C_CRITICAL, C_COLUMN, C_CALENDARS, C_ADDCALENDAR, C_WORKTIME, C_SETCALENDAR, NCOMMANDS
+    C_CRITICAL, C_COLUMN, C_CALENDARS, C_ADDCALENDAR, C_WORKTIME, C_SETCALENDAR, C_UPDATE, NCOMMANDS
 };
 
 static const command commands[NCOMMANDS] = {
@@ -64,6 +64,7 @@ static const command commands[NCOMMANDS] = {
     { "ADDCALENDAR", "NAME/A,FROM/K" },
     { "WORKTIME", "CALENDAR/A,DAY/A,TO/K,HOURS/F" },
     { "SETCALENDAR", "CALENDAR/A,ROW/K/N" },
+    { "UPDATE", "STATUS/A,WHOLE/S" },
 };
 
 /* ---- Words ---- */
@@ -267,7 +268,9 @@ static int find_column(const char *name, int resource_sheet)
         { "name", OPJ_COL_NAME }, { "percent", OPJ_COL_PERCENT }, { "complete", OPJ_COL_PERCENT },
         { "resources", OPJ_COL_RESOURCES }, { "startvariance", OPJ_COL_START_VARIANCE },
         { "finishvariance", OPJ_COL_FINISH_VARIANCE },
-        { "constraint", OPJ_COL_CONSTRAINT_TYPE },
+        { "constraint", OPJ_COL_CONSTRAINT_TYPE }, { "actualstart", OPJ_COL_ACTUAL_START },
+        { "actualfinish", OPJ_COL_ACTUAL_FINISH }, { "actualduration", OPJ_COL_ACTUAL_DURATION },
+        { "remaining", OPJ_COL_REMAINING_DURATION }, { "remainingduration", OPJ_COL_REMAINING_DURATION },
     }, res[] = {
         { "maxunits", OPJ_RCOL_MAX }, { "max", OPJ_RCOL_MAX }, { "rate", OPJ_RCOL_RATE },
         { "stdrate", OPJ_RCOL_RATE }, { "name", OPJ_RCOL_NAME },
@@ -731,6 +734,16 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         if (!(none && a->value[1]) && (cal = find_cal(rx, p, a->value[0], "SETCALENDAR")) < 0) return OPJ_RX_ERROR;
         if (!a->value[1]) return edit_rc(rx, opj_set_plan_calendar(doc, cal), "SETCALENDAR");
         return edit_rc(rx, opj_set_task_calendar(doc, (int)a->num[1] - 1, cal), "SETCALENDAR");
+    }
+    case C_UPDATE: {
+        owf_ptime status;
+        if (!opj_date_parse(a->value[0], 17 * 60, &status)) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "UPDATE: %.100s is not a date", a->value[0]);
+            return OPJ_RX_ERROR;
+        }
+        if ((rc = opj_update_project(doc, status, a->value[1] != NULL, &r)) != OWF_OK) return edit_rc(rx, rc, "UPDATE");
+        snprintf(result, size, "%d", r);
+        return OPJ_RX_OK;
     }
     case C_CRITICAL: {
         size_t at = 0;

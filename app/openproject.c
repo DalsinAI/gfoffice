@@ -48,7 +48,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenProject 0.1.12 (16.11.2026)"
+#define VERSION_TEXT "GFOpenProject 0.1.13 (16.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenProject, the project planner of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -58,7 +58,7 @@ enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_XML, M_EXPORT_CSV, M_EXPORT_PDF, M_PRINT, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_EDIT, M_INSERT, M_DELETE, M_INDENT, M_OUTDENT, M_LINK, M_UNLINK,
     M_DAYS, M_WEEKS, M_MONTHS, M_QUARTERS, M_SHOW_BASELINE, M_RESOURCES, M_START, M_GANTT, M_USAGE, M_NETWORK, M_TASK_USAGE, M_GRAPH, M_TRACKING,
-    M_SET_BASELINE, M_CLEAR_BASELINE, M_WORKTIME, M_PLAN_CALENDAR, M_TASK_CALENDAR,
+    M_SET_BASELINE, M_CLEAR_BASELINE, M_UPDATE_PROJECT, M_WORKTIME, M_PLAN_CALENDAR, M_TASK_CALENDAR,
     M_INFO,
     M_COLUMN                                 /* View > Columns: M_COLUMN + the column (OPJ_COL_) */
 };
@@ -129,9 +129,15 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Constraint Type", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_CONSTRAINT_TYPE) },
     { NM_SUB, "Constraint Date", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_CONSTRAINT_DATE) },
     { NM_SUB, "Notes", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_NOTES) },
+    { NM_SUB, "Actual Start", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_ACTUAL_START) },
+    { NM_SUB, "Actual Finish", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_ACTUAL_FINISH) },
+    { NM_SUB, "Actual Duration", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_ACTUAL_DURATION) },
+    { NM_SUB, "Remaining Dur.", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_REMAINING_DURATION) },
     { NM_TITLE, "Tools", NULL, 0, 0, NULL },
     { NM_ITEM, "Set Baseline", NULL, 0, 0, (APTR)M_SET_BASELINE },
     { NM_ITEM, "Clear Baseline", NULL, 0, 0, (APTR)M_CLEAR_BASELINE },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Update Project...", NULL, 0, 0, (APTR)M_UPDATE_PROJECT },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Change Working Time...", NULL, 0, 0, (APTR)M_WORKTIME },
     { NM_ITEM, "Plan Calendar...", NULL, 0, 0, (APTR)M_PLAN_CALENDAR },
@@ -649,7 +655,7 @@ static void edit_cell(void)
         if ((rc = opj_insert_task(DOC, DOC->plan->ntasks, "")) != OWF_OK) { edit_failed(rc, "New task"); return; }
         view.selected = DOC->plan->ntasks - 1;
     }
-    if (sel_col == OPJ_COL_ID || sel_col == OPJ_COL_WBS || sel_col >= OPJ_COL_BASELINE_START) {
+    if (!opj_column_typed(sel_col)) {
         set_status("That column is worked out, not typed");
         redraw();
         return;
@@ -1027,6 +1033,31 @@ static void resources_window(void)
 
 /* ---- Menus, mouse and keys ---- */
 
+/* ---- Tools > Update Project... ---- */
+
+static owf_ptime today(void);
+
+/* The status date (the last one, or today at the end of its working day) and how to count work done. */
+static void update_project(void)
+{
+    char date[40], msg[96];
+    owf_ptime status;
+    int how, changed = 0, rc;
+    if (rexx_busy) return;
+    opj_date_text(DOC->plan->has_status_date ? DOC->plan->status_date : today() + 9L * 60L, 1, date);
+    for (;;) {
+        if (!ask_text("Update Project", "Work complete through", date, sizeof date)) return;
+        if (opj_date_parse(date, 17 * 60, &status)) break;
+        tell("That is not a date: type it as 20/11/26 or 20/11/26 17:00");
+    }
+    how = ask("Set tasks started by then to", "0% - 100% complete|0% or 100% only|Cancel");
+    if (!how) return;
+    rc = opj_update_project(DOC, status, how == 2, &changed);
+    if (rc != OWF_OK) { edit_failed(rc, "Update Project"); return; }
+    snprintf(msg, sizeof msg, "Update Project: %d task%s brought up to date", changed, changed == 1 ? "" : "s");
+    set_status(msg);
+}
+
 /* ---- Tools > Change Working Time..., Plan Calendar..., Task Calendar... ---- */
 
 static const char *cal_name(int cal)
@@ -1211,6 +1242,7 @@ static void menu_action(ULONG id, struct MenuItem *item)
         break;
     case M_SET_BASELINE: edit_failed(opj_set_baseline(DOC, 0, -1), "Set Baseline"); view.show_baseline = 1; break;
     case M_CLEAR_BASELINE: edit_failed(opj_clear_baseline(DOC, 0, -1), "Clear Baseline"); break;
+    case M_UPDATE_PROJECT: update_project(); break;
     case M_WORKTIME: change_working_time(); break;
     case M_PLAN_CALENDAR: plan_calendar(); break;
     case M_TASK_CALENDAR: task_calendar(); break;

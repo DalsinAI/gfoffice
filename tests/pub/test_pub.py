@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""OpenPublisher's .pub reader (libowf/src/in_pub.c), through pub_dump.
+"""OpenPressmaster's .pub reader (libowf/src/in_pub.c), through pub_dump.
 
     test_pub.py PUB_DUMP [RUNS]
 

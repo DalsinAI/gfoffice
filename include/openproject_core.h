@@ -74,6 +74,9 @@ int opj_set_notes(opj_doc *doc, int row, const char *notes);
  * first..first+count-1, count -1: the whole plan. */
 int opj_set_baseline(opj_doc *doc, int first, int count);
 int opj_clear_baseline(opj_doc *doc, int first, int count);
+/* Tools > Tracking > Update Project: work complete through status (owf_project_update; whole: 0% or 100%
+ * only), as one edit; how many tasks changed in *changed (when not NULL). */
+int opj_update_project(opj_doc *doc, owf_ptime status, int whole, int *changed);
 
 /* ---- Change Working Time: calendars (one Undo step each, the plan scheduled again) ----
  * cal is an index into plan->calendars. */
@@ -127,6 +130,10 @@ enum {
     OPJ_COL_CONSTRAINT_TYPE,             /* "Start No Earlier Than", as MS Project names them */
     OPJ_COL_CONSTRAINT_DATE,             /* "NA" for As Soon / Late As Possible */
     OPJ_COL_NOTES,
+    OPJ_COL_ACTUAL_START,                /* "NA" until the task has started */
+    OPJ_COL_ACTUAL_FINISH,
+    OPJ_COL_ACTUAL_DURATION,             /* duration times % complete, worked out */
+    OPJ_COL_REMAINING_DURATION,
     OPJ_NCOLS
 };
 
@@ -143,8 +150,15 @@ void opj_cell_text(const opj_doc *doc, int row, int column, char *out, size_t si
  * a work resource); Constraint Type (its name, any case, or a short one: ASAP, ALAP, MSO, MFO, SNET, SNLT, FNET,
  * FNLT; a type with a date and none yet takes the task's start, or finish for the finish types); Constraint
  * Date (NA makes it As Soon As Possible; a date on an ASAP or ALAP task makes it Start No Earlier Than);
- * Notes. ID, WBS and the baseline columns can't be typed into (OWF_ERR_FORMAT). */
+ * Notes; Actual Start and Actual Finish (a date, or NA to clear it: an actual finish with no actual start
+ * gives the task its scheduled start as one, and clearing the start clears the finish too). % Complete
+ * above 0 gives a task with no actual start its scheduled start, 100 its scheduled finish as actual
+ * finish, below 100 clears an actual finish and 0 both, as MS Project does. ID, WBS, the baseline,
+ * variance, Actual Duration and Remaining Duration columns can't be typed into (OWF_ERR_FORMAT);
+ * opj_column_typed says which can. */
 int opj_set_cell(opj_doc *doc, int row, int column, const char *text);
+/* 1 when a column can be typed into, 0 when it is worked out. */
+int opj_column_typed(int column);
 /* Task Information's OK: several of row's cells typed at once, in the order given, as one edit (one Undo
  * step), scheduled once at the end. Nothing changes when any cell is refused: its place in columns goes
  * in *bad (when not NULL; -1 when none was), with OWF_ERR_FORMAT, or OWF_ERR_MEMORY. A Constraint Date

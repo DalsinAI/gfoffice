@@ -1,9 +1,9 @@
-/* GFOpenPublisher's built-in publication templates (src/pub/opp_template.c). MIT, Copyright (c) 2026 AmiCradle Team. */
+/* GFOpenPressmaster's built-in publication templates (src/pub/opp_template.c). MIT, Copyright (c) 2026 AmiCradle Team. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "openpublisher_template.h"
-#include "openpublisher_merge.h"
+#include "openpressmaster_template.h"
+#include "openpressmaster_merge.h"
 
 static int checks, failed;
 

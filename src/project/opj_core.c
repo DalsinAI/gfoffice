@@ -743,6 +743,7 @@ static void squeeze(const char *s, char *out, size_t size)
 static const char *const column_titles[OPJ_NCOLS] = {
     "ID", "Task Name", "Duration", "Start", "Finish", "Predecessors", "% Complete", "WBS", "Resource Names",
     "Baseline Start", "Baseline Finish", "Start Var.", "Finish Var.", "Constraint Type", "Constraint Date", "Notes",
+    "Actual Start", "Actual Finish", "Actual Duration", "Remaining Dur.",
 };
 
 static const char *const constraint_names[] = {   /* OWF_CON_ order */
@@ -849,6 +850,17 @@ void opj_cell_text(const opj_doc *doc, int row, int column, char *out, size_t si
         else opj_date_text(t->constraint_date, 0, text);
         break;
     case OPJ_COL_NOTES: s = t->notes ? t->notes : ""; break;
+    case OPJ_COL_ACTUAL_START:
+    case OPJ_COL_ACTUAL_FINISH:
+        if (!(column == OPJ_COL_ACTUAL_START ? t->has_actual_start : t->has_actual_finish)) strcpy(text, "NA");
+        else opj_date_text(column == OPJ_COL_ACTUAL_START ? t->actual_start : t->actual_finish, 0, text);
+        break;
+    case OPJ_COL_ACTUAL_DURATION:
+        owf_pduration_text(doc->plan, owf_ptask_actual_duration(t), t->elapsed, 0, text);
+        break;
+    case OPJ_COL_REMAINING_DURATION:
+        owf_pduration_text(doc->plan, owf_ptask_remaining_duration(t), t->elapsed, 0, text);
+        break;
     default: return;
     }
     n = strlen(s);
@@ -900,7 +912,38 @@ static int set_field(owf_project *work, int row, int column, const char *text)
         while (*s == ' ' || *s == '%') s++;
         if (*s || v > 100) return OWF_ERR_FORMAT;
         t->percent = (int)v;
+        if (!t->summary) {               /* the actual dates follow, as MS Project's */
+            if (v == 0) t->has_actual_start = t->has_actual_finish = 0;
+            else if (!t->has_actual_start) t->has_actual_start = 1, t->actual_start = t->early_start;
+            if (v < 100) t->has_actual_finish = 0;
+            else if (!t->has_actual_finish) {
+                t->has_actual_finish = 1;
+                t->actual_finish = t->early_finish < t->actual_start ? t->actual_start : t->early_finish;
+            }
+        }
         return OWF_OK;
+    }
+    case OPJ_COL_ACTUAL_START:
+    case OPJ_COL_ACTUAL_FINISH: {
+        char word[8];
+        int fin = column == OPJ_COL_ACTUAL_FINISH, keep;
+        squeeze(text, word, sizeof word);
+        if (t->summary) return OWF_ERR_FORMAT;
+        if (!strcmp(word, "NA") || !word[0]) {
+            if (fin) {
+                t->has_actual_finish = 0;
+                if (t->percent == 100) t->percent = 99;
+            } else
+                t->has_actual_start = t->has_actual_finish = 0, t->percent = 0;
+            return OWF_OK;
+        }
+        if (!opj_date_parse(text, day_edge(work, fin), &when)) return OWF_ERR_FORMAT;
+        if (!fin) {
+            keep = t->has_actual_finish && t->actual_finish >= when;
+            if (!keep && t->percent == 100) t->percent = 99;   /* no longer finished */
+            return owf_project_set_actual(work, row, 1, when, keep, keep ? t->actual_finish : 0);
+        }
+        return owf_project_set_actual(work, row, 1, t->has_actual_start ? t->actual_start : t->early_start, 1, when);
     }
     case OPJ_COL_RESOURCES:
         return owf_presource_names_parse(work, row, text, 1);
@@ -930,6 +973,18 @@ static int set_field(owf_project *work, int row, int column, const char *text)
         return replace_text(&t->notes, text);
     default:
         return OWF_ERR_FORMAT;
+    }
+}
+
+int opj_column_typed(int column)
+{
+    switch (column) {
+    case OPJ_COL_NAME: case OPJ_COL_DURATION: case OPJ_COL_START: case OPJ_COL_FINISH: case OPJ_COL_PREDECESSORS:
+    case OPJ_COL_PERCENT: case OPJ_COL_RESOURCES: case OPJ_COL_CONSTRAINT_TYPE: case OPJ_COL_CONSTRAINT_DATE:
+    case OPJ_COL_NOTES: case OPJ_COL_ACTUAL_START: case OPJ_COL_ACTUAL_FINISH:
+        return 1;
+    default:
+        return 0;
     }
 }
 
@@ -978,6 +1033,18 @@ int opj_clear_baseline(opj_doc *doc, int first, int count)
     if (first < 0 || count < 1 || first > doc->plan->ntasks - count) return OWF_ERR_FORMAT;
     if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
     owf_project_clear_baseline(work, first, count);
+    return commit(doc, work);
+}
+
+int opj_update_project(opj_doc *doc, owf_ptime status, int whole, int *changed)
+{
+    owf_project *work;
+    int n;
+    if (changed) *changed = 0;
+    if (!doc) return OWF_ERR_FORMAT;
+    if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
+    n = owf_project_update(work, status, whole);
+    if (changed) *changed = n;
     return commit(doc, work);
 }
 

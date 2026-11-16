@@ -9,7 +9,7 @@
 #                                word processors' files, text, HTML, PDF out
 #   OUT_DIR/owfcalc.library      workbooks, GFOpenCalc's: XLSX, ODS, XLS, CSV,
 #                                charts, the formula engine and page PDF writer
-#   OUT_DIR/owfpub.library       Publisher files, GFOpenPublisher's
+#   OUT_DIR/owfpub.library       Publisher files, GFOpenPressmaster's
 #   OUT_DIR/owfpresent.library   presentations, GFOpenPresentation's: the deck
 #                                model, ODP and the page PDF writer
 #   OUT_DIR/<name>.library.map   each one's linker map

@@ -1,6 +1,6 @@
 # Microsoft Publisher's .pub format: the clean-room notes
 
-GFOpenPublisher's record of what we know about .pub and where each fact came
+GFOpenPressmaster's record of what we know about .pub and where each fact came
 from. Microsoft never published a specification of .pub. Everything below
 was worked out from sample files only: their bytes, their structure, and
 what Publisher itself shows for them (the thumbnail Publisher saves in each
@@ -606,7 +606,7 @@ default style (STSH 1, style 0) gets the first WordArt's size, typeface and
 colour, each only when every run written has its own (runs from our reader
 always do; new text may not, and would take the default's instead).
 Not written yet, named in the report: the scratch area (the reader keeps only
-its count). GFOpenPublisher's own pages reach the writer through
+its count). GFOpenPressmaster's own pages reach the writer through
 `opp_deck_to_pub` (src/pub/opp_export.c), the inverse of `opp_pub_to_deck`:
 frames sharing a text flow share one story, boxes are kept in twips. PL holds 255 text colours; runs past them keep the automatic colour,
 with a note. tests/pub/test_pub_save.py reads every generated file back through
@@ -633,8 +633,8 @@ checked yet.
 ## 13. PageStream
 
 PageStream (Soft-Logik, later Grasshopper) is the Amiga's desktop
-publisher: versions 1-2 (the `.pgs` era), 3, 4 and 5. GFOpenPublisher will
-import it (Design-OpenPublisher.md, section 9).
+publisher: versions 1-2 (the `.pgs` era), 3, 4 and 5. GFOpenPressmaster will
+import it (Design-OpenPressmaster.md, section 9).
 
 No PageStream document was found on GitHub, the only place this session's
 shell reaches (tests/pub/CORPUS.md). So nothing is known yet: no container,

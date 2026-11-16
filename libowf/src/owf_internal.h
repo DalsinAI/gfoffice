@@ -360,7 +360,8 @@ int owf_sheet_keep_charts(owf_book *book, int sheet, const owf_chart *charts, in
 
 enum {
     OWF_CP_FONT = 1 << 0, OWF_CP_SIZE = 1 << 1, OWF_CP_BOLD = 1 << 2, OWF_CP_ITALIC = 1 << 3,
-    OWF_CP_UNDERLINE = 1 << 4, OWF_CP_STRIKE = 1 << 5, OWF_CP_POSITION = 1 << 6, OWF_CP_COLOUR = 1 << 7
+    OWF_CP_UNDERLINE = 1 << 4, OWF_CP_STRIKE = 1 << 5, OWF_CP_POSITION = 1 << 6, OWF_CP_COLOUR = 1 << 7,
+    OWF_CP_HIDDEN = 1 << 8           /* 1.14 */
 };
 enum {
     OWF_PP_ALIGN = 1 << 0, OWF_PP_LEFT = 1 << 1, OWF_PP_RIGHT = 1 << 2, OWF_PP_FIRST = 1 << 3,
