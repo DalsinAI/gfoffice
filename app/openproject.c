@@ -852,6 +852,8 @@ static void set_zoom(int zoom)
     redraw();
 }
 
+static void tick_view(void);
+
 static void menu_action(ULONG id, struct MenuItem *item)
 {
     char path[512], why[200];
