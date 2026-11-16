@@ -180,6 +180,9 @@ typedef struct {
     int first_row;                       /* the top row shown */
     int selected;                        /* a selected row, -1 none */
     int show_baseline;                   /* a thin grey bar under each bar, at its baseline dates */
+    int tracking;                        /* the Tracking Gantt: each task's bar in its row's upper half, its
+                                          * baseline as high in the lower half, the done part solid, and
+                                          * the % Complete beside each bar in place of the resource names */
     int scroll_x, scroll_y;              /* the Network Diagram's scroll, in pixels */
     oldraw_font font;
 } opj_view;
@@ -220,14 +223,16 @@ typedef struct {
 /* Row's bar in the view; 0 when the row has none (out of range). */
 int opj_bar_of(const opj_view *v, const opj_doc *doc, int row, opj_bar *bar);
 
-/* Row's baseline bar (under its bar, a sixth of a row high); 0 when the row has none or the view doesn't
- * show baselines. */
+/* Row's baseline bar (under its bar, a sixth of a row high; the Tracking Gantt's lower half); 0 when the
+ * row has none or the view shows no baselines (the Tracking Gantt always does). */
 int opj_baseline_bar(const opj_view *v, const opj_doc *doc, int row, oldraw_rect *bar);
 #define OPJ_COLOUR_BASELINE OLDRAW_RGB(0x909090)
 
 /* Where the resource names go beside row's bar (to its right, MS Project's way); 0 when the row has no
- * bar or no assignments. */
+ * bar or no assignments. The Tracking Gantt puts every bar's % Complete there. */
 int opj_label_box(const opj_view *v, const opj_doc *doc, int row, oldraw_rect *box);
+/* What goes there: the resource names ("Dale,Bob[50%]"), or "40%" in the Tracking Gantt. */
+void opj_label_text(const opj_view *v, const opj_doc *doc, int row, char *out, size_t size);
 
 /* A link's line: up to 6 points joined by straight lines, the last at the arrow's tip. */
 typedef struct {

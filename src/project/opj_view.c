@@ -121,6 +121,14 @@ int opj_rows_shown(const opj_view *v)
 
 /* ---- Bars and lines ---- */
 
+/* The Tracking Gantt's halves: the bar from TRACK_TOP down, the baseline under it, each track_h high. */
+#define TRACK_TOP 2
+static int track_h(int rh)
+{
+    int h = (rh - 2 * TRACK_TOP - 1) / 2;
+    return h > 1 ? h : 1;
+}
+
 int opj_bar_of(const opj_view *v, const opj_doc *doc, int row, opj_bar *bar)
 {
     const owf_ptask *t;
@@ -149,10 +157,10 @@ int opj_bar_of(const opj_view *v, const opj_doc *doc, int row, opj_bar *bar)
         bar->kind = OPJ_BAR_TASK;
         bar->bar.x = (int)x0;
         bar->bar.w = x1 > x0 ? (int)(x1 - x0) : 1;
-        bar->bar.y = y + rh / 4;
-        bar->bar.h = rh / 2;
+        bar->bar.y = v->tracking ? y + TRACK_TOP : y + rh / 4;
+        bar->bar.h = v->tracking ? track_h(rh) : rh / 2;
         if (t->percent > 0) {
-            int third = bar->bar.h / 3;
+            int third = v->tracking ? 0 : bar->bar.h / 3;   /* Tracking Gantt: the done part is solid */
             bar->done.x = bar->bar.x;
             bar->done.w = (int)((long)bar->bar.w * t->percent / 100);
             if (bar->done.w < 1) bar->done.w = 1;
@@ -394,7 +402,7 @@ int opj_baseline_bar(const opj_view *v, const opj_doc *doc, int row, oldraw_rect
     const owf_ptask *t;
     long x0, x1;
     int rh;
-    if (!v || !bar || !v->show_baseline || !doc || row < 0 || row >= doc->plan->ntasks) return 0;
+    if (!v || !bar || !(v->show_baseline || v->tracking) || !doc || row < 0 || row >= doc->plan->ntasks) return 0;
     t = &doc->plan->tasks[row];
     if (!t->baselined) return 0;
     rh = v->row_height;
@@ -402,6 +410,11 @@ int opj_baseline_bar(const opj_view *v, const opj_doc *doc, int row, oldraw_rect
     x1 = opj_view_x(v, t->baseline_finish);
     bar->x = (int)x0;
     bar->w = x1 > x0 ? (int)(x1 - x0) : 1;
+    if (v->tracking) {                           /* the lower half, as high as the bar */
+        bar->y = opj_row_y(v, row) + TRACK_TOP + track_h(rh) + 1;
+        bar->h = track_h(rh);
+        return 1;
+    }
     bar->y = opj_row_y(v, row) + rh * 3 / 4 + 1;
     bar->h = rh / 6 > 1 ? rh / 6 : 2;
     return 1;
@@ -415,14 +428,23 @@ int opj_label_box(const opj_view *v, const opj_doc *doc, int row, oldraw_rect *b
     opj_bar b;
     int i;
     if (!v || !box || !opj_bar_of(v, doc, row, &b)) return 0;
-    for (i = 0; i < doc->plan->nassigns; i++)
+    for (i = 0; i < doc->plan->nassigns && !v->tracking; i++)
         if (doc->plan->assigns[i].task == row) break;
-    if (i == doc->plan->nassigns) return 0;
+    if (!v->tracking && i == doc->plan->nassigns) return 0;
     box->x = b.bar.x + b.bar.w + LABEL_GAP;
     box->y = opj_row_y(v, row);
     box->w = LABEL_WIDTH;
     box->h = v->row_height;
     return 1;
+}
+
+void opj_label_text(const opj_view *v, const opj_doc *doc, int row, char *out, size_t size)
+{
+    if (!out || !size) return;
+    out[0] = 0;
+    if (!v || !doc || row < 0 || row >= doc->plan->ntasks) return;
+    if (v->tracking) snprintf(out, size, "%d%%", doc->plan->tasks[row].percent);
+    else owf_presource_names_text(doc->plan, row, out, size);
 }
 
 static void draw_sheet_row(oldraw *d, const opj_view *v, const opj_doc *doc, int row)
@@ -491,7 +513,7 @@ void opj_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rec
             oldraw_rect r;
             char text[256];
             if (!opj_label_box(v, doc, row, &r) || !crosses(area, r.x, r.y, r.w, r.h)) continue;
-            owf_presource_names_text(doc->plan, row, text, sizeof text);
+            opj_label_text(v, doc, row, text, sizeof text);
             oldraw_text_box(d, &r, text, (size_t)-1, &v->font, OLDRAW_PEN(OLDRAW_PEN_TEXT), 0, OLDRAW_LEFT);
         }
         for (i = 0; i < doc->plan->ntasks; i++)

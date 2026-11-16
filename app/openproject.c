@@ -48,7 +48,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenProject 0.1.8 (16.11.2026)"
+#define VERSION_TEXT "GFOpenProject 0.1.9 (16.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenProject, the project planner of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -57,12 +57,14 @@ static const char version[] __attribute__((used)) =
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_XML, M_EXPORT_CSV, M_EXPORT_PDF, M_PRINT, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_EDIT, M_INSERT, M_DELETE, M_INDENT, M_OUTDENT, M_LINK, M_UNLINK,
-    M_DAYS, M_WEEKS, M_MONTHS, M_QUARTERS, M_SHOW_BASELINE, M_RESOURCES, M_START, M_GANTT, M_USAGE, M_NETWORK, M_TASK_USAGE, M_GRAPH,
+    M_DAYS, M_WEEKS, M_MONTHS, M_QUARTERS, M_SHOW_BASELINE, M_RESOURCES, M_START, M_GANTT, M_USAGE, M_NETWORK, M_TASK_USAGE, M_GRAPH, M_TRACKING,
     M_SET_BASELINE, M_CLEAR_BASELINE,
     M_INFO,
     M_COLUMN                                 /* View > Columns: M_COLUMN + the column (OPJ_COL_) */
 };
-#define COLUMNS_ITEM 16                      /* View's item number of Columns */
+/* View's items 10 to 15 are the views, one ticked at a time: the others an item excludes. */
+#define VIEWS_BUT(item) (0xFC00L & ~(1L << (item)))
+#define COLUMNS_ITEM 17                      /* View's item number of Columns */
 
 static struct NewMenu menus[] = {
     { NM_TITLE, "Project", NULL, 0, 0, NULL },
@@ -103,11 +105,12 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Resources...", "R", 0, 0, (APTR)M_RESOURCES },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
-    { NM_ITEM, "Gantt Chart", "G", CHECKIT | CHECKED, 1 << 11 | 1 << 12 | 1 << 13 | 1 << 14, (APTR)M_GANTT },
-    { NM_ITEM, "Resource Usage", "W", CHECKIT, 1 << 10 | 1 << 12 | 1 << 13 | 1 << 14, (APTR)M_USAGE },
-    { NM_ITEM, "Network Diagram", "D", CHECKIT, 1 << 10 | 1 << 11 | 1 << 13 | 1 << 14, (APTR)M_NETWORK },
-    { NM_ITEM, "Task Usage", "K", CHECKIT, 1 << 10 | 1 << 11 | 1 << 12 | 1 << 14, (APTR)M_TASK_USAGE },
-    { NM_ITEM, "Resource Graph", "H", CHECKIT, 1 << 10 | 1 << 11 | 1 << 12 | 1 << 13, (APTR)M_GRAPH },
+    { NM_ITEM, "Gantt Chart", "G", CHECKIT | CHECKED, VIEWS_BUT(10), (APTR)M_GANTT },
+    { NM_ITEM, "Resource Usage", "W", CHECKIT, VIEWS_BUT(11), (APTR)M_USAGE },
+    { NM_ITEM, "Network Diagram", "D", CHECKIT, VIEWS_BUT(12), (APTR)M_NETWORK },
+    { NM_ITEM, "Task Usage", "K", CHECKIT, VIEWS_BUT(13), (APTR)M_TASK_USAGE },
+    { NM_ITEM, "Resource Graph", "H", CHECKIT, VIEWS_BUT(14), (APTR)M_GRAPH },
+    { NM_ITEM, "Tracking Gantt", "J", CHECKIT, VIEWS_BUT(15), (APTR)M_TRACKING },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Columns", NULL, 0, 0, NULL },
     { NM_SUB, "ID", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)(M_COLUMN + OPJ_COL_ID) },
@@ -337,10 +340,11 @@ static int inner_h(void) { return win ? win->GZZHeight : 0; }
 /* The view for the doc shown: a new doc gets a new view, the same doc keeps its scroll and choices. */
 static void view_for_doc(void)
 {
-    int zoom = view.zoom, base = view.show_baseline;
+    int zoom = view.zoom, base = view.show_baseline, tracking = view.tracking;
     if (shown != rx.docs + 1) {
         opj_view_init(&view, DOC, inner_w(), inner_h(), fh + 5, shown ? zoom : OPJ_ZOOM_DAYS);
         view.show_baseline = base;
+        view.tracking = tracking;
         view.selected = DOC->plan->ntasks ? 0 : -1;
         shown = rx.docs + 1;
     }
@@ -1065,7 +1069,7 @@ static void menu_action(ULONG id, struct MenuItem *item)
         break;
     case M_ABOUT:
         tell(VERSION_TEXT "\nThe project planner of the GFOffice Suite.\n\nPlans in .gfproj, MSPDI XML and CSV;\n"
-             "MPX and .gan read; the Gantt chart exported as PDF;\nthe Resource Usage, Task Usage, Resource Graph and Network Diagram views.\nMIT, Copyright (c) 2026 AmiCradle Team");
+             "MPX and .gan read; the Gantt chart exported as PDF;\nthe Tracking Gantt, Resource Usage, Task Usage, Resource Graph and\nNetwork Diagram views.\nMIT, Copyright (c) 2026 AmiCradle Team");
         break;
     case M_QUIT: if (may_drop()) quit_now = 1; break;
     case M_UNDO: undo_redo(0); return;
@@ -1092,7 +1096,12 @@ static void menu_action(ULONG id, struct MenuItem *item)
     case M_SHOW_BASELINE: view.show_baseline = item && (item->Flags & CHECKED) ? 1 : 0; break;
     case M_START: view.origin = opj_period_start(OPJ_ZOOM_WEEKS, DOC->plan->start); break;
     case M_RESOURCES: resources_window(); break;
-    case M_GANTT: usage_mode = network_mode = 0; set_status(""); break;
+    case M_GANTT: usage_mode = network_mode = view.tracking = 0; set_status(""); break;
+    case M_TRACKING:
+        usage_mode = network_mode = 0;
+        view.tracking = 1;
+        if (DOC->plan->ntasks && !DOC->plan->tasks[0].baselined) set_status("No baseline yet: Tools > Set Baseline keeps one");
+        break;
     case M_NETWORK:
         usage_mode = 0;
         network_mode = 1;
@@ -1119,7 +1128,7 @@ static void menu_action(ULONG id, struct MenuItem *item)
 /* The View menu's Gantt Chart and Resource Usage ticks, after ARexx VIEW changed the view. */
 static void tick_view(void)
 {
-    struct MenuItem *g, *u, *n, *k, *h;
+    struct MenuItem *g, *u, *n, *k, *h, *tg;
     int c;
     if (!win || !menu) return;
     g = ItemAddress(menu, FULLMENUNUM(2, 10, NOSUB));
@@ -1127,15 +1136,17 @@ static void tick_view(void)
     n = ItemAddress(menu, FULLMENUNUM(2, 12, NOSUB));
     k = ItemAddress(menu, FULLMENUNUM(2, 13, NOSUB));
     h = ItemAddress(menu, FULLMENUNUM(2, 14, NOSUB));
-    if (!g || !u || !n || !k || !h) return;
+    tg = ItemAddress(menu, FULLMENUNUM(2, 15, NOSUB));
+    if (!g || !u || !n || !k || !h || !tg) return;
     ClearMenuStrip(win);
     g->Flags &= ~CHECKED;
     u->Flags &= ~CHECKED;
     n->Flags &= ~CHECKED;
     k->Flags &= ~CHECKED;
     h->Flags &= ~CHECKED;
+    tg->Flags &= ~CHECKED;
     (usage_mode == OPJ_VIEW_GRAPH ? h : usage_mode == OPJ_VIEW_TASK_USAGE ? k : usage_mode ? u
-     : network_mode ? n : g)->Flags |= CHECKED;
+     : network_mode ? n : view.tracking ? tg : g)->Flags |= CHECKED;
     for (c = 0; c < OPJ_NCOLS; c++) {                       /* View > Columns follows the table */
         struct MenuItem *it = ItemAddress(menu, FULLMENUNUM(2, COLUMNS_ITEM, c));
         if (!it) continue;
@@ -1286,11 +1297,12 @@ static int rexx_do_command(const char *command, char *result, size_t size)
     } else if (starts_word_ci(command, "VIEW", &arg)) {
         if (!*arg)
             put_text(result, size, usage_mode == OPJ_VIEW_GRAPH ? "GRAPH" : usage_mode == OPJ_VIEW_TASK_USAGE ? "TASKUSAGE"
-                                   : usage_mode ? "USAGE" : network_mode ? "NETWORK" : "GANTT");
+                                   : usage_mode ? "USAGE" : network_mode ? "NETWORK" : view.tracking ? "TRACKING" : "GANTT");
         else if (starts_word_ci(arg, "GANTT", NULL) || starts_word_ci(arg, "USAGE", NULL) ||
                  starts_word_ci(arg, "NETWORK", NULL) || starts_word_ci(arg, "TASKUSAGE", NULL) ||
-                 starts_word_ci(arg, "GRAPH", NULL)) {
+                 starts_word_ci(arg, "GRAPH", NULL) || starts_word_ci(arg, "TRACKING", NULL)) {
             network_mode = starts_word_ci(arg, "NETWORK", NULL);
+            view.tracking = starts_word_ci(arg, "TRACKING", NULL);
             if (starts_word_ci(arg, "USAGE", NULL)) show_usage(OPJ_VIEW_USAGE);
             else if (starts_word_ci(arg, "TASKUSAGE", NULL)) show_usage(OPJ_VIEW_TASK_USAGE);
             else if (starts_word_ci(arg, "GRAPH", NULL)) show_usage(OPJ_VIEW_GRAPH);
@@ -1299,7 +1311,7 @@ static int rexx_do_command(const char *command, char *result, size_t size)
             redraw();
         } else {
             rc = OPJ_RX_ERROR;
-            put_text(app_lasterror, sizeof app_lasterror, "VIEW: GANTT, USAGE, TASKUSAGE, GRAPH or NETWORK");
+            put_text(app_lasterror, sizeof app_lasterror, "VIEW: GANTT, TRACKING, USAGE, TASKUSAGE, GRAPH or NETWORK");
         }
     } else if (starts_word_ci(command, "QUIT", &arg)) {
         if (DOC->dirty && !starts_word_ci(arg, "FORCE", NULL)) {

@@ -82,6 +82,11 @@ the next PR and only wires windows, menus and requesters to these calls.
   height and font (`opj_usage_view` gives its places). `opj_usage_rows`, `opj_usage_row` and
   `opj_usage_cell_text` give its rows and cells. The app's View menu switches between Gantt Chart
   and Resource Usage (ARexx `VIEW`); the usage view is read only, and Resources... edits.
+- **The Tracking Gantt** (`opj_view.tracking`), MS Project's: the Gantt chart with each task's bar in
+  the upper half of its row and its baseline bar (grey) as high in the lower half, so a slip shows at a
+  glance; the done part is solid, and each bar has its % Complete beside it in place of the resource
+  names (`opj_label_text`). Baselines show whatever Show Baseline says. View > Tracking Gantt (J, or
+  ARexx `VIEW TRACKING`) shows it; everything else is the Gantt chart's, edits included.
 - **The Task Usage view** (`opj_task_usage_draw`), MS Project's: Resource Usage turned round. A row
   for each task (indented by its outline level, a summary's name bold, its ID and its work), then a row
   for each of its assignments (the resource's name, indented, and the assignment's work). The chart
