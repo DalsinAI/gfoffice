@@ -12,7 +12,7 @@
 #include "openbase_report.h"
 #include "ow_layout.h"
 
-#define OB_PREVIEW_VERSION "0.1.0"
+#define OB_PREVIEW_VERSION "0.1.1"
 
 typedef struct ob_preview ob_preview;
 
@@ -35,5 +35,10 @@ void ob_preview_label(const ob_preview *v, int page, char *out, size_t size);
  * that page and date the date; "" when the page has none. For the tests and a one-line status. */
 void ob_preview_band_text(const ob_preview *v, ow_story_kind which, int page, const char *date, char *out,
                           size_t size);
+
+/* 0.1.1: up to size - 1 characters of the n bytes of UTF-8 at utf8 as Latin-1 (what the Amiga's fonts
+ * draw; past Latin-1, '?') into out, ended with a 0. Returns how many bytes of utf8 it took, never part of
+ * a character, so a long run is measured a piece at a time; *chars gets how many characters it wrote. */
+size_t ob_preview_latin1(const char *utf8, size_t n, char *out, size_t size, size_t *chars);
 
 #endif

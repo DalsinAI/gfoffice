@@ -115,3 +115,33 @@ void ob_preview_band_text(const ob_preview *v, ow_story_kind which, int page, co
     }
     ol_document_free(story);
 }
+
+size_t ob_preview_latin1(const char *utf8, size_t n, char *out, size_t size, size_t *chars)
+{
+    size_t i = 0, k = 0;
+    if (chars) *chars = 0;
+    if (!out || !size) return 0;
+    out[0] = 0;
+    if (!utf8) return 0;
+    while (i < n && k + 1 < size) {
+        unsigned char c = (unsigned char)utf8[i];
+        unsigned long u;
+        size_t more, j;
+        if (c < 0x80) { u = c; more = 0; }
+        else if ((c & 0xe0) == 0xc0) { u = c & 0x1f; more = 1; }
+        else if ((c & 0xf0) == 0xe0) { u = c & 0x0f; more = 2; }
+        else if ((c & 0xf8) == 0xf0) { u = c & 0x07; more = 3; }
+        else { u = '?'; more = 0; }     /* a stray continuation byte: one '?' */
+        if (more && i + more >= n) break;                       /* cut off: left for the next piece */
+        for (j = 1; j <= more; j++) {
+            if (((unsigned char)utf8[i + j] & 0xc0) != 0x80) break;
+            u = (u << 6) | ((unsigned char)utf8[i + j] & 0x3f);
+        }
+        if (j <= more) { u = '?'; more = j - 1; }               /* broken: what there was, as one '?' */
+        out[k++] = u < 0x100 ? (char)u : '?';
+        i += 1 + more;
+    }
+    out[k] = 0;
+    if (chars) *chars = k;
+    return i;
+}
