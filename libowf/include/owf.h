@@ -721,6 +721,13 @@ typedef struct owf_book {
     int active;                  /* the sheet shown first */
     int nparts, capparts;        /* owf.library 2.1: parts kept as they were (a sheet's drawing...) */
     owf_part *parts;
+    /* owf.library 2.6: the workbook's structure protected (no sheet added, deleted, renamed, moved, hidden or
+       shown), as Excel's workbookProtection lockStructure and ODF's table:structure-protected */
+    int protect_structure;
+    char *protect_hash;          /* Excel's 16-bit password hash as 4 hex digits, or NULL: no password */
+    char *protect_kept;          /* a hash libowf cannot check, as its file wrote it: "xlsx:" and the workbook*
+                                    hash attributes, or "ods:" the digest algorithm's URI, a space and
+                                    table:protection-key; or NULL */
 } owf_book;
 
 owf_book *owf_book_new(void);

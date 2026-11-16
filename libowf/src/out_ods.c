@@ -3144,10 +3144,43 @@ static void put_scenarios(ods_out *w, owf_buf *b, int sheet)
     }
 }
 
+/* The workbook's structure protection, as table:structure-protected on office:spreadsheet: the password as
+   Excel's 16-bit hash in gfocalc's own attribute, or ODF's digest as it was read. */
+static void put_book_protection(ods_out *w, owf_buf *b)
+{
+    const owf_book *book = w->book;
+    if (!book->protect_structure)
+        return;
+    owf_buf_puts(b, " table:structure-protected=\"true\"");
+    if (book->protect_hash && strlen(book->protect_hash) == 4) {
+        owf_buf_puts(b, " gfocalc:protection-key-excel=\"");
+        attr(w, b, book->protect_hash);
+        owf_buf_putc(b, '"');
+    } else if (book->protect_kept && !strncmp(book->protect_kept, "ods:", 4) && strchr(book->protect_kept, ' ')) {
+        const char *sp = strchr(book->protect_kept, ' ');
+        char alg[128];
+        size_t n = (size_t)(sp - book->protect_kept - 4);
+        if (n < sizeof alg) {
+            memcpy(alg, book->protect_kept + 4, n);
+            alg[n] = 0;
+            owf_buf_puts(b, " table:protection-key=\"");
+            attr(w, b, sp + 1);
+            owf_buf_puts(b, "\" table:protection-key-digest-algorithm=\"");
+            attr(w, b, alg);
+            owf_buf_putc(b, '"');
+        }
+    } else if (book->protect_kept)
+        owf_report_add(w->report, OWF_NOTE_APPROX,
+                       "The workbook's password from an Excel file is not kept in ODS: its structure stays protected "
+                       "without one");
+}
+
 static void body(ods_out *w, owf_buf *b)
 {
     int i;
-    owf_buf_puts(b, "<office:body><office:spreadsheet>");
+    owf_buf_puts(b, "<office:body><office:spreadsheet");
+    put_book_protection(w, b);
+    owf_buf_putc(b, '>');
     if (w->book->date1904)
         owf_buf_puts(b, "<table:calculation-settings><table:null-date table:date-value=\"1904-01-01\"/></table:calculation-settings>");
     put_validations(w, b);

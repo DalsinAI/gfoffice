@@ -99,6 +99,10 @@ owf_book *oc_book_copy(const owf_book *b)
         return NULL;
     c->date1904 = b->date1904;
     c->active = b->active;
+    c->protect_structure = b->protect_structure;
+    if ((b->protect_hash && !(c->protect_hash = oc_strdup(b->protect_hash))) ||
+        (b->protect_kept && !(c->protect_kept = oc_strdup(b->protect_kept))))
+        goto fail;
     if (owf_book_copy_parts(c, b) < 0)                   /* kept drawings, charts... */
         goto fail;
     if (b->nstyles && !(c->styles = dup_array(b->styles, (size_t)b->nstyles * sizeof *b->styles)))
@@ -529,6 +533,13 @@ static void restore(oc_core *core, oc_undo *u, oc_undo *back)
         owf_book t = *core->book;
         *core->book = *u->book;
         *u->book = t;
+        /* the workbook's protection is not an Undo step: the present one stays */
+        u->book->protect_structure = core->book->protect_structure;
+        u->book->protect_hash = core->book->protect_hash;
+        u->book->protect_kept = core->book->protect_kept;
+        core->book->protect_structure = t.protect_structure;
+        core->book->protect_hash = t.protect_hash;
+        core->book->protect_kept = t.protect_kept;
         back->book = u->book;                            /* what was there goes to the other stack */
         back->bytes += book_bytes(back->book);
         u->book = NULL;
