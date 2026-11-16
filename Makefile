@@ -566,6 +566,35 @@ check: publisher-merge-check
 .PHONY: publisher-merge-test publisher-merge-check
 
 ifneq ($(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c),)
+# merge fields shown by the page layout and kept by ODP and PPTX (tests/pub/test_pub_merge_show.c)
+PUB_MERGE_SHOW_DEPS = $(PUB_MERGE_DEPS) $(DECK_DEPS) $(DECK_SRC) tests/pub/test_pub_merge_show.c include/openpresentation_core.h
+
+$(OUT)/test-publisher-merge-show: $(PUB_MERGE_SHOW_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) src/pub/opp_merge.c \
+		src/core/ow_merge.c tests/pub/test_pub_merge_show.c -lz -o $@
+
+$(OUT)/test-publisher-merge-show-asan: $(PUB_MERGE_SHOW_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) src/pub/opp_merge.c src/core/ow_merge.c \
+		tests/pub/test_pub_merge_show.c -lz -o $@
+
+publisher-merge-show-test: $(OUT)/test-publisher-merge-show
+	$(OUT)/test-publisher-merge-show
+
+publisher-merge-show-check: $(OUT)/test-publisher-merge-show-asan
+	$(OUT)/test-publisher-merge-show-asan
+
+test: publisher-merge-show-test
+check: publisher-merge-show-check
+publisher-merge-test: publisher-merge-show-test
+publisher-merge-check: publisher-merge-show-check
+
+.PHONY: publisher-merge-show-test publisher-merge-show-check
+endif
+
+ifneq ($(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c),)
 PUB_CORE_SRC = src/pub/opp_import.c src/deck/opr_layout.c src/deck/opr_pdf.c src/core/ow_layout.c
 PUB_CORE_DEPS = $(PUB_DEPS) $(PUB_CORE_SRC) include/openpublisher_core.h include/openpresentation_core.h \
 	libowf/include/owf_deck.h $(OPENLAYOUT_ENGINE_SRC)
