@@ -48,7 +48,7 @@ static owf_deck *table_deck(int *obj, const char *style)
     owf_obj *o;
     owf_charfmt f;
     int sel = 0, r, c;
-    char t[8];
+    char t[32];
     if (!d || !u || opr_slide_insert(u, d, 0, -1, &sel) < 0)
         goto out;
     memset(&spec, 0, sizeof spec);
@@ -134,7 +134,7 @@ static void round_trip(const char *style, int keep_style)
     size_t n = 0;
     owf_report *report = owf_report_new();
     const owf_obj *o;
-    char got[32], want[8];
+    char got[32], want[32];
 
     CHECK(d && obj >= 0, "a deck with a table");
     CHECK(d && opr_export_pptx(d, &data, &n, report) == OWF_OK && data, "saved as PPTX");
