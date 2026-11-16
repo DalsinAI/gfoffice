@@ -865,6 +865,75 @@ static void test_columns(void)
     CHECK_N(opj_view_near_column(NULL, 0), -1);
 }
 
+/* Task Information's fields: Constraint Type, Constraint Date and Notes as cells, and several cells typed
+ * as one edit (one Undo step, nothing changed when one is refused). Build is Wed 18 to Fri 20 Nov. */
+static void test_task_info(void)
+{
+    opj_doc *doc = three();
+    static const int cols[3] = { OPJ_COL_CONSTRAINT_TYPE, OPJ_COL_CONSTRAINT_DATE, OPJ_COL_NOTES };
+    static const char *const ok[3] = { "Start No Earlier Than", "23/11/26", "Two crews" };
+    static const int cols2[2] = { OPJ_COL_DURATION, OPJ_COL_CONSTRAINT_TYPE };
+    static const char *const bad2[2] = { "5d", "Sideways" };
+    int bad = 9;
+    long changes;
+    CHECK_S(opj_column_title(OPJ_COL_CONSTRAINT_TYPE), "Constraint Type");
+    CHECK_S(opj_column_title(OPJ_COL_NOTES), "Notes");
+    CHECK_S(opj_constraint_name(OWF_CON_FNLT), "Finish No Later Than");
+    CHECK_S(opj_constraint_name(99), "");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_TYPE), "As Soon As Possible");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_DATE), "NA");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_NOTES), "");
+    /* OK: all three at once, one step, scheduled once */
+    changes = doc->changes;
+    CHECK_N(opj_set_cells(doc, 1, cols, ok, 3, &bad), OWF_OK);
+    CHECK_N(bad, -1);
+    CHECK_N(doc->changes, changes + 1);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_TYPE), "Start No Earlier Than");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_DATE), "Mon 23/11/26");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_NOTES), "Two crews");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_START), "Mon 23/11/26");
+    CHECK_S(cell_of(doc, 2, OPJ_COL_FINISH), "Wed 25/11/26");
+    CHECK_N(opj_undo(doc), OWF_OK);                                       /* one step takes it all back */
+    CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_TYPE), "As Soon As Possible");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_NOTES), "");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_START), "Wed 18/11/26");
+    CHECK_N(opj_redo(doc), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_NOTES), "Two crews");
+    /* one refused: nothing changes, and bad says which */
+    changes = doc->changes;
+    CHECK_N(opj_set_cells(doc, 1, cols2, bad2, 2, &bad), OWF_ERR_FORMAT);
+    CHECK_N(bad, 1);
+    CHECK_N(doc->changes, changes);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "3d");
+    CHECK_N(opj_set_cells(doc, 1, cols, ok, 0, &bad), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cells(doc, 1, NULL, ok, 1, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cells(doc, 7, cols, ok, 1, &bad), OWF_ERR_FORMAT);
+    /* a type with a date and none yet: where the task is now; short names, any case */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, "mso"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_CONSTRAINT_TYPE), "Must Start On");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_CONSTRAINT_DATE), "Mon 16/11/26");
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, "Must  finish on"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_CONSTRAINT_DATE), "Mon 16/11/26");   /* the date it had stays */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_DATE, "NA"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_CONSTRAINT_TYPE), "As Soon As Possible");
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, "alap"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_CONSTRAINT_DATE), "NA");
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_DATE, "17/11/26"), OWF_OK);   /* a date: SNET */
+    CHECK_S(cell_of(doc, 0, OPJ_COL_CONSTRAINT_TYPE), "Start No Earlier Than");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_START), "Tue 17/11/26");
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_DATE, "the 30th"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, ""), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_NOTES, ""), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_BASELINE_START, "16/11/26"), OWF_ERR_FORMAT);
+    /* a summary takes only As Soon As Possible, Start No Earlier Than and Finish No Later Than */
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_PREDECESSORS, ""), OWF_OK);     /* a link to its summary is a loop */
+    CHECK_N(opj_indent(doc, 1, 1, 1), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, "Must Start On"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, "FNLT"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, "ASAP"), OWF_OK);
+    opj_doc_free(doc);
+}
+
 static void test_pdf(void)
 {
     opj_doc *doc = three(), *empty;
@@ -905,6 +974,115 @@ static void test_pdf(void)
     opj_doc_free(doc);
 }
 
+/* The Network Diagram: Plan, then Build and Docs (both after Plan), then Ship (after Build). */
+static void test_network(void)
+{
+    opj_doc *doc = three();
+    opj_network net;
+    opj_view v;
+    opj_path path;
+    oldraw_rect b;
+    oldraw *d;
+    char text[80];
+    int w, h;
+    unsigned long bg;
+    CHECK_N(opj_insert_task(doc, 3, "Docs"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 3, OPJ_COL_DURATION, "1d"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 3, OPJ_COL_PREDECESSORS, "1"), OWF_OK);
+    CHECK_N(opj_network_layout(doc, &net), OWF_OK);
+    CHECK_N(net.ntasks, 4);
+    CHECK_N(net.columns, 3);
+    CHECK_N(net.lines, 2);
+    CHECK_N(net.column[0], 0); CHECK_N(net.line[0], 0);
+    CHECK_N(net.column[1], 1); CHECK_N(net.line[1], 0);
+    CHECK_N(net.column[2], 2); CHECK_N(net.line[2], 0);
+    CHECK_N(net.column[3], 1); CHECK_N(net.line[3], 1);
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    CHECK(opj_network_box(&v, &net, 3, &b));
+    CHECK_N(b.x, 216); CHECK_N(b.y, 100); CHECK_N(b.w, 160); CHECK_N(b.h, 68);
+    CHECK(!opj_network_box(&v, &net, 4, &b));
+    opj_network_size(&v, &net, &w, &h);
+    CHECK_N(w, 592);
+    CHECK_N(h, 184);
+    CHECK_N(opj_network_hit(&v, &net, 20, 20), 0);
+    CHECK_N(opj_network_hit(&v, &net, 200, 20), -1);         /* between the columns */
+    CHECK_N(opj_network_hit(&v, &net, 220, 110), 3);
+    CHECK_N(opj_network_hit(&v, &net, -1, 20), -1);
+    /* links: straight along a line, or down in the gap before the successor's column */
+    CHECK(opj_network_link_path(&v, &net, doc, 1, 0, &path));
+    CHECK_N(path.n, 2);
+    CHECK_N(path.x[0], 176); CHECK_N(path.y[0], 50); CHECK_N(path.x[1], 215); CHECK_N(path.y[1], 50);
+    CHECK(opj_network_link_path(&v, &net, doc, 3, 0, &path));
+    CHECK_N(path.n, 4);
+    CHECK_N(path.x[1], 195); CHECK_N(path.y[2], 134); CHECK_N(path.x[3], 215);
+    CHECK(!opj_network_link_path(&v, &net, doc, 0, 0, &path));   /* Plan has no predecessor */
+    CHECK(!opj_network_link_path(&v, &net, doc, 1, 1, &path));
+    /* the boxes' text */
+    opj_network_line_text(doc, 1, 0, text, sizeof text);
+    CHECK_S(text, "Build");
+    opj_network_line_text(doc, 1, 1, text, sizeof text);
+    CHECK_S(text, "ID: 2  Dur: 3d");
+    opj_network_line_text(doc, 1, 2, text, sizeof text);
+    CHECK_S(text, "Start: Wed 18/11/26");
+    opj_network_line_text(doc, 1, 3, text, sizeof text);
+    CHECK_S(text, "Finish: Fri 20/11/26");
+    opj_network_line_text(doc, 9, 0, text, sizeof text);
+    CHECK_S(text, "");
+    /* scrolling stays on the diagram; reveal shows a box whole */
+    v.width = 300;
+    v.height = 120;
+    opj_network_reveal(&v, &net, 2);
+    CHECK_N(v.scroll_x, 292);
+    CHECK_N(v.scroll_y, 0);
+    CHECK_N(opj_network_hit(&v, &net, 130, 20), 2);
+    opj_network_reveal(&v, &net, 0);
+    CHECK_N(v.scroll_x, 0);
+    opj_network_scroll(&v, &net, 1000, 1000);
+    CHECK_N(v.scroll_x, 292);
+    CHECK_N(v.scroll_y, 64);
+    opj_network_scroll(&v, &net, -5000, -5);
+    CHECK_N(v.scroll_x, 0);
+    CHECK_N(v.scroll_y, 59);
+    /* drawing: Plan critical and finished (crossed), Docs not critical, Build selected */
+    CHECK_N(opj_set_percent(doc, 0, 100), OWF_OK);
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    v.selected = 1;
+    d = cur = oldraw_new(&ops, NULL, W, H, NULL);
+    CHECK(d != NULL);
+    bg = oldraw_resolve(d, OLDRAW_PEN(OLDRAW_PEN_BACKGROUND)) & 0xFFFFFFUL;
+    memset(px, 0, sizeof px);
+    ntexts = 0;
+    opj_network_draw(d, &v, &net, doc, NULL);
+    CHECK_X(px[16][16], 0xD03030);                        /* Plan's edge: critical */
+    CHECK_X(px[17][17], 0xD03030);                        /* two pixels thick */
+    CHECK_X(px[18][18], 0xC8C8C8);                        /* finished: crossed, down */
+    CHECK_X(px[81][18], 0xC8C8C8);                        /* and up */
+    CHECK_X(px[100][216], 0x4A7BD0);                      /* Docs's edge: not critical */
+    CHECK_X(px[40][300], oldraw_resolve(d, OLDRAW_PEN(OLDRAW_PEN_FILL)) & 0xFFFFFFUL);   /* Build: selected */
+    CHECK_X(px[50][190], 0xD03030);                       /* Plan to Build: both critical */
+    CHECK_X(px[90][195], 0x3050A0);                       /* Plan to Docs */
+    CHECK_X(px[60][200], bg);                             /* beside Docs's line, where it turns down */
+    CHECK_X(px[195][700], bg);
+    CHECK(drew("Plan") && drew("Build") && drew("Docs") && drew("Ship"));
+    CHECK(drew("ID: 2  Dur: 3d") && drew("Start: Wed 18/11/26"));
+    oldraw_free(d);
+    cur = NULL;
+    opj_network_free(&net);
+    CHECK(net.column == NULL && net.ntasks == 0);
+    /* a summary has no box, and the boxes under it keep their order */
+    CHECK_N(opj_insert_task(doc, 0, "Phase"), OWF_OK);
+    CHECK_N(opj_indent(doc, 1, 4, 1), OWF_OK);
+    CHECK_N(opj_network_layout(doc, &net), OWF_OK);
+    CHECK_N(net.column[0], -1);
+    CHECK(!opj_network_box(&v, &net, 0, &b));
+    CHECK_N(net.column[1], 0);
+    CHECK_N(net.column[4], 1);
+    CHECK_N(net.line[4], 1);
+    opj_network_free(&net);
+    CHECK_N(opj_network_layout(NULL, &net), OWF_ERR_FORMAT);
+    opj_doc_free(doc);
+}
+
 int main(void)
 {
     test_dates();
@@ -921,6 +1099,8 @@ int main(void)
     test_usage();
     test_usage_edits();
     test_columns();
+    test_task_info();
+    test_network();
     if (fails) {
         printf("project view tests: %d of %d checks failed\n", fails, checks);
         return 1;

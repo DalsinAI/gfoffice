@@ -57,17 +57,35 @@ side first, pruned by the best answer so far, up to 5000 programmes. The
 tableau is at most 512K numbers (4 MB). Values within 1e-9 of a whole number
 are written as that number.
 
+The Nonlinear engine (the model's engine `OC_SOLVER_NONLINEAR`, Excel's GRG
+Nonlinear) takes smooth models that are not linear. It is Nelder and Mead's
+simplex search, started from the variables' present values (first steps a
+tenth of each value, or 0.5 for zero), with the constraints and a value goal
+as a squared penalty whose weight starts at 10 and grows a hundredfold for up
+to 12 rounds, each round searching again from the last answer. It stops when
+the points come together, or at the trial limit (4000 points worked out by
+default; the result then says it stopped there). The answer is a local one:
+other starting values may find a better one. It takes no whole or binary
+variables (use Simplex LP for those). Answers are checked on the sheet:
+constraints broken by more than a millionth of the target give "no values
+meet every constraint"; a target past 1e30 gives "no limit".
+
 The window keeps the model on the sheet whether or not the answer is kept,
 as hidden names named as Excel names its Solver models (`solver_opt`,
 `solver_typ`, `solver_val`, `solver_adj`, `solver_num`, `solver_lhsN`,
-`solver_relN`, `solver_rhsN`, `solver_neg`, with `solver_eng` 2 for a linear
-model), so a model made in Excel opens in GFOpenCalc and the other way round.
+`solver_relN`, `solver_rhsN`, `solver_neg`, and `solver_eng`: 2 Simplex LP,
+1 GRG Nonlinear; Excel's 3, Evolutionary, opens as Nonlinear), so a model made in Excel opens in GFOpenCalc and the other way round.
 ODS keeps them as named expressions (ODF has no hidden names, which the save
 notes). Keeping the answer is one Undo step.
 
+The window's Method cycle picks Simplex LP or Nonlinear; a Nonlinear answer
+is offered as the best near the starting values.
+
 ARexx: `SOLVE [MAX|MIN cell | VALUE cell n] [BY cells] [lhs<=rhs ...]
-[INT cells] [BIN cells] [ANY] [KEEP]` gives "target cell=value ..."; with no
-model words it solves the sheet's own model. RC 5 when the model has no
+[INT cells] [BIN cells] [ANY] [SIMPLEX|NONLINEAR] [KEEP]` gives "target
+cell=value ..."; with no model words it solves the sheet's own model
+(SIMPLEX or NONLINEAR alone changes only its engine; a new model is Simplex
+LP unless NONLINEAR is given). RC 5 when the model has no
 answer (no values meet it, no limit, or not linear), 10 when it does not
 make sense; LASTERROR says why. Test script: tests/arexx/calc-solver.rexx.
 
