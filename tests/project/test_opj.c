@@ -667,6 +667,52 @@ static void test_baseline(void)
     opj_doc_free(doc);
 }
 
+/* Baselines 1 to 10 in the core: set, clear, Undo, which are saved, and the names the window takes. */
+static void test_baseline_n(void)
+{
+    opj_doc *doc = three();
+    owf_pbaseline b;
+    char text[40];
+    CHECK_N(opj_baselines_saved(doc), 0);
+    opj_baselines_text(doc, text, sizeof text);
+    CHECK_S(text, "none");
+    CHECK_N(opj_set_baseline_n(doc, 11, 0, -1), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_baseline_n(doc, -1, 0, -1), OWF_ERR_FORMAT);
+    CHECK_N(opj_clear_baseline_n(doc, 11, 0, -1), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_baseline_n(doc, 2, 0, 9), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_baseline_n(doc, 2, 1, 1), OWF_OK);                    /* Build alone */
+    CHECK(owf_ptask_baseline(&doc->plan->tasks[1], 2, &b));
+    CHECK_N(b.start, AT(18, 8, 0));
+    CHECK(!owf_ptask_baseline(&doc->plan->tasks[0], 2, &b));
+    CHECK_S(cell_of(doc, 1, OPJ_COL_BASELINE_START), "NA");                /* Baseline (0) is another */
+    CHECK_N(opj_baselines_saved(doc), 1u << 2);
+    CHECK_N(opj_set_baseline(doc, 0, -1), OWF_OK);
+    CHECK_N(opj_set_baseline_n(doc, 10, 0, -1), OWF_OK);
+    opj_baselines_text(doc, text, sizeof text);
+    CHECK_S(text, "0 2 10");
+    opj_baselines_text(doc, text, 4);                                      /* cut short, still a string */
+    CHECK_S(text, "0 2");
+    CHECK_N(opj_clear_baseline_n(doc, 10, 0, -1), OWF_OK);
+    CHECK_N(opj_baselines_saved(doc), (1u << 0) | (1u << 2));
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK_N(opj_baselines_saved(doc), (1u << 0) | (1u << 2) | (1u << 10));
+    CHECK_N(opj_clear_baseline(doc, 0, -1), OWF_OK);                       /* 0 is the old call */
+    CHECK_N(opj_baselines_saved(doc), (1u << 2) | (1u << 10));
+    /* what Tools > Set Baseline... takes */
+    CHECK_N(opj_baseline_parse(""), 0);
+    CHECK_N(opj_baseline_parse("Baseline"), 0);
+    CHECK_N(opj_baseline_parse(" 3 "), 3);
+    CHECK_N(opj_baseline_parse("Baseline 10"), 10);
+    CHECK_N(opj_baseline_parse("baseline7"), 7);
+    CHECK_N(opj_baseline_parse("BASELINE 1"), 1);
+    CHECK_N(opj_baseline_parse("11"), -1);
+    CHECK_N(opj_baseline_parse("0010"), -1);
+    CHECK_N(opj_baseline_parse("two"), -1);
+    CHECK_N(opj_baseline_parse("Baseline 3x"), -1);
+    CHECK_N(opj_baseline_parse(NULL), 0);
+    opj_doc_free(doc);
+}
+
 /* Printing: pages down then across; the table only on the first pages across; a footer on each. */
 static void test_print(void)
 {
@@ -1693,6 +1739,7 @@ int main(void)
     test_hits();
     test_resources();
     test_baseline();
+    test_baseline_n();
     test_print();
     test_pdf();
     test_usage();

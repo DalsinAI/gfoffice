@@ -25,6 +25,7 @@
 #define NS_FO "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
 #define MAX_ROWS 4096
 #define MAX_SERIES 64
+#define MAX_COLS (2 * MAX_SERIES)   /* a scatter whose series have their own x: an x and a y column each */
 
 /* ---- Reading ---- */
 
@@ -152,7 +153,7 @@ static int grid_make(grid *g, const owf_xml_node *table, int rows, int cols)
 {
     int r = 0;
     memset(g, 0, sizeof *g);
-    if (rows <= 0 || cols <= 0 || rows > MAX_ROWS + 1 || cols > MAX_SERIES + 1)
+    if (rows <= 0 || cols <= 0 || rows > MAX_ROWS + 1 || cols > MAX_COLS)
         return 1;
     if (!(g->cells = calloc((size_t)rows * (size_t)cols, sizeof *g->cells)))
         return 0;
@@ -308,7 +309,7 @@ int owf_chart_from_odf_node(const owf_xml_node *root, owf_chart *c)
                 }
         }
         if (rows > MAX_ROWS + 1) rows = MAX_ROWS + 1;
-        if (cols > MAX_SERIES + 1) cols = MAX_SERIES + 1;
+        if (cols > MAX_COLS) cols = MAX_COLS;
         if (!grid_make(&g, table, rows, cols))
             failed = 1;
     } else {
@@ -415,10 +416,32 @@ static void put_title(owf_buf *b, const char *element, const char *text)
     owf_buf_printf(b, "</text:p></chart:%s>", element);
 }
 
+/* A scatter whose series do not share their x values: some row where two series both have an x and they differ.
+ * Then each series is written as its own x column and values column; otherwise one x column serves them all. */
+static int own_x(const owf_chart *c, int rows)
+{
+    int i, r;
+    if (c->kind != OWF_CHART_SCATTER)
+        return 0;
+    for (r = 0; r < rows; r++) {
+        const owf_chart_point *first = NULL;
+        for (i = 0; i < c->nseries; i++) {
+            const owf_chart_point *p = r < c->series[i].npoints ? &c->series[i].points[r] : NULL;
+            if (!p || !p->has_x)
+                continue;
+            if (!first)
+                first = p;
+            else if (p->x != first->x)
+                return 1;
+        }
+    }
+    return 0;
+}
+
 int owf_chart_odf_xml(const owf_chart *c, int width, int height, int inline_doc, owf_buf *b)
 {
     static const char *const legends[] = { "end", "start", "top", "bottom" };
-    int i, r, rows = 0, scatter, pie, cats = 0;
+    int i, r, rows = 0, scatter, pie, cats = 0, own;
     const char *cls;
     if (!c)
         return OWF_ERR_FORMAT;
@@ -435,6 +458,7 @@ int owf_chart_odf_xml(const owf_chart *c, int width, int height, int inline_doc,
         for (i = 0; i < c->nseries; i++)
             if (r < c->series[i].npoints && (scatter ? c->series[i].points[r].has_x : c->series[i].points[r].label != NULL))
                 cats = 1;
+    own = own_x(c, rows);      /* each series' x in the column before its values: A B, C D, ... */
 
     owf_buf_puts(b, inline_doc ? "<office:document office:mimetype=\"application/vnd.oasis.opendocument.chart\" "
                                : "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<office:document-content ");
@@ -481,13 +505,13 @@ int owf_chart_odf_xml(const owf_chart *c, int width, int height, int inline_doc,
         if (OWF_SHADE_SET(c->series[i].colour))
             owf_buf_printf(b, " chart:style-name=\"series%d\"", i + 1);
         if (rows)
-            put_range(b, "chart:values-cell-range-address", i + 2, 2, rows + 1);
+            put_range(b, "chart:values-cell-range-address", own ? 2 * i + 2 : i + 2, 2, rows + 1);
         if (c->series[i].name)
-            put_range(b, "chart:label-cell-address", i + 2, 1, 1);
+            put_range(b, "chart:label-cell-address", own ? 2 * i + 2 : i + 2, 1, 1);
         owf_buf_printf(b, " chart:class=\"%s\">", cls);
         if (scatter && cats && rows) {
             owf_buf_puts(b, "<chart:domain");
-            put_range(b, "table:cell-range-address", 1, 2, rows + 1);
+            put_range(b, "table:cell-range-address", own ? 2 * i + 1 : 1, 2, rows + 1);
             owf_buf_puts(b, "/>");
         }
         owf_buf_puts(b, "</chart:series>");
@@ -498,16 +522,35 @@ int owf_chart_odf_xml(const owf_chart *c, int width, int height, int inline_doc,
     owf_buf_printf(b, "<table:table table:name=\"local-table\"><table:table-header-columns><table:table-column/>"
                       "</table:table-header-columns><table:table-columns><table:table-column "
                       "table:number-columns-repeated=\"%d\"/></table:table-columns>"
-                      "<table:table-header-rows><table:table-row><table:table-cell/>", c->nseries > 0 ? c->nseries : 1);
-    for (i = 0; i < c->nseries; i++)
+                      "<table:table-header-rows><table:table-row><table:table-cell/>",
+                   own ? 2 * c->nseries - 1 : c->nseries > 0 ? c->nseries : 1);
+    for (i = 0; i < c->nseries; i++) {
+        if (own && i)                    /* over this series' x column */
+            owf_buf_puts(b, "<table:table-cell/>");
         if (c->series[i].name)
             put_string_cell(b, c->series[i].name);
         else
             owf_buf_puts(b, "<table:table-cell/>");
+    }
     owf_buf_puts(b, "</table:table-row></table:table-header-rows><table:table-rows>");
     for (r = 0; r < rows; r++) {
         const owf_chart_point *a = NULL;
         owf_buf_puts(b, "<table:table-row>");
+        if (own) {                       /* each series' x, then its value */
+            for (i = 0; i < c->nseries; i++) {
+                const owf_chart_point *p = r < c->series[i].npoints ? &c->series[i].points[r] : NULL;
+                if (p && p->has_x)
+                    put_number_cell(b, p->x);
+                else
+                    owf_buf_puts(b, "<table:table-cell/>");
+                if (p && p->has_value)
+                    put_number_cell(b, p->value);
+                else
+                    owf_buf_puts(b, "<table:table-cell/>");
+            }
+            owf_buf_puts(b, "</table:table-row>");
+            continue;
+        }
         for (i = 0; i < c->nseries && !a; i++)
             if (r < c->series[i].npoints && (scatter ? c->series[i].points[r].has_x : c->series[i].points[r].label != NULL))
                 a = &c->series[i].points[r];
