@@ -199,6 +199,31 @@ check: diagram-core-check
 
 .PHONY: diagram-core-test diagram-core-check
 
+# The Arrange menu's drawing order and Group and Ungroup (src/diag/odg_order.c).
+ODG_ORDER_DEPS = $(ODG_DEPS) src/diag/odg_order.c include/opendiag_order.h tests/diag/test_odg_order.c
+
+$(OUT)/test-odg-order: $(ODG_ORDER_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		$(ODG_SRC) src/diag/odg_order.c tests/diag/test_odg_order.c -lz -o $@
+
+$(OUT)/test-odg-order-asan: $(ODG_ORDER_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_order.c \
+		tests/diag/test_odg_order.c -lz -o $@
+
+diagram-order-test: $(OUT)/test-odg-order
+	$(OUT)/test-odg-order
+
+diagram-order-check: $(OUT)/test-odg-order-asan
+	$(OUT)/test-odg-order-asan
+
+test: diagram-order-test
+check: diagram-order-check
+
+.PHONY: diagram-order-test diagram-order-check
+
 # Step D4: the canvas (src/diag/odg_view.c), drawn through GFOpenLayout's drawing calls, so it is tested when
 # GFOpenLayout is there (OPENLAYOUT_SRC) with the lines, polygons and ellipses it draws with.
 ODG_OLDRAW = $(wildcard $(OPENLAYOUT_SRC)/draw/oldraw.c)
