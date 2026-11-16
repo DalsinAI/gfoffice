@@ -592,6 +592,60 @@ static void remove_bytes(owf_para *p, size_t from, size_t to)
     }
 }
 
+/* Fields (page number, a merge field...) take no room in a position: the caret is drawn after the fields at
+ * its place, but at a paragraph's end before them. So Backspace takes the last field at its place (not at the
+ * end), Delete the first one at the end, and a selection the fields drawn inside it. */
+static int field_run_at(const owf_para *p, size_t at, int last)
+{
+    size_t cum = 0;
+    int j, found = -1;
+    for (j = 0; j < p->nruns; j++) {
+        if (cum == at && p->runs[j].kind == OWF_RUN_FIELD) {
+            found = j;
+            if (!last)
+                break;
+        }
+        cum += run_length(&p->runs[j]);
+        if (cum > at)
+            break;
+    }
+    return found;
+}
+
+/* A field run taken out; the paragraph's only run becomes empty text, keeping its look */
+static void drop_field(owf_para *p, int j)
+{
+    if (p->nruns > 1) {
+        remove_run(p, j);
+        return;
+    }
+    owf_free(p->runs[j].href);
+    p->runs[j].href = NULL;
+    if (!p->runs[j].text) p->runs[j].text = owf_malloc(1);   /* an empty text run, as Backspace leaves one */
+    if (p->runs[j].text) p->runs[j].text[0] = 0;
+    p->runs[j].kind = OWF_RUN_TEXT;
+    p->runs[j].field = (owf_field)0;
+}
+
+/* The fields of a paragraph at places from..to: after from (or at it too, from_too), up to and at to, but not
+ * at to when to is the paragraph's end (keep_end: they are drawn after the caret there). */
+static void remove_fields(owf_para *p, size_t from, int from_too, size_t to, int keep_end)
+{
+    size_t cum = 0, length = opr_para_length(p);
+    int j = 0;
+    while (j < p->nruns) {
+        if (p->runs[j].kind == OWF_RUN_FIELD && (cum > from || (from_too && cum == from)) && cum <= to &&
+            !(keep_end && cum == to && to == length)) {
+            int before = p->nruns;
+            drop_field(p, j);
+            if (p->nruns < before)
+                continue;
+        }
+        cum += run_length(&p->runs[j]);
+        j++;
+    }
+}
+
 /* Paragraph index + 1 joined onto index. */
 static int join(owf_obj *o, int index)
 {
@@ -661,6 +715,13 @@ int opr_text_backspace(owf_deck *deck, int slide, int obj, opr_pos *at)
     if (!o || !at || !o->text.nparas)
         return -1;
     clamp_pos(o, at);
+    if (at->offset < opr_para_length(&o->text.paras[at->para])) {
+        int f = field_run_at(&o->text.paras[at->para], at->offset, 1);
+        if (f >= 0) {                                /* a field drawn just before the caret */
+            drop_field(&o->text.paras[at->para], f);
+            return 0;
+        }
+    }
     if (at->offset > 0) {
         size_t n;
         char *t = opr_para_text(&o->text.paras[at->para], &n);
@@ -691,6 +752,13 @@ int opr_text_delete(owf_deck *deck, int slide, int obj, opr_pos *at)
         return -1;
     clamp_pos(o, at);
     n = opr_para_length(&o->text.paras[at->para]);
+    if (at->offset == n) {
+        int f = field_run_at(&o->text.paras[at->para], at->offset, 0);
+        if (f >= 0) {                                /* a field drawn just after the caret, at the end */
+            drop_field(&o->text.paras[at->para], f);
+            return 0;
+        }
+    }
     if (at->offset < n) {
         char *t = opr_para_text(&o->text.paras[at->para], &n);
         size_t to;
@@ -733,8 +801,11 @@ int opr_text_delete_selection(owf_deck *deck, int slide, int obj,
         !same_table_cell(&o->text.paras[start.para], &o->text.paras[end.para]))
         return -2;
     if (start.para == end.para) {
+        remove_fields(&o->text.paras[start.para], start.offset, 0, end.offset, 1);
         remove_bytes(&o->text.paras[start.para], start.offset, end.offset);
     } else {
+        remove_fields(&o->text.paras[start.para], start.offset, 0, opr_para_length(&o->text.paras[start.para]), 0);
+        remove_fields(&o->text.paras[end.para], 0, 1, end.offset, 1);
         remove_bytes(&o->text.paras[start.para], start.offset,
                      opr_para_length(&o->text.paras[start.para]));
         remove_bytes(&o->text.paras[end.para], 0, end.offset);
@@ -836,6 +907,7 @@ typedef enum {
     SNAP_OBJ_COLUMNS,
     SNAP_OBJ_WRAP,
     SNAP_OBJ_CROP,
+    SNAP_OBJ_CHART,
     SNAP_OBJ_FLOW,
     SNAP_OBJ_PARENT,
     SNAP_ANIMS,
@@ -885,6 +957,8 @@ typedef struct snapshot {
     int wrap_gap[4];
     /* SNAP_OBJ_CROP: left/top/right/bottom thousandths removed. */
     int crop[4];
+    /* SNAP_OBJ_CHART: the chart object's chart (malloc'd, or NULL) belonging to the saved state. */
+    owf_chart *chart;
     /* SNAP_OBJ_FLOW: the one or two flow identities changed atomically. */
     int flow_count, flow_slide[2], flow_obj[2], flow_story[2];
     /* SNAP_OBJ_PRESENCE: the detached object when it is absent from the slide. */
@@ -1002,6 +1076,9 @@ static void snap_free(snapshot *s)
         owf_free(s->transitions);
     } else if (s->kind == SNAP_OBJ_PRESENCE && s->saved_obj_present) {
         owf_obj_clear(&s->saved_obj);
+    } else if (s->kind == SNAP_OBJ_CHART && s->chart) {
+        owf_chart_clear(s->chart);
+        free(s->chart);
     } else if (s->kind == SNAP_ANIMS) {
         int i;
         for (i = 0; i < s->nanims; i++)
@@ -1380,6 +1457,14 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
         memcpy(crop, o->crop, sizeof crop);
         memcpy(o->crop, s->crop, sizeof o->crop);
         memcpy(s->crop, crop, sizeof s->crop);
+    } else if (s->kind == SNAP_OBJ_CHART) {
+        owf_obj *o = object(deck, s->slide, s->obj);
+        owf_chart *chart;
+        if (!o || o->kind != OWF_OBJ_CHART)
+            return -1;
+        chart = o->chart;
+        o->chart = s->chart;
+        s->chart = chart;
     } else if (s->kind == SNAP_OBJ_FLOW) {
         int i;
         if (s->flow_count < 1 || s->flow_count > 2)
@@ -3286,6 +3371,33 @@ int opr_obj_set_picture_crop(opr_undo *u, owf_deck *deck, int slide, int obj,
     return 0;
 }
 
+int opr_obj_set_chart(opr_undo *u, owf_deck *deck, int slide, int obj, const owf_chart *chart)
+{
+    snapshot s;
+    owf_obj *o = object(deck, slide, obj);
+    owf_chart *copy;
+    if (!u)
+        return -1;
+    if (!o || !chart || obj == OPR_NOTES || o->parent >= 0 || o->kind != OWF_OBJ_CHART)
+        return -2;
+    copy = malloc(sizeof *copy);
+    if (!copy)
+        return -1;
+    if (owf_chart_copy(copy, chart) != OWF_OK) {
+        free(copy);
+        return -1;
+    }
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_OBJ_CHART;
+    s.slide = slide;
+    s.obj = obj;
+    s.focus = s.other_focus = slide;
+    s.chart = o->chart;
+    o->chart = copy;
+    structural_push(u, &s);
+    return 0;
+}
+
 static int story_has_content(const owf_story *story)
 {
     int p, r;
@@ -3457,7 +3569,7 @@ static int step(snapshot *from, int *nfrom, snapshot *to, int *nto, owf_deck *de
     if (obj) {
         if (s->kind == SNAP_TEXT || s->kind == SNAP_OBJ_BOX || s->kind == SNAP_OBJ_ROTATION ||
             s->kind == SNAP_OBJ_LOOK || s->kind == SNAP_OBJ_COLUMNS || s->kind == SNAP_OBJ_WRAP ||
-            s->kind == SNAP_OBJ_CROP)
+            s->kind == SNAP_OBJ_CROP || s->kind == SNAP_OBJ_CHART)
             *obj = s->obj;
         else if (s->kind == SNAP_OBJ_ORDER)
             *obj = s->from;

@@ -80,7 +80,7 @@ static int print_with_openprint(const owf_doc *doc, const char *name, int commen
     int rc;
     print_path(name, path, sizeof path);
     report = owf_report_new();
-    rc = owf_export_file(doc, path, comments ? "pdf-comments" : "pdf", report);
+    rc = owf_export_file(doc, path, comments == 2 ? "pdf-comments-margin" : comments ? "pdf-comments" : "pdf", report);
     owf_report_free(report);
     if (rc != OWF_OK) {
         if (status && status_size)

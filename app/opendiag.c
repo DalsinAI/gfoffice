@@ -57,6 +57,8 @@
 #include "opendiag_edit.h"
 #include "opendiag_style.h"
 #include "opendiag_mind.h"
+#include "opendiag_order.h"
+#include "opendiag_align.h"
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL, *DiskfontBase = NULL;
 struct Library *CyberGfxBase = NULL;     /* the page as a picture (PNG, ILBM): its pixels read back; optional */   /* labels' sizes: OpenDiskFont */
@@ -69,13 +71,20 @@ static const char version[] __attribute__((used)) =
 /* ---- Menus ---- */
 
 enum {
-    M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_SVG, M_EXPORT_PDF, M_EXPORT_PNG, M_EXPORT_ILBM, M_EXPORT_EPS, M_ABOUT, M_QUIT,
+    M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_SVG, M_EXPORT_PDF, M_EXPORT_PNG, M_EXPORT_ILBM, M_EXPORT_EPS, M_EXPORT_MERMAID, M_EXPORT_DOT, M_EXPORT_GRAPHML, M_EXPORT_EXCALIDRAW, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_LABEL, M_STYLE, M_DELETE, M_SELECT_ALL, M_SELECT_NONE,
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100, M_FIT, M_GRID, M_SNAP, M_PAGE_NEXT, M_PAGE_PREV, M_PAGE_ADD, M_LAYERS, M_MAP_NEW, M_MAP_IMPORT, M_MAP_EXPORT,
+    M_CUT, M_COPY, M_PASTE, M_DUPLICATE, M_GROUP, M_UNGROUP,
+    M_ORDER = 400,                       /* M_ORDER + odg_order */
+    M_ALIGN = 410,                       /* M_ALIGN + odg_align_how */
+    M_DISTRIBUTE_ACROSS = 420, M_DISTRIBUTE_DOWN,
     M_TOOL = 100,                        /* M_TOOL + odg_tool */
     M_SHAPE = 200,                       /* M_SHAPE + odg_stencil_at's number */
     M_MAP = 300                          /* M_MAP + odg_mind_key */
 };
+
+/* The menus' numbers, in the order their titles come in the strip below: keep the two in step. */
+enum { MENU_PROJECT, MENU_EDIT, MENU_ARRANGE, MENU_VIEW, MENU_TOOL, MENU_SHAPES, MENU_MAP };
 
 #define TOOL_ITEM(name, key, t) \
     { NM_ITEM, name, key, CHECKIT | ((t) == 0 ? CHECKED : 0), 0x7F & ~(1L << (t)), (APTR)(M_TOOL + (t)) }
@@ -92,6 +101,10 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Export EPS...", NULL, 0, 0, (APTR)M_EXPORT_EPS },
     { NM_ITEM, "Export PNG...", NULL, 0, 0, (APTR)M_EXPORT_PNG },
     { NM_ITEM, "Export IFF ILBM...", NULL, 0, 0, (APTR)M_EXPORT_ILBM },
+    { NM_ITEM, "Export Mermaid...", NULL, 0, 0, (APTR)M_EXPORT_MERMAID },
+    { NM_ITEM, "Export Graphviz DOT...", NULL, 0, 0, (APTR)M_EXPORT_DOT },
+    { NM_ITEM, "Export GraphML...", NULL, 0, 0, (APTR)M_EXPORT_GRAPHML },
+    { NM_ITEM, "Export Excalidraw...", NULL, 0, 0, (APTR)M_EXPORT_EXCALIDRAW },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "About...", "?", 0, 0, (APTR)M_ABOUT },
     { NM_ITEM, "Quit", "Q", 0, 0, (APTR)M_QUIT },
@@ -101,10 +114,34 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Edit Label...", "E", 0, 0, (APTR)M_LABEL },
     { NM_ITEM, "Style...", "K", 0, 0, (APTR)M_STYLE },
+    { NM_ITEM, "Cut", "X", 0, 0, (APTR)M_CUT },
+    { NM_ITEM, "Copy", "C", 0, 0, (APTR)M_COPY },
+    { NM_ITEM, "Paste", "V", 0, 0, (APTR)M_PASTE },
+    { NM_ITEM, "Duplicate", "D", 0, 0, (APTR)M_DUPLICATE },
     { NM_ITEM, "Delete", NULL, 0, 0, (APTR)M_DELETE },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Select All", "L", 0, 0, (APTR)M_SELECT_ALL },
     { NM_ITEM, "Select None", NULL, 0, 0, (APTR)M_SELECT_NONE },
+    { NM_TITLE, "Arrange", NULL, 0, 0, NULL },        /* opendiag_order.h and opendiag_align.h */
+    { NM_ITEM, "Bring to Front", "]", 0, 0, (APTR)(M_ORDER + ODG_ORDER_FRONT) },
+    { NM_ITEM, "Send to Back", "[", 0, 0, (APTR)(M_ORDER + ODG_ORDER_BACK) },
+    { NM_ITEM, "Bring Forward", NULL, 0, 0, (APTR)(M_ORDER + ODG_ORDER_FORWARD) },
+    { NM_ITEM, "Send Backward", NULL, 0, 0, (APTR)(M_ORDER + ODG_ORDER_BACKWARD) },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Group", NULL, 0, 0, (APTR)M_GROUP },
+    { NM_ITEM, "Ungroup", NULL, 0, 0, (APTR)M_UNGROUP },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Align", NULL, 0, 0, NULL },
+    { NM_SUB, "Left Sides", NULL, 0, 0, (APTR)(M_ALIGN + ODG_ALIGN_LEFT) },
+    { NM_SUB, "Centres", NULL, 0, 0, (APTR)(M_ALIGN + ODG_ALIGN_CENTRE) },
+    { NM_SUB, "Right Sides", NULL, 0, 0, (APTR)(M_ALIGN + ODG_ALIGN_RIGHT) },
+    { NM_SUB, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_SUB, "Tops", NULL, 0, 0, (APTR)(M_ALIGN + ODG_ALIGN_TOP) },
+    { NM_SUB, "Middles", NULL, 0, 0, (APTR)(M_ALIGN + ODG_ALIGN_MIDDLE) },
+    { NM_SUB, "Bottoms", NULL, 0, 0, (APTR)(M_ALIGN + ODG_ALIGN_BOTTOM) },
+    { NM_ITEM, "Distribute", NULL, 0, 0, NULL },
+    { NM_SUB, "Across", NULL, 0, 0, (APTR)M_DISTRIBUTE_ACROSS },
+    { NM_SUB, "Down", NULL, 0, 0, (APTR)M_DISTRIBUTE_DOWN },
     { NM_TITLE, "View", NULL, 0, 0, NULL },
     { NM_ITEM, "Zoom In", "+", 0, 0, (APTR)M_ZOOM_IN },
     { NM_ITEM, "Zoom Out", "-", 0, 0, (APTR)M_ZOOM_OUT },
@@ -127,15 +164,8 @@ static struct NewMenu menus[] = {
     TOOL_ITEM("Rhombus", "5", ODG_TOOL_RHOMBUS),
     TOOL_ITEM("Text", "6", ODG_TOOL_TEXT),
     TOOL_ITEM("Connector", "7", ODG_TOOL_CONNECTOR),
-    { NM_TITLE, "Shapes", NULL, 0, 0, NULL },          /* opendiag_stencil.h's, in its order */
-    { NM_ITEM, "Process", NULL, 0, 0, (APTR)(M_SHAPE + 0) },
-    { NM_ITEM, "Decision", NULL, 0, 0, (APTR)(M_SHAPE + 1) },
-    { NM_ITEM, "Terminator", NULL, 0, 0, (APTR)(M_SHAPE + 2) },
-    { NM_ITEM, "Data", NULL, 0, 0, (APTR)(M_SHAPE + 3) },
-    { NM_ITEM, "Predefined Process", NULL, 0, 0, (APTR)(M_SHAPE + 4) },
-    { NM_ITEM, "Preparation", NULL, 0, 0, (APTR)(M_SHAPE + 5) },
-    { NM_ITEM, "Triangle", NULL, 0, 0, (APTR)(M_SHAPE + 6) },
-    { NM_ITEM, "Circle", NULL, 0, 0, (APTR)(M_SHAPE + 7) },
+    { NM_TITLE, "Shapes", NULL, 0, 0, NULL },          /* filled from opendiag_stencil.h by build_menus */
+    { NM_IGNORE, NULL, NULL, 0, 0, NULL },             /* where build_menus puts the sets */
     { NM_TITLE, "Map", NULL, 0, 0, NULL },             /* the map mode (opendiag_mind.h); the keys are in map_keys */
     { NM_ITEM, "New Map", NULL, 0, 0, (APTR)M_MAP_NEW },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -153,6 +183,38 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Export Outline...", NULL, 0, 0, (APTR)M_MAP_EXPORT },
     { NM_END, NULL, NULL, 0, 0, NULL }
 };
+
+/* The menu strip with the Shapes menu filled: an item for each set of opendiag_stencil.h, its shapes under it in
+ * the palette's order (M_SHAPE + the shape's number). Built once, before CreateMenus. */
+static struct NewMenu built[sizeof menus / sizeof menus[0] + ODG_NSETS + 64];
+
+static struct NewMenu *build_menus(void)
+{
+    int i, n = 0, set, nth, k_shape, shapes_at = -1;
+    for (i = 0; i < (int)(sizeof menus / sizeof menus[0]); i++)
+        if (menus[i].nm_Type == NM_IGNORE)   /* the one after the "Shapes" title */
+            shapes_at = i;
+    if (shapes_at < 0 || odg_stencil_count() > 64 || M_SHAPE + odg_stencil_count() > M_MAP)
+        return menus;                    /* the strip as it is, the Shapes menu empty */
+    for (i = 0; i < (int)(sizeof menus / sizeof menus[0]); i++) {
+        if (i != shapes_at) {
+            built[n++] = menus[i];
+            continue;
+        }
+        for (set = 0; set < ODG_NSETS; set++) {
+            struct NewMenu item = { NM_ITEM, NULL, NULL, 0, 0, NULL };
+            item.nm_Label = (STRPTR)odg_stencil_set_name((odg_stencil_set)set);
+            built[n++] = item;
+            for (nth = 0; nth < 31 && (k_shape = odg_stencil_in_set((odg_stencil_set)set, nth)) >= 0; nth++) {
+                struct NewMenu sub = { NM_SUB, NULL, NULL, 0, 0, NULL };
+                sub.nm_Label = (STRPTR)odg_stencil_at(k_shape)->name;
+                sub.nm_UserData = (APTR)(M_SHAPE + k_shape);
+                built[n++] = sub;
+            }
+        }
+    }
+    return built;
+}
 
 static struct Screen *scr;
 static APTR vi;
@@ -378,7 +440,7 @@ static void sync_tool_menu(void)
     if (!win || !menu) return;
     ClearMenuStrip(win);
     for (t = 0; t < ODG_TOOL_SHAPE; t++)     /* the palette's shapes are the Shapes menu's, not ticked */
-        if ((item = ItemAddress(menu, FULLMENUNUM(3, t, NOSUB))) != NULL) {
+        if ((item = ItemAddress(menu, FULLMENUNUM(MENU_TOOL, t, NOSUB))) != NULL) {
             if (t == (int)ed.tool) item->Flags |= CHECKED;
             else item->Flags &= ~CHECKED;
         }
@@ -1019,10 +1081,80 @@ static int map_raw(UWORD code, int shift, int alt)
 
 /* ---- Menus, mouse and keys ---- */
 
+/* The selection made the cells given (Paste, Duplicate, Group and Ungroup select what they made). */
+static void select_made(char (*made)[ODG_CLIP_ID], int n)
+{
+    int i;
+    odg_edit_clear(&ed);
+    for (i = 0; i < n && i < ODG_EDIT_MAX; i++) odg_edit_select(&ed, made[i], 1);
+}
+
+/* The Edit menu's clipboard items and the Arrange menu, on the selection, through the editing core (one Undo step
+ * each); rx.clip is the clipboard ARexx's COPY, CUT and PASTE use too. */
+static void arrange(ULONG id)
+{
+    static char made[ODG_EDIT_MAX][ODG_CLIP_ID];
+    int n = 0, rc;
+    if (id != M_PASTE && !ed.n) { set_status("Select something first"); redraw(); return; }
+    switch (id) {
+    case M_COPY:
+        rc = odg_copy(DOC, ed.list, ed.n, &rx.clip);
+        if (rc == OWF_OK) set_status("Copied");
+        else edit_failed(rc, "Copy");
+        break;
+    case M_CUT:
+        edit_failed(odg_cut(DOC, ed.list, ed.n, &rx.clip), "Cut");
+        odg_edit_prune(&ed, DOC);
+        break;
+    case M_PASTE:
+        if (odg_clip_empty(&rx.clip)) { set_status("Nothing has been copied"); break; }
+        rc = odg_paste_next(DOC, &rx.clip, made, ODG_EDIT_MAX, &n);
+        if (rc == OWF_ERR_FORMAT) set_status("The current layer is hidden or locked");
+        else if (rc == OWF_OK) select_made(made, n);
+        else edit_failed(rc, "Paste");
+        break;
+    case M_DUPLICATE:
+        rc = odg_duplicate(DOC, ed.list, ed.n, ODG_CLIP_STEP, ODG_CLIP_STEP, made, ODG_EDIT_MAX, &n);
+        if (rc == OWF_OK) select_made(made, n);
+        else edit_failed(rc, "Duplicate");
+        break;
+    case M_GROUP:
+        rc = odg_group(DOC, ed.list, ed.n, made[0]);
+        if (rc == OWF_OK) select_made(made, 1);
+        else edit_failed(rc, "Group");
+        break;
+    case M_UNGROUP:
+        rc = odg_ungroup(DOC, ed.list, ed.n, made, ODG_EDIT_MAX, &n);
+        if (rc == OWF_ERR_FORMAT) set_status("Select a group to take apart");
+        else if (rc == OWF_OK) select_made(made, n);
+        else edit_failed(rc, "Ungroup");
+        break;
+    case M_DISTRIBUTE_ACROSS:
+    case M_DISTRIBUTE_DOWN:
+        rc = odg_distribute(DOC, ed.list, ed.n, id == M_DISTRIBUTE_ACROSS);
+        if (rc == OWF_ERR_FORMAT) set_status("Select three shapes or more to spread out");
+        else edit_failed(rc, "Distribute");
+        break;
+    default:
+        if (id >= M_ALIGN) {
+            rc = odg_align(DOC, ed.list, ed.n, (odg_align_how)(id - M_ALIGN));
+            if (rc == OWF_ERR_FORMAT) set_status("Select two shapes or more to line up");
+            else edit_failed(rc, "Align");
+        } else {
+            rc = odg_reorder(DOC, ed.list, ed.n, (odg_order)(id - M_ORDER));
+            if (rc == OWF_ERR_FORMAT) set_status("Already there");
+            else edit_failed(rc, "Arrange");
+        }
+        break;
+    }
+    redraw();
+}
+
 static void menu_action(ULONG id, struct MenuItem *item)
 {
     char path[512];
     set_status("");
+    if ((id >= M_CUT && id <= M_UNGROUP) || (id >= M_ORDER && id <= M_DISTRIBUTE_DOWN)) { arrange(id); return; }
     if (id >= M_TOOL && id < M_TOOL + ODG_TOOL_SHAPE) { set_tool((odg_tool)(id - M_TOOL)); return; }
     if (id >= M_MAP && id <= M_MAP + ODG_MKEY_LAYOUT) { map_key((odg_mind_key)(id - M_MAP)); return; }
     if (id >= M_SHAPE && id < M_SHAPE + (ULONG)odg_stencil_count()) {
@@ -1045,11 +1177,15 @@ static void menu_action(ULONG id, struct MenuItem *item)
     case M_EXPORT_SVG: export_as("SVG", "#?.svg"); return;
     case M_EXPORT_PDF: export_as("PDF", "#?.pdf"); return;
     case M_EXPORT_EPS: export_as("EPS", "#?.(eps|epsf|ps)"); return;
+    case M_EXPORT_MERMAID: export_as("MERMAID", "#?.(mmd|mermaid)"); return;
+    case M_EXPORT_DOT: export_as("DOT", "#?.(dot|gv)"); return;
+    case M_EXPORT_GRAPHML: export_as("GRAPHML", "#?.graphml"); return;
+    case M_EXPORT_EXCALIDRAW: export_as("EXCALIDRAW", "#?.excalidraw"); return;
     case M_EXPORT_PNG: export_as("PNG", "#?.png"); return;
     case M_EXPORT_ILBM: export_as("ILBM", "#?.(iff|ilbm)"); return;
     case M_ABOUT:
         tell(VERSION_TEXT "\nThe diagram editor of the GFOffice Suite.\n\n.drawio diagrams, as diagrams.net reads them;\n"
-             "SVG and PNG with the diagram inside open;\nSVG, PDF, EPS, PNG and IFF ILBM exports.\nMIT, Copyright (c) 2026 AmiCradle Team");
+             "SVG and PNG with the diagram inside open;\nSVG, PDF, EPS, PNG, IFF ILBM,\nMermaid, Graphviz DOT, GraphML\nand Excalidraw exports.\nMIT, Copyright (c) 2026 AmiCradle Team");
         break;
     case M_QUIT: if (may_drop()) quit_now = 1; break;
     case M_UNDO: undo_redo(0); return;
@@ -1287,7 +1423,7 @@ static int rexx_do_command(const char *command, char *result, size_t size)
     } else if (starts_word_ci(command, "SHAPE", &arg)) {
         int k;
         if (!*arg) put_text(result, size, ed.tool == ODG_TOOL_SHAPE ? odg_stencil_at(ed.shape)->name : "");
-        else if ((k = odg_stencil_find(arg)) < 0) rc = app_error(ODG_RX_ERROR, "SHAPE: Process, Decision, Terminator, Data, Predefined Process, Preparation, Triangle or Circle");
+        else if ((k = odg_stencil_find(arg)) < 0) rc = app_error(ODG_RX_ERROR, "SHAPE: a name from the Shapes menu, such as Process, Decision, Document or Cloud");
         else { ed.shape = k; set_tool(ODG_TOOL_SHAPE); }
     } else if (starts_word_ci(command, "SELECT", &arg)) {
         follow_doc();
@@ -1396,7 +1532,7 @@ static int open_window(void)
         fw = TextLength(&rp, (STRPTR)"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", 62) / 62;
         if (fw < 4) fw = 8;
     }
-    menu = CreateMenus(menus, TAG_DONE);
+    menu = CreateMenus(build_menus(), TAG_DONE);
     if (menu) LayoutMenus(menu, vi, GTMN_NewLookMenus, TRUE, TAG_DONE);
     w = scr->Width < 900 ? scr->Width : 900;
     h = scr->Height - scr->BarHeight - 1 < 600 ? scr->Height - scr->BarHeight - 1 : 600;

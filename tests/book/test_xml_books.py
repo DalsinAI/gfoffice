@@ -94,9 +94,9 @@ def canon(text, notes=False):
     return out
 
 
-def same_books(name, a, b, ignore=None):
-    """Two dumps hold the same, but for lines ignore() says differ."""
-    ca, cb = canon(a), canon(b)
+def same_books(name, a, b, ignore=None, drop=()):
+    """Two dumps hold the same, but for lines ignore() says differ and lines starting with drop."""
+    ca, cb = [l for l in canon(a) if not l.startswith(drop)], [l for l in canon(b) if not l.startswith(drop)]
     if ignore:
         ca, cb = [ignore(l) for l in ca], [ignore(l) for l in cb]
     if ca != cb:
@@ -114,6 +114,10 @@ def parse(text):
             book["notes"].append(line)
         elif word == "book":
             book["line"] = line
+        elif word == "bookprotect":
+            book["protect"] = line
+        elif word in ("extbook", "extsheet", "extcell"):
+            book.setdefault("ext", []).append(line)
         elif word in ("font", "numfmt", "style"):
             book[word + "s"][int(line.split()[1])] = line
         elif word == "name":
@@ -299,7 +303,8 @@ def test_xls_to_xlsx(work):
         rc_a, a, _ = dump(src)
         rc_b, b, err = dump(dst)
         check("read back " + os.path.basename(dst), rc_a == 0 and rc_b == 0, err)
-        same_books("xls to xlsx: " + os.path.basename(src), a, b)
+        # XLS keeps no other book's values: the XLSX names each book it links (its "ext" lines)
+        same_books("xls to xlsx: " + os.path.basename(src), a, b, drop=("ext",))
         check_xlsx_package(dst)
         written.append(dst)
     # what Excel shows of other books: their numbers and parts
@@ -370,10 +375,11 @@ def test_hand_xlsx(work):
     notes = "\n".join(b["notes"])
     for want in ("Diagonal lines", "Patterned cell backgrounds", "gradient", "angle", "Text formatted in parts",
                  "Pivot tables", "Chart sheets", "comments on cells could not be read", "#SPILL!", "Data tables", "numbers could not be read",
-                 "Sheet protection", "Links in cells",
+                 "Links in cells",
                  "pictures, charts or drawings could not be kept", "Tables keep"):
         check("hand: note " + want, want in notes, notes)
     check("hand: conditional formatting read, not noted", "Conditional formatting" not in notes, notes)
+    check("hand: sheet protection read, not noted", "Sheet protection" not in notes, notes)
     data = b["sheets"][0]
     check("hand: conditional format", data.get("cfs") == [
         'cf type=0 op=4 priority=1 stop=0 ranges=1,1-2,1 set=0 flags=0 colour=- fill=- formula "2"'], data.get("cfs"))
@@ -729,10 +735,10 @@ def test_hand_ods(work):
     b = parse(out)
     check("hand.ods: book", b["line"] == "book format=ods sheets=3 active=2 date1904=0", b["line"])
     notes = "\n".join(b["notes"])
-    for want in ("angle", "Conditional formatting", "Sheet protection", "Err:502", "Some formulas could not",
+    for want in ("angle", "Conditional formatting", "Err:502", "Some formulas could not",
                  "Pictures on sheets", "split in two", "30 December 1899"):
         check("hand.ods: note " + want, want in notes, notes)
-    for gone in ("Data validation", "Comments on cells", "AutoFilter"):
+    for gone in ("Data validation", "Comments on cells", "AutoFilter", "Sheet protection"):
         check("hand.ods: read, not noted: " + gone, gone not in notes, notes)
     check("hand.ods: the merged cell's comment, not its text", 'comment 4,4 author "me" text "NOT THIS"' in out, out[-2000:])
     check("hand.ods: the AutoFilter's buttons", 'autofilter 0,0-1,7 ""' in out, out[-2000:])
@@ -1053,6 +1059,202 @@ def test_damaged(paths, ext):
     print("%d damaged %s files read safely" % (runs, ext.upper()))
 
 
+def test_external_books(work):
+    """Other books' links: the full target and the values the file last saw (an externalLink's sheetDataSet),
+    read and written again; a name's "%20" decoded; sheets only the formulas name added after the cached ones."""
+    def hand(name, link=None, target=None):
+        src = os.path.join(work, name)
+        shutil.copytree(os.path.join(FIX, "xlsx-hand"), src)
+        for path, value in (("xl/externalLinks/externalLink1.xml", link),
+                            ("xl/externalLinks/_rels/externalLink1.xml.rels", target)):
+            if value:
+                full = os.path.join(src, *path.split("/"))
+                with open(full, encoding="utf-8") as f:
+                    text = f.read()
+                with open(full, "w", encoding="utf-8") as f:
+                    f.write(value(text))
+        return zip_dir(src, src + ".xlsx")
+
+    def part(path, name):
+        with zipfile.ZipFile(path) as z:
+            return z.read(name).decode("utf-8")
+
+    path = hand("ext")
+    rc, out, err = dump(path)
+    want = ['extbook "Other.xlsx" target="file:///C:/Books/Other.xlsx"', 'extsheet "Other.xlsx" "Rates"',
+            'extcell "Rates" 0,0 number 2', 'extcell "Rates" 0,1 text "Two & a\\x0d\\nb"', 'extcell "Rates" 2,2 bool 1',
+            'extcell "Rates" 2,3 error #REF!', 'extsheet "Other.xlsx" "Unused"']
+    check("external books: read", rc == 0 and parse(out).get("ext") == want, parse(out).get("ext"))
+    again = os.path.join(work, "ext-again.xlsx")
+    if convert(path, again):
+        link = part(again, "xl/externalLinks/externalLink1.xml")
+        check("external books: values written", '<sheetNames><sheetName val="Rates"/><sheetName val="Unused"/></sheetNames>'
+              '<definedNames><definedName name="Rate"/></definedNames><sheetDataSet><sheetData sheetId="0"><row r="1">'
+              '<cell r="A1"><v>2</v></cell><cell r="B1" t="str"><v xml:space="preserve">Two &amp; a_x000D_\nb</v></cell></row>'
+              '<row r="3"><cell r="C3" t="b"><v>1</v></cell><cell r="D3" t="e"><v>#REF!</v></cell></row></sheetData>'
+              '</sheetDataSet>' in link, link)
+        rels = part(again, "xl/externalLinks/_rels/externalLink1.xml.rels")
+        check("external books: full target written", 'Target="file:///C:/Books/Other.xlsx" TargetMode="External"' in rels, rels)
+        check("external books: read again", parse(dump(again)[1]).get("ext") == want, parse(dump(again)[1]).get("ext"))
+    # a name with "%20": decoded for the formulas, the target kept as written
+    spaced = hand("ext-spaced", target=lambda t: t.replace("file:///C:/Books/Other.xlsx", "Books/My%20Rates.xlsx"))
+    rc, out, err = dump(spaced)
+    b = parse(out)
+    check("external books: %20 decoded", rc == 0 and (b.get("ext") or [""])[0] == 'extbook "My Rates.xlsx" target="Books/My%20Rates.xlsx"',
+          b.get("ext"))
+    cell_is(b, 0, "E4", 'number 2 formula "\'[My Rates.xlsx]Rates\'!$A$1+Rate"', "external books: ")
+    again = os.path.join(work, "ext-spaced-again.xlsx")
+    if convert(spaced, again):
+        rels = part(again, "xl/externalLinks/_rels/externalLink1.xml.rels")
+        check("external books: %20 target kept", 'Target="Books/My%20Rates.xlsx"' in rels, rels)
+    # the cache knows only "Unused": the formulas' "Rates" follows it, the values keep their sheetId
+    other = hand("ext-other", link=lambda t: t.replace('<sheetName val="Rates"/><sheetName val="Unused"/>',
+                                                       '<sheetName val="Unused"/>'))
+    again = os.path.join(work, "ext-other-again.xlsx")
+    if convert(other, again):
+        link = part(again, "xl/externalLinks/externalLink1.xml")
+        check("external books: formula sheets after the cached", '<sheetNames><sheetName val="Unused"/><sheetName val="Rates"/>'
+              '</sheetNames>' in link and '<sheetData sheetId="0"><row r="1"><cell r="A1"><v>2</v>' in link, link)
+
+    # ODS: a table of LibreOffice's kind for each sheet, the formulas naming the book where it is, and back
+    ods = os.path.join(work, "ext.ods")
+    if convert(path, ods):
+        content = part(ods, "content.xml")
+        check("external books: ODS value table", '<table:table table:name="\'file:///C:/Books/Other.xlsx\'#Rates">'
+              '<table:table-source xlink:type="simple" xlink:href="file:///C:/Books/Other.xlsx" table:table-name="Rates" '
+              'table:mode="copy-results-only"/><table:table-column table:number-columns-repeated="4"/><table:table-row>'
+              '<table:table-cell office:value-type="float" office:value="2"/>' in content and
+              '<table:table-row table:number-rows-repeated="1"><table:table-cell/></table:table-row><table:table-row>'
+              '<table:table-cell table:number-columns-repeated="2"/><table:table-cell office:value-type="boolean" '
+              'office:boolean-value="true"/>' in content and "'#Unused\"><table:table-source" in content, content[-3000:])
+        check("external books: ODS formula names the file", "of:=['file:///C:/Books/Other.xlsx'#$Rates.$A$1]+Rate" in content,
+              re.findall(r'table:formula="[^"]*Rate[^"]*"', content))
+        rc, out, err = dump(ods)
+        b = parse(out)
+        check("external books: ODS read", rc == 0 and b.get("ext") == [l.replace("\\x0d\\n", "\\n") for l in want], b.get("ext"))
+        check("external books: ODS value tables are not sheets", [s["name"] for s in b["sheets"]] == ["Data", "Hidden", "Very & hidden"],
+              [s["name"] for s in b["sheets"]])
+        cell_is(b, 0, "E4", 'number 2 formula "[Other.xlsx]Rates!$A$1+Rate"', "external books: ODS ")
+    # LibreOffice's own: "%20" in the URL, the sheet from table:table-name; a sheet linked with its formulas
+    # (copy-all) stays a sheet, noted
+    src = os.path.join(work, "ext-ods")
+    shutil.copytree(os.path.join(FIX, "ods-hand"), src)
+    content_path = os.path.join(src, "content.xml")
+    with open(content_path, encoding="utf-8") as f:
+        text = f.read()
+    at = text.rindex("</t:table>") + len("</t:table>")
+    link = ('<t:table xmlns:xl="http://www.w3.org/1999/xlink" t:name="\'file:///home/dale/My%20Rates.ods\'#Q1">'
+            '<t:table-source xl:href="file:///home/dale/My%20Rates.ods" xl:type="simple" t:table-name="Q 1" '
+            't:mode="copy-results-only"/><t:table-column/><t:table-row t:number-rows-repeated="2"><t:table-cell/></t:table-row>'
+            '<t:table-row><t:table-cell office:value-type="float" office:value="7" t:formula="of:=1+6"/>'
+            '<t:table-cell office:value-type="string"><text:p>seven</text:p></t:table-cell></t:table-row></t:table>'
+            '<t:table xmlns:xl="http://www.w3.org/1999/xlink" t:name="Linked"><t:table-source xl:href="Other.ods" '
+            't:table-name="Sheet1" t:mode="copy-all"/><t:table-column/><t:table-row><t:table-cell office:value-type="float" '
+            'office:value="1"/></t:table-row></t:table>')
+    with open(content_path, "w", encoding="utf-8") as f:
+        f.write(text[:at] + link + text[at:])
+    hand = zip_dir(src, src + ".ods", stored_first="mimetype")
+    rc, out, err = dump(hand)
+    b = parse(out)
+    check("external books: LibreOffice's table read", rc == 0 and b.get("ext") == [
+        'extbook "My Rates.ods" target="file:///home/dale/My%20Rates.ods"', 'extsheet "My Rates.ods" "Q 1"',
+        'extcell "Q 1" 2,0 number 7', 'extcell "Q 1" 2,1 text "seven"'], b.get("ext"))
+    check("external books: copy-all stays a sheet", [s["name"] for s in b["sheets"]][-1] == "Linked" and
+          any("linked to other files" in n for n in b["notes"]), ([s["name"] for s in b["sheets"]], b["notes"]))
+    # a file cut off inside a value table (so the table never ends), with settings.xml's two ActiveTable items:
+    # read safely, nothing freed twice or left
+    cut = os.path.join(work, "ext-ods-cut")
+    shutil.copytree(src, cut)
+    end = link.index("/>") + 2
+    with open(os.path.join(cut, "content.xml"), "w", encoding="utf-8") as f:
+        f.write(text[:at] + link[:end])
+    rc, out, err = dump(zip_dir(cut, cut + ".ods", stored_first="mimetype"))
+    check("external books: cut off inside a value table", rc in (0, 10) and "Sanitizer" not in err, (rc, err[-800:]))
+    xlsx = os.path.join(work, "ext-ods.xlsx")
+    if convert(hand, xlsx):
+        rc, out, err = dump(xlsx)
+        check("external books: XLSX links only the books formulas name", parse(out).get("ext") is None, parse(out).get("ext"))
+
+def test_book_protection(work):
+    """Workbook structure protection: XLSX workbookProtection lockStructure and ODS table:structure-protected,
+    with Excel's 16-bit password hash or another program's digest kept as it was."""
+    def hand_xlsx(name, protection):
+        src = os.path.join(work, name)
+        shutil.copytree(os.path.join(FIX, "xlsx-hand"), src)
+        wb = os.path.join(src, "xl", "workbook.xml")
+        with open(wb, encoding="utf-8") as f:
+            text = f.read()
+        text = text.replace('<x:workbookPr date1904="true"/>', '<x:workbookPr date1904="true"/>' + protection)
+        with open(wb, "w", encoding="utf-8") as f:
+            f.write(text)
+        return zip_dir(src, src + ".xlsx")
+
+    def part(path, name):
+        with zipfile.ZipFile(path) as z:
+            return z.read(name).decode("utf-8")
+
+    sha = ('workbookAlgorithmName="SHA-512" workbookHashValue="aGFzaA==" workbookSaltValue="c2FsdA==" '
+           'workbookSpinCount="100000"')
+    # Excel's 16-bit hash: kept in XLSX, and in ODS as gfocalc's own attribute, and back
+    legacy = hand_xlsx("bp-legacy", '<x:workbookProtection workbookPassword="CBEB" lockStructure="1" lockWindows="1"/>')
+    rc, out, err = dump(legacy)
+    check("book protection: legacy read", rc == 0 and parse(out).get("protect") == 'bookprotect hash=CBEB kept=""',
+          parse(out).get("protect"))
+    ods = os.path.join(work, "bp-legacy.ods")
+    back = os.path.join(work, "bp-legacy-back.xlsx")
+    if convert(legacy, ods) and convert(ods, back):
+        content = part(ods, "content.xml")
+        check("book protection: ODS structure-protected", re.search(
+            r'<office:spreadsheet table:structure-protected="true" gfocalc:protection-key-excel="CBEB">', content),
+            content[:600])
+        rc, out, err = dump(ods)
+        check("book protection: ODS read", parse(out).get("protect") == 'bookprotect hash=CBEB kept=""', parse(out).get("protect"))
+        wbx = part(back, "xl/workbook.xml")
+        check("book protection: XLSX written", '<workbookPr date1904="1"/><workbookProtection workbookPassword="CBEB" '
+              'lockStructure="1"/><bookViews>' in wbx, wbx[:600])
+    # a digest: kept in XLSX as it was; ODS keeps the structure protected and says the password is lost
+    digest = hand_xlsx("bp-sha", "<x:workbookProtection lockStructure=\"true\" " + sha + "/>")
+    again = os.path.join(work, "bp-sha-again.xlsx")
+    if convert(digest, again):
+        wbx = part(again, "xl/workbook.xml")
+        check("book protection: digest kept", "<workbookProtection " + sha + ' lockStructure="1"/>' in wbx, wbx[:600])
+    ods = os.path.join(work, "bp-sha.ods")
+    if convert(digest, ods):
+        rc, out, err = run([OWCONVERT, "--report", digest, os.path.join(work, "bp-sha2.ods")])
+        check("book protection: digest noted in ODS", "workbook's password" in out + err, out + err)
+        rc, out, err = dump(ods)
+        check("book protection: ODS without the digest", parse(out).get("protect") == 'bookprotect hash=- kept=""',
+              parse(out).get("protect"))
+    # lockStructure off: not protected
+    off = hand_xlsx("bp-off", '<x:workbookProtection lockStructure="0" lockWindows="1"/>')
+    rc, out, err = dump(off)
+    check("book protection: lockStructure 0", "protect" not in parse(out), parse(out).get("protect"))
+    # ODF's own digest, read and written as it was
+    src = os.path.join(work, "bp-ods")
+    shutil.copytree(os.path.join(FIX, "ods-hand"), src)
+    content_path = os.path.join(src, "content.xml")
+    with open(content_path, encoding="utf-8") as f:
+        text = f.read()
+    # the hand file names the table namespace "t"
+    text = text.replace("<office:spreadsheet>", '<office:spreadsheet t:structure-protected="true" '
+                        't:protection-key="a2V5" t:protection-key-digest-algorithm='
+                        '"http://www.w3.org/2001/04/xmlenc#sha256">', 1)
+    with open(content_path, "w", encoding="utf-8") as f:
+        f.write(text)
+    hand = zip_dir(src, src + ".ods", stored_first="mimetype")
+    rc, out, err = dump(hand)
+    check("book protection: ODF digest read", parse(out).get("protect") ==
+          'bookprotect hash=- kept="ods:http://www.w3.org/2001/04/xmlenc#sha256 a2V5"', parse(out).get("protect"))
+    rc, out, err = run([OWCONVERT, "--report", hand, os.path.join(work, "bp-ods.xlsx")])
+    check("book protection: ODF digest noted in XLSX", rc == 0 and "workbook's password" in out + err, out + err)
+    again = os.path.join(work, "bp-ods-again.ods")
+    if convert(hand, again):
+        content = part(again, "content.xml")
+        check("book protection: ODF digest written", '<office:spreadsheet table:structure-protected="true" '
+              'table:protection-key="a2V5" table:protection-key-digest-algorithm="http://www.w3.org/2001/04/xmlenc#sha256">'
+              in content, content[:600])
+
+
 def main():
     with tempfile.TemporaryDirectory() as work:
         test_numbers()
@@ -1071,6 +1273,8 @@ def main():
         csvs = test_csv(work)
         test_bombs(work)
         test_routing(work)
+        test_book_protection(work)
+        test_external_books(work)
         test_damaged([hand, strict] + generated + written[:1], "xlsx")
         test_damaged([hand_ods, os.path.join(FIX, "book-lo.ods"), os.path.join(FIX, "book-odfpy.ods")]
                      + [p for p in ods_written if p.endswith(".ods")][:1], "ods")

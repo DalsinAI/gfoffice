@@ -343,3 +343,56 @@ int opr_transition_tile_at(int width, int height, int index, opr_blit *tile)
     tile->height = tile->source_y + 16 <= height ? 16 : height - tile->source_y;
     return 0;
 }
+
+int opr_show_place(int choice, int wb_depth, int wb_width, int wb_height)
+{
+    if (choice == OPR_SHOW_OWN_SCREEN || choice == OPR_SHOW_WORKBENCH) return choice;
+    return wb_depth >= 16 && wb_width >= 640 && wb_height >= 480 ? OPR_SHOW_WORKBENCH : OPR_SHOW_OWN_SCREEN;
+}
+
+const char *opr_show_place_word(int choice)
+{
+    return choice == OPR_SHOW_OWN_SCREEN ? "own" : choice == OPR_SHOW_WORKBENCH ? "workbench" : "auto";
+}
+
+static int place_same(const char *a, const char *b)
+{
+    for (; *a && *b; a++, b++) {
+        int x = *a >= 'A' && *a <= 'Z' ? *a + 32 : *a, y = *b >= 'A' && *b <= 'Z' ? *b + 32 : *b;
+        if (x != y) return 0;
+    }
+    return !*b && (!*a || *a == '\n' || *a == '\r' || *a == ' ');
+}
+
+int opr_show_place_from(const char *word)
+{
+    if (!word) return OPR_SHOW_AUTO;
+    while (*word == ' ' || *word == '\t') word++;
+    if (place_same(word, "own")) return OPR_SHOW_OWN_SCREEN;
+    if (place_same(word, "workbench")) return OPR_SHOW_WORKBENCH;
+    return OPR_SHOW_AUTO;
+}
+
+void opr_show_screen_size(long slide_w, long slide_h, int *width, int *height)
+{
+    int w = 640, h = 480;
+    if (slide_w > 0 && slide_h > 0) {
+        if (slide_w * 3 >= slide_h * 4) {           /* 4:3 or wider: 480 high */
+            double x = 480.0 * (double)slide_w / (double)slide_h;
+            w = x > 4096.0 ? 4096 : (int)(x + 0.5);
+            if (w < 640) w = 640;
+        } else {                                    /* taller: 640 wide */
+            double y = 640.0 * (double)slide_h / (double)slide_w;
+            h = y > 4096.0 ? 4096 : (int)(y + 0.5);
+            if (h < 480) h = 480;
+        }
+    }
+    if (width) *width = w;
+    if (height) *height = h;
+}
+
+int opr_show_screen_depth(int rtg, int wb_depth)
+{
+    if (!rtg) return 8;
+    return wb_depth >= 24 ? 24 : 16;
+}
