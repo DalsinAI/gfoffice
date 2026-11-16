@@ -912,6 +912,18 @@ static void keep_refs(odp *o, const owf_xml_node *n, int where, int depth)
 
 /* An embedded chart object's chart (draw:object xlink:href="./Object 1", its content.xml an office:chart), read
  * with its own data (Presentation gap 2): malloc'd, or NULL when it is not one (or memory ran out). */
+/* A chart of a kind owf_chart does not know (radar, bubble, stock, gantt...) is not one to write back: NULL, so
+ * the object is kept whole as before, not saved as a bar chart. */
+static owf_chart *known_kind(owf_chart *chart)
+{
+    if (chart && chart->kind == OWF_CHART_OTHER) {
+        owf_chart_clear(chart);
+        free(chart);
+        return NULL;
+    }
+    return chart;
+}
+
 static owf_chart *read_chart_object(odp *o, const owf_xml_node *ob)
 {
     const char *href = attr(ob, NS_XLINK, "href");
@@ -926,7 +938,7 @@ static owf_chart *read_chart_object(odp *o, const owf_xml_node *ob)
             free(chart);
             chart = NULL;
         }
-        return chart;
+        return known_kind(chart);
     }
     if (!o->zip || !href)
         return NULL;
@@ -943,7 +955,7 @@ static owf_chart *read_chart_object(odp *o, const owf_xml_node *ob)
         chart = NULL;
     }
     free(data);
-    return chart;
+    return known_kind(chart);
 }
 
 /* An object kept whole, with what it refers to. */
