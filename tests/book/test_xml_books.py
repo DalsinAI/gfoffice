@@ -1126,6 +1126,8 @@ def test_book_protection(work):
     rc, out, err = dump(hand)
     check("book protection: ODF digest read", parse(out).get("protect") ==
           'bookprotect hash=- kept="ods:http://www.w3.org/2001/04/xmlenc#sha256 a2V5"', parse(out).get("protect"))
+    rc, out, err = run([OWCONVERT, "--report", hand, os.path.join(work, "bp-ods.xlsx")])
+    check("book protection: ODF digest noted in XLSX", rc == 0 and "workbook's password" in out + err, out + err)
     again = os.path.join(work, "bp-ods-again.ods")
     if convert(hand, again):
         content = part(again, "content.xml")

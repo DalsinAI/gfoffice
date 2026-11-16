@@ -1843,6 +1843,10 @@ static void workbook_xml(xlsx_out *w, owf_buf *b)
             owf_buf_printf(b, " workbookPassword=\"%s\"", book->protect_hash);
         else if (book->protect_kept && !strncmp(book->protect_kept, "xlsx:", 5))
             owf_buf_puts(b, book->protect_kept + 5);
+        else if (book->protect_kept)
+            owf_report_add(w->report, OWF_NOTE_APPROX,
+                           "The workbook's password from an ODS file is not kept in XLSX: its structure stays "
+                           "protected without one");
         owf_buf_puts(b, " lockStructure=\"1\"/>");
     }
     owf_buf_printf(b, "<bookViews><workbookView activeTab=\"%d\"/></bookViews><sheets>", active);

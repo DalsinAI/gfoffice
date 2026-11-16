@@ -345,8 +345,8 @@ int oc_core_unprotect_sheet(oc_core *core, const char *password);
 int oc_core_sheet_protection(const oc_core *core, unsigned *allow, int *has_password);
 int oc_core_set_cell_protection(oc_core *core, int locked, int formula_hidden);
 /* The workbook's structure: while it is protected no sheet is added,
- * duplicated, deleted, renamed, moved, hidden or shown (OC_PROTECTED, and -1
- * from oc_core_add_sheet). The password is kept and checked as a sheet's.
+ * duplicated, deleted, renamed, moved, hidden or shown, nor a pivot table
+ * made on a new sheet (OC_PROTECTED, and -1 from oc_core_add_sheet). The password is kept and checked as a sheet's.
  * Not an Undo step, and Undo leaves it as it is; protecting clears Undo
  * and Redo, so none brings back what it keeps out. OWF_ERR_UNSUPPORTED:
  * already protected (not protected). */

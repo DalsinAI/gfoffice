@@ -5714,7 +5714,19 @@ static void test_book_protection(void)
         CHECK(oc_core_sheet_count(core) == 3 && !strcmp(oc_core_book(core)->sheets[1].name, "Two") &&
               !oc_core_book(core)->sheets[2].hidden);
         CHECK(oc_core_set_sheet(core, 0) == OWF_OK);                        /* sheets can still be shown */
-        CHECK(oc_core_set_input(core, 0, 0, 0, "5") == OWF_OK && fabs(num(core, "A1") - 5.0) < 1e-12);
+        {   /* nor a pivot table on a new sheet */
+            owf_range data;
+            enter_at(core, "A1", "Key");
+            enter_at(core, "B1", "Value");
+            enter_at(core, "A2", "x");
+            enter_at(core, "B2", "5");
+            CHECK(oc_parse_range("A1:B2", &data));
+            oc_core_select_range(core, &data);
+            CHECK(oc_core_pivot_summary(core, 0, OC_PIVOT_NO_COLUMN, 1, OC_SUBTOTAL_SUM) == OC_PROTECTED &&
+                  oc_core_sheet_count(core) == 3);
+            go(core, "A1");
+        }
+        CHECK(oc_core_set_input(core, 0, 0, 2, "5") == OWF_OK && fabs(num(core, "C1") - 5.0) < 1e-12);  /* cells change */
         if (k < 2) {
             CHECK(oc_core_save(core, paths[k], NULL, NULL) == OWF_OK);
             CHECK(oc_core_open(core, paths[k], NULL, NULL, NULL) == OWF_OK);
