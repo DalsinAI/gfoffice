@@ -299,6 +299,29 @@ static int crop_marks(owf_pdf *pdf, int m, int w, int h, int gap)
     return 0;
 }
 
+int opr_booklet_side(int n, int k, int *left, int *right)
+{
+    int total = (n + 3) / 4 * 4, sheet = k / 2, l, r;
+    if (n <= 0 || k < 0 || k >= total / 2) return -1;
+    if (k % 2 == 0) { l = total - 1 - 2 * sheet; r = 2 * sheet; }          /* the front: the last page and the first */
+    else { l = 2 * sheet + 1; r = total - 2 - 2 * sheet; }                 /* the back: the second and the next to last */
+    *left = l < n ? l : -1;
+    *right = r < n ? r : -1;
+    return 0;
+}
+
+/* The pages a PDF shows: the slides but the hidden ones (unless with_hidden), into *out (malloc'd); how many,
+ * or -1 */
+static int shown_slides(const owf_deck *deck, const opr_pdf_options *options, int **out)
+{
+    int i, n = 0;
+    *out = (int *)malloc(sizeof **out * (size_t)(deck->nslides ? deck->nslides : 1));
+    if (!*out) return -1;
+    for (i = 0; i < deck->nslides; i++)
+        if (!deck->slides[i].hidden || (options && options->with_hidden)) (*out)[n++] = i;
+    return n;
+}
+
 int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigned char **data, size_t *length,
                    owf_report *report)
 {
@@ -316,7 +339,35 @@ int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigne
     /* the display list in twips: a unit is a quarter of one */
     memset(&scale, 0, sizeof scale);
     ol_scale_set(&scale, 1, OL_UNITS_PER_TWIP);
-    if (options && options->pages == OPR_PDF_HANDOUTS) {
+    if (options && options->pages == OPR_PDF_BOOKLET) {
+        int *order = NULL, n = shown_slides(deck, options, &order), k, sides;
+        if (n < 0)
+            goto memory;
+        sides = (n + 3) / 4 * 2;
+        for (k = 0; k < sides; k++) {
+            int lr[2], j;
+            opr_booklet_side(n, k, &lr[0], &lr[1]);
+            if (owf_pdf_page(pdf, deck->width * 2, deck->height) < 0) {
+                free(order);
+                goto memory;
+            }
+            for (j = 0; j < 2; j++) {
+                opr_slide *laid;
+                if (lr[j] < 0)
+                    continue;                        /* a blank page */
+                laid = opr_slide_layout(deck, order[lr[j]], NULL, NULL, options->today);
+                scale.origin_x = j ? deck->width : 0;
+                if (!laid || draw_laid(pdf, deck, laid, &scale, 0) < 0) {
+                    opr_slide_free(laid);
+                    free(order);
+                    goto memory;
+                }
+                overflow |= laid->overflow;
+                opr_slide_free(laid);
+            }
+        }
+        free(order);
+    } else if (options && options->pages == OPR_PDF_HANDOUTS) {
         int per = options->handout_slides, k = 0, w, h, box[4];
         if (per != 1 && per != 2 && per != 3 && per != 4 && per != 9)
             per = 6;
