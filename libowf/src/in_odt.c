@@ -499,8 +499,11 @@ static int odf_field(const owf_xml_node *c)
         *owf_xml_attr(c, NS_TEXT, "column-name")) return OWF_FIELD_MERGE;                  /* 1.9 */
     if (owf_xml_is(c, NS_TEXT, "alphabetical-index-mark") && owf_xml_attr(c, NS_TEXT, "string-value") &&
         *owf_xml_attr(c, NS_TEXT, "string-value")) return OWF_FIELD_INDEX;                 /* 1.10 */
-    if (owf_xml_is(c, NS_TEXT, "conditional-text") && owf_xml_attr(c, NS_TEXT, "condition"))
-        return OWF_FIELD_IF;                                                               /* 1.16 */
+    if ((owf_xml_is(c, NS_TEXT, "conditional-text") || owf_xml_is(c, NS_TEXT, "hidden-text")) &&
+        owf_xml_attr(c, NS_TEXT, "condition"))
+        return OWF_FIELD_IF;                                                               /* 1.16, 1.20 */
+    if (owf_xml_is(c, NS_TEXT, "hidden-paragraph") && owf_xml_attr(c, NS_TEXT, "condition"))
+        return OWF_FIELD_HIDE_PARA;                                                        /* 1.20 */
     if (owf_xml_is(c, NS_TEXT, "sequence") && owf_xml_attr(c, NS_TEXT, "name") &&
         *owf_xml_attr(c, NS_TEXT, "name")) return OWF_FIELD_SEQ;
     if (owf_xml_is(c, NS_TEXT, "text-input")) return OWF_FIELD_FILLIN;                     /* 1.19 */
@@ -518,6 +521,13 @@ static int odf_if_form(const owf_doc *doc, const owf_xml_node *c, char *out, siz
 {
     const char *s = owf_xml_attr(c, NS_TEXT, "condition"), *yes = owf_xml_attr(c, NS_TEXT, "string-value-if-true"),
                *no = owf_xml_attr(c, NS_TEXT, "string-value-if-false"), *colon;
+    if (owf_xml_is(c, NS_TEXT, "hidden-text")) {     /* 1.20: its text hidden while it holds: "" or the text */
+        yes = "";
+        no = owf_xml_attr(c, NS_TEXT, "string-value");
+    } else if (owf_xml_is(c, NS_TEXT, "hidden-paragraph")) {   /* 1.20: "1" while it hides the paragraph */
+        yes = "1";
+        no = "";
+    }
     owf_if_form f;
     char tok[112];                                   /* (room for "DOCVARIABLE " before it in f.a) */
     int kind, k, i;
@@ -1051,12 +1061,22 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
         const char *arg = NULL;
         owf_field field = (owf_field)odf_field(c);
         char form[320];
+        const char *fixed = NULL;                    /* (1.20: what a hidden text or paragraph shows) */
+        int hide = owf_xml_is(c, NS_TEXT, "hidden-text") || field == OWF_FIELD_HIDE_PARA;
+        if (hide) {
+            const char *h = owf_xml_attr(c, NS_TEXT, "is-hidden");
+            int hidden = h && !strcmp(h, "true");
+            fixed = field == OWF_FIELD_HIDE_PARA ? (hidden ? "1" : "")
+                  : hidden ? "" : owf_xml_attr(c, NS_TEXT, "string-value") ? owf_xml_attr(c, NS_TEXT, "string-value") : "";
+        }
         if (field == OWF_FIELD_USER || field == OWF_FIELD_SEQ) arg = owf_xml_attr(c, NS_TEXT, "name");
         else if (field == OWF_FIELD_FILLIN) arg = owf_xml_attr(c, NS_TEXT, "description");   /* 1.19: its prompt */
-        else if (field == OWF_FIELD_IF) {            /* 1.16: as Word's form, or its text alone */
+        else if (field == OWF_FIELD_IF || field == OWF_FIELD_HIDE_PARA) {   /* 1.16: as Word's form, or its text alone */
             if (!odf_if_form(o->b->doc, c, form, sizeof form)) {
                 owf_buf_init(&shown);
-                plain_text(c, &shown);
+                if (field == OWF_FIELD_HIDE_PARA) ;  /* (1.20: a condition we can't read: the paragraph shown) */
+                else if (fixed) owf_buf_puts(&shown, fixed);
+                else plain_text(c, &shown);
                 set_fmt(o->b, &rel);
                 if (shown.length) owf_builder_text(o->b, (const char *)shown.data, shown.length);
                 owf_buf_free(&shown);
@@ -1090,7 +1110,8 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
                 o->b->failed = 1;
         }
         owf_buf_init(&shown);
-        plain_text(c, &shown);
+        if (fixed) owf_buf_puts(&shown, fixed);
+        else plain_text(c, &shown);
         owf_buf_putc(&shown, 0);
         set_fmt(o->b, &rel);
         owf_builder_field(o->b, field, arg, shown.failed ? NULL : (const char *)shown.data);
