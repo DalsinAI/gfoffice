@@ -58,7 +58,7 @@ enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_XML, M_EXPORT_CSV, M_EXPORT_PDF, M_PRINT, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_EDIT, M_INSERT, M_DELETE, M_INDENT, M_OUTDENT, M_LINK, M_UNLINK,
     M_DAYS, M_WEEKS, M_MONTHS, M_QUARTERS, M_SHOW_BASELINE, M_RESOURCES, M_START, M_GANTT, M_USAGE, M_NETWORK, M_TASK_USAGE, M_GRAPH, M_TRACKING,
-    M_SET_BASELINE, M_CLEAR_BASELINE, M_LEVEL, M_CLEAR_LEVELING, M_UPDATE_PROJECT, M_WORKTIME, M_PLAN_CALENDAR, M_TASK_CALENDAR,
+    M_SET_BASELINE, M_CLEAR_BASELINE, M_ASSIGN, M_LEVEL, M_CLEAR_LEVELING, M_UPDATE_PROJECT, M_WORKTIME, M_PLAN_CALENDAR, M_TASK_CALENDAR,
     M_INFO,
     M_FIND, M_FIND_NEXT, M_REPLACE, M_SORT_START, M_SORT_FINISH, M_SORT_NAME, M_SORT_DURATION, M_SORT_BY,
     M_AUTOFILTER_ROW, M_AUTOFILTER, M_FILTER_SUMMARIES, M_GROUP_COLUMN, M_GROUP_DESC,
@@ -198,6 +198,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Set Baseline...", NULL, 0, 0, (APTR)M_SET_BASELINE },
     { NM_ITEM, "Clear Baseline...", NULL, 0, 0, (APTR)M_CLEAR_BASELINE },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Assign Resources...", NULL, 0, 0, (APTR)M_ASSIGN },
     { NM_ITEM, "Level Resources...", NULL, 0, 0, (APTR)M_LEVEL },
     { NM_ITEM, "Clear Leveling", NULL, 0, 0, (APTR)M_CLEAR_LEVELING },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -1146,6 +1147,195 @@ static void resources_window(void)
     res_free();
 }
 
+/* ---- Tools > Assign Resources... (MS Project's dialog): every resource against the selected task ---- */
+
+static struct List as_list;
+static struct Node *as_nodes;
+static char (*as_text)[80];
+
+static void as_free(void)
+{
+    free(as_nodes);
+    free(as_text);
+    as_nodes = NULL;
+    as_text = NULL;
+    NewList(&as_list);
+}
+
+static void as_build(int task)
+{
+    int i, n = DOC->plan->nresources;
+    as_free();
+    if (!n) return;
+    as_nodes = (struct Node *)calloc((size_t)n, sizeof *as_nodes);
+    as_text = (char (*)[80])calloc((size_t)n, sizeof *as_text);
+    if (!as_nodes || !as_text) { as_free(); return; }
+    for (i = 0; i < n; i++) {
+        opj_assign_line(DOC, task, i, as_text[i], sizeof as_text[i]);
+        as_nodes[i].ln_Name = as_text[i];
+        AddTail(&as_list, &as_nodes[i]);
+    }
+}
+
+static void assign_window(void)
+{
+    enum { A_LIST = 1, A_UNITS, A_ASSIGN, A_REMOVE, A_REPLACE, A_ADD, A_CLOSE };
+    static const char *const labels[] = { "Assign", "Remove", "Replace...", "Add Resource...", "Close" };
+    struct Window *aw;
+    struct Gadget *eg = NULL, *g, *g_list, *g_units, *g_info;
+    struct NewGadget ng;
+    char title[80], head[80], info[120] = "Choose a resource, then Assign, Remove or Replace";
+    int task = view.selected, done = 0, sel = -1, w = fw * 52, lines = 10, h, i, by, bw;
+    if (rexx_busy || !edit_allowed(OPJ_EDIT_INFO)) return;
+    if (task < 0 || task >= DOC->plan->ntasks) { set_status("Assign Resources: choose a task first"); redraw(); return; }
+    snprintf(title, sizeof title, "Assign Resources: %.50s", DOC->plan->tasks[task].name ? DOC->plan->tasks[task].name : "");
+    snprintf(head, sizeof head, "  %-20s %8s %10s", "Resource Name", "Units", "Cost");
+    NewList(&as_list);
+    as_build(task);
+    h = (fh + 2) * (lines + 1) + (fh + 8) * 3 + 24;
+    aw = OpenWindowTags(NULL, WA_Title, (ULONG)title, WA_PubScreen, (ULONG)scr,
+        WA_Left, win->LeftEdge + 40, WA_Top, win->TopEdge + 40, WA_InnerWidth, w, WA_InnerHeight, h,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SmartRefresh, TRUE,
+        WA_AutoAdjust, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY |
+                  LISTVIEWIDCMP | STRINGIDCMP | BUTTONIDCMP | TEXTIDCMP,
+        TAG_DONE);
+    if (!aw) { as_free(); return; }
+    SetFont(aw->RPort, font);
+    if (!(g = CreateContext(&eg))) { CloseWindow(aw); as_free(); return; }
+    memset(&ng, 0, sizeof ng);
+    ng.ng_VisualInfo = vi;
+    ng.ng_TextAttr = &font_attr;
+    ng.ng_LeftEdge = aw->BorderLeft + 8;
+    ng.ng_TopEdge = aw->BorderTop + 2;
+    ng.ng_Width = w - 16;
+    ng.ng_Height = fh + 4;
+    g = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text, (ULONG)head, GTTX_CopyText, TRUE, TAG_DONE);
+    ng.ng_TopEdge = aw->BorderTop + 6 + fh + 2;
+    ng.ng_Height = (fh + 2) * lines + 4;
+    ng.ng_GadgetID = A_LIST;
+    g = g_list = CreateGadget(LISTVIEW_KIND, g, &ng, GTLV_Labels, (ULONG)&as_list, GTLV_ShowSelected, 0, TAG_DONE);
+    by = ng.ng_TopEdge + ng.ng_Height + 6;
+    ng.ng_TopEdge = by;
+    ng.ng_LeftEdge = aw->BorderLeft + 8 + fw * 6 + 8;
+    ng.ng_Width = fw * 12 + 12;
+    ng.ng_Height = fh + 6;
+    ng.ng_GadgetText = (UBYTE *)"Units";
+    ng.ng_Flags = PLACETEXT_LEFT;
+    ng.ng_GadgetID = A_UNITS;
+    g = g_units = CreateGadget(STRING_KIND, g, &ng, GTST_MaxChars, 20, TAG_DONE);
+    ng.ng_LeftEdge += ng.ng_Width + 8;
+    ng.ng_Width = w - 16 - (ng.ng_LeftEdge - aw->BorderLeft - 8);
+    ng.ng_GadgetText = NULL;
+    ng.ng_GadgetID = 0;
+    g = g_info = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text, (ULONG)info, GTTX_CopyText, TRUE, TAG_DONE);
+    ng.ng_TopEdge = by + fh + 12;
+    ng.ng_LeftEdge = aw->BorderLeft + 8;
+    bw = (w - 16 - 4 * 6) / 5;
+    ng.ng_Width = bw;
+    ng.ng_Flags = PLACETEXT_IN;
+    for (i = 0; i < 5; i++) {
+        ng.ng_GadgetText = (UBYTE *)labels[i];
+        ng.ng_GadgetID = A_ASSIGN + i;
+        g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+        ng.ng_LeftEdge += bw + 6;
+    }
+    if (!g) { FreeGadgets(eg); CloseWindow(aw); as_free(); return; }
+    AddGList(aw, eg, ~0, -1, NULL);
+    RefreshGList(eg, aw, NULL, -1);
+    GT_RefreshWindow(aw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        WaitPort(aw->UserPort);
+        while ((m = GT_GetIMsg(aw->UserPort)) != NULL) {
+            ULONG class = m->Class;
+            UWORD code = m->Code;
+            struct Gadget *gg = (struct Gadget *)m->IAddress;
+            int changed = 0, rc = OWF_OK;
+            STRPTR units = NULL;
+            const char *what = "Assign";
+            GT_ReplyIMsg(m);
+            if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) { done = 1; continue; }
+            if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(aw); GT_EndRefresh(aw, TRUE); continue; }
+            if (class != IDCMP_GADGETUP) continue;
+            GT_GetGadgetAttrs(g_units, aw, NULL, GTST_String, (ULONG)&units, TAG_DONE);
+            switch (gg->GadgetID) {
+            case A_LIST: {
+                opj_assign_info ai;
+                char u[32] = "";
+                sel = code;
+                if (opj_assign_get(DOC, task, sel, &ai) && ai.assigned) opj_units_text(DOC, sel, ai.units, u, sizeof u);
+                GT_SetGadgetAttrs(g_units, aw, NULL, GTST_String, (ULONG)u, TAG_DONE);
+                break;
+            }
+            case A_UNITS:
+            case A_ASSIGN:
+                if (sel < 0) break;
+                rc = opj_assign_resource(DOC, task, sel, units ? (const char *)units : "");
+                if (rc == OWF_OK) snprintf(info, sizeof info, "%.40s assigned", DOC->plan->resources[sel].name);
+                changed = 1;
+                break;
+            case A_REMOVE:
+                if (sel < 0) break;
+                what = "Remove";
+                rc = opj_remove_resource(DOC, task, sel);
+                if (rc == OWF_OK) snprintf(info, sizeof info, "%.40s removed", DOC->plan->resources[sel].name);
+                changed = 1;
+                break;
+            case A_REPLACE: {
+                char name[100] = "";
+                int to, kind;
+                if (sel < 0) break;
+                what = "Replace";
+                if (!ask_text("Replace", "With (a resource's name)", name, sizeof name)) break;
+                if ((to = opj_find_resource(DOC, name)) < 0) {
+                    snprintf(info, sizeof info, "No resource %.40s", name);
+                    changed = 1;
+                    break;
+                }
+                kind = DOC->plan->resources[sel].type != DOC->plan->resources[to].type;
+                rc = opj_replace_resource(DOC, task, sel, to, units ? (const char *)units : "");
+                if (rc == OWF_OK) {
+                    snprintf(info, sizeof info, kind && !(units && *units) ? "%.30s replaced: one unit, as it is another kind"
+                                                                           : "%.30s replaced", DOC->plan->resources[sel].name);
+                    sel = to;
+                }
+                changed = 1;
+                break;
+            }
+            case A_ADD: {
+                char name[100] = "";
+                int at = -1;
+                what = "Add Resource";
+                if (!ask_text("Add Resource", "Name", name, sizeof name)) break;
+                if ((rc = opj_add_resource(DOC, name, &at)) == OWF_OK) sel = at;
+                changed = 1;
+                break;
+            }
+            case A_CLOSE: done = 1; break;
+            }
+            if (rc != OWF_OK) {
+                struct Window *keep = win;
+                win = aw;
+                edit_failed(rc, what);
+                win = keep;
+            }
+            if (changed) {
+                GT_SetGadgetAttrs(g_list, aw, NULL, GTLV_Labels, ~0, TAG_DONE);
+                as_build(task);
+                GT_SetGadgetAttrs(g_list, aw, NULL, GTLV_Labels, (ULONG)&as_list,
+                                  GTLV_Selected, sel < 0 ? ~0 : (ULONG)sel, TAG_DONE);
+                GT_SetGadgetAttrs(g_info, aw, NULL, GTTX_Text, (ULONG)info, TAG_DONE);
+                redraw();
+            }
+        }
+    }
+    RemoveGList(aw, eg, -1);
+    FreeGadgets(eg);
+    CloseWindow(aw);
+    as_free();
+}
+
 /* ---- Menus, mouse and keys ---- */
 
 /* ---- Tools > Level Resources... ---- */
@@ -1603,6 +1793,7 @@ static void menu_action(ULONG id, struct MenuItem *item)
     case M_SHOW_BASELINE: view.show_baseline = item && (item->Flags & CHECKED) ? 1 : 0; break;
     case M_START: view.origin = opj_period_start(OPJ_ZOOM_WEEKS, DOC->plan->start); break;
     case M_RESOURCES: resources_window(); break;
+    case M_ASSIGN: assign_window(); break;
     case M_GANTT: usage_mode = network_mode = view.tracking = 0; set_status(""); break;
     case M_TRACKING:
         usage_mode = network_mode = 0;

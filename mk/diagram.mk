@@ -135,6 +135,14 @@ check: diagram-stencil-check
 
 .PHONY: diagram-stencil-test diagram-stencil-check
 
+# No state kept between calls in the diagram code a library is to hold (tests/diag/check_no_state.sh).
+diagram-state-check:
+	tests/diag/check_no_state.sh $(CC)
+
+check: diagram-state-check
+
+.PHONY: diagram-state-check
+
 # The shapes' outlines (libowf/diagram/owf_dshape.c), shared by the canvas and the writers.
 $(OUT)/test-dshape: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dshape.c
 	mkdir -p $(OUT)
@@ -345,3 +353,42 @@ check: diagram-view-check
 
 .PHONY: diagram-view-test diagram-view-check
 endif
+
+# owfdiag.library (docs/suite/owf-libraries.md): OWFLibsTest's diagram checks (tests/library/owf_libs_diag.c) on
+# the PC with what the library holds linked in (scripts/owfdiag-sources.sh's files) and owf_kind.c built as the
+# library's (OWF_KIND_DIAGRAMS: owf_struct_size answers the diagram structures' sizes from src/diag/odg_sizes.c).
+OWFDIAG_HOST_SRC = $(DIAG_SRC) $(filter-out src/diag/odg_view.c src/diag/odg_edit.c,$(wildcard src/diag/*.c)) \
+	src/deck/ow_picture.c
+OWFDIAG_HOST_DEPS = $(OWFDIAG_HOST_SRC) $(OWF_SRC) $(wildcard include/opendiag_*.h) libowf/include/owf_diagram.h \
+	tests/library/owf_libs_diag.c tests/library/owf_libs_host.h
+OWFDIAG_HOST_FLAGS = -DOWF_HAVE_ZLIB -DOWF_LIBS_HOST -DOWF_KIND_DIAGRAMS -DOWF_KIND_NO_DOCUMENTS \
+	-DOWF_KIND_NO_WORKBOOKS -Iinclude -Isrc/deck -Ilibowf/include -Ilibowf/src -Itests/library
+
+$(OUT)/test-owf-libs-diag: $(OWFDIAG_HOST_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) $(OWFDIAG_HOST_FLAGS) $(OWF_SRC) $(OWFDIAG_HOST_SRC) tests/library/owf_libs_diag.c -lz -o $@
+
+$(OUT)/test-owf-libs-diag-asan: $(OWFDIAG_HOST_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		$(OWFDIAG_HOST_FLAGS) $(OWF_SRC) $(OWFDIAG_HOST_SRC) tests/library/owf_libs_diag.c -lz -o $@
+
+diagram-library-test: $(OUT)/test-owf-libs-diag
+	$(OUT)/test-owf-libs-diag $(OUT)/
+
+diagram-library-check: $(OUT)/test-owf-libs-diag-asan
+	$(OUT)/test-owf-libs-diag-asan $(OUT)/
+
+test: diagram-library-test
+check: diagram-library-check
+
+.PHONY: diagram-library-test diagram-library-check
+
+# A file on owfdiag.library may include the diagram headers in any order (include/opendiag_proto.h).
+diagram-proto-check:
+	tests/diag/check_proto_order.sh $(CC)
+
+test: diagram-proto-check
+check: diagram-proto-check
+
+.PHONY: diagram-proto-check

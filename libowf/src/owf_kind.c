@@ -14,6 +14,8 @@
  * so each library judges the files no package, compound file or header
  * tells apart by its own readers only. Publisher's detector is here, not
  * with its reader (in_pub.c), so every library knows a .pub.
+ * OWF_KIND_DIAGRAMS (owfdiag.library) answers the diagram structures'
+ * sizes too (OWF_DSTRUCT_, opendiag_core.h) from odg_struct_size.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_internal.h"
@@ -137,8 +139,16 @@ owf_kind owf_file_kind(const unsigned char *data, size_t length)
     return best_book > best_doc ? OWF_KIND_WORKBOOK : OWF_KIND_DOCUMENT;
 }
 
+#ifdef OWF_KIND_DIAGRAMS
+unsigned long odg_struct_size(int which); /* src/diag/odg_sizes.c, from 100 (OWF_DSTRUCT_FIRST) */
+#endif
+
 unsigned long owf_struct_size(int which)
 {
     static const unsigned short sizes[OWF_STRUCT_COUNT] = { OWF_STRUCT_SIZES };
+#ifdef OWF_KIND_DIAGRAMS
+    if (which >= OWF_STRUCT_COUNT)
+        return odg_struct_size(which);
+#endif
     return which >= 0 && which < OWF_STRUCT_COUNT ? sizes[which] : 0;
 }
