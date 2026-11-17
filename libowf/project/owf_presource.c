@@ -139,9 +139,7 @@ void owf_project_remap_assignments(owf_project *p, const int *map, int nold)
 
 static const owf_pcal *task_cal(const owf_project *p, const owf_ptask *t)
 {
-    if (t->elapsed) return NULL;
-    if (t->calendar >= 0 && t->calendar < p->ncalendars) return &p->calendars[t->calendar];
-    return p->ncalendars ? &p->calendars[p->calendar] : NULL;
+    return owf_ptask_calendar(p, (int)(t - p->tasks));   /* the scheduler's: resource calendars too */
 }
 
 /* A task's working minutes from a to b, cut to its dates. */
