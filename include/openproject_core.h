@@ -208,7 +208,9 @@ int opj_clear_leveling(opj_doc *doc);
  * the actual and remaining durations, then % Complete, then the actual finish. An actual duration sets %
  * Complete against the duration (a longer one than planned stretches the task to it; below the whole
  * never rounds to 100%); a remaining one makes the duration the actual plus it. The actual dates follow
- * % Complete as the cells do. A summary takes only % Complete. OWF_ERR_FORMAT for text a cell wouldn't
+ * % Complete as the cells do. Elapsed ones ("1ed") make the duration elapsed; the two in different kinds
+ * (or a remaining one against work done in the other kind) are refused. The Milestone flag stays as set,
+ * whatever the duration becomes. A summary takes only % Complete. OWF_ERR_FORMAT for text a cell wouldn't
  * take or a row out of range, with nothing changed. */
 int opj_update_task(opj_doc *doc, int row, const char *percent, const char *actual, const char *remaining,
                     const char *actual_start, const char *actual_finish);
@@ -324,6 +326,9 @@ enum {
     OPJ_RCOL_RATE,                       /* Std. Rate: "20.00/h" for work, "5.00" a unit for material */
     OPJ_RCOL_WORK,                       /* worked out: "40h" */
     OPJ_RCOL_COST,                       /* worked out: "800.00" */
+    OPJ_RCOL_CALENDAR,                   /* Base Calendar: its calendar's name, the plan's when it has none of
+                                          * its own; typed: a calendar's name or number, "" for the plan's.
+                                          * Its tasks are scheduled on it (owf_ptask_calendar) */
     OPJ_NRCOLS
 };
 

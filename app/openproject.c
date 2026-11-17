@@ -48,7 +48,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenProject 0.1.19 (16.11.2026)"
+#define VERSION_TEXT "GFOpenProject 0.1.20 (16.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenProject, the project planner of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -62,11 +62,13 @@ enum {
     M_INFO,
     M_FIND, M_FIND_NEXT, M_REPLACE, M_SORT_START, M_SORT_FINISH, M_SORT_NAME, M_SORT_DURATION, M_SORT_BY,
     M_AUTOFILTER_ROW, M_AUTOFILTER, M_FILTER_SUMMARIES, M_GROUP_COLUMN, M_GROUP_DESC,
+    M_UPDATE_TASKS, M_PROGRESS_LINES,
     M_COLUMN                                 /* View > Columns: M_COLUMN + the column (OPJ_COL_) */
 };
 #define M_FILTER 200                         /* View > Filter: M_FILTER + an OPJ_FILTER_ (All .. Unstarted) */
 #define M_GROUP 220                          /* View > Group By: M_GROUP + an index into group_cols */
 #define DATA_ITEM 19                         /* View's item number of Sort; Filter and Group By follow */
+#define PROGRESS_ITEM 8                      /* Tools' item number of Progress Lines */
 #define NFILTER_ITEMS 7                      /* Filter's items 0 to 6: the filters, one ticked at a time */
 #define NGROUP_ITEMS 7                       /* Group By's items 0 to 6: No Group and six columns */
 static const int group_cols[NGROUP_ITEMS] = {
@@ -153,6 +155,11 @@ static struct NewMenu menus[] = {
     { NM_SUB, "SV", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_SV) },
     { NM_SUB, "CV", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_CV) },
     { NM_SUB, "Leveling Delay", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_LEVELING_DELAY) },
+    { NM_SUB, "Work", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_WORK) },
+    { NM_SUB, "Actual Work", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_ACTUAL_WORK) },
+    { NM_SUB, "Remaining Work", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_REMAINING_WORK) },
+    { NM_SUB, "Cost", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_COST) },
+    { NM_SUB, "Actual Cost", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_ACTUAL_COST) },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Sort", NULL, 0, 0, NULL },
     { NM_SUB, "by Start Date", NULL, 0, 0, (APTR)M_SORT_START },
@@ -190,7 +197,9 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Level Resources...", NULL, 0, 0, (APTR)M_LEVEL },
     { NM_ITEM, "Clear Leveling", NULL, 0, 0, (APTR)M_CLEAR_LEVELING },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Update Tasks...", NULL, 0, 0, (APTR)M_UPDATE_TASKS },
     { NM_ITEM, "Update Project...", NULL, 0, 0, (APTR)M_UPDATE_PROJECT },
+    { NM_ITEM, "Progress Lines", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)M_PROGRESS_LINES },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Change Working Time...", NULL, 0, 0, (APTR)M_WORKTIME },
     { NM_ITEM, "Plan Calendar...", NULL, 0, 0, (APTR)M_PLAN_CALENDAR },
@@ -407,11 +416,12 @@ static int inner_h(void) { return win ? win->GZZHeight : 0; }
 /* The view for the doc shown: a new doc gets a new view, the same doc keeps its scroll and choices. */
 static void view_for_doc(void)
 {
-    int zoom = view.zoom, base = view.show_baseline, tracking = view.tracking;
+    int zoom = view.zoom, base = view.show_baseline, tracking = view.tracking, progress = view.progress_lines;
     if (shown != rx.docs + 1) {
         opj_view_init(&view, DOC, inner_w(), inner_h(), fh + 5, shown ? zoom : OPJ_ZOOM_DAYS);
         view.show_baseline = base;
         view.tracking = tracking;
+        view.progress_lines = progress;     /* Tools > Progress Lines stays ticked for the next plan */
         view.selected = DOC->plan->ntasks ? 0 : -1;
         shown = rx.docs + 1;
     }
@@ -792,10 +802,13 @@ static int may_drop(void)
     return 1;
 }
 
+static void tick_view(void);
+
 static void open_file(const char *path)
 {
     if (run_file("OPEN", path, "FORCE") != OPJ_RX_OK) tell(rx.lasterror);
     else set_status("");
+    tick_view();                        /* the new plan's Filter and Group By (All Tasks, No Group) */
     redraw();
 }
 
@@ -942,7 +955,7 @@ static void res_build(void)
         size_t k = 0;
         for (c = 0; c < OPJ_NRCOLS; c++) {
             char cell[64];
-            static const int width[OPJ_NRCOLS] = { 4, 16, 9, 5, 10, 6, 10, 8, 10 };
+            static const int width[OPJ_NRCOLS] = { 4, 16, 9, 5, 10, 6, 10, 8, 10, 12 };
             size_t l;
             opj_resource_cell_text(DOC, i, c, cell, sizeof cell);
             l = strlen(cell);
@@ -966,10 +979,10 @@ static void resources_window(void)
     struct Window *rw;
     struct Gadget *eg = NULL, *g, *g_list, *g_col, *g_val;
     struct NewGadget ng;
-    int done = 0, sel = -1, col = OPJ_RCOL_NAME, w = fw * 86, lines = 12, h, i, by;
+    int done = 0, sel = -1, col = OPJ_RCOL_NAME, w = fw * 99, lines = 12, h, i, by;
     char head[200];
     size_t k = 0;
-    static const int width[OPJ_NRCOLS] = { 4, 16, 9, 5, 10, 6, 10, 8, 10 };
+    static const int width[OPJ_NRCOLS] = { 4, 16, 9, 5, 10, 6, 10, 8, 10, 12 };
     for (i = 0; i < OPJ_NRCOLS; i++) {
         const char *t = opj_resource_column_title(i);
         size_t l = strlen(t);
@@ -1125,6 +1138,43 @@ static void level_resources(void)
     for (i = 0; i < DOC->plan->nresources; i++) over += DOC->plan->resources[i].overallocated != 0;
     snprintf(msg, sizeof msg, "Level Resources: %d task%s delayed%s", delayed, delayed == 1 ? "" : "s",
              over ? "; some over-allocation no move can mend" : "");
+    set_status(msg);
+}
+
+/* ---- Tools > Update Tasks... (the selected task's progress in one Undo) ---- */
+
+static void update_tasks(void)
+{
+    static const int cols[5] = { OPJ_COL_PERCENT, OPJ_COL_ACTUAL_DURATION, OPJ_COL_REMAINING_DURATION,
+                                 OPJ_COL_ACTUAL_START, OPJ_COL_ACTUAL_FINISH };
+    static const char *const labels[5] = { "% Complete", "Actual duration", "Remaining duration",
+                                           "Actual start (NA: none)", "Actual finish (NA: none)" };
+    char was[5][80], now[5][80], msg[200];
+    const char *given[5];
+    int row = view.selected, i, rc, summary;
+    if (rexx_busy) return;
+    if (row < 0 || row >= DOC->plan->ntasks) { set_status("Update Tasks: select a task first"); return; }
+    summary = DOC->plan->tasks[row].summary;
+    for (i = 0; i < 5; i++) {
+        char *text = opj_cell_text_dup(DOC, row, cols[i]);
+        put_text(was[i], sizeof was[i], text ? text : "");
+        free(text);
+        put_text(now[i], sizeof now[i], was[i]);
+        given[i] = NULL;
+    }
+    for (i = 0; i < (summary ? 1 : 5); i++) {    /* a summary rolls up its subtasks: % Complete only */
+        if (!ask_text("Update Tasks", labels[i], now[i], sizeof now[i])) return;
+        if (strcmp(now[i], was[i])) given[i] = now[i];
+    }
+    if (!given[0] && !given[1] && !given[2] && !given[3] && !given[4]) return;
+    rc = opj_update_task(DOC, row, given[0], given[1], given[2], given[3], given[4]);
+    if (rc != OWF_OK) { edit_failed(rc, "Update Tasks"); return; }
+    {
+        char *pc = opj_cell_text_dup(DOC, row, OPJ_COL_PERCENT);
+        snprintf(msg, sizeof msg, "Update Tasks: %.80s now %s complete", DOC->plan->tasks[row].name
+                 ? DOC->plan->tasks[row].name : "the task", pc ? pc : "?");
+        free(pc);
+    }
     set_status(msg);
 }
 
@@ -1299,14 +1349,13 @@ static void sort_dialog(void)
 /* The lines' filter or group changed: back to the top, the selection on show. */
 static void lines_changed(const char *what)
 {
-    int rc = opj_lines_update(&lines, DOC);
     char msg[120];
     view.first_row = 0;
-    if (rc != OWF_OK) {
-        edit_failed(rc, what);
+    view_for_doc();                     /* works the lines out once; none (every task shown) on no memory */
+    if (!view.lines) {
+        edit_failed(OWF_ERR_MEMORY, what);
         return;
     }
-    view_for_doc();
     keep_selection_shown();
     if (lines.group >= 0) {
         int i, groups = 0;
@@ -1443,7 +1492,6 @@ static void set_zoom(int zoom)
     redraw();
 }
 
-static void tick_view(void);
 
 static void menu_action(ULONG id, struct MenuItem *item)
 {
@@ -1453,7 +1501,7 @@ static void menu_action(ULONG id, struct MenuItem *item)
         int edit = id == M_EDIT ? OPJ_EDIT_CELL : id == M_INSERT ? OPJ_EDIT_INSERT : id == M_DELETE ? OPJ_EDIT_DELETE
                  : id == M_INDENT ? OPJ_EDIT_INDENT : id == M_OUTDENT ? OPJ_EDIT_OUTDENT : id == M_LINK ? OPJ_EDIT_LINK
                  : id == M_UNLINK ? OPJ_EDIT_UNLINK : id == M_INFO ? OPJ_EDIT_INFO
-                 : id == M_REPLACE ? OPJ_EDIT_CELL : OPJ_EDIT_NONE;
+                 : id == M_REPLACE || id == M_UPDATE_TASKS ? OPJ_EDIT_CELL : OPJ_EDIT_NONE;
         if (!edit_allowed(edit)) return;
     }
     if (id >= M_FILTER && id < M_FILTER + NFILTER_ITEMS) {     /* View > Filter: a filter, ticked alone */
@@ -1581,10 +1629,17 @@ static void menu_action(ULONG id, struct MenuItem *item)
         lines_changed("Group By");
         break;
     case M_UPDATE_PROJECT: update_project(); break;
+    case M_UPDATE_TASKS: update_tasks(); break;
+    case M_PROGRESS_LINES:
+        view.progress_lines = item && (item->Flags & CHECKED) ? 1 : 0;
+        if (view.progress_lines && !DOC->plan->has_status_date)
+            set_status("Progress lines need a status date: Tools > Update Project... sets one");
+        break;
     case M_WORKTIME: change_working_time(); break;
     case M_PLAN_CALENDAR: plan_calendar(); break;
     case M_TASK_CALENDAR: task_calendar(); break;
     }
+    if (id == M_NEW) tick_view();       /* the new plan's Filter and Group By (All Tasks, No Group) */
     redraw();
 }
 
@@ -1633,6 +1688,10 @@ static void tick_view(void)
         struct MenuItem *down = ItemAddress(menu, FULLMENUNUM(2, DATA_ITEM + 2, NGROUP_ITEMS + 2));
         if (sum) sum->Flags = (UWORD)(lines.filter.summaries ? sum->Flags | CHECKED : sum->Flags & ~CHECKED);
         if (down) down->Flags = (UWORD)(lines.group_descending ? down->Flags | CHECKED : down->Flags & ~CHECKED);
+    }
+    {   /* Tools > Progress Lines follows the view (ARexx PROGRESSLINES too) */
+        struct MenuItem *pl = ItemAddress(menu, FULLMENUNUM(3, PROGRESS_ITEM, NOSUB));
+        if (pl) pl->Flags = (UWORD)(view.progress_lines ? pl->Flags | CHECKED : pl->Flags & ~CHECKED);
     }
     ResetMenuStrip(win, menu);
 }

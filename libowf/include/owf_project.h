@@ -141,8 +141,8 @@ typedef struct {
     int type;                            /* OWF_RES_ */
     long max_units;                      /* percent: 100 is one full time (work resources) */
     long rate;                           /* hundredths of the currency an hour of work, or a unit of material */
-    int calendar;                        /* index into the project's calendars, -1: the project's; kept in files
-                                          * and used for usage, not yet for scheduling */
+    int calendar;                        /* index into the project's calendars, -1: the project's; tasks it
+                                          * works on are scheduled on it (owf_ptask_calendar) */
     /* worked out by owf_project_schedule */
     long work;                           /* minutes, over all its assignments (work resources) */
     long cost;                           /* hundredths of the currency */
@@ -184,6 +184,11 @@ typedef struct {
 /* A new project starting at start, with the Standard calendar as its calendar. NULL: memory. */
 owf_project *owf_project_new(owf_ptime start);
 void owf_project_free(owf_project *p);
+/* The calendar task is scheduled on: none (NULL) for an elapsed task (every minute counts); its own
+ * calendar; else the calendar of its first work resource that has one (MS Project schedules on resource
+ * calendars; with several resources on different calendars it spans them all, here the first wins); else
+ * the project's. NULL for a task out of range or a project with no calendars. */
+const owf_pcal *owf_ptask_calendar(const owf_project *p, int task);
 /* Adds a task at the end (level 1, one working day, ASAP); its index, or -1 for memory. */
 int owf_project_add_task(owf_project *p, const char *name, long duration);
 /* Adds a calendar (a copy of Standard named name); its index, or -1 for memory. */

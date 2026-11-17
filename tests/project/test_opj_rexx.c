@@ -119,6 +119,10 @@ static void test_resources_and_baseline(void)
     CHECK_S(ok("GETRESOURCE 1 rate"), "20.00/h");
     CHECK_S(ok("GETRESOURCE 1 Work"), "28h");                                /* 16h, and half of 24h */
     CHECK_S(ok("GETRESOURCE 1 Cost"), "560.00");
+    CHECK_S(ok("GETRESOURCE 1 Calendar"), "Standard");                      /* Base Calendar: the plan's */
+    CHECK_N(rx_do("SETRESOURCE 1 Calendar Nights"), OPJ_RX_ERROR);          /* no such calendar */
+    ok("SETRESOURCE 1 \"Base Calendar\" 1");
+    CHECK_S(ok("GETRESOURCE 1 basecalendar"), "Standard");
     CHECK_S(ok("GETRESOURCE 1 Name"), "Dale");
     CHECK_N(rx_do("GETRESOURCE 2 Name"), OPJ_RX_ERROR);
     CHECK_N(rx_do("SETRESOURCE 1 Work 3h"), OPJ_RX_ERROR);
@@ -612,6 +616,20 @@ static void test_filter_group(void)
     CHECK_S(rx.lasterror, "LINE: no line 9");
     CHECK_S(ok("GROUP"), "0");
     CHECK_S(ok("LINES"), "4");
+    ok("FILTER Milestones SUMMARIES");                                     /* NEW starts on All Tasks, */
+    ok("GROUP BY Duration DESC");                                          /* ungrouped */
+    ok("SAVEAS build/host/rexx-lines.gfproj");
+    ok("NEW FORCE");
+    CHECK_N(lines.filter.kind, OPJ_FILTER_ALL);
+    CHECK_N(lines.filter.summaries, 0);
+    CHECK_N(lines.group, -1);
+    CHECK_N(lines.group_descending, 0);
+    CHECK_S(ok("LINES"), "0");
+    ok("FILTER Milestones");
+    ok("OPEN build/host/rexx-lines.gfproj FORCE");              /* and so does OPEN */
+    CHECK_N(lines.filter.kind, OPJ_FILTER_ALL);
+    CHECK_S(ok("LINES"), "4");
+    remove("build/host/rexx-lines.gfproj");
     rx.lines = NULL;
     opj_lines_free(&lines);
 }

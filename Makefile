@@ -544,11 +544,13 @@ pub-test: $(OUT)/pub-dump $(OUT)/pub-resave $(PUB_MADE)
 	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub.py $(OUT)/pub-dump 40
 	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub_save.py $(OUT)/pub-resave $(OUT)/pub-dump
 	python3 tests/pub/test_pub_long_list.py $(OUT)/pub-dump
+	python3 tests/pub/test_pub_many_masters.py $(OUT)/pub-dump
 
 pub-check: $(OUT)/pub-dump-asan $(OUT)/pub-resave-asan $(PUB_MADE)
 	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub.py $(OUT)/pub-dump-asan 150
 	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub_save.py $(OUT)/pub-resave-asan $(OUT)/pub-dump-asan
 	python3 tests/pub/test_pub_long_list.py $(OUT)/pub-dump-asan
+	python3 tests/pub/test_pub_many_masters.py $(OUT)/pub-dump-asan
 
 test: pub-test
 check: pub-check
@@ -831,3 +833,16 @@ publisher-merge-show-test: pressmaster-merge-show-test
 publisher-template-check: pressmaster-template-check
 publisher-template-test: pressmaster-template-test
 .PHONY: publisher-core-check publisher-core-test publisher-merge-check publisher-merge-test publisher-merge-show-check publisher-merge-show-test publisher-template-check publisher-template-test
+
+# No tool attribution in the tree: scripts/check-attribution.sh, tested by
+# tests/repo/test_attribution.sh on throwaway repositories.
+attribution-test:
+	sh tests/repo/test_attribution.sh
+
+attribution-check:
+	sh scripts/check-attribution.sh .
+
+test: attribution-test attribution-check
+check: attribution-test attribution-check
+
+.PHONY: attribution-test attribution-check
