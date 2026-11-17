@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.18.0"
+#define OWF_VERSION "1.20.0"
 
 /* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
@@ -98,8 +98,13 @@ typedef enum { OWF_FIELD_PAGE, OWF_FIELD_PAGES, OWF_FIELD_DATE, OWF_FIELD_TIME,
                /* 1.16: conditional text: href is Word's form after IF, two operands, an operator and the two
                 * texts ({DOCVARIABLE Gender} = "F" "Ms" "Mr"; owf_ifform.h), text the one last shown (DOCX IF,
                 * ODF text:conditional-text) */
-               OWF_FIELD_IF } owf_field;
-#define OWF_FIELD_LAST OWF_FIELD_IF
+               OWF_FIELD_IF,
+               /* 1.20: a hidden paragraph: href is an IF's form whose texts are "1" and "" (its condition, as
+                * {DOCVARIABLE Draft} = "yes" "1" ""), text "1" while it holds: then its paragraph isn't shown
+                * (owf_para_hidden), unless the view shows hidden text. The field itself shows nothing. ODF
+                * text:hidden-paragraph; DOCX has none (the paragraph's text is written w:vanish while it holds). */
+               OWF_FIELD_HIDE_PARA } owf_field;
+#define OWF_FIELD_LAST OWF_FIELD_HIDE_PARA
 
 typedef struct {
     owf_run_kind kind;
@@ -206,6 +211,17 @@ typedef struct {
      * away. 0: none. */
     int row_revision;
 } owf_para;
+
+/* 1.20: whether a hidden-paragraph field (OWF_FIELD_HIDE_PARA) hides the paragraph now. Header-only. */
+static inline int owf_para_hidden(const owf_para *p)
+{
+    int j;
+    for (j = 0; p && j < p->nruns; ++j)
+        if (p->runs[j].kind == OWF_RUN_FIELD && p->runs[j].field == OWF_FIELD_HIDE_PARA && p->runs[j].text &&
+            *p->runs[j].text)
+            return 1;
+    return 0;
+}
 
 typedef enum {
     OWF_SECTION_CONTINUOUS, OWF_SECTION_NEW_PAGE, OWF_SECTION_ODD_PAGE,

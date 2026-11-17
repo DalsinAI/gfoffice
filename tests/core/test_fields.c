@@ -32,7 +32,7 @@ static const char *dump(const owf_doc *doc)
 {
     static const char *const names[] = { "PAGE", "PAGES", "DATE", "TIME", "TITLE", "AUTHOR", "SUBJECT", "FILENAME",
                                          "WORDS", "CHAPTER", "USER", "REF", "REFPAGE", "MERGE", "INDEX", "SEQ",
-                                         "IF" };
+                                         "IF", "HIDEPARA" };
     static char out[2048];
     size_t used = 0;
     int i, j;
@@ -718,6 +718,111 @@ static void test_if(void)
     }
 }
 
+/* libowf 1.20 (2.0.51): hidden paragraphs (ODF text:hidden-paragraph, OWF_FIELD_HIDE_PARA) and hidden text
+ * (text:hidden-text, an IF whose first text is ""): worked out from a user field, out and back through ODT,
+ * the paragraph left out of Markdown, HTML and PDF and written w:vanish in DOCX; OpenOffice's own form read */
+static int has(const unsigned char *d, size_t n, const char *s)
+{
+    size_t k = strlen(s), i;
+    for (i = 0; d && i + k <= n; ++i)
+        if (!memcmp(d + i, s, k)) return 1;
+    return 0;
+}
+
+static void test_hidden_paragraph(void)
+{
+    static const char *const names[] = { "mimetype", "content.xml" };
+    static const char *const parts[] = {
+        "application/vnd.oasis.opendocument.text",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-content "
+        "xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+        "xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" office:version=\"1.3\"><office:body><office:text>"
+        "<text:user-field-decls><text:user-field-decl office:value-type=\"string\" office:string-value=\"yes\" "
+        "text:name=\"Draft\"/></text:user-field-decls>"
+        "<text:p>Shown</text:p>"
+        "<text:p><text:hidden-paragraph text:condition=\"ooow:Draft == &quot;yes&quot;\" text:is-hidden=\"true\"/>Draft only</text:p>"
+        "<text:p>See <text:hidden-text text:condition=\"ooow:Draft != &quot;yes&quot;\" text:string-value=\"the final\" "
+        "text:is-hidden=\"true\">the final</text:hidden-text> copy</text:p>"
+        "</office:text></office:body></office:document-content>" };
+    static const char *const fmts[] = { "odt", "docx", "markdown", "html", "pdf" };
+    static const char *const want =
+        "Getting started|{HIDEPARA:{DOCVARIABLE Draft} = \"yes\" \"1\" \"\"=1}Plug it in and wait.|Using it"
+        "{IF:{DOCVARIABLE Draft} = \"yes\" \"\" \"Note\"=}|Press the button.";
+    owf_doc *doc = doc_of(), *back = NULL, *oo = NULL;
+    ow_editor *ed = doc ? ow_editor_new(doc) : NULL;
+    ow_selection sel;
+    int k;
+    CHECK(ed != NULL, "editor");
+    if (!ed) { owf_doc_free(doc); return; }
+    CHECK(ow_editor_set_user_field(ed, "Draft", "yes") == OWF_OK, "user field");
+    memset(&sel, 0, sizeof sel);
+    sel.anchor.paragraph = sel.focus.paragraph = 1;
+    ow_editor_set_selection(ed, &sel);
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_HIDE_PARA, "{DOCVARIABLE Draft} \"yes\"") == OWF_ERR_FORMAT,
+          "no operator: refused");
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_HIDE_PARA, NULL) == OWF_ERR_FORMAT, "no condition: refused");
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_HIDE_PARA, "{DOCVARIABLE Draft} = \"yes\"") == OWF_OK, "HIDEPARA");
+    caret_end(ed, 2);
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_IF, "{DOCVARIABLE Draft} = \"yes\" \"\" \"Note\"") == OWF_OK,
+          "hidden text");
+    CHECK(!strcmp(dump(doc), want), dump(doc));
+    CHECK(owf_para_hidden(&doc->body.paras[1]) && !owf_para_hidden(&doc->body.paras[0]), "the paragraph is hidden");
+    caret_end(ed, 0);                                /* the caret steps over it */
+    ow_editor_move_caret(ed, OW_MOVE_RIGHT, 0);
+    sel = ow_editor_selection(ed);
+    CHECK(sel.focus.paragraph == 2, "Right goes past the hidden paragraph");
+    ow_editor_set_show_hidden(ed, 1);
+    caret_end(ed, 0);
+    ow_editor_move_caret(ed, OW_MOVE_RIGHT, 0);
+    sel = ow_editor_selection(ed);
+    CHECK(sel.focus.paragraph == 1, "shown: Right goes into it");
+    ow_editor_set_show_hidden(ed, 0);
+
+    for (k = 0; k < 5; ++k) {
+        const owf_format *f = owf_format_named(fmts[k]);
+        unsigned char *data = NULL, *xml = NULL;
+        size_t length = 0, n = 0;
+        CHECK(f && f->export(doc, &data, &length, NULL) == OWF_OK && data, fmts[k]);
+        if (!data) continue;
+        if (k < 2) {
+            owf_unzip zip;
+            CHECK(owf_unzip_open(&zip, data, length) &&
+                  owf_unzip_read(&zip, k ? "word/document.xml" : "content.xml", &xml, &n) == OWF_OK, "part");
+        }
+        if (k == 0) {
+            CHECK(has(xml, n, "<text:hidden-paragraph text:condition=\"ooow:Draft == &quot;yes&quot;\" "
+                              "text:is-hidden=\"true\"/>"), "text:hidden-paragraph");
+            CHECK(has(xml, n, "<text:hidden-text text:condition=\"ooow:Draft == &quot;yes&quot;\" "
+                              "text:string-value=\"Note\" text:is-hidden=\"true\">Note</text:hidden-text>"), "text:hidden-text");
+            CHECK(owf_import_memory(data, length, NULL, &back, NULL, NULL) == OWF_OK && back, "ODT back");
+            if (back) {
+                CHECK(!strcmp(dump(back), want), dump(back));
+                owf_doc_free(back);
+                back = NULL;
+            }
+        } else if (k == 1) {
+            CHECK(has(xml, n, "<w:vanish/>") && has(xml, n, "Plug it in") && !has(xml, n, "HIDEPARA"),
+                  "DOCX: the hidden paragraph's text w:vanish");
+        } else {
+            CHECK(!has(data, length, "Plug") && has(data, length, "Using"), fmts[k]);   /* (PDF: a word a piece) */
+        }
+        owf_free(xml);
+        free(data);
+    }
+    CHECK(ow_editor_set_user_field(ed, "Draft", "no") == OWF_OK && ow_editor_update_fields(ed) >= 0 &&
+          !owf_para_hidden(&doc->body.paras[1]) && strstr(dump(doc), "\"Note\"=Note}"), dump(doc));
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+
+    CHECK(zip_import(names, parts, 2, &oo) == OWF_OK && oo, "OpenOffice's hidden paragraph and text");
+    if (oo) {
+        CHECK(!strcmp(dump(oo), "Shown|{HIDEPARA:{DOCVARIABLE Draft} = \"yes\" \"1\" \"\"=1}Draft only|"
+                                "See {IF:{DOCVARIABLE Draft} <> \"yes\" \"\" \"the final\"=} copy"), dump(oo));
+        CHECK(owf_para_hidden(&oo->body.paras[1]), "hidden as it was saved");
+        owf_doc_free(oo);
+    }
+}
+
 int main(void)
 {
     test_editing();
@@ -730,6 +835,7 @@ int main(void)
     test_seq();
     test_caption_refs();
     test_if();
+    test_hidden_paragraph();
     printf("fields: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

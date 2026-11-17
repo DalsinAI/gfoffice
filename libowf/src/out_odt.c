@@ -653,7 +653,26 @@ static void put_conditional(owf_buf *out, const owf_run *run)
         ok = ok && odf_operand(&cond, f.b, f.b_field) && !cond.failed;
     }
     if (!ok) {
-        owf_buf_puts_xml(out, shown);
+        if (run->field != OWF_FIELD_HIDE_PARA) owf_buf_puts_xml(out, shown);
+        owf_buf_free(&cond);
+        return;
+    }
+    if (run->field == OWF_FIELD_HIDE_PARA || (!f.yes[0] && f.no[0])) {
+        /* 1.20: a hidden paragraph, or text hidden while it holds (an IF whose first text is ""), as ODF's own */
+        int para = run->field == OWF_FIELD_HIDE_PARA;
+        owf_buf_puts(out, para ? "<text:hidden-paragraph text:condition=\"" : "<text:hidden-text text:condition=\"");
+        owf_buf_put(out, (const char *)cond.data, cond.length);
+        if (!para) {
+            owf_buf_puts(out, "\" text:string-value=\"");
+            owf_buf_puts_xml(out, f.no);
+        }
+        owf_buf_printf(out, "\" text:is-hidden=\"%s\"", (para ? *shown : !*shown) ? "true" : "false");
+        if (para) owf_buf_puts(out, "/>");
+        else {
+            owf_buf_puts(out, ">");
+            owf_buf_puts_xml(out, f.no);
+            owf_buf_puts(out, "</text:hidden-text>");
+        }
         owf_buf_free(&cond);
         return;
     }
@@ -677,7 +696,7 @@ static void put_field(owf_buf *out, const owf_doc *doc, const owf_run *run)
                                          "database-display", "alphabetical-index-mark", "sequence" };
     const char *name = run->field >= OWF_FIELD_TITLE && run->field <= OWF_FIELD_SEQ
                      ? names[run->field - OWF_FIELD_TITLE] : NULL;
-    if (run->field == OWF_FIELD_IF) { put_conditional(out, run); return; }   /* 1.16 */
+    if (run->field == OWF_FIELD_IF || run->field == OWF_FIELD_HIDE_PARA) { put_conditional(out, run); return; }   /* 1.16, 1.20 */
     if (!name) return;
     if (run->field == OWF_FIELD_INDEX) {             /* 1.10: a point mark, Main:Sub as key1 and its value */
         const char *e = run->href ? run->href : "", *colon = strchr(e, ':');

@@ -466,7 +466,9 @@ int ow_editor_set_note_restart(ow_editor *editor, int endnote, int restart);
  * paragraph is under), a user field, and a reference to a body paragraph (its text or its page) through a
  * bookmark. A field shows the value worked out when it was inserted or last updated: on inserting one, when
  * document information or a user field changes, and on ow_editor_update_fields (after opening, before saving
- * and printing). ow_editor_insert_field takes the kinds without a name; USER, REF and REF_PAGE need one. */
+ * and printing). ow_editor_insert_field takes the kinds without a name; USER, REF and REF_PAGE need one.
+ * 2.0.51: OWF_FIELD_HIDE_PARA takes a condition ({DOCVARIABLE Draft} = "no"); while it holds its paragraph
+ * isn't shown (ow_editor_set_show_hidden shows it), printed or exported to PDF, Markdown or HTML. */
 int ow_editor_insert_field_arg(ow_editor *editor, owf_field field, const char *name);
 /* Fields worked out again and laid out: how many changed (0: none), or an OWF_ERR_ */
 int ow_editor_update_fields(ow_editor *editor);
