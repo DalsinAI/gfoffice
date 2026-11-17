@@ -72,7 +72,7 @@
 #include <clib/alib_protos.h>
 
 #include "openpresentation_core.h"
-#include "ow_spell_dict.h"
+#include "owf_spell.h"
 #include "ow_clipboard.h"
 #ifdef OPENPRESSMASTER
 #include "openpressmaster_core.h"
@@ -482,7 +482,7 @@ static int edit_obj = -1;
 /* Spelling (GFOpenWrite's dictionary, PROGDIR:Dictionaries/): opened the
  * first time it is wanted; misspelt words in the text being typed get a
  * wavy underline while spell_as_you_type is on. */
-static ow_spell *spell;
+static owf_spell *spell;
 static int spell_tried, spell_as_you_type = 1;
 static opr_pos caret;
 static opr_selection text_selection;
@@ -2823,18 +2823,19 @@ static void draw_text_selection(const opr_slide *s, const ol_scale *sc)
 /* The dictionary, opened once; loud says why when there is none. */
 static int spell_ready(int loud)
 {
-    static const char *const paths[] = { "PROGDIR:Dictionaries/en_GB.words", "PROGDIR:Dictionaries/en_US.words",
-                                         "SYS:Dictionaries/en_GB.words", NULL };
     char msg[160];
-    int i;
     if (spell) return 1;
     if (spell_tried && !loud) return 0;
     spell_tried = 1;
     /* the word list is about a megabyte: say why the pause */
     set_status("Opening the dictionary...");
     draw_status();
-    for (i = 0; paths[i]; i++)
-        if ((spell = ow_spell_open(paths[i], "PROGDIR:Dictionaries/user.words", msg, sizeof msg)) != NULL) return 1;
+    /* GFOffice's one spell checker, owfspell.library (libowf/include/owf_spell.h) */
+    if (!owf_spell_library()) {
+        if (loud) set_status("No spelling: owfspell.library goes in LIBS:.");
+        return 0;
+    }
+    if ((spell = owf_spell_open_default(msg, sizeof msg)) != NULL) return 1;
     if (loud) set_status("No dictionary: GFOpenWrite's en_GB.words goes in PROGDIR:Dictionaries/.");
     return 0;
 }
@@ -5461,7 +5462,7 @@ static void spell_dialog(void)
             break;
         }
         spell_show(&found);
-        nsugg = ow_spell_suggest(spell, word, sugg, 8);
+        nsugg = owf_spell_suggest(spell, word, sugg[0], 8);
         GT_SetGadgetAttrs(glv, rw, NULL, GTLV_Labels, (ULONG)~0, TAG_DONE);
         labels.lh_Head = (struct Node *)&labels.lh_Tail;
         labels.lh_TailPred = (struct Node *)&labels.lh_Head;
@@ -5514,10 +5515,10 @@ static void spell_dialog(void)
             set_status("Spelling stopped.");
             break;
         case G_IGNORE_ALL:
-            ow_spell_ignore(spell, word);
+            owf_spell_ignore(spell, word);
             break;
         case G_ADD:
-            if (!ow_spell_add(spell, word)) set_status("The word could not be saved in PROGDIR:Dictionaries/user.words.");
+            if (!owf_spell_add(spell, word)) set_status("The word could not be saved in PROGDIR:Dictionaries/user.words.");
             break;
         case G_DO_CHANGE: {
             STRPTR v = NULL;
@@ -7680,7 +7681,7 @@ static void insert_page_field(owf_field which)
     draw_status();
 }
 
-/* ---- Mailings: mail merge (src/pub/opp_merge.c) ----
+/* ---- Mailings: mail merge (libowf/pub/opp_merge.c) ----
  * The data source is a CSV file whose first line names the columns. Merge fields show the column's name in
  * guillemets, or the values of the record shown; Merge to New Publication makes the pages once for each record
  * in this window, as a new untitled publication (the publication's own file is left as it is). */
@@ -9790,7 +9791,8 @@ out:
     opr_clip_free(slide_clip);
     if (deck) owf_deck_free(deck);
     opr_undo_free(undo);
-    ow_spell_close(spell);
+    if (spell) owf_spell_close(spell);   /* through owfspell.library, open only once spelling was used */
+    owf_spell_library_close();
     if (theme.text) ogt_theme_free(&theme);
     if (LayersBase) CloseLibrary(LayersBase);
     if (OpenFontTextBase) CloseLibrary(OpenFontTextBase);

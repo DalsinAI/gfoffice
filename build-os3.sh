@@ -7,8 +7,8 @@
 #
 #   build-os3.sh [OUT_DIR]              (default build/os3)
 #   OWF=library build-os3.sh [OUT_DIR]  each on its library (build-library.sh, docs/suite/owf-libraries.md):
-#                                       GFOpenWrite on owfwrite.library, GFOpenCalc on owfcalc.library, OWConvert
-#                                       on all four
+#                                       GFOpenWrite on owfwrite.library, GFOpenCalc on owfcalc.library, GFOpenDiag
+#                                       on owfdiag.library, OWConvert on the first four
 #
 # Both are 68040 code, as every build. The GFOpenWrite UI uses GFOpenGadTools.
 # No FPU is required.
@@ -63,6 +63,20 @@ library)
     ;;
 esac
 
+# GFOffice's one spell checker is owfspell.library (libowf/src/owf_spell.c, docs/suite/owf-spell.md): a program
+# that spells is built with $SPELL and links $SPELL_SRC, which opens the library, and no program links a copy of
+# owf_spell.c.
+SPELL="-DOWF_USE_SPELL_LIBRARY -I$HERE/libowf/library/sdk/Include_H"
+SPELL_SRC="$HERE/libowf/amiga/owf_spell_base.c"
+OWFSRC_ALL=$OWFSRC
+OWFSRC=""
+for f in $OWFSRC_ALL; do
+    case "$f" in
+    */owf_spell.c) ;;
+    *) OWFSRC="$OWFSRC $f" ;;
+    esac
+done
+
 # GFOpenWrite reads documents only: the workbook code (owf_book.c, its charts and its
 # formats) is OWConvert's and the spreadsheet's, and the deck code
 # (owf_deck.c, ODP, the page PDF writer) OWConvert's and GFOpenPresentation's.
@@ -72,6 +86,7 @@ for f in $OWFSRC; do
     */owf_book.c | */owf_cfb.c | */owf_xlfunc.c | */in_xls.c | */out_csv.c | */owf_chart.c | */owf_chartbook.c | */owf_chartodf.c) ;;
     */owf_booknum.c | */owf_xlformula.c | */in_xlsx.c | */out_xlsx.c | */in_ods.c | */out_ods.c | */in_csv.c) ;;
     */owf_deck.c | */in_odp.c | */out_odp.c | */in_pptx.c | */in_ppt.c | */owf_pdf.c | */owf_pdffonts.c) ;;
+    */owf_fill.c | */owf_picture.c) ;;   # the shared fills and picture writers: the drawing programs' (below)
     */in_pub.c) ;;   # GFOpenPressmaster's .pub reader: it needs owf_cfb.c
     */owf_cfbw.c | */out_pub.c) ;;   # GFOpenPressmaster's .pub save and its compound file writer
     */owf_kind.c) ;;   # owf_file_kind: it reads the workbook and .pub detectors
@@ -125,9 +140,9 @@ APP_COMMON="$HERE/app/ow_autosave.c $HERE/app/ow_print.c $HERE/app/ow_spell.c $H
 # libgfmalloc would define the same calls. Select the flavour's allocator and
 # do not inject the otherwise unused fpuauto maths. Calc and the converter keep
 # their explicit -lm paths.
-"$CC" $CFLAGS_COMMON -DNO_FPUAUTO -DNO_GFMALLOC -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_WRITE \
+"$CC" $CFLAGS_COMMON -DNO_FPUAUTO -DNO_GFMALLOC -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_WRITE $SPELL \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
-    $OWFSRC_DOCS "$HERE"/src/core/*.c $OL_C "$HERE/app/openwrite2.c" $APP_COMMON \
+    $OWFSRC_DOCS "$HERE"/src/core/*.c $OL_C "$HERE/app/openwrite2.c" $APP_COMMON $SPELL_SRC \
     "$HERE"/third_party/opengadtools/*.c -lamiga \
     -o "$OUT/GFOpenWrite"
 
@@ -135,9 +150,9 @@ APP_COMMON="$HERE/app/ow_autosave.c $HERE/app/ow_print.c $HERE/app/ow_spell.c $H
 if [ "${OW1:-}" = yes ] && [ "$OWF" = library ]; then
     echo "build-os3.sh: the 1.x window is built with libowf linked in only (OWF=linked)"
 elif [ "${OW1:-}" = yes ]; then
-"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
+"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $SPELL \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
-    $OWFSRC_DOCS "$HERE"/src/core/*.c $OL_C "$HERE/app/openwrite.c" $APP_COMMON \
+    $OWFSRC_DOCS "$HERE"/src/core/*.c $OL_C "$HERE/app/openwrite.c" $APP_COMMON $SPELL_SRC \
     "$HERE"/third_party/opengadtools/*.c -lamiga \
     -o "$OUT/GFOpenWrite1"
 echo "$OUT/GFOpenWrite1 ($(wc -c < "$OUT/GFOpenWrite1") bytes)"
@@ -171,7 +186,9 @@ else
 OWFSRC_DECK="$OWFSRC_DOCS"
 # owf_chart.c: a slide's charts are read and written as chart parts (Presentation gap 2); owf_booknum.c reads
 # and writes their numbers
-for f in owf_deck.c in_odp.c out_odp.c in_pptx.c in_ppt.c owf_pdf.c owf_pdffonts.c owf_chart.c owf_chartodf.c owf_booknum.c; do
+# owf_fill.c and owf_picture.c: the fills and picture writers every drawing program shares (owf_fill.h, owf_picture.h)
+for f in owf_deck.c in_odp.c out_odp.c in_pptx.c in_ppt.c owf_pdf.c owf_pdffonts.c owf_fill.c owf_picture.c \
+    owf_chart.c owf_chartodf.c owf_booknum.c; do
     OWFSRC_DECK="$OWFSRC_DECK $HERE/libowf/src/$f"
 done
 # The chart editor (Chart Data..., OPR_CHART_EDITOR; Presentation gap 2) is GFOpenCalc's core on a data sheet:
@@ -183,11 +200,11 @@ for f in owf_book.c owf_cfb.c owf_xlfunc.c in_xls.c out_csv.c owf_chartbook.c ow
     OWFSRC_CHARTED="$OWFSRC_CHARTED $HERE/libowf/src/$f"
 done
 # shellcheck disable=SC2086
-"$CC" $CFLAGS_COMMON -DOW_CLIPBOARD_OBJECTS -DOPR_CHART_EDITOR -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
+"$CC" $CFLAGS_COMMON -DOW_CLIPBOARD_OBJECTS -DOPR_CHART_EDITOR -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $SPELL \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/src/calc" -I"$HERE/libowf/calc" \
     -I"$HERE/third_party/opengadtools" \
     $OWFSRC_DECK $OWFSRC_CHARTED "$HERE"/libowf/calc/*.c "$HERE"/src/calc/*.c "$HERE"/src/deckchart/*.c \
-    "$HERE"/src/deck/*.c "$HERE/src/core/ow_spell_dict.c" "$HERE/src/core/ow_layout.c" $OL_C \
+    "$HERE"/src/deck/*.c $SPELL_SRC "$HERE/src/core/ow_layout.c" $OL_C \
     "$HERE/app/openpresent.c" "$HERE/app/opr_chartwin.c" "$HERE/app/ow_stack.c" "$HERE/app/ow_clipboard.c" \
     "$HERE"/third_party/opengadtools/*.c -lamiga -lm \
     -o "$OUT/GFOpenPresentation"
@@ -198,9 +215,9 @@ echo "$OUT/GFOpenPresentation ($(wc -c < "$OUT/GFOpenPresentation") bytes)"
 # ABI still exposes the P0 model only, and the deck bridge is intentionally kept in the portable core.
 OWFSRC_PUB="$OWFSRC_DECK $HERE/libowf/src/owf_cfb.c $HERE/libowf/src/in_pub.c"
 # shellcheck disable=SC2086
-"$CC" $CFLAGS_COMMON -DOPENPRESSMASTER -DOW_CLIPBOARD_OBJECTS -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS \
+"$CC" $CFLAGS_COMMON -DOPENPRESSMASTER -DOW_CLIPBOARD_OBJECTS -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $SPELL \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
-    $OWFSRC_PUB "$HERE"/src/deck/*.c "$HERE/src/core/ow_spell_dict.c" "$HERE/src/pub/opp_import.c" "$HERE/src/pub/opp_merge.c" "$HERE/src/pub/opp_pagenum.c" "$HERE/src/pub/opp_template.c" "$HERE/src/core/ow_merge.c" "$HERE/src/core/ow_layout.c" $OL_C \
+    $OWFSRC_PUB "$HERE"/src/deck/*.c $SPELL_SRC "$HERE/src/pub/opp_import.c" "$HERE/libowf/pub/opp_merge.c" "$HERE/src/pub/opp_pagenum.c" "$HERE/libowf/pub/opp_template.c" "$HERE/src/core/ow_merge.c" "$HERE/src/core/ow_layout.c" $OL_C \
     "$HERE/app/openpresent.c" "$HERE/app/ow_stack.c" "$HERE/app/ow_clipboard.c" "$HERE"/third_party/opengadtools/*.c -lamiga \
     -o "$OUT/GFOpenPressmaster"
 echo "$OUT/GFOpenPressmaster ($(wc -c < "$OUT/GFOpenPressmaster") bytes)"

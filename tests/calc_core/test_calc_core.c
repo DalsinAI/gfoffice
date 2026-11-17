@@ -6119,6 +6119,60 @@ static void test_track_changes_ods_refs(void)
     oc_core_free(core);
 }
 
+/* Tracked changes kept in XLSX (a shared workbook's revision log), each where it was when made: read back
+ * where they are now, as recorded. */
+static void test_track_changes_xlsx(void)
+{
+    static const char path[] = "build/host/calc-core-track.xlsx";
+    oc_core *core = fresh();
+    const owf_change *c;
+    if (!core) return;
+    oc_core_set_track_clock(core, track_clock, NULL);
+    CHECK(oc_core_set_track_author(core, "Lister") == OWF_OK);
+    enter_at(core, "A1", "5");
+    enter_at(core, "B2", "'0123");
+    CHECK(oc_core_set_track_changes(core, 1) == OWF_OK);
+    enter_at(core, "A1", "7");
+    enter_at(core, "B2", "=A1*2");
+    go(core, "A3");
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    enter_at(core, "C4", "x & <y>");
+    go(core, "C4");
+    CHECK(oc_core_delete(core, 0) == OWF_OK);
+    go(core, "B1");
+    CHECK(oc_core_insert(core, 1) == OWF_OK);                    /* a column too: B2 is C2 now */
+    CHECK(oc_core_add_sheet(core, "Two") == 1 && oc_core_rename_sheet(core, 1, "Second") == OWF_OK);
+    CHECK(oc_core_change_count(core) == 7);
+    CHECK(oc_core_save(core, path, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, path, NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_track_changes(core) && oc_core_change_count(core) == 7 && oc_core_sheet_count(core) == 2);
+    c = oc_core_change_at(core, 0);
+    CHECK(c && c->kind == OWF_CHANGE_CELL && c->row == 0 && c->col == 0 && c->id == 1 && c->before &&
+          !strcmp(c->before, "5") && c->after && !strcmp(c->after, "7"));
+    CHECK(c && c->author && !strcmp(c->author, "Lister") && c->date && !strcmp(c->date, "2026-11-16T07:00:00"));
+    c = oc_core_change_at(core, 1);
+    CHECK(c && c->row == 1 && c->col == 2 && c->before && !strcmp(c->before, "'0123") && c->after &&
+          !strcmp(c->after, "=A1*2"));
+    c = oc_core_change_at(core, 2);
+    CHECK(c && c->kind == OWF_CHANGE_INSERT_ROWS && c->row == 2 && c->count == 1 && c->sheet == 0);
+    c = oc_core_change_at(core, 3);
+    CHECK(c && c->kind == OWF_CHANGE_DELETE_ROWS && c->row == 3 && c->count == 1 && c->ncells == 1 && c->nchildren == 1);
+    CHECK(c && c->ncells == 1 && c->cells[0].row == 0 && c->cells[0].col == 3 && !strcmp(c->cells[0].input, "x & <y>"));
+    CHECK(c && c->nchildren == 1 && c->children[0].kind == OWF_CHANGE_CELL && c->children[0].row == 0 &&
+          c->children[0].col == 3 && !c->children[0].before);
+    c = oc_core_change_at(core, 4);
+    CHECK(c && c->kind == OWF_CHANGE_INSERT_COLS && c->col == 1 && c->count == 1);
+    c = oc_core_change_at(core, 5);
+    CHECK(c && c->kind == OWF_CHANGE_INSERT_SHEET && c->sheet == 1 && c->after && !strcmp(c->after, "Two"));
+    c = oc_core_change_at(core, 6);
+    CHECK(c && c->kind == OWF_CHANGE_RENAME_SHEET && c->sheet == 1 && c->before && !strcmp(c->before, "Two") &&
+          c->after && !strcmp(c->after, "Second"));
+    CHECK(oc_core_reject_all_changes(core) == OWF_OK && oc_core_sheet_count(core) == 1);
+    CHECK(fabs(num(core, "A1") - 5) < 1e-9 && !strcmp(text(core, "B2"), "0123") && empty_at(core, "C4") &&
+          empty_at(core, "C2"));
+    oc_core_free(core);
+}
+
 static void test_track_changes_ods(void)
 {
     static const char path[] = "build/host/calc-core-track.ods";
@@ -8875,6 +8929,377 @@ static void test_scenarios(void)
     remove(ods);
 }
 
+
+/* ---- External data (oc_html.c, oc_extdata.c) ---- */
+
+static const char web_page[] =
+    "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Rates <table></title>\n"
+    "<script>var s = \"<table><tr><td>no</td></tr></table>\";</script><style>td { color: red }</style></head><body>\n"
+    "<!-- <table><tr><td>hidden</td></tr></table> -->\n"
+    "<table id=\"rates\" class='x'><caption> Exchange\n rates </caption>\n"
+    "<thead><tr><th>Currency<th>Rate</tr></thead>\n"
+    "<tbody><tr><td>Euro &euro;</td><td>1.17</td></tr>\n"
+    "<tr><td>Yen&nbsp;&#165;</td><td> 182.5 </td></tr>\n"
+    "<tr><td colspan=\"2\">Updated <b>daily</b><br>at noon &amp; night</td></tr></tbody></table>\n"
+    "<table><tr><td rowspan=\"2\">A</td><td>B</td><td>C</td></tr>\n"
+    "<tr><td>D<table id=inner><tr><td>x</td></tr></table> E</td><td>F</td></tr>\n"
+    "<tr><td>=SUM(1)</td><td>'q</td><td>50%</td></tr></table>\n"
+    "<p>1 < 2</p><table><tr><td>cut short";
+
+static const char *ext_text(const oc_exttable *t, unsigned row, unsigned col)
+{
+    const oc_extvalue *v;
+    if (row >= t->rows || col >= t->cols)
+        return "(outside)";
+    v = &t->cells[(size_t)row * t->cols + col];
+    return v->kind == OC_EXTV_EMPTY ? "" : v->text ? v->text : "(null)";
+}
+
+static void test_web_tables(void)
+{
+    oc_webtable_info info[8];
+    oc_exttable t;
+    size_t n = sizeof web_page - 1;
+    static const char latin[] = "<meta http-equiv=content-type content='text/html; charset=iso-8859-1'>"
+                                "<table><tr><td>\xa3 5</td><td>caf\xe9 \x96 bar</td></tr></table>";
+    static const char stray[] = "<table><tr><td>caf\xc3\xa9 \x96 &#x1F600; &#150; &bogus; &amp</td></tr></table>";
+
+    memset(info, 0, sizeof info);
+    CHECK(oc_web_tables(web_page, n, info, 8) == 4);
+    CHECK_STR(info[0].id, "rates");
+    CHECK_STR(info[0].caption, "Exchange rates");
+    CHECK(info[0].number == 1 && info[0].depth == 0 && info[0].rows == 4 && info[0].cols == 2);
+    CHECK(info[1].number == 2 && info[1].rows == 3 && info[1].cols == 3 && !info[1].id[0]);
+    CHECK_STR(info[2].id, "inner");
+    CHECK(info[2].depth == 1 && info[2].rows == 1 && info[2].cols == 1);
+    CHECK(info[3].rows == 1 && info[3].cols == 1);      /* the page cut short: what it had */
+    CHECK(oc_web_tables(web_page, n, NULL, 0) == 4);
+    CHECK(oc_web_tables(web_page, n, info, 1) == 4);
+    CHECK(oc_web_tables("no tables", 9, NULL, 0) == 0);
+
+    CHECK(oc_web_table_number(web_page, n, "HTML_2") == 2);
+    CHECK(oc_web_table_number(web_page, n, "html_1") == 1);
+    CHECK(oc_web_table_number(web_page, n, "3") == 3);
+    CHECK(oc_web_table_number(web_page, n, "rates") == 1);
+    CHECK(oc_web_table_number(web_page, n, "EXCHANGE RATES") == 1);
+    CHECK(oc_web_table_number(web_page, n, "inner") == 3);
+    CHECK(oc_web_table_number(web_page, n, "5") == 0);
+    CHECK(oc_web_table_number(web_page, n, "HTML_0") == 0);
+    CHECK(oc_web_table_number(web_page, n, "nope") == 0);
+
+    CHECK(oc_web_table(web_page, n, "rates", &t) == OWF_OK);
+    CHECK(t.rows == 4 && t.cols == 2);
+    CHECK_STR(ext_text(&t, 0, 0), "Currency");
+    CHECK_STR(ext_text(&t, 0, 1), "Rate");
+    CHECK_STR(ext_text(&t, 1, 0), "Euro \xe2\x82\xac");
+    CHECK_STR(ext_text(&t, 1, 1), "1.17");
+    CHECK_STR(ext_text(&t, 2, 0), "Yen \xc2\xa5");
+    CHECK_STR(ext_text(&t, 2, 1), "182.5");
+    CHECK_STR(ext_text(&t, 3, 0), "Updated daily at noon & night");
+    CHECK_STR(ext_text(&t, 3, 1), "");                       /* the colspan's room */
+    CHECK(t.cells[1].kind == OC_EXTV_INPUT);
+    oc_exttable_free(&t);
+    CHECK(t.rows == 0 && t.cells == NULL);
+
+    CHECK(oc_web_table(web_page, n, "HTML_2", &t) == OWF_OK);
+    CHECK(t.rows == 3 && t.cols == 3);
+    CHECK_STR(ext_text(&t, 0, 0), "A");
+    CHECK_STR(ext_text(&t, 1, 0), "");                       /* the rowspan's room */
+    CHECK_STR(ext_text(&t, 1, 1), "D E");                    /* the table inside is a table of its own */
+    CHECK_STR(ext_text(&t, 1, 2), "F");
+    CHECK_STR(ext_text(&t, 2, 0), "=SUM(1)");
+    CHECK_STR(ext_text(&t, 2, 1), "'q");
+    oc_exttable_free(&t);
+    CHECK(oc_web_table(web_page, n, "inner", &t) == OWF_OK && t.rows == 1 && !strcmp(ext_text(&t, 0, 0), "x"));
+    oc_exttable_free(&t);
+    CHECK(oc_web_table(web_page, n, "4", &t) == OWF_OK && !strcmp(ext_text(&t, 0, 0), "cut short"));
+    oc_exttable_free(&t);
+    CHECK(oc_web_table(web_page, n, "nope", &t) == OWF_ERR_FORMAT && t.rows == 0 && !t.cells);
+
+    CHECK(oc_web_table(latin, sizeof latin - 1, "1", &t) == OWF_OK);
+    CHECK_STR(ext_text(&t, 0, 0), "\xc2\xa3 5");
+    CHECK_STR(ext_text(&t, 0, 1), "caf\xc3\xa9 \xe2\x80\x93 bar");
+    oc_exttable_free(&t);
+    CHECK(oc_web_table(stray, sizeof stray - 1, "1", &t) == OWF_OK);
+    CHECK_STR(ext_text(&t, 0, 0), "caf\xc3\xa9 \xe2\x80\x93 \xf0\x9f\x98\x80 \xe2\x80\x93 &bogus; &");
+    oc_exttable_free(&t);
+
+    /* oc_exttable */
+    CHECK(oc_exttable_alloc(&t, 0, 3) == OWF_OK && t.rows == 0 && !t.cells);
+    CHECK(oc_exttable_alloc(&t, 100000, 100000) == OWF_ERR_UNSUPPORTED && !t.cells);
+    CHECK(oc_exttable_alloc(&t, 2, 2) == OWF_OK);
+    CHECK(oc_exttable_set(&t, 1, 1, OC_EXTV_TEXT, 0, "abc", 2) == OWF_OK && !strcmp(ext_text(&t, 1, 1), "ab"));
+    CHECK(oc_exttable_set(&t, 1, 1, OC_EXTV_NUMBER, 4, NULL, 0) == OWF_OK && t.cells[3].number == 4 && !t.cells[3].text);
+    CHECK(oc_exttable_set(&t, 2, 0, OC_EXTV_TEXT, 0, "x", 1) == OWF_ERR_UNSUPPORTED);
+    oc_exttable_free(&t);
+}
+
+static int put_file(const char *path, const char *text)
+{
+    FILE *f = fopen(path, "wb");
+    if (!f)
+        return 0;
+    fputs(text, f);
+    return fclose(f) == 0;
+}
+
+static char *ext_input(oc_core *core, int sheet, unsigned row, unsigned col)
+{
+    static char buf[256];
+    char *s = oc_core_cell_input(core, sheet, row, col);
+    snprintf(buf, sizeof buf, "%s", s ? s : "");
+    owf_free(s);
+    return buf;
+}
+
+/* A database for the tests: "Products" is a name, a code kept as text, a price and a date; "Empty" has no
+ * rows; anything else is not there. */
+static int fake_queries;
+static int fake_query(void *user, const char *database, const char *item, int headers, oc_exttable *out,
+                      char *err, size_t errsize)
+{
+    unsigned r = 0;
+    (void)user;
+    fake_queries++;
+    if (strcmp(database, "Work:Shop.oadb")) {
+        snprintf(err, errsize, "No database %s", database);
+        return OWF_ERR_IO;
+    }
+    if (!strcmp(item, "Empty"))
+        return oc_exttable_alloc(out, headers ? 1 : 0, 2) == OWF_OK && headers &&
+               oc_exttable_set(out, 0, 0, OC_EXTV_TEXT, 0, "Name", 4) == OWF_OK ? OWF_OK : OWF_OK;
+    if (strcmp(item, "Products") && strncmp(item, "SELECT", 6))
+        return OWF_ERR_FORMAT;
+    if (oc_exttable_alloc(out, headers ? 3 : 2, 4) != OWF_OK)
+        return OWF_ERR_MEMORY;
+    if (headers) {
+        oc_exttable_set(out, 0, 0, OC_EXTV_TEXT, 0, "Name", 4);
+        oc_exttable_set(out, 0, 1, OC_EXTV_TEXT, 0, "Code", 4);
+        oc_exttable_set(out, 0, 2, OC_EXTV_TEXT, 0, "Price", 5);
+        oc_exttable_set(out, 0, 3, OC_EXTV_TEXT, 0, "Added", 5);
+        r = 1;
+    }
+    oc_exttable_set(out, r, 0, OC_EXTV_TEXT, 0, "=Widget", 7);
+    oc_exttable_set(out, r, 1, OC_EXTV_TEXT, 0, "0123", 4);
+    oc_exttable_set(out, r, 2, OC_EXTV_NUMBER, 2.5, NULL, 0);
+    oc_exttable_set(out, r, 3, OC_EXTV_INPUT, 0, "2026-11-16", 10);
+    oc_exttable_set(out, r + 1, 0, OC_EXTV_TEXT, 0, "Gadget", 6);
+    oc_exttable_set(out, r + 1, 2, OC_EXTV_NUMBER, 0.1, NULL, 0);
+    return OWF_OK;
+}
+
+static void test_extdata(void)
+{
+    static const char *const page = "build/host/calc-core-ext.html";
+    static const char *const saved_x = "build/host/calc-core-ext.xlsx";
+    static const char *const saved_o = "build/host/calc-core-ext.ods";
+    static const char small[] = "<table id=rates><tr><th>Currency<th>Rate<tr><td>Euro<td>1.2</table>";
+    static const char big[] = "<table id=rates><tr><th>Currency<th>Rate<tr><td>A<td>1<tr><td>B<td>2"
+                              "<tr><td>C<td>3<tr><td>D<td>4<tr><td>E<td>5</table>";
+    oc_core *core = fresh();
+    oc_extdata_spec spec, got;
+    oc_extdata_io io;
+    owf_range r;
+    char err[200], sql[700];
+    int index = -1, sheet = -1, i;
+    size_t at;
+    if (!core)
+        return;
+    memset(&io, 0, sizeof io);
+    io.query = fake_query;
+    CHECK(put_file(page, web_page));
+
+    oc_extdata_init(&spec);
+    CHECK(spec.kind == OC_EXTDATA_WEB && spec.headers && !strcmp(spec.item, "HTML_1"));
+    snprintf(spec.source, sizeof spec.source, "%s", page);
+    snprintf(spec.item, sizeof spec.item, "rates");
+    snprintf(spec.dest, sizeof spec.dest, "B2");
+    CHECK(oc_core_extdata_count(core) == 0);
+    CHECK(oc_core_extdata_add(core, &spec, NULL, 0, &index, err, sizeof err) == OWF_OK && index == 0);
+    CHECK(oc_core_extdata_count(core) == 1);
+    CHECK_STR(ext_input(core, 0, 1, 1), "Currency");
+    CHECK_STR(ext_input(core, 0, 2, 2), "1.17");
+    CHECK_STR(ext_input(core, 0, 3, 2), "182.5");
+    CHECK_STR(ext_input(core, 0, 4, 1), "Updated daily at noon & night");
+    CHECK(oc_core_extdata(core, 0, &got, &sheet, &r) == OWF_OK && sheet == 0);
+    CHECK(r.first_row == 1 && r.first_col == 1 && r.last_row == 4 && r.last_col == 2);
+    CHECK_STR(got.dest, "B2");
+    CHECK_STR(got.item, "rates");
+    CHECK_STR(got.source, page);
+    CHECK(got.kind == OC_EXTDATA_WEB && !got.refresh_on_open && !got.refresh_seconds);
+    CHECK(oc_core_extdata_at(core, 0, 3, 2) == 0 && oc_core_extdata_at(core, 0, 5, 2) == -1);
+    CHECK(oc_core_extdata(core, 1, &got, NULL, NULL) == OWF_ERR_UNSUPPORTED);
+    {   /* the names are hidden: Manage Names does not list them */
+        const owf_book *b = oc_core_book(core);
+        int hidden = 0;
+        for (i = 0; i < b->nnames; i++)
+            hidden += b->names[i].hidden && !strncmp(b->names[i].name, "_GF_EXTDATA_", 12);
+        CHECK(hidden == 2);
+    }
+    CHECK(oc_core_set_input(core, 0, 9, 3, "=SUM(C3:C4)") == OWF_OK);
+    CHECK(oc_core_undo(core) == OWF_OK);                   /* the formula */
+    CHECK(oc_core_undo(core) == OWF_OK);                   /* the range */
+    CHECK(oc_core_extdata_count(core) == 0 && !strcmp(ext_input(core, 0, 1, 1), ""));
+    CHECK(oc_core_redo(core) == OWF_OK && oc_core_extdata_count(core) == 1 && !strcmp(ext_input(core, 0, 1, 1), "Currency"));
+    CHECK(oc_core_redo(core) == OWF_OK);
+    oc_core_cell_text(core, 0, 9, 3, err, sizeof err);
+    CHECK_STR(err, "183.67");
+
+    /* refreshed: the range shrinks, what it no longer covers is emptied, the formula follows */
+    CHECK(put_file(page, small));
+    CHECK(oc_core_extdata_refresh(core, 0, NULL, 0, err, sizeof err) == OWF_OK);
+    CHECK_STR(ext_input(core, 0, 2, 1), "Euro");
+    CHECK_STR(ext_input(core, 0, 2, 2), "1.2");
+    CHECK_STR(ext_input(core, 0, 3, 1), "");
+    CHECK_STR(ext_input(core, 0, 4, 1), "");
+    CHECK(oc_core_extdata(core, 0, NULL, NULL, &r) == OWF_OK && r.last_row == 2 && r.last_col == 2);
+    oc_core_cell_text(core, 0, 9, 3, err, sizeof err);
+    CHECK_STR(err, "1.2");
+    CHECK(oc_core_undo(core) == OWF_OK && !strcmp(ext_input(core, 0, 3, 2), "182.5"));
+    CHECK(oc_core_redo(core) == OWF_OK && !strcmp(ext_input(core, 0, 3, 2), ""));
+
+    /* growing onto a cell that holds something: refused, unless told to write over it */
+    CHECK(oc_core_set_input(core, 0, 5, 1, "mine") == OWF_OK);
+    CHECK(put_file(page, big));
+    CHECK(oc_core_extdata_refresh(core, 0, NULL, 0, err, sizeof err) == OC_EXTDATA_BLOCKED);
+    CHECK_STR(ext_input(core, 0, 5, 1), "mine");
+    CHECK_STR(ext_input(core, 0, 2, 1), "Euro");
+    CHECK(oc_core_extdata_refresh(core, 0, NULL, OC_EXTDATA_OVERWRITE, err, sizeof err) == OWF_OK);
+    CHECK_STR(ext_input(core, 0, 5, 1), "D");
+    CHECK_STR(ext_input(core, 0, 6, 2), "5");
+
+    /* a source that cannot be read, a table the page lacks: the last values stay */
+    oc_extdata_init(&spec);
+    CHECK(oc_core_extdata(core, 0, &spec, NULL, NULL) == OWF_OK);
+    snprintf(spec.item, sizeof spec.item, "nope");
+    CHECK(oc_core_extdata_change(core, 0, &spec, NULL, 0, err, sizeof err) == OWF_ERR_FORMAT);
+    CHECK(strstr(err, "nope") != NULL);
+    CHECK(remove(page) == 0);
+    CHECK(oc_core_extdata_refresh(core, 0, NULL, 0, err, sizeof err) == OWF_ERR_IO && err[0]);
+    CHECK_STR(ext_input(core, 0, 2, 1), "A");
+    snprintf(spec.source, sizeof spec.source, "https://example.org/rates.html");
+    CHECK(oc_core_extdata_change(core, 0, &spec, NULL, 0, err, sizeof err) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_extdata(core, 0, &got, NULL, NULL) == OWF_OK && !strcmp(got.source, page));
+
+    /* a row put in above: the range follows */
+    CHECK(put_file(page, small));
+    go(core, "A1");
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    CHECK(oc_core_extdata(core, 0, &got, NULL, &r) == OWF_OK && r.first_row == 2);
+    CHECK_STR(got.dest, "B3");
+    CHECK(oc_core_extdata_refresh(core, -1, NULL, 0, err, sizeof err) == OWF_OK);
+    CHECK_STR(ext_input(core, 0, 3, 1), "Euro");
+    CHECK_STR(ext_input(core, 0, 2, 1), "Currency");
+    CHECK_STR(ext_input(core, 0, 1, 1), "");
+
+    /* a database: text stays text, a date is a date, the field names first */
+    oc_extdata_init(&spec);
+    spec.kind = OC_EXTDATA_DATABASE;
+    snprintf(spec.source, sizeof spec.source, "Work:Shop.oadb");
+    snprintf(spec.item, sizeof spec.item, "Products");
+    snprintf(spec.dest, sizeof spec.dest, "F1");
+    CHECK(oc_core_extdata_add(core, &spec, NULL, 0, &index, err, sizeof err) == OWF_ERR_UNSUPPORTED);
+    CHECK(oc_core_extdata_add(core, &spec, &io, 0, &index, err, sizeof err) == OWF_OK && index == 1);
+    CHECK_STR(ext_input(core, 0, 0, 5), "Name");
+    CHECK_STR(ext_input(core, 0, 1, 5), "'=Widget");
+    CHECK_STR(ext_input(core, 0, 1, 6), "'0123");
+    CHECK_STR(ext_input(core, 0, 1, 7), "2.5");
+    {
+        const owf_cell *d = owf_sheet_find(&oc_core_book(core)->sheets[0], 1, 8);
+        CHECK(d && d->type == OWF_VALUE_NUMBER && d->number > 46000);   /* a date: days since 1900 */
+    }
+    CHECK_STR(ext_input(core, 0, 2, 7), "0.1");
+    CHECK(oc_core_extdata_at(core, 0, 2, 8) == 1);
+    spec.headers = 0;
+    CHECK(oc_core_extdata_change(core, 1, &spec, &io, 0, err, sizeof err) == OWF_OK);
+    CHECK_STR(ext_input(core, 0, 0, 5), "'=Widget");
+    CHECK_STR(ext_input(core, 0, 2, 5), "");
+    snprintf(spec.item, sizeof spec.item, "Empty");
+    CHECK(oc_core_extdata_change(core, 1, &spec, &io, 0, err, sizeof err) == OWF_OK);
+    CHECK(oc_core_extdata(core, 1, NULL, NULL, &r) == OWF_OK && r.first_row == 0 && r.last_row == 0 &&
+          r.first_col == 5 && r.last_col == 5);
+    CHECK_STR(ext_input(core, 0, 0, 5), "");
+    snprintf(spec.item, sizeof spec.item, "Missing");
+    CHECK(oc_core_extdata_change(core, 1, &spec, &io, 0, err, sizeof err) == OWF_ERR_FORMAT && err[0]);
+
+    /* a long query with quotes and semicolons, kept in pieces; on another sheet */
+    CHECK(oc_core_add_sheet(core, "Data 2") >= 0);
+    at = (size_t)snprintf(sql, sizeof sql, "SELECT \"Name\"; -- 100%% ");
+    while (at + 12 < sizeof sql)
+        at += (size_t)snprintf(sql + at, sizeof sql - at, "'x;y\"z', ");
+    snprintf(spec.item, sizeof spec.item, "%s", sql);
+    snprintf(spec.dest, sizeof spec.dest, "'Data 2'!C3");
+    spec.refresh_on_open = 1;
+    spec.refresh_seconds = 300;
+    spec.headers = 1;
+    oc_core_set_sheet(core, 0);
+    CHECK(strlen(sql) > 600);
+    CHECK(oc_core_extdata_change(core, 1, &spec, &io, 0, err, sizeof err) == OWF_OK);
+    CHECK(oc_core_extdata_count(core) == 2);
+    CHECK(oc_core_extdata(core, 1, &got, &sheet, &r) == OWF_OK && sheet == 1 && r.first_row == 2 && r.first_col == 2);
+    CHECK_STR(got.dest, "'Data 2'!C3");
+    CHECK(got.refresh_on_open && got.refresh_seconds == 300 && got.headers && got.kind == OC_EXTDATA_DATABASE);
+    CHECK_STR(got.item, sql);
+    CHECK_STR(ext_input(core, 1, 2, 2), "Name");
+    CHECK_STR(ext_input(core, 0, 1, 5), "");                 /* where it was: emptied */
+    {
+        const owf_book *b = oc_core_book(core);
+        int pieces = 0;
+        for (i = 0; i < b->nnames; i++)
+            pieces += b->names[i].sheet == 1 && !strncmp(b->names[i].name, "_GF_EXTDATA_2_D", 15);
+        CHECK(pieces >= 4);
+        for (i = 0; i < b->nnames; i++)
+            CHECK(!(b->names[i].sheet == 0 && !strncmp(b->names[i].name, "_GF_EXTDATA_2", 13)));
+    }
+
+    /* saved and opened again, in XLSX and ODS: the settings and the ranges as they were */
+    for (i = 0; i < 2; i++) {
+        const char *file = i ? saved_o : saved_x;
+        int k;
+        CHECK(oc_core_save(core, file, NULL, NULL) == OWF_OK);
+        CHECK(oc_core_open(core, file, NULL, NULL, NULL) == OWF_OK);
+        CHECK(oc_core_extdata_count(core) == 2);
+        CHECK(oc_core_extdata(core, 0, &got, &sheet, &r) == OWF_OK && sheet == 0 && r.first_row == 2 &&
+              r.last_row == 3 && r.first_col == 1 && r.last_col == 2);
+        CHECK_STR(got.source, page);
+        CHECK_STR(got.item, "rates");
+        CHECK(oc_core_extdata(core, 1, &got, &sheet, NULL) == OWF_OK && sheet == 1 && got.refresh_on_open);
+        CHECK_STR(got.item, sql);
+        k = oc_core_is_dirty(core);
+        CHECK(oc_core_extdata_refresh_on_open(core, &io) == 1);
+        CHECK(oc_core_is_dirty(core) == k);
+        CHECK(!oc_core_can_undo(core));                     /* quiet: no Undo step */
+    }
+    CHECK(fake_queries > 0);
+
+    /* forgotten: the values stay, or go */
+    CHECK(oc_core_extdata_remove(core, 0, 0) == OWF_OK && oc_core_extdata_count(core) == 1);
+    CHECK_STR(ext_input(core, 0, 3, 1), "Euro");
+    CHECK(oc_core_undo(core) == OWF_OK && oc_core_extdata_count(core) == 2);
+    CHECK(oc_core_extdata_remove(core, 0, 1) == OWF_OK && oc_core_extdata_count(core) == 1);
+    CHECK_STR(ext_input(core, 0, 3, 1), "");
+    CHECK(oc_core_extdata_remove(core, 5, 0) == OWF_ERR_UNSUPPORTED);
+
+    /* a protected sheet refuses */
+    oc_core_set_sheet(core, 0);
+    CHECK(put_file(page, small));
+    oc_extdata_init(&spec);
+    snprintf(spec.source, sizeof spec.source, "%s", page);
+    snprintf(spec.dest, sizeof spec.dest, "A20");
+    CHECK(oc_core_protect_sheet(core, NULL, 0) == OWF_OK);
+    CHECK(oc_core_extdata_add(core, &spec, NULL, 0, &index, err, sizeof err) == OC_PROTECTED);
+    CHECK(oc_core_unprotect_sheet(core, NULL) == OWF_OK);
+    snprintf(spec.dest, sizeof spec.dest, "not a cell");
+    CHECK(oc_core_extdata_add(core, &spec, NULL, 0, &index, err, sizeof err) == OWF_ERR_FORMAT);
+    spec.dest[0] = 0;                                        /* the active cell */
+    go(core, "H30");
+    CHECK(oc_core_extdata_add(core, &spec, NULL, 0, &index, err, sizeof err) == OWF_OK);
+    CHECK_STR(ext_input(core, 0, 29, 7), "Currency");
+    CHECK(!strcmp(name_box(core), "H30:I31"));
+    oc_core_free(core);
+    remove(page);
+}
+
 int main(void)
 {
     test_more();
@@ -8944,6 +9369,9 @@ int main(void)
     test_edit_links();
     test_track_changes_ods();
     test_track_changes_ods_refs();
+    test_track_changes_xlsx();
+    test_web_tables();
+    test_extdata();
     test_pivot_summary();
     test_pivot_layout();
     test_pivot_sort();

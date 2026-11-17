@@ -712,6 +712,8 @@ static void put_object(pptxw *w, owf_buf *b, const owf_obj *o, const owf_obj *bo
         return;
     }
     if (o->kind == OWF_OBJ_TABLE) {
+        if (o->ncols > 64)
+            owf_report_add(w->report, OWF_NOTE_LOST, "A table's columns past the 64th were left out");
         put_table(b, d, o, box, id);
         return;
     }

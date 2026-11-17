@@ -25,7 +25,7 @@ enum {
     C_HELP, C_LASTERROR, C_ISDIRTY, C_GETFILE, C_NEW, C_OPEN, C_SAVE, C_SAVEAS, C_EXPORT, C_TASKS, C_ADDTASK,
     C_DELETETASK, C_GETCELL, C_SETCELL, C_INDENT, C_OUTDENT, C_LINK, C_UNLINK, C_UNDO, C_REDO, C_BASELINE,
     C_RESOURCES, C_ADDRESOURCE, C_DELETERESOURCE, C_GETRESOURCE, C_SETRESOURCE, C_ASSIGN, C_USAGE, C_FINISH,
-    C_CRITICAL, C_COLUMN, C_CALENDARS, C_ADDCALENDAR, C_WORKTIME, C_SETCALENDAR, C_UPDATE, C_BASELINES, C_REPLACE, C_LEVEL, C_CLEARLEVELING, C_SORT, C_FIND, C_REPLACETEXT, C_FILTER, C_GROUP, C_LINES, C_LINE, C_UPDATETASK, C_PROGRESSLINES, NCOMMANDS
+    C_CRITICAL, C_COLUMN, C_CALENDARS, C_ADDCALENDAR, C_WORKTIME, C_SETCALENDAR, C_UPDATE, C_BASELINES, C_REPLACE, C_LEVEL, C_CLEARLEVELING, C_SORT, C_FIND, C_REPLACETEXT, C_FILTER, C_GROUP, C_LINES, C_LINE, C_UPDATETASK, C_PROGRESSLINES, C_REPORT, NCOMMANDS
 };
 
 static const command commands[NCOMMANDS] = {
@@ -67,7 +67,7 @@ static const command commands[NCOMMANDS] = {
     { "UPDATE", "STATUS/A,WHOLE/S" },
     { "BASELINES", "" },
     { "REPLACE", "ROW/A/N,FROM/A,TO/A,UNITS/K" },
-    { "LEVEL", "WITHINSLACK/S" },
+    { "LEVEL", "WITHINSLACK/S,ORDER/K" },
     { "CLEARLEVELING", "" },
     { "SORT", "BY/A,DESC/S,THEN/K,THENDESC/S,LAST/K,LASTDESC/S" },
     { "FIND", "TEXT/A,COLUMN/K,FROM/K/N,BACK/S,EXACT/S,BEGINS/S,RESOURCES/S" },
@@ -78,6 +78,7 @@ static const command commands[NCOMMANDS] = {
     { "LINE", "LINE/A/N" },
     { "UPDATETASK", "ROW/A/N,PERCENT/K,ACTUAL/K,REMAINING/K,START/K,FINISH/K" },
     { "PROGRESSLINES", "ON/S,OFF/S" },
+    { "REPORT", "NAME/A,FILE/A,FORMAT/K" },
 };
 
 /* ---- Words ---- */
@@ -414,6 +415,41 @@ static void put(char *result, size_t size, const char *s)
     result[n] = 0;
 }
 
+/* REPORT: one of the plan's reports (owf_preport.c) saved through libowf's writers, as the name's
+ * extension or FORMAT says (PDF, ODT, DOCX, RTF, HTML, text...). */
+static int save_report(opj_rexx *rx, const char *name, const char *file, const char *format)
+{
+    char f[16];
+    owf_doc *report;
+    int kind = owf_preport_parse(name), rc;
+    if (kind < 0) {
+        snprintf(rx->lasterror, sizeof rx->lasterror,
+                 "REPORT: NAME is Summary, Critical, Milestones, WhoDoesWhat, Overallocated or CashFlow, not %s", name);
+        return OPJ_RX_ERROR;
+    }
+    if (!name_fits(rx, "REPORT", file)) return OPJ_RX_ERROR;
+    if (format) squash(format, f, sizeof f);
+    if (owf_project_report(rx->doc->plan, kind, &report) != OWF_OK) {
+        put(rx->lasterror, sizeof rx->lasterror, "REPORT: out of memory");
+        return OPJ_RX_FAIL;
+    }
+    rc = owf_export_file(report, file, format ? f : NULL, NULL);
+    owf_doc_free(report);
+    if (rc == OWF_ERR_FORMAT || rc == OWF_ERR_UNSUPPORTED) {
+        snprintf(rx->lasterror, sizeof rx->lasterror, "REPORT: can't save a report as %s", format ? format : file);
+        return OPJ_RX_ERROR;
+    }
+    if (rc == OWF_ERR_MEMORY) {
+        snprintf(rx->lasterror, sizeof rx->lasterror, "Out of memory writing %s", file);
+        return OPJ_RX_FAIL;
+    }
+    if (rc != OWF_OK) {
+        snprintf(rx->lasterror, sizeof rx->lasterror, "Could not write %s", file);
+        return OPJ_RX_ERROR;
+    }
+    return OPJ_RX_OK;
+}
+
 /* ---- Calendars ---- */
 
 /* A weekday's name ("Mon", "monday") as 0 Sunday..6, or -1. */
@@ -673,8 +709,12 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         }
         return edit_rc(rx, opj_set_assignment(doc, (int)row, r, a->value[2] ? a->num[2] : 100), "ASSIGN");
     case C_LEVEL: {
-        int n = 0;
-        if ((rc = opj_level(doc, a->value[0] != NULL, &n)) != OWF_OK) return edit_rc(rx, rc, "LEVEL");
+        int n = 0, order = a->value[1] ? opj_level_order_parse(a->value[1]) : OWF_LEVEL_STANDARD;
+        if (order < 0) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "LEVEL: ORDER is Standard, ID or Priority");
+            return OPJ_RX_ERROR;
+        }
+        if ((rc = opj_level_by(doc, a->value[0] != NULL, order, &n)) != OWF_OK) return edit_rc(rx, rc, "LEVEL");
         snprintf(result, size, "%d", n);
         return OPJ_RX_OK;
     }
@@ -763,6 +803,7 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
     case C_UPDATETASK:
         return edit_rc(rx, opj_update_task(doc, (int)row, a->value[1], a->value[2], a->value[3], a->value[4], a->value[5]),
                        "UPDATETASK");
+    case C_REPORT: return save_report(rx, a->value[0], a->value[1], a->value[2]);
     case C_PROGRESSLINES:
         if (!rx->view) {
             put(rx->lasterror, sizeof rx->lasterror, "PROGRESSLINES: there is no window to draw them in");

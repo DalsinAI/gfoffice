@@ -48,7 +48,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenProject 0.1.20 (16.11.2026)"
+#define VERSION_TEXT "GFOpenProject 0.1.23 (17.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenProject, the project planner of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -58,7 +58,7 @@ enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_XML, M_EXPORT_CSV, M_EXPORT_PDF, M_PRINT, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_EDIT, M_INSERT, M_DELETE, M_INDENT, M_OUTDENT, M_LINK, M_UNLINK,
     M_DAYS, M_WEEKS, M_MONTHS, M_QUARTERS, M_SHOW_BASELINE, M_RESOURCES, M_START, M_GANTT, M_USAGE, M_NETWORK, M_TASK_USAGE, M_GRAPH, M_TRACKING,
-    M_SET_BASELINE, M_CLEAR_BASELINE, M_LEVEL, M_CLEAR_LEVELING, M_UPDATE_PROJECT, M_WORKTIME, M_PLAN_CALENDAR, M_TASK_CALENDAR,
+    M_SET_BASELINE, M_CLEAR_BASELINE, M_ASSIGN, M_LEVEL, M_CLEAR_LEVELING, M_UPDATE_PROJECT, M_WORKTIME, M_PLAN_CALENDAR, M_TASK_CALENDAR,
     M_INFO,
     M_FIND, M_FIND_NEXT, M_REPLACE, M_SORT_START, M_SORT_FINISH, M_SORT_NAME, M_SORT_DURATION, M_SORT_BY,
     M_AUTOFILTER_ROW, M_AUTOFILTER, M_FILTER_SUMMARIES, M_GROUP_COLUMN, M_GROUP_DESC,
@@ -67,8 +67,8 @@ enum {
 };
 #define M_FILTER 200                         /* View > Filter: M_FILTER + an OPJ_FILTER_ (All .. Unstarted) */
 #define M_GROUP 220                          /* View > Group By: M_GROUP + an index into group_cols */
-#define DATA_ITEM 19                         /* View's item number of Sort; Filter and Group By follow */
-#define PROGRESS_ITEM 8                      /* Tools' item number of Progress Lines */
+#define DATA_ITEM 20                         /* View's item number of Sort; Filter and Group By follow */
+#define PROGRESS_ITEM 9                      /* Tools' item number of Progress Lines */
 #define NFILTER_ITEMS 7                      /* Filter's items 0 to 6: the filters, one ticked at a time */
 #define NGROUP_ITEMS 7                       /* Group By's items 0 to 6: No Group and six columns */
 static const int group_cols[NGROUP_ITEMS] = {
@@ -76,7 +76,8 @@ static const int group_cols[NGROUP_ITEMS] = {
 };
 /* View's items 10 to 15 are the views, one ticked at a time: the others an item excludes. */
 #define VIEWS_BUT(item) (0xFC00L & ~(1L << (item)))
-#define COLUMNS_ITEM 17                      /* View's item number of Columns */
+#define COLUMNS_ITEM 17                      /* View's item number of Columns; More Columns follows */
+#define MORE_COLUMNS OPJ_COL_WORK            /* the first column in More Columns */
 
 static struct NewMenu menus[] = {
     { NM_TITLE, "Project", NULL, 0, 0, NULL },
@@ -155,11 +156,16 @@ static struct NewMenu menus[] = {
     { NM_SUB, "SV", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_SV) },
     { NM_SUB, "CV", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_CV) },
     { NM_SUB, "Leveling Delay", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_LEVELING_DELAY) },
+    { NM_ITEM, "More Columns", NULL, 0, 0, NULL },            /* a submenu takes 32: work, cost and type here */
     { NM_SUB, "Work", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_WORK) },
     { NM_SUB, "Actual Work", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_ACTUAL_WORK) },
     { NM_SUB, "Remaining Work", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_REMAINING_WORK) },
     { NM_SUB, "Cost", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_COST) },
     { NM_SUB, "Actual Cost", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_ACTUAL_COST) },
+    { NM_SUB, "Type", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_TYPE) },
+    { NM_SUB, "Effort Driven", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_EFFORT_DRIVEN) },
+    { NM_SUB, "Priority", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_PRIORITY) },
+    { NM_SUB, "Overallocated", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_OVERALLOCATED) },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Sort", NULL, 0, 0, NULL },
     { NM_SUB, "by Start Date", NULL, 0, 0, (APTR)M_SORT_START },
@@ -194,6 +200,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Set Baseline...", NULL, 0, 0, (APTR)M_SET_BASELINE },
     { NM_ITEM, "Clear Baseline...", NULL, 0, 0, (APTR)M_CLEAR_BASELINE },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Assign Resources...", NULL, 0, 0, (APTR)M_ASSIGN },
     { NM_ITEM, "Level Resources...", NULL, 0, 0, (APTR)M_LEVEL },
     { NM_ITEM, "Clear Leveling", NULL, 0, 0, (APTR)M_CLEAR_LEVELING },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -612,27 +619,33 @@ static int edit_allowed(int edit)
 
 /* ---- Task Information (Edit > Task Information..., or a double-click on a bar) ---- */
 
-enum { TI_NAME, TI_DURATION, TI_PERCENT, TI_PREDECESSORS, TI_RESOURCES, TI_CONSTRAINT, TI_DATE, TI_NOTES, TI_N };
+enum { TI_NAME, TI_DURATION, TI_PERCENT, TI_PREDECESSORS, TI_RESOURCES, TI_CONSTRAINT, TI_DATE, TI_NOTES, TI_TYPE,
+       TI_EFFORT, TI_PRIORITY, TI_N };
 
 static void task_info(void)
 {
     static const int cols[TI_N] = { OPJ_COL_NAME, OPJ_COL_DURATION, OPJ_COL_PERCENT, OPJ_COL_PREDECESSORS,
-                                    OPJ_COL_RESOURCES, OPJ_COL_CONSTRAINT_TYPE, OPJ_COL_CONSTRAINT_DATE, OPJ_COL_NOTES };
+                                    OPJ_COL_RESOURCES, OPJ_COL_CONSTRAINT_TYPE, OPJ_COL_CONSTRAINT_DATE, OPJ_COL_NOTES,
+                                    OPJ_COL_TYPE, OPJ_COL_EFFORT_DRIVEN, OPJ_COL_PRIORITY };
     static const char *const labels[TI_N] = { "Name", "Duration", "% Complete", "Predecessors", "Resources",
-                                              "Constraint", "Date", "Notes" };
+                                              "Constraint", "Date", "Notes", "Task Type", "Effort Driven",
+                                              "Priority" };
     static STRPTR kinds[9];
+    static STRPTR types[] = { (STRPTR)"Fixed Units", (STRPTR)"Fixed Duration", (STRPTR)"Fixed Work", NULL };
     static char was[TI_N][400], now[TI_N][400];
     struct Window *aw;
     struct Gadget *eg = NULL, *g, *gad[TI_N];
     struct NewGadget ng;
     char title[80], why[160];
-    int i, done = 0, row = view.selected, lw = fw * 13 + 12, w = fw * 64, h, kind, kind_was;
+    int i, done = 0, row = view.selected, lw = fw * 13 + 12, w = fw * 64, h, kind, kind_was, type, type_was, summary;
     if (rexx_busy || !edit_allowed(OPJ_EDIT_INFO)) return;
     if (row < 0 || row >= DOC->plan->ntasks) { set_status("Task Information: choose a task first"); redraw(); return; }
     for (i = 0; i < 8; i++) kinds[i] = (STRPTR)opj_constraint_name(i);
     kinds[8] = NULL;
     for (i = 0; i < TI_N; i++) opj_cell_text(DOC, row, cols[i], was[i], sizeof was[i]);
     kind = kind_was = DOC->plan->tasks[row].constraint;
+    type = type_was = DOC->plan->tasks[row].type;            /* a summary's are blank: its gadgets are off */
+    summary = DOC->plan->tasks[row].summary;
     snprintf(title, sizeof title, "Task Information: %.50s", was[TI_NAME]);
     h = (fh + 8) * (TI_N + 1) + 16;
     aw = OpenWindowTags(NULL, WA_Title, (ULONG)title, WA_PubScreen, (ULONG)scr,
@@ -657,6 +670,15 @@ static void task_info(void)
         ng.ng_GadgetID = 10 + i;
         if (i == TI_CONSTRAINT)
             g = gad[i] = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)kinds, GTCY_Active, (ULONG)kind, TAG_DONE);
+        else if (i == TI_TYPE)
+            g = gad[i] = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)types, GTCY_Active, (ULONG)type,
+                                      GA_Disabled, (ULONG)summary, TAG_DONE);
+        else if (i == TI_EFFORT)
+            g = gad[i] = CreateGadget(CHECKBOX_KIND, g, &ng, GTCB_Checked, (ULONG)!strcmp(was[i], "Yes"),
+                                      GA_Disabled, (ULONG)summary, TAG_DONE);
+        else if (i == TI_PRIORITY)                   /* 0..1000, 1000 Do Not Level; a summary has none */
+            g = gad[i] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)was[i], GTST_MaxChars, 4,
+                                      GA_Disabled, (ULONG)summary, TAG_DONE);
         else
             g = gad[i] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)was[i], GTST_MaxChars, 399, TAG_DONE);
     }
@@ -688,6 +710,11 @@ static void task_info(void)
             if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) done = 1;
             else if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(aw); GT_EndRefresh(aw, TRUE); }
             else if (class == IDCMP_GADGETUP && gg->GadgetID == 10 + TI_CONSTRAINT) kind = code;
+            else if (class == IDCMP_GADGETUP && gg->GadgetID == 10 + TI_TYPE) {
+                type = code;                                 /* Fixed Work is always effort driven */
+                if (type == OWF_TT_FIXED_WORK)
+                    GT_SetGadgetAttrs(gad[TI_EFFORT], aw, NULL, GTCB_Checked, TRUE, TAG_DONE);
+            }
             else if (class == IDCMP_GADGETUP && gg->GadgetID == 2) ok = 1;
             else if (class == IDCMP_GADGETUP && gg->GadgetID == 3) done = 1;
         }
@@ -700,7 +727,17 @@ static void task_info(void)
                 if (i == TI_CONSTRAINT) {
                     if (kind == kind_was) continue;
                     put_text(now[i], sizeof now[i], opj_constraint_name(kind));
+                } else if (i == TI_TYPE) {
+                    if (summary || type == type_was) continue;
+                    put_text(now[i], sizeof now[i], (const char *)types[type]);
+                } else if (i == TI_EFFORT) {
+                    ULONG on = 0;
+                    if (summary) continue;
+                    GT_GetGadgetAttrs(gad[i], aw, NULL, GTCB_Checked, (ULONG)&on, TAG_DONE);
+                    put_text(now[i], sizeof now[i], on ? "Yes" : "No");
+                    if (!strcmp(now[i], was[i])) continue;
                 } else {
+                    if (i == TI_PRIORITY && summary) continue;
                     GT_GetGadgetAttrs(gad[i], aw, NULL, GTST_String, (ULONG)&str, TAG_DONE);
                     put_text(now[i], sizeof now[i], str ? (const char *)str : "");
                     if (!strcmp(now[i], was[i])) continue;
@@ -719,7 +756,7 @@ static void task_info(void)
                                                                 : "Task Information: %s was not taken",
                          i < TI_N ? labels[i] : "a field");
                 SetWindowTitles(aw, (UBYTE *)why, (UBYTE *)~0);   /* stays open to put it right */
-                if (i < TI_N && i != TI_CONSTRAINT) ActivateGadget(gad[i], aw, NULL);
+                if (i < TI_N && i != TI_CONSTRAINT && i != TI_TYPE && i != TI_EFFORT) ActivateGadget(gad[i], aw, NULL);
             }
         }
     }
@@ -1117,22 +1154,311 @@ static void resources_window(void)
     res_free();
 }
 
+/* ---- Tools > Assign Resources... (MS Project's dialog): every resource against the selected task ---- */
+
+static struct List as_list;
+static struct Node *as_nodes;
+static char (*as_text)[80];
+
+static void as_free(void)
+{
+    free(as_nodes);
+    free(as_text);
+    as_nodes = NULL;
+    as_text = NULL;
+    NewList(&as_list);
+}
+
+static void as_build(int task)
+{
+    int i, n = DOC->plan->nresources;
+    as_free();
+    if (!n) return;
+    as_nodes = (struct Node *)calloc((size_t)n, sizeof *as_nodes);
+    as_text = (char (*)[80])calloc((size_t)n, sizeof *as_text);
+    if (!as_nodes || !as_text) { as_free(); return; }
+    for (i = 0; i < n; i++) {
+        opj_assign_line(DOC, task, i, as_text[i], sizeof as_text[i]);
+        as_nodes[i].ln_Name = as_text[i];
+        AddTail(&as_list, &as_nodes[i]);
+    }
+}
+
+/* Resource r's name for the Assign window's info line; "" for none or out of range. */
+static const char *res_name(int r)
+{
+    return r >= 0 && r < DOC->plan->nresources && DOC->plan->resources[r].name ? DOC->plan->resources[r].name : "";
+}
+
+static void assign_window(void)
+{
+    enum { A_LIST = 1, A_UNITS, A_ASSIGN, A_REMOVE, A_REPLACE, A_ADD, A_CLOSE };
+    static const char *const labels[] = { "Assign", "Remove", "Replace...", "Add Resource...", "Close" };
+    struct Window *aw;
+    struct Gadget *eg = NULL, *g, *g_list, *g_units, *g_info;
+    struct NewGadget ng;
+    char title[80], head[80], info[120] = "Choose a resource, then Assign, Remove or Replace";
+    int task = view.selected, done = 0, sel = -1, w = fw * 52, lines = 10, h, i, by, bw;
+    if (rexx_busy || !edit_allowed(OPJ_EDIT_INFO)) return;
+    if (task < 0 || task >= DOC->plan->ntasks) { set_status("Assign Resources: choose a task first"); redraw(); return; }
+    snprintf(title, sizeof title, "Assign Resources: %.50s", DOC->plan->tasks[task].name ? DOC->plan->tasks[task].name : "");
+    snprintf(head, sizeof head, "  %-20s %8s %10s", "Resource Name", "Units", "Cost");
+    NewList(&as_list);
+    as_build(task);
+    h = (fh + 2) * (lines + 1) + (fh + 8) * 3 + 24;
+    aw = OpenWindowTags(NULL, WA_Title, (ULONG)title, WA_PubScreen, (ULONG)scr,
+        WA_Left, win->LeftEdge + 40, WA_Top, win->TopEdge + 40, WA_InnerWidth, w, WA_InnerHeight, h,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SmartRefresh, TRUE,
+        WA_AutoAdjust, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY |
+                  LISTVIEWIDCMP | STRINGIDCMP | BUTTONIDCMP | TEXTIDCMP,
+        TAG_DONE);
+    if (!aw) { as_free(); return; }
+    SetFont(aw->RPort, font);
+    if (!(g = CreateContext(&eg))) { CloseWindow(aw); as_free(); return; }
+    memset(&ng, 0, sizeof ng);
+    ng.ng_VisualInfo = vi;
+    ng.ng_TextAttr = &font_attr;
+    ng.ng_LeftEdge = aw->BorderLeft + 8;
+    ng.ng_TopEdge = aw->BorderTop + 2;
+    ng.ng_Width = w - 16;
+    ng.ng_Height = fh + 4;
+    g = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text, (ULONG)head, GTTX_CopyText, TRUE, TAG_DONE);
+    ng.ng_TopEdge = aw->BorderTop + 6 + fh + 2;
+    ng.ng_Height = (fh + 2) * lines + 4;
+    ng.ng_GadgetID = A_LIST;
+    g = g_list = CreateGadget(LISTVIEW_KIND, g, &ng, GTLV_Labels, (ULONG)&as_list, GTLV_ShowSelected, 0, TAG_DONE);
+    by = ng.ng_TopEdge + ng.ng_Height + 6;
+    ng.ng_TopEdge = by;
+    ng.ng_LeftEdge = aw->BorderLeft + 8 + fw * 6 + 8;
+    ng.ng_Width = fw * 12 + 12;
+    ng.ng_Height = fh + 6;
+    ng.ng_GadgetText = (UBYTE *)"Units";
+    ng.ng_Flags = PLACETEXT_LEFT;
+    ng.ng_GadgetID = A_UNITS;
+    g = g_units = CreateGadget(STRING_KIND, g, &ng, GTST_MaxChars, 20, TAG_DONE);
+    ng.ng_LeftEdge += ng.ng_Width + 8;
+    ng.ng_Width = w - 16 - (ng.ng_LeftEdge - aw->BorderLeft - 8);
+    ng.ng_GadgetText = NULL;
+    ng.ng_GadgetID = 0;
+    g = g_info = CreateGadget(TEXT_KIND, g, &ng, GTTX_Text, (ULONG)info, GTTX_CopyText, TRUE, TAG_DONE);
+    ng.ng_TopEdge = by + fh + 12;
+    ng.ng_LeftEdge = aw->BorderLeft + 8;
+    bw = (w - 16 - 4 * 6) / 5;
+    ng.ng_Width = bw;
+    ng.ng_Flags = PLACETEXT_IN;
+    for (i = 0; i < 5; i++) {
+        ng.ng_GadgetText = (UBYTE *)labels[i];
+        ng.ng_GadgetID = A_ASSIGN + i;
+        g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+        ng.ng_LeftEdge += bw + 6;
+    }
+    if (!g) { FreeGadgets(eg); CloseWindow(aw); as_free(); return; }
+    AddGList(aw, eg, ~0, -1, NULL);
+    RefreshGList(eg, aw, NULL, -1);
+    GT_RefreshWindow(aw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        WaitPort(aw->UserPort);
+        while ((m = GT_GetIMsg(aw->UserPort)) != NULL) {
+            ULONG class = m->Class;
+            UWORD code = m->Code;
+            struct Gadget *gg = (struct Gadget *)m->IAddress;
+            int changed = 0, rc = OWF_OK;
+            STRPTR units = NULL;
+            const char *what = "Assign";
+            GT_ReplyIMsg(m);
+            if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) { done = 1; continue; }
+            if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(aw); GT_EndRefresh(aw, TRUE); continue; }
+            if (class != IDCMP_GADGETUP) continue;
+            GT_GetGadgetAttrs(g_units, aw, NULL, GTST_String, (ULONG)&units, TAG_DONE);
+            switch (gg->GadgetID) {
+            case A_LIST: {
+                opj_assign_info ai;
+                char u[32] = "";
+                sel = code;
+                if (opj_assign_get(DOC, task, sel, &ai) && ai.assigned) opj_units_text(DOC, sel, ai.units, u, sizeof u);
+                GT_SetGadgetAttrs(g_units, aw, NULL, GTST_String, (ULONG)u, TAG_DONE);
+                break;
+            }
+            case A_UNITS:
+            case A_ASSIGN:
+                if (sel < 0) break;
+                rc = opj_assign_resource(DOC, task, sel, units ? (const char *)units : "");
+                if (rc == OWF_OK) snprintf(info, sizeof info, "%.40s assigned", res_name(sel));
+                changed = 1;
+                break;
+            case A_REMOVE:
+                if (sel < 0) break;
+                what = "Remove";
+                rc = opj_remove_resource(DOC, task, sel);
+                if (rc == OWF_OK) snprintf(info, sizeof info, "%.40s removed", res_name(sel));
+                changed = 1;
+                break;
+            case A_REPLACE: {
+                char name[100] = "";
+                int to, kind;
+                if (sel < 0) break;
+                what = "Replace";
+                if (!ask_text("Replace", "With (a resource's name)", name, sizeof name)) break;
+                if ((to = opj_find_resource(DOC, name)) < 0) {
+                    snprintf(info, sizeof info, "No resource %.40s", name);
+                    changed = 1;
+                    break;
+                }
+                kind = DOC->plan->resources[sel].type != DOC->plan->resources[to].type;
+                rc = opj_replace_resource(DOC, task, sel, to, units ? (const char *)units : "");
+                if (rc == OWF_OK) {
+                    snprintf(info, sizeof info, kind && !(units && *units) ? "%.30s replaced: one unit, as it is another kind"
+                                                                           : "%.30s replaced", res_name(sel));
+                    sel = to;
+                }
+                changed = 1;
+                break;
+            }
+            case A_ADD: {
+                char name[100] = "";
+                int at = -1;
+                what = "Add Resource";
+                if (!ask_text("Add Resource", "Name", name, sizeof name)) break;
+                if ((rc = opj_add_resource(DOC, name, &at)) == OWF_OK) sel = at;
+                changed = 1;
+                break;
+            }
+            case A_CLOSE: done = 1; break;
+            }
+            if (rc != OWF_OK) {
+                struct Window *keep = win;
+                info[0] = 0;                          /* not the last success under the error */
+                win = aw;
+                edit_failed(rc, what);
+                win = keep;
+            }
+            if (changed) {
+                GT_SetGadgetAttrs(g_list, aw, NULL, GTLV_Labels, ~0, TAG_DONE);
+                as_build(task);
+                GT_SetGadgetAttrs(g_list, aw, NULL, GTLV_Labels, (ULONG)&as_list,
+                                  GTLV_Selected, sel < 0 ? ~0 : (ULONG)sel, TAG_DONE);
+                GT_SetGadgetAttrs(g_info, aw, NULL, GTTX_Text, (ULONG)info, TAG_DONE);
+                redraw();
+            }
+        }
+    }
+    RemoveGList(aw, eg, -1);
+    FreeGadgets(eg);
+    CloseWindow(aw);
+    as_free();
+}
+
 /* ---- Menus, mouse and keys ---- */
 
 /* ---- Tools > Level Resources... ---- */
 
-/* Levels the plan, the whole of it or only within slack, with the busy pointer while it works (each move
- * schedules the plan again, which takes a while on a large one). */
+/* The Level Resources requester, as ProjectLibre's and MS Project's Resource Leveling dialog: the leveling
+ * order, "Level only within available slack", then Level Now, Clear Leveling or Cancel. The choices stay
+ * for the next time. 1 Level Now, 2 Clear Leveling, 0 Cancel. */
+static int level_order = OWF_LEVEL_STANDARD, level_within;
+
+static int level_dialog(void)
+{
+    static STRPTR orders[OWF_LEVEL_NORDERS + 1];
+    struct Window *aw;
+    struct Gadget *eg = NULL, *g, *slack_g;
+    struct NewGadget ng;
+    int i, done = 0, answer = 0, order = level_order, lw = fw * 15 + 12, w = fw * 56, h = (fh + 8) * 4 + 16;
+    for (i = 0; i < OWF_LEVEL_NORDERS; i++) orders[i] = (STRPTR)opj_level_order_name(i);
+    orders[OWF_LEVEL_NORDERS] = NULL;
+    aw = OpenWindowTags(NULL, WA_Title, (ULONG)"Level Resources", WA_PubScreen, (ULONG)scr,
+        WA_Left, win->LeftEdge + 40, WA_Top, win->TopEdge + 30, WA_InnerWidth, w, WA_InnerHeight, h,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SmartRefresh, TRUE,
+        WA_AutoAdjust, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | BUTTONIDCMP |
+                  CYCLEIDCMP | CHECKBOXIDCMP,
+        TAG_DONE);
+    if (!aw) return 0;
+    if (!(g = CreateContext(&eg))) { CloseWindow(aw); return 0; }
+    memset(&ng, 0, sizeof ng);
+    ng.ng_VisualInfo = vi;
+    ng.ng_TextAttr = &font_attr;
+    ng.ng_Height = fh + 6;
+    ng.ng_Flags = PLACETEXT_LEFT;
+    ng.ng_LeftEdge = aw->BorderLeft + 8 + lw;
+    ng.ng_TopEdge = aw->BorderTop + 8;
+    ng.ng_Width = w - 16 - lw;
+    ng.ng_GadgetText = (UBYTE *)"Leveling order";
+    ng.ng_GadgetID = 10;
+    g = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)orders, GTCY_Active, (ULONG)order, TAG_DONE);
+    ng.ng_TopEdge += fh + 8;
+    ng.ng_Flags = PLACETEXT_RIGHT;
+    ng.ng_LeftEdge = aw->BorderLeft + 8;
+    ng.ng_Width = 26;
+    ng.ng_GadgetText = (UBYTE *)"Level only within available slack";
+    ng.ng_GadgetID = 11;
+    g = slack_g = CreateGadget(CHECKBOX_KIND, g, &ng, GTCB_Checked, (ULONG)level_within, TAG_DONE);
+    ng.ng_Flags = PLACETEXT_IN;
+    ng.ng_TopEdge = aw->Height - aw->BorderBottom - 6 - (fh + 6);
+    ng.ng_Width = (w - 32) / 3;
+    ng.ng_GadgetText = (UBYTE *)"Level Now";
+    ng.ng_GadgetID = 1;
+    g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+    ng.ng_LeftEdge += ng.ng_Width + 8;
+    ng.ng_GadgetText = (UBYTE *)"Clear Leveling";
+    ng.ng_GadgetID = 2;
+    g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+    ng.ng_LeftEdge += ng.ng_Width + 8;
+    ng.ng_GadgetText = (UBYTE *)"Cancel";
+    ng.ng_GadgetID = 3;
+    g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+    if (!g) { FreeGadgets(eg); CloseWindow(aw); return 0; }
+    AddGList(aw, eg, ~0, -1, NULL);
+    RefreshGList(eg, aw, NULL, -1);
+    GT_RefreshWindow(aw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        WaitPort(aw->UserPort);
+        while ((m = GT_GetIMsg(aw->UserPort)) != NULL) {
+            ULONG class = m->Class;
+            UWORD code = m->Code;
+            struct Gadget *gg = (struct Gadget *)m->IAddress;
+            GT_ReplyIMsg(m);
+            if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) done = 1;
+            else if (class == IDCMP_VANILLAKEY && code == 13) answer = 1, done = 1;
+            else if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(aw); GT_EndRefresh(aw, TRUE); }
+            else if (class == IDCMP_GADGETUP && gg->GadgetID == 10) order = code;
+            else if (class == IDCMP_GADGETUP && gg->GadgetID >= 1 && gg->GadgetID <= 3)
+                answer = gg->GadgetID == 3 ? 0 : gg->GadgetID, done = 1;
+        }
+    }
+    if (answer) {
+        ULONG on = 0;
+        GT_GetGadgetAttrs(slack_g, aw, NULL, GTCB_Checked, (ULONG)&on, TAG_DONE);
+        level_within = on != 0;
+        level_order = order >= 0 && order < OWF_LEVEL_NORDERS ? order : OWF_LEVEL_STANDARD;
+    }
+    RemoveGList(aw, eg, -1);
+    FreeGadgets(eg);
+    CloseWindow(aw);
+    return answer;
+}
+
+/* Levels the plan in the requester's order, the whole of it or only within slack, with the busy pointer
+ * while it works (each move schedules the plan again, which takes a while on a large one). */
 static void level_resources(void)
 {
     char msg[96];
     int how, delayed = 0, rc, over = 0, i;
     if (rexx_busy) return;
-    how = ask("Level Resources: delay tasks until no resource is over-allocated",
-              "Level|Within slack only|Cancel");
+    how = level_dialog();
+    redraw();
     if (!how) return;
+    if (how == 2) {
+        rc = opj_clear_leveling(DOC);
+        if (rc == OWF_OK) set_status("Leveling cleared");
+        else edit_failed(rc, "Clear Leveling");
+        return;
+    }
     SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
-    rc = opj_level(DOC, how == 2, &delayed);
+    rc = opj_level_by(DOC, level_within, level_order, &delayed);
     SetWindowPointer(win, TAG_DONE);
     if (rc != OWF_OK) { edit_failed(rc, "Level Resources"); return; }
     for (i = 0; i < DOC->plan->nresources; i++) over += DOC->plan->resources[i].overallocated != 0;
@@ -1574,6 +1900,7 @@ static void menu_action(ULONG id, struct MenuItem *item)
     case M_SHOW_BASELINE: view.show_baseline = item && (item->Flags & CHECKED) ? 1 : 0; break;
     case M_START: view.origin = opj_period_start(OPJ_ZOOM_WEEKS, DOC->plan->start); break;
     case M_RESOURCES: resources_window(); break;
+    case M_ASSIGN: assign_window(); break;
     case M_GANTT: usage_mode = network_mode = view.tracking = 0; set_status(""); break;
     case M_TRACKING:
         usage_mode = network_mode = 0;
@@ -1666,7 +1993,8 @@ static void tick_view(void)
     (usage_mode == OPJ_VIEW_GRAPH ? h : usage_mode == OPJ_VIEW_TASK_USAGE ? k : usage_mode ? u
      : network_mode ? n : view.tracking ? tg : g)->Flags |= CHECKED;
     for (c = 0; c < OPJ_NCOLS; c++) {                       /* View > Columns follows the table */
-        struct MenuItem *it = ItemAddress(menu, FULLMENUNUM(2, COLUMNS_ITEM, c));
+        struct MenuItem *it = ItemAddress(menu, c < MORE_COLUMNS ? FULLMENUNUM(2, COLUMNS_ITEM, c)
+                                                : FULLMENUNUM(2, COLUMNS_ITEM + 1, c - MORE_COLUMNS));
         if (!it) continue;
         if (opj_view_column_shown(&view, c)) it->Flags |= CHECKED;
         else it->Flags &= ~CHECKED;
