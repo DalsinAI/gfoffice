@@ -32,7 +32,7 @@ static const char *dump(const owf_doc *doc)
 {
     static const char *const names[] = { "PAGE", "PAGES", "DATE", "TIME", "TITLE", "AUTHOR", "SUBJECT", "FILENAME",
                                          "WORDS", "CHAPTER", "USER", "REF", "REFPAGE", "MERGE", "INDEX", "SEQ",
-                                         "IF" };
+                                         "IF", "FILLIN" };
     static char out[2048];
     size_t used = 0;
     int i, j;
@@ -718,6 +718,82 @@ static void test_if(void)
     }
 }
 
+
+/* libowf 1.19 (2.0.50): input fields (FILLIN): a prompt and the answer given, kept by update_fields, given a
+ * new answer (undoable), through DOCX and ODT; Word's own form with \d and a quote in the prompt */
+static void test_fill_in(void)
+{
+    static const char *const names[] = { "[Content_Types].xml", "_rels/.rels", "word/document.xml" };
+    static const char *const parts[] = {
+        "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+        "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+        "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+        "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>"
+        "</Types>",
+        "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+        "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>"
+        "</Relationships>",
+        "<?xml version=\"1.0\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>"
+        "<w:p><w:r><w:t xml:space=\"preserve\">Dear </w:t></w:r>"
+        "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText xml:space=\"preserve\"> FILLIN \"Whose \\\"name\\\"?\" \\d \"Sir\" </w:instrText></w:r>"
+        "<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>Ann</w:t></w:r><w:r><w:fldChar w:fldCharType=\"end\"/></w:r>"
+        "<w:fldSimple w:instr=\" FILLIN Town \"><w:r><w:t>Leeds</w:t></w:r></w:fldSimple></w:p>"
+        "<w:sectPr/></w:body></w:document>" };
+    static const char *const fmts[] = { "docx", "odt" };
+    owf_doc *doc = doc_of(), *word = NULL, *back = NULL;
+    ow_editor *ed = doc ? ow_editor_new(doc) : NULL;
+    const char *prompt = NULL, *answer = NULL;
+    static const char *const want = "Getting started|Plug it in and wait.{FILLIN:Your name?=Ann}|Using it|Press the button.";
+    int k;
+    CHECK(ed != NULL, "editor");
+    if (!ed) { owf_doc_free(doc); return; }
+    CHECK(ow_editor_insert_fill_in(ed, NULL, "x") == OWF_ERR_FORMAT, "an input field needs a prompt");
+    caret_end(ed, 1);
+    CHECK(ow_editor_insert_fill_in(ed, "Your name?", "Bob") == OWF_OK, "inserted");
+    CHECK(!strcmp(dump(doc), "Getting started|Plug it in and wait.{FILLIN:Your name?=Bob}|Using it|Press the button."),
+          dump(doc));
+    CHECK(ow_editor_update_fields(ed) >= 0 && strstr(dump(doc), "=Bob}"), "update_fields keeps the answer");
+    CHECK(ow_editor_fill_in_count(ed) == 1 && ow_editor_fill_in_at(ed, 0, &prompt, &answer) &&
+          !strcmp(prompt, "Your name?") && !strcmp(answer, "Bob") && !ow_editor_fill_in_at(ed, 1, NULL, NULL), "listed");
+    CHECK(ow_editor_set_fill_in(ed, 0, "Ann") == OWF_OK && !strcmp(dump(doc), want), dump(doc));
+    CHECK(ow_editor_undo(ed) == 1 && strstr(dump(doc), "=Bob}") && ow_editor_redo(ed) == 1 && !strcmp(dump(doc), want),
+          "an answer is one undo");
+    CHECK(ow_editor_set_fill_in(ed, 1, "x") == OWF_ERR_FORMAT, "no second one");
+    for (k = 0; k < 2; ++k) {
+        const owf_format *f = owf_format_named(fmts[k]);
+        unsigned char *data = NULL;
+        size_t length = 0;
+        CHECK(f && f->export(doc, &data, &length, NULL) == OWF_OK && data, fmts[k]);
+        if (!data) continue;
+        {
+            owf_unzip zip;
+            unsigned char *xml = NULL;
+            size_t n = 0;
+            CHECK(owf_unzip_open(&zip, data, length) &&
+                  owf_unzip_read(&zip, k ? "content.xml" : "word/document.xml", &xml, &n) == OWF_OK, "part");
+            if (xml) {
+                CHECK(strstr((char *)xml, k ? "<text:text-input text:description=\"Your name?\">Ann</text:text-input>"
+                                            : "FILLIN &quot;Your name?&quot;") != NULL, k ? "text:text-input" : "FILLIN");
+                owf_free(xml);
+            }
+        }
+        CHECK(owf_import_memory(data, length, NULL, &back, NULL, NULL) == OWF_OK && back, fmts[k]);
+        if (back) {
+            CHECK(!strcmp(dump(back), want), dump(back));
+            owf_doc_free(back);
+            back = NULL;
+        }
+        free(data);
+    }
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+    CHECK(zip_import(names, parts, 3, &word) == OWF_OK && word, "Word's FILLIN");
+    if (word) {
+        CHECK(!strcmp(dump(word), "Dear {FILLIN:Whose \"name\"?=Ann}{FILLIN:Town=Leeds}"), dump(word));
+        owf_doc_free(word);
+    }
+}
+
 int main(void)
 {
     test_editing();
@@ -730,6 +806,7 @@ int main(void)
     test_seq();
     test_caption_refs();
     test_if();
+    test_fill_in();
     printf("fields: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

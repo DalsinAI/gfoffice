@@ -15,34 +15,10 @@
 
 static const unsigned char signature[8] = { 137, 'P', 'N', 'G', 13, 10, 26, 10 };
 
-static unsigned long crc_table[256];
-static int crc_ready;
-
-static void crc_init(void)
-{
-    unsigned long c;
-    int n, k;
-    for (n = 0; n < 256; n++) {
-        c = (unsigned long)n;
-        for (k = 0; k < 8; k++)
-            c = c & 1 ? 0xedb88320UL ^ (c >> 1) : c >> 1;
-        crc_table[n] = c;
-    }
-    crc_ready = 1;
-}
-
-/* PNG's CRC over a chunk's type and data. */
+/* PNG's CRC over a chunk's type and data: zip's CRC-32 (owf_crc32, owf_zip.c), one copy for libowf. */
 static unsigned long crc(const unsigned char *type, const unsigned char *data, size_t n)
 {
-    unsigned long c = 0xffffffffUL;
-    size_t i;
-    if (!crc_ready)
-        crc_init();
-    for (i = 0; i < 4; i++)
-        c = crc_table[(c ^ type[i]) & 0xff] ^ (c >> 8);
-    for (i = 0; i < n; i++)
-        c = crc_table[(c ^ data[i]) & 0xff] ^ (c >> 8);
-    return (c ^ 0xffffffffUL) & 0xffffffffUL;
+    return owf_crc32(owf_crc32(0, type, 4), data, n);
 }
 
 static unsigned long be32(const unsigned char *p)

@@ -41,6 +41,105 @@ static long mul_div(long a, long b, long c, long limit)
     return whole > limit ? limit : whole;
 }
 
+/* ---- Task types ---- */
+
+#define MAX_DURATION (0x7FFFFFFFL / 2)          /* minutes: well past any plan */
+
+static int is_summary(const owf_project *p, int task)
+{
+    return task + 1 < p->ntasks && p->tasks[task + 1].level > p->tasks[task].level;
+}
+
+static int is_work(const owf_project *p, const owf_passign *a)
+{
+    return a->resource >= 0 && a->resource < p->nresources && p->resources[a->resource].type == OWF_RES_WORK;
+}
+
+long owf_ptask_units(const owf_project *p, int task)
+{
+    long sum = 0;
+    int i;
+    if (!p || task < 0 || task >= p->ntasks) return 0;
+    for (i = 0; i < p->nassigns; i++)
+        if (p->assigns[i].task == task && is_work(p, &p->assigns[i])) sum += p->assigns[i].units;
+    return sum;
+}
+
+/* 1 when the task's work resources (not their units) are the same in both plans */
+static int same_resources(const owf_project *a, const owf_project *b, int task)
+{
+    int i, j, n = 0, m = 0;
+    for (i = 0; i < a->nassigns; i++) {
+        const owf_passign *x = &a->assigns[i];
+        int found = 0;
+        if (x->task != task || !is_work(a, x)) continue;
+        n++;
+        for (j = 0; j < b->nassigns && !found; j++) {
+            const owf_passign *y = &b->assigns[j];
+            found = y->task == task && is_work(b, y) && y->resource < b->nresources && x->resource < a->nresources &&
+                    a->resources[x->resource].uid == b->resources[y->resource].uid;
+        }
+        if (!found) return 0;
+    }
+    for (i = 0; i < b->nassigns; i++) m += b->assigns[i].task == task && is_work(b, &b->assigns[i]);
+    return n == m;
+}
+
+/* every work assignment's units on task times num / den, at least 1 */
+static void scale_units(owf_project *p, int task, long num, long den)
+{
+    int i;
+    for (i = 0; i < p->nassigns; i++) {
+        owf_passign *a = &p->assigns[i];
+        if (a->task != task || !is_work(p, a)) continue;
+        a->units = mul_div(a->units, num, den, 0x7FFFFFFFL);
+        if (a->units < 1) a->units = 1;
+    }
+}
+
+void owf_project_keep_types(const owf_project *before, owf_project *after)
+{
+    int i;
+    if (!before || !after) return;
+    for (i = 0; i < after->ntasks && i < before->ntasks; i++) {
+        const owf_ptask *b = &before->tasks[i];
+        owf_ptask *t = &after->tasks[i];
+        long u0, u1, d0 = b->duration, d1 = t->duration;
+        int fixed_work = t->type == OWF_TT_FIXED_WORK;
+        if (b->uid != t->uid || is_summary(before, i) || is_summary(after, i)) continue;
+        u0 = owf_ptask_units(before, i);
+        u1 = owf_ptask_units(after, i);
+        if (u0 <= 0 || u1 <= 0) continue;                   /* no work to keep */
+        if (same_resources(before, after, i)) {
+            if (u0 == u1) {
+                if (d0 != d1 && fixed_work && d0 > 0 && d1 > 0) scale_units(after, i, d0, d1);
+            } else if (t->type != OWF_TT_FIXED_DURATION && d1 == d0) {
+                t->duration = mul_div(d0, u0, u1, MAX_DURATION);
+            }
+        } else if (fixed_work || t->effort_driven) {
+            if (t->type == OWF_TT_FIXED_DURATION) scale_units(after, i, u0, u1);
+            else if (d1 == d0) t->duration = mul_div(d0, u0, u1, MAX_DURATION);
+        }
+    }
+}
+
+int owf_project_set_work(owf_project *p, int task, long work)
+{
+    owf_ptask *t;
+    long units, now;
+    if (!p || task < 0 || task >= p->ntasks || work < 0 || work > MAX_WORK || is_summary(p, task)) return OWF_ERR_FORMAT;
+    t = &p->tasks[task];
+    if ((units = owf_ptask_units(p, task)) <= 0) return OWF_ERR_FORMAT;
+    if (t->type == OWF_TT_FIXED_DURATION) {
+        if (work == 0 || t->duration <= 0) return OWF_ERR_FORMAT;
+        now = mul_div(t->duration, units, 100, MAX_WORK);
+        scale_units(p, task, work, now);
+    } else {
+        t->duration = mul_div(work, 100, units, MAX_DURATION);
+    }
+    return OWF_OK;
+}
+
 int owf_project_add_resource(owf_project *p, const char *name)
 {
     owf_presource *r;
@@ -139,9 +238,7 @@ void owf_project_remap_assignments(owf_project *p, const int *map, int nold)
 
 static const owf_pcal *task_cal(const owf_project *p, const owf_ptask *t)
 {
-    if (t->elapsed) return NULL;
-    if (t->calendar >= 0 && t->calendar < p->ncalendars) return &p->calendars[t->calendar];
-    return p->ncalendars ? &p->calendars[p->calendar] : NULL;
+    return owf_ptask_calendar(p, (int)(t - p->tasks));   /* the scheduler's: resource calendars too */
 }
 
 /* A task's working minutes from a to b, cut to its dates. */
