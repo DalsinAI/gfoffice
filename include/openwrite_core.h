@@ -351,6 +351,12 @@ int ow_editor_track_changes(const ow_editor *editor);
 /* The name new changes are made under; NULL or "" for none (an unknown author). */
 int ow_editor_set_review_author(ow_editor *editor, const char *utf8);
 const char *ow_editor_review_author(const ow_editor *editor);
+/* 2.0.52: document compare (Word's Compare): the revised document's body put into this one's as tracked
+ * changes under author (NULL or "": the review author): paragraphs matched by their text, a changed paragraph
+ * word by word, a paragraph only one side has inserted or deleted whole. Text only: fields, pictures and
+ * paragraph formats aren't compared, and a table's paragraphs are only compared in place. One undo. The
+ * number of changes made (0: the same, and no undo point), or minus an OWF_ERR_ code (nothing changed). */
+int ow_editor_compare(ow_editor *editor, const owf_doc *revised, const char *author);
 
 /* libowf 1.11: ow_change_info.kind for a tracked format change (owf_run.format_change); its runs count as a
  * change of their own unless they are an insertion's or deletion's too */

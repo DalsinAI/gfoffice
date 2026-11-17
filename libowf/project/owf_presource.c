@@ -526,7 +526,7 @@ static int level_movable(const owf_project *p, int i)
 {
     const owf_ptask *t = &p->tasks[i];
     return !t->summary && t->duration > 0 && !t->milestone && !t->has_actual_start && t->constraint != OWF_CON_MSO &&
-           t->constraint != OWF_CON_MFO && t->constraint != OWF_CON_ALAP;
+           t->constraint != OWF_CON_MFO && t->constraint != OWF_CON_ALAP && t->priority < OWF_PRIORITY_DO_NOT_LEVEL;
 }
 
 /* 1 when task i takes up time at at. */
@@ -541,23 +541,25 @@ typedef struct {
     int movable;
 } level_entry;
 
-/* Who keeps their place: those that can't move, then the earlier start, less slack, the first in the plan. */
-static int level_before(const owf_project *p, const level_entry *a, const level_entry *b)
+/* Who keeps their place: those that can't move, then in the order's turn (OWF_LEVEL_). */
+static int level_before(const owf_project *p, const level_entry *a, const level_entry *b, int order)
 {
     const owf_ptask *ta = &p->tasks[a->task], *tb = &p->tasks[b->task];
     if (a->movable != b->movable) return a->movable < b->movable;
+    if (order == OWF_LEVEL_ID_ONLY) return a->task < b->task;
+    if (order == OWF_LEVEL_PRIORITY && ta->priority != tb->priority) return ta->priority > tb->priority;
     if (ta->early_start != tb->early_start) return ta->early_start < tb->early_start;
     if (ta->total_slack != tb->total_slack) return ta->total_slack < tb->total_slack;
     return a->task < b->task;
 }
 
 /* An insertion sort (a clash has few tasks, and qsort would need the plan in a global). */
-static void level_sort(const owf_project *p, level_entry *e, int n)
+static void level_sort(const owf_project *p, level_entry *e, int n, int order)
 {
     int i, j;
     for (i = 1; i < n; i++) {
         level_entry x = e[i];
-        for (j = i; j > 0 && level_before(p, &x, &e[j - 1]); j--) e[j] = e[j - 1];
+        for (j = i; j > 0 && level_before(p, &x, &e[j - 1], order); j--) e[j] = e[j - 1];
         e[j] = x;
     }
 }
@@ -600,13 +602,53 @@ int owf_project_clear_leveling(owf_project *p)
     return owf_project_schedule(p);
 }
 
+int owf_ptask_overallocated(const owf_project *p, int task)
+{
+    const owf_ptask *t;
+    int i, j, k;
+    if (!p || task < 0 || task >= p->ntasks) return 0;
+    t = &p->tasks[task];
+    if (t->early_finish <= t->early_start) return 0;
+    for (i = 0; i < p->nassigns; i++) {
+        const owf_passign *a = &p->assigns[i];
+        const owf_presource *r;
+        if (a->task != task || a->resource < 0 || a->resource >= p->nresources || a->units <= 0) continue;
+        r = &p->resources[a->resource];
+        if (r->type != OWF_RES_WORK) continue;
+        /* the load only rises where a task starts: the task's own start, and each start within it */
+        for (k = -1; k < p->nassigns; k++) {
+            owf_ptime at;
+            long load = 0;
+            if (k < 0) at = t->early_start;
+            else {
+                const owf_passign *b = &p->assigns[k];
+                if (b->resource != a->resource || b->task < 0 || b->task >= p->ntasks || b->units <= 0) continue;
+                at = p->tasks[b->task].early_start;
+                if (at <= t->early_start || at >= t->early_finish) continue;
+            }
+            for (j = 0; j < p->nassigns && load <= r->max_units; j++) {
+                const owf_passign *b = &p->assigns[j];
+                if (b->resource != a->resource || b->task < 0 || b->task >= p->ntasks || b->units <= 0) continue;
+                if (level_covers(&p->tasks[b->task], at)) load += b->units;
+            }
+            if (load > r->max_units) return 1;
+        }
+    }
+    return 0;
+}
+
 int owf_project_level(owf_project *p, int within_slack)
+{
+    return owf_project_level_by(p, within_slack, OWF_LEVEL_STANDARD);
+}
+
+int owf_project_level_by(owf_project *p, int within_slack, int order)
 {
     owf_ptime *from = NULL;
     long *slack = NULL;
     level_entry *e = NULL;
     int i, n, rounds, delayed = 0, rc;
-    if (!p || owf_project_clear_leveling(p) != OWF_OK) return -1;
+    if (!p || order < 0 || order >= OWF_LEVEL_NORDERS || owf_project_clear_leveling(p) != OWF_OK) return -1;
     if (!p->nassigns || !p->nresources || !p->ntasks) return 0;
     from = owf_malloc((size_t)p->nresources * sizeof *from);
     slack = owf_malloc((size_t)p->ntasks * sizeof *slack);
@@ -631,7 +673,7 @@ int owf_project_level(owf_project *p, int within_slack)
             e[n].units = a->units;
             e[n++].movable = level_movable(p, a->task);
         }
-        level_sort(p, e, n);
+        level_sort(p, e, n, order);
         /* keep what fits, in that order; the first that doesn't and may move goes after the earliest
            finish of those kept */
         for (k = 0; k < n; k++) {

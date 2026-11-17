@@ -250,13 +250,14 @@ static void test_mspdi_written(void)
                     "</FromDate><ToDate>2026-11-28T23:59:00</ToDate></TimePeriod><WorkingTimes><WorkingTime><FromTime>"
                     "10:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime></WorkingTimes></WeekDay>");
     /* Design: two days are 16 hours; the notes escaped. */
-    CHECK_HAS(data, "<UID>1</UID><ID>1</ID><Name>Design, review</Name><Type>0</Type><OutlineLevel>1</OutlineLevel>"
+    CHECK_HAS(data, "<UID>1</UID><ID>1</ID><Name>Design, review</Name><Type>0</Type><OutlineLevel>1</OutlineLevel><Priority>500</Priority>"
                     "<Start>2026-11-16T08:00:00</Start><Finish>2026-11-17T17:00:00</Finish>"
                     "<Duration>PT16H0M0S</Duration><DurationFormat>7</DurationFormat>");
     CHECK_HAS(data, "<Notes>Ask &quot;Dale&quot; &lt;first&gt;</Notes>");
     /* Build: FS (1) with a 4 hour lag, 2400 tenths of a minute, shown in hours (5); it starts at 13:00
      * on Wednesday (Tuesday 17:00 plus 4 working hours is Wednesday 12:00, the lunch break). */
-    CHECK_HAS(data, "<Name>Build</Name><Type>0</Type><OutlineLevel>1</OutlineLevel><Start>2026-11-18T13:00:00</Start>"
+    CHECK_HAS(data, "<Name>Build</Name><Type>0</Type><OutlineLevel>1</OutlineLevel><Priority>500</Priority>"
+                    "<Start>2026-11-18T13:00:00</Start>"
                     "<Finish>2026-11-23T12:00:00</Finish>");
     CHECK_HAS(data, "<PercentComplete>25</PercentComplete>");
     CHECK_HAS(data, "<PredecessorLink><PredecessorUID>1</PredecessorUID><Type>1</Type><CrossProject>0</CrossProject>"
@@ -1147,6 +1148,49 @@ static void test_task_types(void)
     owf_project_free(q);
 }
 
+/* Priority through both files; one out of MSPDI's 0..1000 reads as the default. */
+static void test_priority(void)
+{
+    static const char hand[] =
+        "<?xml version=\"1.0\"?>\n<Project xmlns=\"http://schemas.microsoft.com/project\">"
+        "<StartDate>2026-11-16T08:00:00</StartDate><Tasks>"
+        "<Task><UID>1</UID><ID>1</ID><Name>A</Name><OutlineLevel>1</OutlineLevel><Priority>1000</Priority></Task>"
+        "<Task><UID>2</UID><ID>2</ID><Name>B</Name><OutlineLevel>1</OutlineLevel><Priority>1500</Priority></Task>"
+        "<Task><UID>3</UID><ID>3</ID><Name>C</Name><OutlineLevel>1</OutlineLevel></Task>"
+        "</Tasks></Project>\n";
+    owf_project *p = sample(), *q = NULL;
+    unsigned char *data;
+    size_t length;
+    int f;
+    p->tasks[0].priority = 0;
+    p->tasks[1].priority = OWF_PRIORITY_DO_NOT_LEVEL;
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    for (f = OWF_PFILE_GFPROJ; f <= OWF_PFILE_MSPDI; f++) {
+        CHECK_N(owf_project_write(p, f, &data, &length), OWF_OK);
+        if (f == OWF_PFILE_MSPDI) CHECK_HAS(data, "<Priority>1000</Priority>");
+        q = NULL;
+        CHECK_N(owf_project_read(data, length, &q), OWF_OK);
+        if (q && q->ntasks == p->ntasks) {
+            CHECK_N(q->tasks[0].priority, 0);
+            CHECK_N(q->tasks[1].priority, OWF_PRIORITY_DO_NOT_LEVEL);
+            CHECK_N(q->tasks[2].priority, OWF_PRIORITY_DEFAULT);
+        } else
+            CHECK(q && q->ntasks == p->ntasks);
+        owf_project_free(q);
+        owf_free(data);
+    }
+    owf_project_free(p);
+    q = NULL;
+    CHECK_N(owf_project_read((const unsigned char *)hand, sizeof hand - 1, &q), OWF_OK);
+    if (q && q->ntasks == 3) {
+        CHECK_N(q->tasks[0].priority, OWF_PRIORITY_DO_NOT_LEVEL);
+        CHECK_N(q->tasks[1].priority, OWF_PRIORITY_DEFAULT);          /* out of range */
+        CHECK_N(q->tasks[2].priority, OWF_PRIORITY_DEFAULT);          /* none given */
+    } else
+        CHECK(q && q->ntasks == 3);
+    owf_project_free(q);
+}
+
 int main(void)
 {
     test_durations();
@@ -1160,6 +1204,7 @@ int main(void)
     test_actuals();
     test_leveling_delay();
     test_task_types();
+    test_priority();
     test_mpx();
     test_gan();
     test_damaged();

@@ -384,6 +384,15 @@ check: diagram-library-check
 
 .PHONY: diagram-library-test diagram-library-check
 
+# GFOpenDiag on owfdiag.library (build.d/diag.sh, OWF=library): every call its own files make is the library's.
+diagram-app-calls-check:
+	OPENLAYOUT_SRC=$(OPENLAYOUT_SRC) tests/diag/check_app_calls.sh $(CC)
+
+test: diagram-app-calls-check
+check: diagram-app-calls-check
+
+.PHONY: diagram-app-calls-check
+
 # A file on owfdiag.library may include the diagram headers in any order (include/opendiag_proto.h).
 diagram-proto-check:
 	tests/diag/check_proto_order.sh $(CC)

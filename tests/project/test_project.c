@@ -908,6 +908,86 @@ static void test_resource_calendar(void)
     owf_project_free(p);
 }
 
+/* Leveling order and priority: who keeps their place at a clash, and Do Not Level (1000). */
+static void test_leveling_order(void)
+{
+    owf_project *p = plan();
+    int x = owf_project_add_task(p, "X", D), z = owf_project_add_task(p, "Z", 2 * D);
+    int dale = owf_project_add_resource(p, "Dale");
+    owf_project_assign(p, x, dale, 100);
+    owf_project_assign(p, z, dale, 100);
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_N(TASK(p, x)->priority, OWF_PRIORITY_DEFAULT);
+    CHECK(owf_ptask_overallocated(p, x) && owf_ptask_overallocated(p, z));
+    /* Standard: the same start, Z has less slack (none) and keeps its place; X goes after it */
+    CHECK_N(owf_project_level_by(p, 0, OWF_LEVEL_STANDARD), 1);
+    CHECK_T(TASK(p, x)->early_start, AT(18, 8, 0));
+    CHECK_T(TASK(p, z)->early_start, AT(16, 8, 0));
+    CHECK(!owf_ptask_overallocated(p, x) && !owf_ptask_overallocated(p, z));
+    CHECK_N(owf_project_level(p, 0), 1);                          /* owf_project_level is Standard */
+    CHECK_T(TASK(p, x)->early_start, AT(18, 8, 0));
+    /* ID Only: X is first in the plan and keeps its place; Z goes after it */
+    CHECK_N(owf_project_level_by(p, 0, OWF_LEVEL_ID_ONLY), 1);
+    CHECK_T(TASK(p, x)->early_start, AT(16, 8, 0));
+    CHECK_T(TASK(p, z)->early_start, AT(17, 8, 0));
+    /* Priority, Standard: the higher priority keeps its place, ties as Standard */
+    CHECK_N(owf_project_level_by(p, 0, OWF_LEVEL_PRIORITY), 1);
+    CHECK_T(TASK(p, x)->early_start, AT(18, 8, 0));               /* both 500: Standard's answer */
+    TASK(p, x)->priority = 600;
+    CHECK_N(owf_project_level_by(p, 0, OWF_LEVEL_PRIORITY), 1);
+    CHECK_T(TASK(p, x)->early_start, AT(16, 8, 0));
+    CHECK_T(TASK(p, z)->early_start, AT(17, 8, 0));
+    TASK(p, z)->priority = 700;
+    CHECK_N(owf_project_level_by(p, 0, OWF_LEVEL_PRIORITY), 1);
+    CHECK_T(TASK(p, z)->early_start, AT(16, 8, 0));
+    CHECK_T(TASK(p, x)->early_start, AT(18, 8, 0));
+    /* Do Not Level: X at 1000 never moves, in any order; Z moves instead, whatever its priority */
+    TASK(p, x)->priority = OWF_PRIORITY_DO_NOT_LEVEL;
+    CHECK_N(owf_project_level_by(p, 0, OWF_LEVEL_STANDARD), 1);
+    CHECK_N(TASK(p, x)->level_delay, 0);
+    CHECK_T(TASK(p, z)->early_start, AT(17, 8, 0));
+    CHECK_N(owf_project_level_by(p, 0, OWF_LEVEL_PRIORITY), 1);
+    CHECK_T(TASK(p, z)->early_start, AT(17, 8, 0));
+    TASK(p, z)->priority = OWF_PRIORITY_DO_NOT_LEVEL;             /* neither may move: left over-allocated */
+    CHECK_N(owf_project_level_by(p, 0, OWF_LEVEL_STANDARD), 0);
+    CHECK(p->resources[dale].overallocated && owf_ptask_overallocated(p, x));
+    CHECK_N(owf_project_level_by(p, 0, -1), -1);
+    CHECK_N(owf_project_level_by(p, 0, OWF_LEVEL_NORDERS), -1);
+    CHECK_N(owf_project_level_by(NULL, 0, OWF_LEVEL_STANDARD), -1);
+    owf_project_free(p);
+}
+
+/* A task's Overallocated: its work resource has more at some time within the task than its max units. */
+static void test_task_overallocated(void)
+{
+    owf_project *p = plan();
+    int a = owf_project_add_task(p, "A", 2 * D), b = owf_project_add_task(p, "B", D);
+    int c = owf_project_add_task(p, "C", D), m = owf_project_add_task(p, "M", 0), k = owf_project_add_task(p, "K", D);
+    int dale = owf_project_add_resource(p, "Dale"), ann = owf_project_add_resource(p, "Ann");
+    int wood = owf_project_add_resource(p, "Wood");
+    p->resources[wood].type = OWF_RES_MATERIAL;
+    owf_project_assign(p, a, dale, 100);
+    owf_project_assign(p, b, dale, 100);
+    owf_project_assign(p, c, ann, 50);
+    owf_project_assign(p, m, dale, 100);
+    owf_project_assign(p, k, wood, 500);                          /* material: never over-allocated */
+    TASK(p, b)->level_delay = D;                                  /* B on Tuesday, A's second day */
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_T(TASK(p, b)->early_start, AT(17, 8, 0));
+    CHECK(owf_ptask_overallocated(p, a));                         /* B starts within A */
+    CHECK(owf_ptask_overallocated(p, b));                         /* A covers B's start */
+    CHECK(!owf_ptask_overallocated(p, c));                        /* Ann at 50% of 100% */
+    CHECK(!owf_ptask_overallocated(p, m));                        /* a milestone takes no time */
+    CHECK(!owf_ptask_overallocated(p, k));
+    CHECK(!owf_ptask_overallocated(p, 99) && !owf_ptask_overallocated(p, -1) && !owf_ptask_overallocated(NULL, 0));
+    TASK(p, b)->level_delay = 2 * D;                              /* after A: no one is over */
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK(!owf_ptask_overallocated(p, a) && !owf_ptask_overallocated(p, b));
+    p->resources[ann].max_units = 40;                             /* now Ann's 50% is too much */
+    CHECK(owf_ptask_overallocated(p, c));
+    owf_project_free(p);
+}
+
 int main(void)
 {
     test_dates();
@@ -931,6 +1011,8 @@ int main(void)
     test_summary_back_to_task();
     test_task_types();
     test_resource_calendar();
+    test_leveling_order();
+    test_task_overallocated();
     test_peak_cap();
     if (fails) {
         printf("project tests: %d of %d checks failed\n", fails, checks);

@@ -59,6 +59,7 @@
 #include "opendiag_mind.h"
 #include "opendiag_order.h"
 #include "opendiag_align.h"
+#include "owf_open.h"
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL, *DiskfontBase = NULL;
 struct Library *CyberGfxBase = NULL;     /* the page as a picture (PNG, ILBM): its pixels read back; optional */   /* labels' sizes: OpenDiskFont */
@@ -1580,6 +1581,17 @@ int main(int argc, char **argv)
         rc = 20;
         goto out;
     }
+    /* owfdiag.library from LIBS: when built on it (OWF=library); nothing to open when libowf is linked in */
+    if (!owf_open()) {
+#ifdef OWF_USE_LIBRARY
+        if (owf_open_sizes_differ)
+            tell("GFOpenDiag needs the " OWF_LIBRARY_NAME " it was built with: the one in LIBS: is another.");
+        else
+#endif
+            tell("GFOpenDiag needs " OWF_LIBRARY_NAME " in LIBS:.");
+        rc = 20;
+        goto out;
+    }
     if (argc > 1) put_text(first, sizeof first, argv[1]);
     else if (argc == 0) {
         struct WBStartup *w = (struct WBStartup *)argv;
@@ -1623,5 +1635,6 @@ out:
     if (CyberGfxBase) { CloseLibrary(CyberGfxBase); CyberGfxBase = NULL; }
     if (AslBase) CloseLibrary(AslBase);
     if (GadToolsBase) CloseLibrary(GadToolsBase);
+    owf_close();
     return rc;
 }
