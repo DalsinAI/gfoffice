@@ -5441,6 +5441,45 @@ ob_int ob_query_run(ob_project *p, const ob_query *q, const char *const *params,
     return action_go(p, q, params, 1, undoable);
 }
 
+/* ---- The query window's words (core 0.17) ---- */
+
+void ob_query_set_kind(ob_query *q, ob_qkind kind)
+{
+    int i;
+    if ((unsigned)kind >= OB_QKINDS) kind = OB_QK_SELECT;
+    if (q->kind == kind) return;
+    for (i = 0; i < q->ncolumns && i < OB_QUERY_COLUMNS; i++) q->columns[i].to[0] = 0;
+    if (kind == OB_QK_SELECT || kind == OB_QK_UNION) q->target[0] = 0;
+    if (kind == OB_QK_UNION) q->njoins = 0;
+    else q->union_all = 0;
+    q->kind = kind;
+}
+
+ob_int ob_query_ask(ob_project *p, const ob_query *q, const char *const *params, char *out, size_t size)
+{
+    qplan *pl;
+    char target[OB_NAME_MAX];
+    ob_int n;
+    int can;
+    if (out && size) out[0] = 0;
+    if ((n = action_go(p, q, params, 0, NULL)) < 0) return -1;
+    if (!(pl = plan_make(p, q))) return -1;
+    copy(target, sizeof target, pl->target);
+    can = n <= OB_UNDO_ROWS && undo_can(p, pl, q->kind);
+    plan_free(pl);
+    ok(p);
+    if (!out || !size) return n;
+    if (n == 0) {
+        snprintf(out, size, "%s %s no rows.", qname(q),
+                 q->kind == OB_QK_APPEND ? "adds" : q->kind == OB_QK_DELETE ? "deletes" : "changes");
+        return 0;
+    }
+    snprintf(out, size, "This will %s %lld row%s %s %s.%s",
+             q->kind == OB_QK_APPEND ? "add" : q->kind == OB_QK_DELETE ? "delete" : "change", (long long)n, n == 1 ? "" : "s",
+             q->kind == OB_QK_APPEND ? "to" : q->kind == OB_QK_DELETE ? "from" : "in", target, can ? "" : " It can't be undone.");
+    return n;
+}
+
 int ob_query_check(ob_project *p, const ob_query *q)
 {
     qplan *pl = plan_make(p, q);

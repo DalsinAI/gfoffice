@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.16.0"
+#define OB_CORE_VERSION "0.17.0"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -719,6 +719,21 @@ int ob_query_delete(ob_project *p, const char *name);
 const char *ob_qkind_name(ob_qkind k);      /* "Select", "Update", "Append", "Delete", "Union" */
 ob_int ob_query_preview(ob_project *p, const ob_query *q, const char *const *params);
 ob_int ob_query_run(ob_project *p, const ob_query *q, const char *const *params, int *undoable);
+
+/* ---- The query window's words (core 0.17) ----
+ * ob_query_set_kind changes what q does and clears what the new kind has no
+ * use for: every column's "to" (an Update To is a value, an Append To a
+ * field), the target when the new kind reads, union_all unless it is a
+ * Union, and a Union's drawn joins (its tables are its parts). The same
+ * kind again changes nothing.
+ * ob_query_ask counts as ob_query_preview does, keeps nothing, and puts in
+ * out the sentence a window asks before Run: "This will change 3 rows in
+ * Products.", "This will add 1 row to Archive.", "This will delete 2 rows
+ * from Orders.", with " It can't be undone." after it when ob_query_run
+ * would empty the Undo list, or "Raise prices changes no rows." for none.
+ * The count; -1 with the reason in ob_error and out empty. */
+void ob_query_set_kind(ob_query *q, ob_qkind kind);
+ob_int ob_query_ask(ob_project *p, const ob_query *q, const char *const *params, char *out, size_t size);
 
 /* ---- Union queries (core 0.16, design 5.7) ----
  * A Union query (kind OB_QK_UNION) reads the rows of two or more parts, one

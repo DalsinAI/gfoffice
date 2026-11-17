@@ -3804,6 +3804,120 @@ static void test_union_queries(void)
     ob_close(p);
 }
 
+/* ---- The query window's words (core 0.17) ---- */
+
+static void test_query_window(void)
+{
+    ob_project *p = fresh("qwindow.oadb");
+    static ob_query q;
+    static ob_table arch, o2;
+    ob_qcolumn *c;
+    ob_field *f;
+    char said[200], before[1024];
+    int steps;
+    if (!p) return;
+    five_customers(p);
+    shop_orders(p);
+    snprintf(before, sizeof before, "%s", cust_rows(p));
+    steps = ob_undo_count(p);
+
+    /* the kind chosen in the window */
+    ob_query_init(&q, "Move York");
+    ob_query_add_table(&q, "Customers");
+    c = ob_query_add_column(&q, "Customers", "Town");
+    strcpy(c->criteria[0], "york");
+    ob_query_set_kind(&q, OB_QK_UPDATE);
+    CHECK(q.kind == OB_QK_UPDATE && q.ncolumns == 1 && !strcmp(c->criteria[0], "york"), "an update, its grid kept");
+    strcpy(c->to, "Hull");
+    strcpy(q.target, "Customers");
+    ob_query_set_kind(&q, OB_QK_UPDATE);
+    CHECK(!strcmp(c->to, "Hull") && !strcmp(q.target, "Customers"), "the same kind again changes nothing");
+
+    /* the sentence before Run */
+    strcpy(said, "x");
+    CHECK(ob_query_ask(p, &q, NULL, said, sizeof said) == 2 && !strcmp(said, "This will change 2 rows in Customers."),
+          "two rows: %s / %s", said, ob_error(p));
+    CHECK(!strcmp(cust_rows(p), before) && ob_undo_count(p) == steps, "asking keeps nothing: %s", cust_rows(p));
+    strcpy(c->criteria[0], "hull");
+    CHECK(ob_query_ask(p, &q, NULL, said, sizeof said) == 1 && !strcmp(said, "This will change 1 row in Customers."),
+          "one row: %s", said);
+    CHECK(ob_query_ask(p, &q, NULL, NULL, 0) == 1, "only the count");
+    strcpy(c->criteria[0], "york");
+    strcpy(c->to, "Paris");
+    strcpy(said, "x");
+    CHECK(ob_query_ask(p, &q, NULL, said, sizeof said) < 0 && !said[0], "a rule broken: nothing said");
+    CHECK_ERR(p, "Town must be one of: Leeds,York,Hull");
+    strcpy(c->to, "[Where to?]");
+    {
+        const char *hull[] = { "Hull" };
+        CHECK(ob_query_ask(p, &q, hull, said, sizeof said) == 2 && !strcmp(said, "This will change 2 rows in Customers."),
+              "with an answer: %s / %s", said, ob_error(p));
+    }
+    strcpy(c->to, "Hull");
+    q.columns[0].criteria[0][0] = 0;
+    c = ob_query_add_column(&q, "Customers", "Name");
+    strcpy(c->criteria[0], "nobody");
+    CHECK(ob_query_ask(p, &q, NULL, said, sizeof said) == 0 && !strcmp(said, "Move York changes no rows."), "none: %s", said);
+    q.name[0] = 0;
+    CHECK(ob_query_ask(p, &q, NULL, said, sizeof said) == 0 && !strcmp(said, "The query changes no rows."), "no name: %s", said);
+    strcpy(q.name, "Move York");
+
+    /* to a delete: Update To goes, the target stays */
+    ob_query_set_kind(&q, OB_QK_DELETE);
+    CHECK(q.kind == OB_QK_DELETE && !q.columns[0].to[0] && !strcmp(q.target, "Customers") && q.ncolumns == 2, "a delete");
+    CHECK(ob_query_ask(p, &q, NULL, said, sizeof said) == 0 && !strcmp(said, "Move York deletes no rows."), "deletes none: %s", said);
+    strcpy(q.columns[1].criteria[0], "bob");
+    CHECK(ob_query_ask(p, &q, NULL, said, sizeof said) == 1 && !strcmp(said, "This will delete 1 row from Customers."),
+          "delete one: %s / %s", said, ob_error(p));
+    strcpy(q.columns[1].criteria[0], "dan");
+    CHECK(ob_query_ask(p, &q, NULL, said, sizeof said) < 0 && !said[0], "dan has orders");
+    CHECK_ERR(p, "That would leave a row looking up a row that isn't there");
+    CHECK(!strcmp(cust_rows(p), before), "still nothing kept: %s", cust_rows(p));
+
+    /* to an append: into another table */
+    ob_table_init(&arch, "Archive");
+    f = ob_table_add_field(&arch, "Who", OB_TEXT);
+    f->required = 1;
+    CHECK(ob_table_create(p, &arch), "Archive: %s", ob_error(p));
+    ob_query_set_kind(&q, OB_QK_APPEND);
+    strcpy(q.target, "Archive");
+    q.columns[1].criteria[0][0] = 0;
+    strcpy(q.columns[1].to, "Who");
+    strcpy(q.columns[0].criteria[0], "york");
+    CHECK(ob_query_ask(p, &q, NULL, said, sizeof said) == 2 && !strcmp(said, "This will add 2 rows to Archive."),
+          "append: %s / %s", said, ob_error(p));
+    CHECK(ob_row_total(p, "Archive") == 0, "none added by asking");
+    strcpy(q.columns[1].criteria[0], "nobody");
+    CHECK(ob_query_ask(p, &q, NULL, said, sizeof said) == 0 && !strcmp(said, "Move York adds no rows."), "adds none: %s", said);
+
+    /* to a query that reads: no target, no Append To; asking is refused */
+    ob_query_set_kind(&q, OB_QK_SELECT);
+    CHECK(q.kind == OB_QK_SELECT && !q.target[0] && !q.columns[1].to[0], "a select again");
+    strcpy(said, "x");
+    CHECK(ob_query_ask(p, &q, NULL, said, sizeof said) < 0 && !said[0], "a select isn't run");
+    CHECK_ERR(p, "Move York reads rows: open it to see them");
+    q.njoins = 1;
+    q.union_all = 1;
+    ob_query_set_kind(&q, OB_QK_UNION);
+    CHECK(q.kind == OB_QK_UNION && q.njoins == 0 && q.union_all == 1, "a union has no joins");
+    ob_query_set_kind(&q, (ob_qkind)99);
+    CHECK(q.kind == OB_QK_SELECT && q.union_all == 0, "a kind that isn't one is a select");
+
+    /* a delete that cascades can't be undone, and the sentence says so */
+    orders(&o2, OB_DELETE_CASCADE);
+    strcpy(o2.name, "Lines");
+    CHECK(ob_table_create(p, &o2), "Lines: %s", ob_error(p));
+    ob_query_init(&q, "Drop bob");
+    ob_query_add_table(&q, "Customers");
+    c = ob_query_add_column(&q, "Customers", "Name");
+    strcpy(c->criteria[0], "bob");
+    ob_query_set_kind(&q, OB_QK_DELETE);
+    CHECK(ob_query_ask(p, &q, NULL, said, sizeof said) == 1
+          && !strcmp(said, "This will delete 1 row from Customers. It can't be undone."), "cascade: %s / %s", said, ob_error(p));
+    CHECK(!strcmp(cust_rows(p), before), "and still nothing kept: %s", cust_rows(p));
+    ob_close(p);
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1) {
@@ -3841,6 +3955,7 @@ int main(int argc, char **argv)
     test_grid();
     test_action_queries();
     test_union_queries();
+    test_query_window();
     test_relation_draw();
     test_dbf();
     test_rexx_rows();

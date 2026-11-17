@@ -393,6 +393,36 @@ the union is next opened ("there is no table or query named Leeds").
 
 SQL typed as SQL may still say `UNION` itself, as a Select query (5.3).
 
+### 5.8 The query window for kinds (core 0.17, GFOpenBase 0.16.0)
+
+The designer has a **Kind** gadget beside Type the SQL: Select, Update,
+Append, Delete or Union. Changing it keeps the grid and clears what the new
+kind has no use for (`ob_query_set_kind`): each column's To, the target of
+a kind that reads, a Union's drawn joins.
+
+- **Update** and **Delete** show the table they change (Change, From), one
+  of the query's own tables. **Append** shows Add to, any table of the
+  project. A column gets an **Update To** line (a value, `empty`, a
+  `[question]` or `=SQL`) or an **Append To** line (a field of the target),
+  shown in the column list after `->`.
+- **Union** calls its tables Parts; the list to add from offers the saved
+  Select queries after the tables. **Keep rows that are the same** is UNION
+  ALL. Joins... is off. A column with a sort sorts by the heading it names.
+- **Run** on a query that changes rows asks its `[questions]`, counts
+  (`ob_query_ask`, which keeps nothing) and asks "This will change 3 rows in
+  Products." with Run and Cancel; " It can't be undone." follows when the
+  run would empty the Undo list (triggers, a cascade, more than 20,000
+  rows). A query that changes no rows says so and does not run. After Run
+  the datasheet shows the table again, the status line names the step, and
+  Edit > Undo takes it back. The designer stays open.
+- Open Query's Run, Query > Run Again and a form button's Run Query go the
+  same way. While an ARexx command runs nothing is asked, so a query that
+  changes rows is not run.
+
+Tests: `test_query_window` in tests/base/test_base_core.c (the kinds'
+changes and every sentence). The window itself needs a lab (owed while
+Cradle labs are paused).
+
 ## 6. Forms
 
 ### 6.1 Auto forms
