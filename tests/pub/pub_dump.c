@@ -27,22 +27,26 @@ static void put_string(const char *s)
     putchar('"');
 }
 
-/* A run's character formatting when it has any: "bold italic 20pt font \"Arial\"". */
+/* A run's character formatting when it has any: "bold italic underline 20pt font \"Arial\"". */
 static void put_fmt(const owf_doc *res, const owf_charfmt *f)
 {
     if (f->flags & OWF_BOLD)
         printf(" bold");
     if (f->flags & OWF_ITALIC)
         printf(" italic");
+    if (f->flags & OWF_UNDERLINE)
+        printf(" underline");
     if (f->size)
         printf(" %d.%dpt", f->size / 20, (f->size % 20) * 10 / 20);
+    if (f->colour != OWF_COLOUR_AUTO)
+        printf(" colour #%06lx", f->colour);
     if (f->font >= 0 && res && f->font < res->nfonts)
         printf(" font \"%s\"", res->fonts[f->font].name);
 }
 
 static int has_fmt(const owf_charfmt *f)
 {
-    return (f->flags & (OWF_BOLD | OWF_ITALIC)) || f->size || f->font >= 0;
+    return (f->flags & (OWF_BOLD | OWF_ITALIC | OWF_UNDERLINE)) || f->size || f->font >= 0 || f->colour != OWF_COLOUR_AUTO;
 }
 
 static void put_story(const owf_doc *res, const owf_story *story, const char *indent)
@@ -66,18 +70,30 @@ static void put_story(const owf_doc *res, const owf_story *story, const char *in
                 printf("\\t");
             } else if (run->kind == OWF_RUN_LINEBREAK) {
                 printf("\\n");
+            } else if (run->kind == OWF_RUN_FIELD) {
+                printf(run->field == OWF_FIELD_PAGE ? "{page}" : "{field %d}", (int)run->field);
             }
         }
         printf("\"\n");
+        if (p->table_id >= 0)
+            printf("%s  cell row %d column %d of %d\n", indent, p->table_row, p->table_col, p->table_cols);
         if (p->fmt.align != OWF_ALIGN_LEFT)
             printf("%s  align %s\n", indent, p->fmt.align == OWF_ALIGN_CENTRE ? "centre" :
                    p->fmt.align == OWF_ALIGN_RIGHT ? "right" : "justify");
         for (j = 0; j < p->nruns; j++) {
             const owf_run *run = &p->runs[j];
-            if (run->kind != OWF_RUN_TEXT || !run->text || !has_fmt(&run->fmt))
+            if (run->kind == OWF_RUN_FIELD) {
+                printf("%s  run %d field %s", indent, j, run->field == OWF_FIELD_PAGE ? "page" : "other");
+                put_fmt(res, &run->fmt);
+                printf("\n");
+                continue;
+            }
+            if (run->kind != OWF_RUN_TEXT || !run->text || (!has_fmt(&run->fmt) && !run->href))
                 continue;
             printf("%s  run %d \"%.24s\"", indent, j, run->text);
             put_fmt(res, &run->fmt);
+            if (run->href)
+                printf(" link \"%.60s\"", run->href);
             printf("\n");
         }
     }
@@ -176,11 +192,16 @@ int main(int argc, char **argv)
     printf(" x ");
     put_mm(pub->height_emu);
     printf(" mm (emu %ld x %ld, twips %d x %d)\n", pub->width_emu, pub->height_emu, pub->width, pub->height);
+    if (pub->facing)
+        printf("facing-pages\n");
     printf("masters %d\n", pub->nmasters);
     for (i = 0; i < pub->nmasters; i++) {
         printf("master %d ", i + 1);
         put_string(pub->masters[i].name ? pub->masters[i].name : "");
-        printf(" frames %d\n", pub->masters[i].nframes);
+        printf(" frames %d", pub->masters[i].nframes);
+        if (pub->masters[i].pair >= 0)
+            printf(" %s with %d", pub->masters[i].side == OWF_PUB_RIGHT ? "right" : "left", pub->masters[i].pair + 1);
+        printf("\n");
         put_page(pub, &pub->masters[i], 1);
     }
     printf("pages %d\n", pub->npages);

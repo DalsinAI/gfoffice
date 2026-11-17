@@ -500,7 +500,40 @@ static void put_box_label(owf_buf *b, const owf_dcell *c, const owf_dnum box[4],
     put_label(b, c->value, c->style, x, y, anchor, valign, "none");
 }
 
-static void put_vertex(owf_buf *b, const owf_dpage *p, const owf_dcell *c)
+/* A shape from the shapes' outlines (owf_dshape.c): each part a path, filled and drawn round as its flags say. */
+static void put_shape(owf_buf *b, const char *style, const owf_dshape *sh)
+{
+    char buf[40];
+    int k, i;
+    for (k = 0; k < sh->nparts; k++) {
+        const owf_dshape_part *pt = &sh->parts[k];
+        owf_buf_puts(b, "<path d=\"");
+        for (i = 0; i < pt->n; i++) {
+            owf_buf_puts(b, i ? " L " : "M ");
+            put_num(b, sh->points[pt->first + i].x);
+            owf_buf_putc(b, ' ');
+            put_num(b, sh->points[pt->first + i].y);
+        }
+        if (pt->flags & OWF_DSHAPE_CLOSED)
+            owf_buf_puts(b, " Z");
+        owf_buf_putc(b, '"');
+        if (pt->flags & OWF_DSHAPE_FILL)
+            put_paint(b, style, "#ffffff");
+        else {
+            owf_dnum width = owf_dnum_parse(style_or(style, "strokeWidth", buf, sizeof buf, "1"));
+            owf_buf_puts(b, " fill=\"none\"");
+            put_attr_text(b, "stroke", colour(style, "strokeColor", buf, sizeof buf, "#000000"));
+            if (width != 100)
+                put_attr_num(b, "stroke-width", width);
+            if (owf_dstyle_get(style, "dashed", buf, sizeof buf) && !strcmp(buf, "1"))
+                owf_buf_puts(b, " stroke-dasharray=\"3 3\"");
+        }
+        owf_buf_puts(b, " />\n");
+    }
+}
+
+/* sh: the writer's room for a shape's outline (1.5 KB, off the Amiga's small stack). */
+static void put_vertex(owf_buf *b, const owf_dpage *p, const owf_dcell *c, owf_dshape *sh)
 {
     owf_dnum box[4], header = 0;
     char buf[40];
@@ -511,6 +544,8 @@ static void put_vertex(owf_buf *b, const owf_dpage *p, const owf_dcell *c)
         return;
     if (bare)
         ;
+    else if (owf_dshape_outline(style, box, sh))
+        put_shape(b, style, sh);
     else if (owf_dstyle_is(style, "ellipse")) {
         owf_buf_puts(b, "<ellipse");
         put_attr_num(b, "cx", box[0] + box[2] / 2);
@@ -645,14 +680,19 @@ int owf_dsvg_write(const owf_diagram *d, int page, unsigned char **data, size_t 
     unsigned char *mx = NULL;
     size_t mxn = 0;
     owf_buf b;
+    owf_dshape *sh;                      /* the writer's own: a library keeps nothing between calls */
     int i, r;
 
     if (page < 0 || page >= d->npages)
         return OWF_ERR_FORMAT;
     p = &d->pages[page];
+    if (!(sh = (owf_dshape *)owf_malloc(sizeof *sh)))
+        return OWF_ERR_MEMORY;
     r = owf_drawio_write(d, 0, &mx, &mxn);
-    if (r != OWF_OK)
+    if (r != OWF_OK) {
+        owf_free(sh);
         return r;
+    }
     owf_dpage_bounds(p, box);
     box[0] -= 100;                       /* a pixel round it, for the lines' width */
     box[1] -= 100;
@@ -684,8 +724,9 @@ int owf_dsvg_write(const owf_diagram *d, int page, unsigned char **data, size_t 
         if (c->kind == OWF_DCELL_EDGE)
             put_edge(&b, p, c);
         else if (c->kind == OWF_DCELL_VERTEX && !(parent && parent->kind == OWF_DCELL_EDGE))
-            put_vertex(&b, p, c);
+            put_vertex(&b, p, c, sh);
     }
+    owf_free(sh);
     owf_buf_puts(&b, "</g>\n</svg>\n");
     return owf_buf_take(&b, data, length);
 }

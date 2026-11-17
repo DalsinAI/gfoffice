@@ -148,6 +148,18 @@ int owf_cfb_children(const owf_cfb *cfb, unsigned long storage,
 long owf_cfb_find_path(const owf_cfb *cfb, const char *path);
 int owf_cfb_read_entry(owf_cfb *cfb, unsigned long entry, unsigned char **data, size_t *length);
 
+/* Writing a compound file (owf_cfbw.c): streams by path ("Quill/QuillSub/
+ * CONTENTS", storages made on the way; names up to 31 characters, Latin-1,
+ * so "\005SummaryInformation"), each added once; then finish gives the
+ * whole file from malloc. OWF_OK, OWF_ERR_FORMAT (a bad or repeated path),
+ * OWF_ERR_MEMORY or OWF_ERR_UNSUPPORTED (over 2 GB). */
+typedef struct owf_cfbw owf_cfbw;
+owf_cfbw *owf_cfbw_new(void);
+int owf_cfbw_add(owf_cfbw *w, const char *path, const unsigned char *data, size_t length);
+int owf_cfbw_set_clsid(owf_cfbw *w, const char *storage, const unsigned char clsid[16]);
+int owf_cfbw_finish(owf_cfbw *w, unsigned char **out, size_t *length);
+void owf_cfbw_free(owf_cfbw *w);
+
 /* ---- Workbook formats ---- */
 
 extern const owf_book_format owf_book_format_xls;
@@ -203,6 +215,12 @@ char *owf_xl_formula_move(const char *text, long drow, long dcol);
 /* From an XLSX file: "_xlfn." (and "_xlws.", "_xlpm.") off, and another
  * book's number ("[1]Rates!A1") as its file's name, books[0] for [1]. */
 char *owf_xl_formula_from_file(const char *text, char *const *books, int nbooks);
+/* The name formulas give another book: the last part of its path or URL, "%20" and the like decoded (NULL:
+ * none, or memory ran out). */
+char *owf_link_name(const char *target, size_t length);
+/* The book's last sheet made another book's (target) sheet: its values kept (no formulas or styles), the sheet
+ * taken out of the book. -1 when memory runs out (the sheet stays). */
+int owf_book_link_last_sheet(owf_book *book, const char *target, const char *sheet);
 /* For an XLSX file: "_xlfn." on where Excel wants it, and with links, each
  * other book by its number, the books, their sheets and names collected in
  * links for the file's externalLink parts. */
@@ -314,10 +332,27 @@ int owf_ooxml_kind(const unsigned char *data, size_t length);
  * "xl/worksheets/sheet1.xml". 0 when it does not fit. */
 int owf_opc_part_name(char *out, size_t size, const char *dir, const char *target);
 
-/* A chart as an .xlsx's chart part (DrawingML's c:chartSpace), and a drawing part (xdr:wsDr) anchoring n
- * charts, the k-th through its relationship "rId<k>" (owf_chart.c): what owf_sheet_charts reads back. */
+/* A chart as an .xlsx's chart part (DrawingML's c:chartSpace; owf_chart.c), and a drawing part (xdr:wsDr)
+ * anchoring n charts, the k-th through its relationship "rId<k>" (owf_chartbook.c): what owf_sheet_charts reads
+ * back. */
 int owf_chart_part_xml(const owf_chart *c, owf_buf *b);
 int owf_chart_drawing_xml(const owf_chart *charts, int n, owf_buf *b);
+/* A slide's chart as PowerPoint keeps it (owf_chart.c): into part its chart part, the series' names, categories
+ * and values pointing at Sheet1 of its embedded workbook and naming that workbook by the part's relationship
+ * data_rid (c:externalData); into xlsx that workbook, made here from the chart's points: categories (or a
+ * scatter's x values) down column A from A2, a series a column from B, its name in row 1, a gap an empty cell.
+ * c is not changed. OWF_OK or OWF_ERR_MEMORY. */
+int owf_chart_pptx_parts(const owf_chart *c, const char *data_rid, owf_buf *part, owf_buf *xlsx);
+/* A slide's chart as OpenDocument embeds one (owf_chartodf.c): its object's content.xml (office:chart) with its data
+ * in its own table, "local-table". Read: OWF_OK, OWF_ERR_FORMAT when it holds no chart, OWF_ERR_MEMORY (c then holds
+ * nothing; owf_chart_clear frees it). Written: the chart width by height twips, its data a column a series. */
+int owf_chart_from_odf(const char *xml, size_t length, owf_chart *c);
+/* The same from its parsed root: office:document-content, or a flat file's office:document in its draw:object. */
+int owf_chart_from_odf_node(const owf_xml_node *root, owf_chart *c);
+/* inline_doc: as a flat file holds it, an office:document to go inside draw:object. */
+int owf_chart_odf_xml(const owf_chart *c, int width, int height, int inline_doc, owf_buf *b);
+/* A chart part's root (c:chartSpace) read into c, which holds nothing yet (owf_chart.c, for owf_chartbook.c). */
+void owf_chart_read_space(owf_chart *c, const owf_xml_node *space, int *failed);
 /* And a sheet's charts kept so, as an .xlsx's drawing is kept: its drawing, relationships and charts parts. */
 int owf_sheet_keep_charts(owf_book *book, int sheet, const owf_chart *charts, int n);
 
@@ -325,7 +360,8 @@ int owf_sheet_keep_charts(owf_book *book, int sheet, const owf_chart *charts, in
 
 enum {
     OWF_CP_FONT = 1 << 0, OWF_CP_SIZE = 1 << 1, OWF_CP_BOLD = 1 << 2, OWF_CP_ITALIC = 1 << 3,
-    OWF_CP_UNDERLINE = 1 << 4, OWF_CP_STRIKE = 1 << 5, OWF_CP_POSITION = 1 << 6, OWF_CP_COLOUR = 1 << 7
+    OWF_CP_UNDERLINE = 1 << 4, OWF_CP_STRIKE = 1 << 5, OWF_CP_POSITION = 1 << 6, OWF_CP_COLOUR = 1 << 7,
+    OWF_CP_HIDDEN = 1 << 8           /* 1.14 */
 };
 enum {
     OWF_PP_ALIGN = 1 << 0, OWF_PP_LEFT = 1 << 1, OWF_PP_RIGHT = 1 << 2, OWF_PP_FIRST = 1 << 3,
@@ -477,8 +513,8 @@ extern const unsigned short owf_pdf_widths[8][224];
 
 /* The formats. */
 extern const owf_format owf_format_fodt, owf_format_wordworth, owf_format_finalwriter;
-extern const owf_format owf_format_text, owf_format_amiga_text, owf_format_ftxt,
-    owf_format_ansi, owf_format_prowrite, owf_format_html, owf_format_pdf, owf_format_pdf_comments, owf_format_odt, owf_format_docx,
+extern const owf_format owf_format_markdown, owf_format_text, owf_format_amiga_text, owf_format_ftxt,
+    owf_format_ansi, owf_format_prowrite, owf_format_html, owf_format_pdf, owf_format_pdf_comments, owf_format_pdf_comments_margin, owf_format_odt, owf_format_docx,
     owf_format_rtf;
 
 #endif

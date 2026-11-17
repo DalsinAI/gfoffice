@@ -58,6 +58,11 @@ int opj_delete_tasks(opj_doc *doc, int first, int count);
 int opj_indent(opj_doc *doc, int first, int count, int by);
 /* Links each row to the next, finish to start (MS Project's Link Tasks); count >= 2. */
 int opj_link_rows(opj_doc *doc, int first, int count);
+/* A finish-to-start link from task pred to task succ (a link dragged between bars); OWF_ERR_FORMAT when
+ * they are the same, out of range, linked already, or the link would make a loop (the plan unchanged). */
+int opj_link_tasks(opj_doc *doc, int pred, int succ);
+/* A task's duration in working minutes (a bar stretched), no longer estimated; not a summary's. */
+int opj_set_duration(opj_doc *doc, int row, long minutes);
 /* Removes every link between the rows (Unlink Tasks), or each row's links when count is 1. */
 int opj_unlink_rows(opj_doc *doc, int first, int count);
 /* Percent complete, 0..100. */
@@ -69,6 +74,52 @@ int opj_set_notes(opj_doc *doc, int row, const char *notes);
  * first..first+count-1, count -1: the whole plan. */
 int opj_set_baseline(opj_doc *doc, int first, int count);
 int opj_clear_baseline(opj_doc *doc, int first, int count);
+/* The same for Baseline n, 0..10 (0 is the one above, MS Project's Baseline; 1..10 Baseline 1 to 10);
+ * n out of range: OWF_ERR_FORMAT. */
+int opj_set_baseline_n(opj_doc *doc, int n, int first, int count);
+int opj_clear_baseline_n(opj_doc *doc, int n, int first, int count);
+/* Which baselines some task has saved: bit n for Baseline n. */
+unsigned opj_baselines_saved(const opj_doc *doc);
+/* "3", "Baseline 3", "baseline3", "Baseline" or "" (Baseline 0) to n, 0..10; -1 when it is none of these. */
+int opj_baseline_parse(const char *text);
+/* The saved ones as "0 3 10" ("none" with none) into out. */
+void opj_baselines_text(const opj_doc *doc, char *out, size_t size);
+/* Tools > Tracking > Update Project: work complete through status (owf_project_update; whole: 0% or 100%
+ * only), as one edit; how many tasks changed in *changed (when not NULL). */
+int opj_update_project(opj_doc *doc, owf_ptime status, int whole, int *changed);
+
+/* ---- Change Working Time: calendars (one Undo step each, the plan scheduled again) ----
+ * cal is an index into plan->calendars. */
+
+/* Working hours as typed: spans "08:00-12:00, 13:00-17:00" (commas or spaces between them, "8-12" whole
+ * hours too), or "off" (or "") for no working time. 1 and *out set, or 0 when it isn't hours. */
+int opj_hours_parse(const char *text, owf_pday *out);
+/* The other way: "08:00-12:00, 13:00-17:00", or "off". out holds at least 80 bytes. */
+void opj_hours_text(const owf_pday *h, char *out);
+/* A calendar by its name (case ignored) or its number from 1; -1 when there is none. */
+int opj_find_calendar(const owf_project *p, const char *name);
+/* A new base calendar called name, a copy of calendar from (its week and its exceptions; -1: Standard's
+ * hours), its index in *index. OWF_ERR_FORMAT for an empty name or one a calendar has already. */
+int opj_add_calendar(opj_doc *doc, const char *name, int from, int *index);
+/* The hours of one weekday (0 Sunday) in every week of the calendar. */
+int opj_set_week_hours(opj_doc *doc, int cal, int weekday, const char *hours);
+/* The hours of the days first..last (days since 1 Jan 2000, at most 3660 of them): hours, "off" for
+ * holidays, or NULL to give them back the week's hours. */
+int opj_set_day_hours(opj_doc *doc, int cal, long first, long last, const char *hours);
+/* The days a Change Working Time line names: a weekday ("Mon", "friday": 1, *weekday 0 Sunday..6), or a
+ * date or two ("24/12/26", "24/12/26 - 1/1/27", "24/12/26 to 1/1/27": 2, *first and *last in days since
+ * 1 Jan 2000, at most 3660 days). 0 when it is neither. */
+int opj_days_parse(const char *text, int *weekday, long *first, long *last);
+/* What a Change Working Time line's days work now: a weekday's hours, or the first day's (out at least
+ * 80 bytes, "" when text names no days or cal is out of range). */
+void opj_days_hours_text(const owf_project *p, int cal, const char *text, char *out);
+/* Sets the hours of the days text names (as opj_days_parse) on calendar cal: hours as opj_hours_parse,
+ * or "default" for dates to have the week's hours again. One Undo step; OWF_ERR_FORMAT for days or hours
+ * that aren't. */
+int opj_set_days_hours(opj_doc *doc, int cal, const char *days, const char *hours);
+/* The plan's calendar (Project > Project Information's), or a task's own (-1: the plan's). */
+int opj_set_plan_calendar(opj_doc *doc, int cal);
+int opj_set_task_calendar(opj_doc *doc, int row, int cal);
 
 /* ---- The task sheet ---- */
 
@@ -86,19 +137,61 @@ enum {
     OPJ_COL_BASELINE_FINISH,
     OPJ_COL_START_VARIANCE,              /* working time later than the baseline: "2d", "-4h", "0d" */
     OPJ_COL_FINISH_VARIANCE,
+    OPJ_COL_CONSTRAINT_TYPE,             /* "Start No Earlier Than", as MS Project names them */
+    OPJ_COL_CONSTRAINT_DATE,             /* "NA" for As Soon / Late As Possible */
+    OPJ_COL_NOTES,
+    OPJ_COL_ACTUAL_START,                /* "NA" until the task has started */
+    OPJ_COL_ACTUAL_FINISH,
+    OPJ_COL_ACTUAL_DURATION,             /* duration times % complete, worked out */
+    OPJ_COL_REMAINING_DURATION,
+    OPJ_COL_BCWS,                        /* earned value at the status date (NA without one), money */
+    OPJ_COL_BCWP,
+    OPJ_COL_ACWP,
+    OPJ_COL_SV,                          /* NA without a status date */
+    OPJ_COL_CV,
+    OPJ_COL_LEVELING_DELAY,              /* "0d"; a summary's is blank; typed: a duration, "3ed" elapsed */
+    OPJ_COL_WORK,                        /* its assignments' work (a summary: its subtasks'), "40h"; typed: as
+                                          * the task's type takes it (owf_project_set_work) */
+    OPJ_COL_ACTUAL_WORK,                 /* work times % complete (a summary: its subtasks'), worked out */
+    OPJ_COL_REMAINING_WORK,              /* work less actual work, worked out */
+    OPJ_COL_COST,                        /* its assignments' cost, money; worked out */
+    OPJ_COL_ACTUAL_COST,                 /* cost times % complete (ACWP's), worked out */
+    OPJ_COL_TYPE,                        /* "Fixed Units", "Fixed Duration" or "Fixed Work" (typed: those, or
+                                          * units, duration, work); a summary's is blank */
+    OPJ_COL_EFFORT_DRIVEN,               /* "Yes" or "No"; Fixed Work is always Yes; a summary's is blank */
+    OPJ_COL_PRIORITY,                    /* 0..1000 (typed); 1000 is Do Not Level; a summary's is blank */
+    OPJ_COL_OVERALLOCATED,               /* "Yes" or "No" (owf_ptask_overallocated), worked out; a summary's is
+                                          * blank. An over-allocated task's ID also gets a "!", drawn red */
     OPJ_NCOLS
 };
 
 /* A column's heading. */
 const char *opj_column_title(int column);
+/* A constraint type's name, "As Soon As Possible" .. "Finish No Later Than" (OWF_CON_), "" out of range. */
+const char *opj_constraint_name(int constraint);
 /* A cell as the sheet shows it, into out (cut to size, NUL-terminated):
  * a duration "5d", "3ed", "1d?"; a date "Mon 16/11/26" (day/month/year); predecessors "2,3SS+1d". */
 void opj_cell_text(const opj_doc *doc, int row, int column, char *out, size_t size);
 /* Typed text into a cell, as one edit. Name; Duration (owf_pduration_parse's text); Start (sets Start No
  * Earlier Than, as MS Project does), Finish (Finish No Earlier Than); Predecessors (replaces the row's
  * links); % Complete; Resource Names (replaces the row's assignments; a name not in the plan is added as
- * a work resource). ID and WBS can't be typed into (OWF_ERR_FORMAT). */
+ * a work resource); Constraint Type (its name, any case, or a short one: ASAP, ALAP, MSO, MFO, SNET, SNLT, FNET,
+ * FNLT; a type with a date and none yet takes the task's start, or finish for the finish types); Constraint
+ * Date (NA makes it As Soon As Possible; a date on an ASAP or ALAP task makes it Start No Earlier Than);
+ * Notes; Actual Start and Actual Finish (a date, or NA to clear it: an actual finish with no actual start
+ * gives the task its scheduled start as one, and clearing the start clears the finish too). % Complete
+ * above 0 gives a task with no actual start its scheduled start, 100 its scheduled finish as actual
+ * finish, below 100 clears an actual finish and 0 both, as MS Project does. ID, WBS, the baseline,
+ * variance, Actual Duration and Remaining Duration columns can't be typed into (OWF_ERR_FORMAT);
+ * opj_column_typed says which can. */
 int opj_set_cell(opj_doc *doc, int row, int column, const char *text);
+/* 1 when a column can be typed into, 0 when it is worked out. */
+int opj_column_typed(int column);
+/* Task Information's OK: several of row's cells typed at once, in the order given, as one edit (one Undo
+ * step), scheduled once at the end. Nothing changes when any cell is refused: its place in columns goes
+ * in *bad (when not NULL; -1 when none was), with OWF_ERR_FORMAT, or OWF_ERR_MEMORY. A Constraint Date
+ * after a Constraint Type of As Soon or As Late As Possible is left alone, so the type chosen stands. */
+int opj_set_cells(opj_doc *doc, int row, const int *columns, const char *const *texts, int n, int *bad);
 /* The outline number of a row, "1.2.3". */
 void opj_outline_number(const opj_doc *doc, int row, char *out, size_t size);
 /* "Mon 16/11/26" (with_time: "Mon 16/11/26 08:00"). out holds at least 24 bytes. */
@@ -106,6 +199,129 @@ void opj_date_text(owf_ptime t, int with_time, char *out);
 /* "16/11/26", "16/11/2026", "Mon 16/11/26 13:00", "2026-11-16", "2026-11-16 13:00". A date with no time
  * gets default_minute (the start or end of a working day). 1 when it is one. */
 int opj_date_parse(const char *s, int default_minute, owf_ptime *t);
+
+/* Tools > Level Resources: owf_project_level_by (within_slack: only within each task's slack; order an
+ * OWF_LEVEL_) as one edit; how many tasks it delayed in *delayed (when not NULL). opj_level is Standard.
+ * Clear Leveling: every delay back to 0 (with none, nothing changes and there is no Undo step). The
+ * order's name, "" out of range; opj_level_order_parse takes a name ("Priority, Standard", "priority",
+ * "ID Only", "id", "standard"), -1 for none. */
+int opj_level_by(opj_doc *doc, int within_slack, int order, int *delayed);
+int opj_level(opj_doc *doc, int within_slack, int *delayed);
+const char *opj_level_order_name(int order);
+int opj_level_order_parse(const char *name);
+int opj_clear_leveling(opj_doc *doc);
+
+/* ---- Update Tasks (MS Project's Tools > Tracking > Update Tasks...) ---- */
+
+/* Row's progress in one edit, each as typed in its cell, NULL or "" left as it is: the actual start, then
+ * the actual and remaining durations, then % Complete, then the actual finish. An actual duration sets %
+ * Complete against the duration (a longer one than planned stretches the task to it; below the whole
+ * never rounds to 100%); a remaining one makes the duration the actual plus it. The actual dates follow
+ * % Complete as the cells do. Elapsed ones ("1ed") make the duration elapsed; the two in different kinds
+ * (or a remaining one against work done in the other kind) are refused. The Milestone flag stays as set,
+ * whatever the duration becomes. A summary takes only % Complete. OWF_ERR_FORMAT for text a cell wouldn't
+ * take or a row out of range, with nothing changed. */
+int opj_update_task(opj_doc *doc, int row, const char *percent, const char *actual, const char *remaining,
+                    const char *actual_start, const char *actual_finish);
+
+/* ---- Sort, Find and Replace (Project > Sort, Edit > Find..., Edit > Replace...) ---- */
+
+typedef struct {
+    int column;                          /* an OPJ_COL_ */
+    int descending;
+} opj_sort_key;
+/* Project > Sort with "Permanently renumber tasks" and "Keep outline structure": each summary's subtasks
+ * (and the top level) reordered by the keys, first key first; a summary carries its subtasks along. Dates,
+ * durations, numbers and money sort by value (NA after every value), the rest by their text, case ignored;
+ * ties keep their order. Links and assignments follow their tasks. One edit; OWF_ERR_FORMAT for no keys
+ * (more than 3) or a column out of range. */
+int opj_sort_tasks(opj_doc *doc, const opj_sort_key *keys, int nkeys);
+
+enum { OPJ_FIND_CONTAINS, OPJ_FIND_EQUALS, OPJ_FIND_BEGINS };
+/* Find: the next row after from (-1: start at the top; with backward, the one before, -1: from the bottom)
+ * whose cell in column, as the sheet shows it, matches text by how (an OPJ_FIND_), case ignored; going
+ * round the end once. -1 when none does (or text is empty). */
+int opj_find_task(const opj_doc *doc, int column, const char *text, int how, int from, int backward);
+/* The same over the resource sheet's cells (an OPJ_RCOL_). */
+int opj_find_resource_row(const opj_doc *doc, int column, const char *text, int how, int from, int backward);
+/* Replace: in rows first..first+count-1 (count -1: every row), every place find is in column's cell (case
+ * ignored) becomes with, and the cell is set as if typed. One edit for them all, how many cells changed in
+ * *changed (either may be NULL). When a cell won't take its new text, nothing changes: OWF_ERR_FORMAT, with
+ * how many wouldn't in *refused. OWF_ERR_FORMAT too for an empty find, a column that can't be typed, or rows
+ * out of range. */
+int opj_replace_text(opj_doc *doc, int column, const char *find, const char *with, int first, int count,
+                     int *changed, int *refused);
+/* A cell's value as Sort and Group By order it: 1 with *v for a date, duration, number or money (*na set for
+ * NA); 0 for a column ordered by its text. */
+int opj_cell_value(const opj_doc *doc, int row, int column, long *v, int *na);
+/* Text against text with case ignored, as strcmp; and whether cell matches text by how (an OPJ_FIND_). */
+int opj_text_cmp(const char *a, const char *b);
+/* A cell's whole text as the sheet shows it, however long (a Name or Notes); owf_free it. NULL for memory. */
+char *opj_cell_text_dup(const opj_doc *doc, int row, int column);
+int opj_text_matches(const char *cell, const char *text, int how);
+
+/* ---- Filters and groups (Project > Filtered For, the AutoFilter row, Project > Group By) ----
+ * A view shows a plan's tasks as lines: with no filter and no group, a line for each task in the sheet's
+ * order. A filter keeps the tasks it passes (and, with summaries set, the summaries above them, MS
+ * Project's "Show related summary rows"). Group By drops the outline: the summaries go, and the rest are
+ * gathered under a heading line for each value of the group's column, the headings in that column's sort
+ * order (ascending or descending) and the tasks under each in the sheet's order. Lines are worked out by
+ * opj_lines_update, again after any edit. */
+enum {
+    OPJ_FILTER_ALL,                      /* All Tasks */
+    OPJ_FILTER_CRITICAL,                 /* Critical */
+    OPJ_FILTER_MILESTONES,               /* Milestones */
+    OPJ_FILTER_INCOMPLETE,               /* Incomplete Tasks: under 100% (a summary: any subtask is) */
+    OPJ_FILTER_COMPLETED,                /* Completed Tasks: 100% (a summary: every subtask is) */
+    OPJ_FILTER_SUMMARY,                  /* Summary Tasks */
+    OPJ_FILTER_UNSTARTED,                /* Unstarted Tasks: 0% and no actual start (a summary: no subtask
+                                          * started) */
+    OPJ_FILTER_CELL,                     /* the AutoFilter: column's cell matches text by how */
+    OPJ_NFILTERS
+};
+typedef struct {
+    int kind;                            /* OPJ_FILTER_ */
+    int column;                          /* OPJ_FILTER_CELL: an OPJ_COL_ */
+    int how;                             /* OPJ_FILTER_CELL: an OPJ_FIND_ */
+    char text[80];                       /* OPJ_FILTER_CELL: what to match, as the sheet shows it */
+    int summaries;                       /* also the summaries above every task it keeps */
+} opj_filter;
+/* A column by its title or a short name, case, spaces and stops ignored ("Duration", "% Complete" or
+ * "percent", "Resource Names" or "resources"); an OPJ_COL_ (an OPJ_RCOL_ with resource_sheet), -1 none. */
+int opj_column_parse(const char *name, int resource_sheet);
+/* Sort's keys as typed, "Start, Duration desc, Name": up to 3 columns by opj_column_parse, each followed
+ * by desc (descending, down) or asc (ascending, up). OWF_OK with them in keys[0..*nkeys-1], or
+ * OWF_ERR_FORMAT for none, more than 3, or a column it doesn't know. */
+int opj_sort_parse(const char *text, opj_sort_key *keys, int *nkeys);
+/* A filter's name as the Filtered For menu has it ("Critical"), "" out of range; a name (case ignored, an
+ * AutoFilter is "AutoFilter") back to its OPJ_FILTER_, -1 for none. */
+const char *opj_filter_name(int kind);
+int opj_filter_parse(const char *name);
+/* 1 when filter (NULL: All Tasks) keeps row on its own (summaries set or not). */
+int opj_filter_passes(const opj_doc *doc, const opj_filter *filter, int row);
+
+typedef struct {
+    opj_filter filter;                   /* set before opj_lines_update; kind OPJ_FILTER_ALL keeps every task */
+    int group;                           /* the Group By column, an OPJ_COL_, -1 none */
+    int group_descending;
+    /* worked out by opj_lines_update */
+    int n;                               /* how many lines */
+    int *task;                           /* each line's task row; -1 for a group's heading */
+    int *heading;                        /* each line's group (its heading's task row: the group's first) */
+    int ntasks;                          /* the plan's tasks when worked out */
+    int *line_of;                        /* each task's line, -1 when hidden */
+} opj_lines;
+/* Lines with no filter and no group (nothing worked out yet). */
+void opj_lines_init(opj_lines *lines);
+/* Works the lines out for doc from their filter and group. OWF_OK, OWF_ERR_MEMORY (lines as before), or
+ * OWF_ERR_FORMAT for a filter or group out of range. */
+int opj_lines_update(opj_lines *lines, const opj_doc *doc);
+void opj_lines_free(opj_lines *lines);
+/* 1 when lines filter or group anything (a view with them shows other than every task). */
+int opj_lines_active(const opj_lines *lines);
+/* A group's heading: the column's title and the group's value, "Duration: 5 days" ("Duration: " with no
+ * value); "" when line is no heading. */
+void opj_lines_heading_text(const opj_lines *lines, const opj_doc *doc, int line, char *out, size_t size);
 
 /* ---- The resource sheet ---- */
 
@@ -119,6 +335,9 @@ enum {
     OPJ_RCOL_RATE,                       /* Std. Rate: "20.00/h" for work, "5.00" a unit for material */
     OPJ_RCOL_WORK,                       /* worked out: "40h" */
     OPJ_RCOL_COST,                       /* worked out: "800.00" */
+    OPJ_RCOL_CALENDAR,                   /* Base Calendar: its calendar's name, the plan's when it has none of
+                                          * its own; typed: a calendar's name or number, "" for the plan's.
+                                          * Its tasks are scheduled on it (owf_ptask_calendar) */
     OPJ_NRCOLS
 };
 
@@ -141,6 +360,35 @@ int opj_set_assignment(opj_doc *doc, int task, int resource, long units);
 void opj_work_text(long minutes, char *out);
 /* "1234.50": hundredths of money. out >= 16 bytes. */
 void opj_money_text(long hundredths, char *out);
+
+/* ---- Assign Resources (MS Project's dialog): every resource against one task ---- */
+typedef struct {
+    int assigned;                        /* 1 when the task has the resource */
+    long units;                          /* the assignment's units, as opj_set_assignment takes them; 0 when none */
+    long work, cost;                     /* its work (minutes) and cost (hundredths), as scheduled */
+} opj_assign_info;
+/* The resource against the task into *out; 0 (and *out zeroed) when either is out of range. */
+int opj_assign_get(const opj_doc *doc, int task, int resource, opj_assign_info *out);
+/* Units as the dialog types them for the resource: a work resource "50%" or "50" (whole percent, 1 to
+ * 100000), a material "2.5" (units, to two places), a cost "120.00" (a currency sign before it is fine).
+ * OWF_OK with *units as opj_set_assignment takes them; OWF_ERR_FORMAT for 0, nothing, or text it doesn't take. */
+int opj_units_parse(const opj_doc *doc, int resource, const char *text, long *units);
+/* The other way: "50%", "2.5", "120.00"; "" for a resource out of range. out holds at least 24 bytes. */
+void opj_units_text(const opj_doc *doc, int resource, long units, char *out, size_t size);
+/* The dialog's line for the resource: "*" when assigned (else " "), the name, then for an assignment its
+ * units and cost, in columns. */
+void opj_assign_line(const opj_doc *doc, int task, int resource, char *out, size_t size);
+/* Assign: the resource on the task at units (NULL or "": the assignment's own units, else 100%, or one
+ * unit of a material; a cost resource needs its amount), as one edit. */
+int opj_assign_resource(opj_doc *doc, int task, int resource, const char *units);
+/* The resource named (any case, blanks around it skipped), or a row number from 1; -1 when there is none. */
+int opj_find_resource(const opj_doc *doc, const char *name);
+/* Remove: the resource's assignment on the task, as one edit; OWF_ERR_FORMAT when there is none. */
+int opj_remove_resource(opj_doc *doc, int task, int resource);
+/* Replace: the task's assignment of from goes to to, keeping its place and, with units NULL or "", its
+ * units (one unit of to's kind when the two kinds differ), as one edit. OWF_ERR_FORMAT when from isn't
+ * assigned, to already is, or they are the same. */
+int opj_replace_resource(opj_doc *doc, int task, int from, int to, const char *units);
 
 /* ---- Resource usage: each resource's work in each period ---- */
 
@@ -168,12 +416,32 @@ typedef struct {
     int first_row;                       /* the top row shown */
     int selected;                        /* a selected row, -1 none */
     int show_baseline;                   /* a thin grey bar under each bar, at its baseline dates */
+    int tracking;                        /* the Tracking Gantt: each task's bar in its row's upper half, its
+                                          * baseline as high in the lower half, the done part solid, and
+                                          * the % Complete beside each bar in place of the resource names */
+    int scroll_x, scroll_y;              /* the Network Diagram's scroll, in pixels */
+    int progress_lines;                  /* View > Progress Lines: a line down the chart at the status date */
     oldraw_font font;
+    const opj_lines *lines;              /* the Gantt view's filter and groups (worked out for doc); NULL: every
+                                          * task, a line each. first_row is then the top line shown; selected
+                                          * stays a task row */
 } opj_view;
 
 /* A view of doc, width by height pixels, rows row_height high, at a zoom, starting at the Monday on or
  * before the plan's start. Shows ID, Name, Duration, Start, Finish and Predecessors. */
 void opj_view_init(opj_view *v, const opj_doc *doc, int width, int height, int row_height, int zoom);
+/* The column chooser (View > Columns, ARexx COLUMN). A column's width when shown: 32 ID, 180 Task Name, 56
+ * Duration, 96 Start and Finish, 84 Predecessors, 64 % Complete, 48 WBS, 140 Resource Names, 96 the baseline
+ * dates, 72 the variances, 140 Constraint Type, 96 Constraint Date, 160 Notes, 64 Work, 80 Actual Work, 96
+ * Remaining Work, 80 Cost and Actual Cost; 0 out of range. */
+int opj_column_width(int column);
+/* 1 when v's table shows column. */
+int opj_view_column_shown(const opj_view *v, int column);
+/* Shows column at its width (a shown column keeps its own) or hides it; the columns stay in the sheet's
+ * order. 1 done (nothing to do counts), 0 out of range or when it would hide the last column shown. */
+int opj_view_show_column(opj_view *v, int column, int show);
+/* column when shown, else the next shown column after it, else the last one before it; -1 when none is. */
+int opj_view_near_column(const opj_view *v, int column);
 /* Pixels a day takes at a zoom: 24, 6, 2, 1. */
 int opj_zoom_day_width(int zoom);
 /* The chart's left edge (where origin is). */
@@ -184,6 +452,12 @@ owf_ptime opj_view_time(const opj_view *v, long x);
 /* A row's top y (rows above first_row are above the view); rows shown. */
 int opj_row_y(const opj_view *v, int row);
 int opj_rows_shown(const opj_view *v);
+/* With v's lines: how many lines doc has in v, the task on a line (-1 for a heading or out of range) and a
+ * task's line (-1 hidden). Without, a line is a task. A hidden task has no bar, baseline, label or links,
+ * and its row's y is far above the view. */
+int opj_view_lines(const opj_view *v, const opj_doc *doc);
+int opj_view_line_task(const opj_view *v, const opj_doc *doc, int line);
+int opj_view_task_line(const opj_view *v, const opj_doc *doc, int task);
 
 /* What a task's bar looks like. */
 enum { OPJ_BAR_TASK, OPJ_BAR_SUMMARY, OPJ_BAR_MILESTONE };
@@ -196,14 +470,16 @@ typedef struct {
 /* Row's bar in the view; 0 when the row has none (out of range). */
 int opj_bar_of(const opj_view *v, const opj_doc *doc, int row, opj_bar *bar);
 
-/* Row's baseline bar (under its bar, a sixth of a row high); 0 when the row has none or the view doesn't
- * show baselines. */
+/* Row's baseline bar (under its bar, a sixth of a row high; the Tracking Gantt's lower half); 0 when the
+ * row has none or the view shows no baselines (the Tracking Gantt always does). */
 int opj_baseline_bar(const opj_view *v, const opj_doc *doc, int row, oldraw_rect *bar);
 #define OPJ_COLOUR_BASELINE OLDRAW_RGB(0x909090)
 
 /* Where the resource names go beside row's bar (to its right, MS Project's way); 0 when the row has no
- * bar or no assignments. */
+ * bar or no assignments. The Tracking Gantt puts every bar's % Complete there. */
 int opj_label_box(const opj_view *v, const opj_doc *doc, int row, oldraw_rect *box);
+/* What goes there: the resource names ("Dale,Bob[50%]"), or "40%" in the Tracking Gantt. */
+void opj_label_text(const opj_view *v, const opj_doc *doc, int row, char *out, size_t size);
 
 /* A link's line: up to 6 points joined by straight lines, the last at the arrow's tip. */
 typedef struct {
@@ -213,6 +489,16 @@ typedef struct {
 /* The line from link (of row's links) to row. 0 when there is none. */
 int opj_link_path(const opj_view *v, const opj_doc *doc, int row, int link, opj_path *path);
 
+/* Progress lines (MS Project's, at the status date Update Project sets): a line down the chart at the
+ * status date that jags, on the row of each task that has started or should have by then, to the point on
+ * its bar its % Complete reaches, then back; left of the line, a task is behind, right of it ahead. It
+ * runs straight past a summary, a heading, a task done by the status date and one not due to start yet.
+ * The status date's x in *x; 0 with progress_lines off or no status date. */
+int opj_status_x(const opj_view *v, const opj_doc *doc, long *x);
+/* Row's progress point: 1 with its x when the line jags to it, 0 when the line runs straight past. */
+int opj_progress_point(const opj_view *v, const opj_doc *doc, int row, long *x);
+#define OPJ_COLOUR_PROGRESS OLDRAW_RGB(0xE02020)
+
 /* Colours used. */
 #define OPJ_COLOUR_BAR OLDRAW_RGB(0x4A7BD0)
 #define OPJ_COLOUR_CRITICAL OLDRAW_RGB(0xD03030)
@@ -221,9 +507,115 @@ int opj_link_path(const opj_view *v, const opj_doc *doc, int row, int link, opj_
 #define OPJ_COLOUR_LINK OLDRAW_RGB(0x3050A0)
 #define OPJ_COLOUR_NONWORKING OLDRAW_RGB(0xE4E4E4)
 #define OPJ_COLOUR_GRID OLDRAW_RGB(0xC8C8C8)
+#define OPJ_COLOUR_HEADING OLDRAW_RGB(0xFFF2CC)       /* a group's heading line (MS Project's yellow) */
 
 /* Draws what of the view crosses area (the view's own pixels) onto d. */
 void opj_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area);
+
+/* ---- The Resource Usage view (MS Project's): each resource's row, its assignments' rows under it, and
+ * the work of each in every period of the timescale's lower tier (a day, week, month or quarter, by the
+ * zoom); a period over the resource's max units is in red, and its ID has "!" (the resource sheet's). It
+ * uses a view's size, row height, zoom, origin, first row, selected row and font; its table is its own:
+ * ID, Resource Name and Work. ---- */
+#define OPJ_USAGE_ID_W 32
+#define OPJ_USAGE_NAME_W 180
+#define OPJ_USAGE_WORK_W 72
+enum { OPJ_UCOL_ID, OPJ_UCOL_NAME, OPJ_UCOL_WORK, OPJ_NUCOLS };
+/* The rows: every resource, each followed by its assignments in the order they were made. */
+int opj_usage_rows(const opj_doc *doc);
+/* Row's resource, and its assignment (-1: the resource's own row). 0 when there is no such row. */
+int opj_usage_row(const opj_doc *doc, int row, int *resource, int *assign);
+const char *opj_usage_column_title(int column);
+/* A table cell: the resource's ID, name and work (the resource sheet's), or for an assignment "", its
+ * task's name and its work. "" out of range. */
+void opj_usage_cell_text(const opj_doc *doc, int row, int column, char *out, size_t size);
+/* v as the usage view draws it: its table's width in place of the Gantt view's columns, so opj_view_x,
+ * opj_view_time, opj_chart_left and opj_row_y give the usage view's places. */
+void opj_usage_view(const opj_view *v, opj_view *usage);
+void opj_usage_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area);
+
+/* ---- The Task Usage view (MS Project's): Resource Usage turned round. Each task's row (indented by its
+ * outline level, a summary's name bold), its assignments' rows under it, and the work of each in every
+ * period; a task's row holds its own and its subtasks' work and is shaded. Its table: ID, Task Name and
+ * Work, as wide as Resource Usage's; it uses the same view fields (opj_usage_view gives its places).
+ * Read only. ---- */
+int opj_task_usage_rows(const opj_doc *doc);
+/* Row's task, and its assignment (-1: the task's own row). 0 when there is no such row. */
+int opj_task_usage_row(const opj_doc *doc, int row, int *task, int *assign);
+const char *opj_task_usage_column_title(int column);
+/* A table cell: the task's ID, name and work, or for an assignment "", its resource's name and its work. */
+void opj_task_usage_cell_text(const opj_doc *doc, int row, int column, char *out, size_t size);
+/* Work of a task (assign -1: its own assignments' and its subtasks') or of one of its assignments in
+ * [from, to), as opj_work_text puts it, "" when none. */
+void opj_task_usage_text(const opj_doc *doc, int task, int assign, owf_ptime from, owf_ptime to, char *out,
+                         size_t size);
+void opj_task_usage_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area);
+
+/* ---- The Resource Graph (MS Project's): one work resource's allocation in each period of the timescale's
+ * lower tier, as a bar of percent (its work there over its calendar's working time there): blue up to
+ * its max units, red above. A line marks its max units; the scale runs from 0 to opj_graph_scale. Its
+ * table's place (Resource Usage's width) holds the resource's name, its peak in the periods shown and its
+ * max units, with the scale's ends beside the chart. The plot runs from three rows down to a row above
+ * the bottom. It uses the same view fields as Resource Usage. Read only. ---- */
+/* A resource's percent allocated in [from, to); -1 for a material or cost resource, or no working time. */
+long opj_graph_percent(const opj_doc *doc, int resource, owf_ptime from, owf_ptime to);
+/* The scale's top: the larger of its max units and its peak in the periods v shows, at least 100,
+ * rounded up to 50. */
+long opj_graph_scale(const opj_view *v, const opj_doc *doc, int resource);
+/* The bar of the period holding period: within (up to the max units) and over (above it; h 0 when not
+ * over). 0 when the period has no allocation. */
+int opj_graph_bar(const opj_view *v, const opj_doc *doc, int resource, owf_ptime period, long scale,
+                  oldraw_rect *within, oldraw_rect *over);
+void opj_graph_draw(oldraw *d, const opj_view *v, const opj_doc *doc, int resource, const oldraw_rect *area);
+/* ---- The Network Diagram view (MS Project's, src/project/opj_network.c): a box for every task that
+ * isn't a summary, holding its name, ID and duration, start and finish, four rows of the view's row height
+ * high. A box stands in the column one past its furthest predecessor's (the first column: no
+ * predecessors), and down its column in the sheet's order. A link is a line with an arrow from the
+ * predecessor's box's right side to the successor's left side; red when both tasks are critical. A
+ * critical task's box is edged in red; a milestone's edge is doubled; a task under way is struck through
+ * once and a finished one crossed. It uses a view's size, row height, selected row, font and scroll. ---- */
+#define OPJ_NET_BOX_W 160
+#define OPJ_NET_GAP_X 40
+#define OPJ_NET_GAP_Y 16
+#define OPJ_NET_MARGIN 16
+typedef struct {
+    int ntasks;                          /* the plan's tasks when laid out */
+    int *column, *line;                  /* each task's box's column and place down it; -1 for a summary */
+    int columns, lines;                  /* how many columns, and the most boxes in one */
+} opj_network;
+/* Lays doc's boxes out (lay it out again after any edit). OWF_OK, OWF_ERR_MEMORY, OWF_ERR_FORMAT. */
+int opj_network_layout(const opj_doc *doc, opj_network *net);
+void opj_network_free(opj_network *net);
+/* Row's box in the view (scrolled); 0 for a summary or out of range. */
+int opj_network_box(const opj_view *v, const opj_network *net, int row, oldraw_rect *box);
+/* The whole diagram's size in pixels, margins included; 0 by 0 with no boxes. */
+void opj_network_size(const opj_view *v, const opj_network *net, int *width, int *height);
+/* The row whose box is at x, y; -1 none. */
+int opj_network_hit(const opj_view *v, const opj_network *net, int x, int y);
+/* Scrolls by dx, dy pixels, kept to the diagram; scrolls just enough to show row's box whole. */
+void opj_network_scroll(opj_view *v, const opj_network *net, int dx, int dy);
+void opj_network_reveal(opj_view *v, const opj_network *net, int row);
+/* The line of link (of row's links) to row's box: 2 or 4 points, the last at the arrow's tip. 0 when
+ * either end is a summary or out of range. */
+int opj_network_link_path(const opj_view *v, const opj_network *net, const opj_doc *doc, int row, int link,
+                          opj_path *path);
+/* A box's line of text, 0 to 3: the name; "ID: 2  Dur: 3d"; "Start: Mon 16/11/26"; "Finish: ...". */
+void opj_network_line_text(const opj_doc *doc, int row, int line, char *out, size_t size);
+void opj_network_draw(oldraw *d, const opj_view *v, const opj_network *net, const opj_doc *doc,
+                      const oldraw_rect *area);
+
+/* The task edits, which act on the Gantt chart's selected task, from the Edit menu or a key (OPJ_EDIT_INFO:
+ * Task Information). Resource
+ * Usage hides that selection, so none of them runs while it shows. */
+enum { OPJ_EDIT_NONE = -1, OPJ_EDIT_CELL, OPJ_EDIT_INSERT, OPJ_EDIT_DELETE, OPJ_EDIT_INDENT, OPJ_EDIT_OUTDENT,
+       OPJ_EDIT_LINK, OPJ_EDIT_UNLINK, OPJ_EDIT_INFO, OPJ_NEDITS };
+/* The edit a key in the window asks for: Return the cell, Del the task's deletion, Tab indent (shift:
+ * outdent). OPJ_EDIT_NONE for any other key. */
+int opj_edit_for_key(int key, int shift);
+/* Why edit can't run with usage showing (OPJ_VIEW_: the usage views are read only), as the status line
+ * says it; NULL when it may run (OPJ_EDIT_NONE always may). */
+enum { OPJ_VIEW_GANTT, OPJ_VIEW_USAGE, OPJ_VIEW_TASK_USAGE, OPJ_VIEW_GRAPH };
+const char *opj_edit_refused(int usage, int edit);
 
 /* ---- Printing the Gantt view: pages down, then across, as MS Project prints ----
  * The first page across holds the table and the start of the chart; the pages after it hold more of the
@@ -244,18 +636,58 @@ int opj_print_page_view(const opj_print *pr, int page, opj_view *v);
 /* Draws a page onto d (sized as the page). */
 void opj_print_draw(oldraw *d, const opj_print *pr, const opj_doc *doc, int page);
 
+/* ---- The printed Gantt view as a PDF (src/project/opj_pdf.c) ----
+ * Each page opj_print_layout lays out, drawn through an oldraw target that writes into libowf's page PDF
+ * writer (owf_pdf.h): A4 landscape, a 1 cm margin, OPJ_PDF_TWIPS twips a pixel, text in PDF's standard fonts,
+ * so it stays searchable. proto gives the columns, zoom and baselines; the font is the paper's own, Helvetica
+ * at OPJ_PDF_FONT_PX pixels in rows OPJ_PDF_ROW high, whatever the screen's. */
+#define OPJ_PDF_PAGE_W 16838                  /* A4 landscape, twips */
+#define OPJ_PDF_PAGE_H 11906
+#define OPJ_PDF_MARGIN 567                    /* 1 cm */
+#define OPJ_PDF_TWIPS 12                      /* a pixel: 0.6 pt */
+#define OPJ_PDF_FONT_PX 12                    /* 7.2 pt */
+#define OPJ_PDF_ROW 17
+/* The PDF, from malloc (owf_free it), and its page count in *pages (may be NULL). OWF_OK; OWF_ERR_MEMORY;
+ * OWF_ERR_FORMAT when the plan has no tasks or a page is too small for it. */
+int opj_pdf_write(const opj_doc *doc, const opj_view *proto, unsigned char **data, size_t *length, int *pages);
+
 /* What is at a point. */
-enum { OPJ_HIT_NONE, OPJ_HIT_COLUMN_TITLE, OPJ_HIT_TIMESCALE, OPJ_HIT_CELL, OPJ_HIT_SPLIT, OPJ_HIT_BAR, OPJ_HIT_CHART };
+enum { OPJ_HIT_NONE, OPJ_HIT_COLUMN_TITLE, OPJ_HIT_TIMESCALE, OPJ_HIT_CELL, OPJ_HIT_SPLIT, OPJ_HIT_BAR, OPJ_HIT_CHART,
+       OPJ_HIT_HEADING };                /* HEADING: a group's heading line (row -1) */
 typedef struct {
     int what;                            /* OPJ_HIT_ */
     int row, column;                     /* CELL: both; COLUMN_TITLE: column; BAR, CHART: row (-1 below the rows) */
+    int line;                            /* CELL, BAR, CHART, HEADING: the view's line there, -1 below them */
     owf_ptime time;                      /* TIMESCALE, BAR, CHART: the time at the point */
     int part;                            /* BAR: 0 its middle (move), 1 its right end (stretch), 2 its done part */
 } opj_hit;
 void opj_hit_test(const opj_view *v, const opj_doc *doc, int x, int y, opj_hit *hit);
 
+/* ---- Dragging on the Gantt chart (opj_drag.c), MS Project's mouse ----
+ * A bar's middle moves the task (Start No Earlier Than the day it is dropped on, at that day's first
+ * working minute), its right end stretches it (its duration the working time to the end of the day it is
+ * dropped on), its done part or its left 3 pixels set % Complete, and a bar dropped on another task's bar
+ * links the two, finish to start. Moves and stretches go by whole days at every zoom; summaries and
+ * milestones are only linked. Each drop is one edit, one Undo step. */
+enum { OPJ_DRAG_MOVE, OPJ_DRAG_STRETCH, OPJ_DRAG_PROGRESS, OPJ_DRAG_LINK };
+typedef struct {
+    int kind;                            /* OPJ_DRAG_MOVE, _STRETCH or _PROGRESS (a link is found on the drop) */
+    int row;                             /* the bar's task */
+    int x0, y0;                          /* where the button went down */
+} opj_drag;
+/* A drag from where the button went down (hit, x, y): 1 when it is on a bar that can be dragged. Letting
+ * go within OPJ_DRAG_SLOP pixels of there is a click, not a drag, and does nothing. */
+#define OPJ_DRAG_SLOP 3
+int opj_drag_begin(const opj_view *v, const opj_doc *doc, const opj_hit *hit, int x, int y, opj_drag *d);
+/* What letting go at x, y would do, for the status line: "Start: Mon 23/11/26", "Duration: 4d",
+ * "% Complete: 50%", "Link 2 to 3, finish to start"; 0 (out "") when it would do nothing. */
+int opj_drag_text(const opj_view *v, const opj_doc *doc, const opj_drag *d, int x, int y, char *out, size_t size);
+/* Lets go at x, y: OWF_OK, or OWF_ERR_FORMAT when it does nothing (a click, no change, off the row, a
+ * link that would loop) and the plan is as it was. */
+int opj_drag_end(opj_doc *doc, const opj_view *v, const opj_drag *d, int x, int y);
+
 /* ---- ARexx (opj_rexx.c): the plan's commands of the GFOPENPROJECT port ----
- * The app answers VERSION, ACTIVATE, DEACTIVATE, FAULT, PRINT and QUIT itself and hands every other
+ * The app answers VERSION, ACTIVATE, DEACTIVATE, FAULT, PRINT, VIEW and QUIT itself and hands every other
  * command here. Arguments as a ReadArgs template (quotes, KEYWORD=value or KEYWORD value, /S switches);
  * rows and resources are numbered from 1, as the sheets' ID columns. Return codes as every Open app's
  * port: 0 done, 5 not possible now, 10 an error, 20 an unknown command or out of memory; on any but 0,
@@ -270,12 +702,21 @@ typedef struct {
     char file[256];                      /* the plan's file, "" when it has none */
     char lasterror[256];
     unsigned long docs;                  /* bumped each time NEW or OPEN replaces doc: a new plan, even at the old address */
+    opj_view *view;                      /* the window's view: EXPORT FORMAT PDF prints its columns and zoom,
+                                          * COLUMN shows and hides its columns; NULL: a fresh one at days zoom
+                                          * for EXPORT, and COLUMN is not possible (5) */
+    opj_lines *lines;                    /* the window's filter and groups: FILTER and GROUP set them, and they
+                                          * are worked out again after every command; NULL: FILTER, GROUP,
+                                          * LINES and LINE are not possible (5) */
 } opj_rexx;
 
 /* A command, its answer into result (cut to size, "" when it has none). */
 int opj_rexx_command(opj_rexx *rx, const char *command, char *result, size_t size);
 /* The file format a name's extension asks for: .xml MSPDI, .csv CSV, else .gfproj. */
 int opj_rexx_format(const char *file);
+/* EXPORT's format for the printed Gantt view as a PDF (FORMAT PDF, or a .pdf name): not a plan file, so
+ * SAVE and SAVEAS never write it. */
+#define OPJ_EXPORT_PDF 100
 
 #ifdef __cplusplus
 }

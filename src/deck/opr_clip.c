@@ -196,7 +196,12 @@ static int copy_slide(importer *im, owf_slide *to, const owf_slide *from, int ma
     if (to->transition.kind == OWF_TRANS_OTHER)
         to->transition.kind = OWF_TRANS_FADE;
     to->transition.keep = -1;
-    to->background = from->background;
+    {
+        /* the whole background: its colour, gradient, hatching and how see-through it is */
+        owf_look bg;
+        OWF_BACKGROUND_LOOK(from, &bg);
+        OWF_BACKGROUND_SET(to, &bg);
+    }
     to->background_image = from->background_image >= 0 ? image_of(im, from->background_image) : -1;
     to->hidden = from->hidden;
     to->keep_timing = -1;

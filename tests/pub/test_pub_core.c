@@ -1,4 +1,4 @@
-#include "openpublisher_core.h"
+#include "openpressmaster_core.h"
 #include "openpresentation_core.h"
 #include "owf_metafile.h"
 
@@ -78,6 +78,23 @@ static int frame_for_object(const opr_slide *laid, const owf_obj *object)
     return -1;
 }
 
+/* The link of the first run in the deck that starts with word; NULL: none, or no link. */
+static const char *deck_href(const owf_deck *deck, const char *word)
+{
+    int i, j, k, m;
+    for (i = 0; deck && i < deck->nslides; i++)
+        for (j = 0; j < deck->slides[i].nobjs; j++) {
+            const owf_story *st = &deck->slides[i].objs[j].text;
+            for (k = 0; k < st->nparas; k++)
+                for (m = 0; m < st->paras[k].nruns; m++) {
+                    const owf_run *run = &st->paras[k].runs[m];
+                    if (run->text && !strncmp(run->text, word, strlen(word)))
+                        return run->href;
+                }
+        }
+    return NULL;
+}
+
 /* Every object of the deck whose story has a run starting with word: its paragraph's alignment, or -1. */
 static int align_of(const owf_deck *deck, const char *word)
 {
@@ -103,6 +120,97 @@ static const owf_charfmt *deck_run(const owf_deck *deck, const char *word)
             if (f) return f;
         }
     return NULL;
+}
+
+/* A story's text, all runs, into buf. */
+static void story_text(const owf_story *s, char *buf, size_t size)
+{
+    int i, j;
+    size_t n = 0;
+    buf[0] = 0;
+    for (i = 0; i < s->nparas; i++)
+        for (j = 0; j < s->paras[i].nruns; j++)
+            if (s->paras[i].runs[j].text) {
+                size_t k = strlen(s->paras[i].runs[j].text);
+                if (n + k + 1 >= size) return;
+                memcpy(buf + n, s->paras[i].runs[j].text, k + 1);
+                n += k;
+            }
+}
+
+static int same_fmt(const owf_charfmt *a, const owf_charfmt *b)
+{
+    return a->flags == b->flags && a->size == b->size && a->font == b->font && a->colour == b->colour;
+}
+
+/* Two objects alike as a .pub keeps them: kind, box, group, picture, look, text. */
+static int same_obj(const owf_obj *a, const owf_obj *b, const owf_deck *da, const owf_deck *db)
+{
+    static char ta[4096], tb[4096];
+    if (a->kind != b->kind || a->x != b->x || a->y != b->y || a->width != b->width || a->height != b->height ||
+        a->parent != b->parent || a->look.fill != b->look.fill || a->look.line != b->look.line ||
+        (a->look.line && a->look.line_width != b->look.line_width) || (a->flow_story >= 0) != (b->flow_story >= 0))
+        return 0;
+    if (a->kind == OWF_OBJ_PICTURE) {
+        const owf_image *ia, *ib;
+        if ((a->image < 0) != (b->image < 0)) return 0;
+        if (a->image >= 0) {
+            ia = &da->res->images[a->image];
+            ib = &db->res->images[b->image];
+            if (ia->length != ib->length || memcmp(ia->data, ib->data, ia->length) || strcmp(ia->mime, ib->mime))
+                return 0;
+        }
+    }
+    if (a->kind == OWF_OBJ_TABLE && a->ncols != b->ncols) return 0;
+    story_text(&a->text, ta, sizeof ta);
+    story_text(&b->text, tb, sizeof tb);
+    if (strcmp(ta, tb) || a->text.nparas != b->text.nparas) return 0;
+    if (a->text.nparas && a->text.paras[0].nruns && b->text.paras[0].nruns &&
+        !same_fmt(&a->text.paras[0].runs[0].fmt, &b->text.paras[0].runs[0].fmt))
+        return 0;
+    return 1;
+}
+
+/* A publication's deck saved as .pub (opp_export_pub) and read back gives the
+ * same deck; saving that again gives the same bytes. */
+static void deck_round_trip(const char *path, owf_report *report)
+{
+    owf_deck *a = NULL, *b = NULL;
+    owf_pub *pub = NULL;
+    unsigned char *one = NULL, *two = NULL;
+    size_t n1 = 0, n2 = 0;
+    int i, j, same = 1, objects = 0;
+    CHECK(opp_import_pub_file(path, &a, report, NULL) == OWF_OK && a);
+    if (!a) return;
+    CHECK(opp_export_pub(a, &one, &n1, report) == OWF_OK && one && n1 > 512);
+    CHECK(one && owf_pub_read(one, n1, &pub, report) == OWF_OK && pub);
+    CHECK(pub && opp_pub_to_deck(pub, &b, report) == OWF_OK && b);
+    if (b) {
+        CHECK(b->nslides == a->nslides && b->nmasters == a->nmasters);
+        for (i = 0; i < a->nslides && i < b->nslides; i++) {
+            if (a->slides[i].nobjs != b->slides[i].nobjs || a->slides[i].master != b->slides[i].master) {
+                same = 0;
+                fprintf(stderr, "%s: page %d: %d objects, master %d; read back %d, %d\n", path, i + 1,
+                        a->slides[i].nobjs, a->slides[i].master, b->slides[i].nobjs, b->slides[i].master);
+                continue;
+            }
+            for (j = 0; j < a->slides[i].nobjs; j++, objects++)
+                if (!same_obj(&a->slides[i].objs[j], &b->slides[i].objs[j], a, b)) {
+                    same = 0;
+                    fprintf(stderr, "%s: page %d object %d differs when read back\n", path, i + 1, j);
+                }
+        }
+        CHECK(same);
+        CHECK(opp_flow_chain_count(a, NULL) == opp_flow_chain_count(b, NULL));
+        CHECK(opp_export_pub(b, &two, &n2, report) == OWF_OK && two);
+        CHECK(two && n1 == n2 && !memcmp(one, two, n1));
+    }
+    CHECK(objects > 0);
+    owf_free(one);
+    owf_free(two);
+    owf_pub_free(pub);
+    owf_deck_free(a);
+    owf_deck_free(b);
 }
 
 int main(void)
@@ -143,6 +251,16 @@ int main(void)
      * frame on the scratch area (left out). */
     CHECK(opp_import_pub_file(PUB("gen-2007-runs.pub"), &deck, report, &version) == OWF_OK);
     CHECK(deck && deck->nslides == 2 && deck->slides[0].nobjs == 4 && deck->res->nimages == 1);
+    /* P1d links (TOKN): a web address and an e-mail on their words; a link to a page is text for now;
+     * the file carries a second TOKN for the story (linking "See"), which is ignored */
+    CHECK(deck_href(deck, "our site") && !strcmp(deck_href(deck, "our site"), "https://example.org/gfoffice/"));
+    CHECK(deck_href(deck, "write to us") && !strcmp(deck_href(deck, "write to us"), "mailto:team@example.org?subject=Hello"));
+    CHECK(deck_href(deck, "See ") == NULL && deck_href(deck, ", or turn to page 1.") == NULL);
+    /* P1b underline (0x21E's low byte): on the two linked words only */
+    CHECK(deck_run(deck, "our site") && (deck_run(deck, "our site")->flags & OWF_UNDERLINE));
+    CHECK(deck_run(deck, "write to us") && (deck_run(deck, "write to us")->flags & OWF_UNDERLINE));
+    CHECK(deck_run(deck, "See ") && !(deck_run(deck, "See ")->flags & OWF_UNDERLINE));
+    CHECK(deck_run(deck, "Bold and italic") && !(deck_run(deck, "Bold and italic")->flags & OWF_UNDERLINE));
     if (deck && deck->nslides > 0 && deck->slides[0].nobjs > 3) {
         const owf_charfmt *bold = run_fmt(&deck->slides[0].objs[1].text, "Bold and italic");
         const owf_charfmt *plain = run_fmt(&deck->slides[0].objs[0].text, "Plain text");
@@ -156,6 +274,22 @@ int main(void)
         CHECK(plain && !(plain->flags & (OWF_BOLD | OWF_ITALIC)) && plain->size == 200);
         CHECK(!strcmp(font_name(deck->res, plain), "Times New Roman"));
         CHECK(deck->slides[0].objs[2].kind == OWF_OBJ_TABLE && deck->slides[0].objs[2].ncols == 2);
+        /* P1d table cells (TCD): six cells in three rows of two; the third cell has two paragraphs */
+        {
+            const owf_story *t = &deck->slides[0].objs[2].text;
+            CHECK(t->nparas == 7);
+            if (t->nparas == 7) {
+                CHECK(t->paras[0].table_id >= 0 && t->paras[0].table_row == 0 && t->paras[0].table_col == 0 &&
+                      t->paras[0].table_cols == 2);
+                CHECK(t->paras[1].table_row == 0 && t->paras[1].table_col == 1);
+                CHECK(t->paras[2].table_row == 1 && t->paras[2].table_col == 0);
+                CHECK(t->paras[3].table_row == 1 && t->paras[3].table_col == 0);
+                CHECK(t->paras[4].table_row == 1 && t->paras[4].table_col == 1);
+                CHECK(t->paras[6].table_row == 2 && t->paras[6].table_col == 1);
+            }
+            /* the plain text boxes' paragraphs are not cells */
+            CHECK(deck->slides[0].objs[0].text.nparas && deck->slides[0].objs[0].text.paras[0].table_id < 0);
+        }
         CHECK(deck->slides[0].objs[3].kind == OWF_OBJ_PICTURE && deck->slides[0].objs[3].image == 0);
         CHECK(format->export(deck, &odp, &odp_length, report) == OWF_OK);
         CHECK(owf_import_deck_memory(odp, odp_length, "odp", &roundtrip, report, &used) == OWF_OK && roundtrip);
@@ -165,6 +299,16 @@ int main(void)
             /* ODP saves Arial as Liberation Sans, the deck's own default face, which reads back as the
              * default (-1); the typeface itself is GFOffice's ODP round trip's, not the .pub reader's */
             CHECK(again && (again->font < 0 || !strcmp(font_name(roundtrip->res, again), "Liberation Sans")));
+            CHECK(deck_href(roundtrip, "our site") && !strcmp(deck_href(roundtrip, "our site"), "https://example.org/gfoffice/"));
+            CHECK(deck_run(roundtrip, "our site") && (deck_run(roundtrip, "our site")->flags & OWF_UNDERLINE));
+            if (roundtrip->slides[0].nobjs > 2) {
+                const owf_story *t = &roundtrip->slides[0].objs[2].text;
+                int k, last_row = -1, cells_ok = t->nparas >= 6;
+                for (k = 0; k < t->nparas; k++)
+                    if (t->paras[k].table_id < 0 || t->paras[k].table_row < last_row) cells_ok = 0;
+                    else last_row = t->paras[k].table_row;
+                CHECK(roundtrip->slides[0].objs[2].kind == OWF_OBJ_TABLE && cells_ok && last_row == 2);
+            }
         }
         free(odp); odp = NULL; odp_length = 0;
         owf_deck_free(roundtrip); roundtrip = NULL;
@@ -228,9 +372,15 @@ int main(void)
         CHECK(count_look(deck, OWF_SHADE(0xFFFFFF), 0, 0) == 1);
         CHECK(count_look(deck, OWF_SHADE(0x996633), OWF_SHADE(0x993300), 10) == 1);
         CHECK(deck->slides[0].objs[0].inset[0] == 144);
+        /* P1b text colour (0x244, a place in PL): red as 0x00BBGGRR, the scheme's place 2, and one not known */
+        CHECK(deck_run(deck, "headline") && deck_run(deck, "headline")->colour == 0xFF0000);
+        CHECK(deck_run(deck, " over") && deck_run(deck, " over")->colour == 0x000099);
+        CHECK(deck_run(deck, " a bar") && deck_run(deck, " a bar")->colour == OWF_COLOUR_AUTO);
+        CHECK(deck_run(deck, "A ") && deck_run(deck, "A ")->colour == OWF_COLOUR_AUTO);
         CHECK(format->export(deck, &odp, &odp_length, report) == OWF_OK);
         CHECK(owf_import_deck_memory(odp, odp_length, "odp", &roundtrip, report, &used) == OWF_OK && roundtrip);
         CHECK(count_look(roundtrip, OWF_SHADE(0xCCCCEB), OWF_SHADE(0x000000), 20) == 1);
+        CHECK(deck_run(roundtrip, "headline") && deck_run(roundtrip, "headline")->colour == 0xFF0000);
         free(odp); odp = NULL; odp_length = 0;
         owf_deck_free(roundtrip); roundtrip = NULL;
     }
@@ -349,7 +499,121 @@ int main(void)
         }
     }
 
+    /* GFOpenPressmaster save: the deck back to .pub */
+    deck_round_trip(PUB("gen-2007-plain.pub"), report);
+    deck_round_trip(PUB("gen-2007-runs.pub"), report);
+    deck_round_trip(PUB("gen-2010-styles.pub"), report);
+    deck_round_trip(PUB("gen-2013-look.pub"), report);
+    deck_round_trip(PUB("gen-2003-columns.pub"), report);
+    deck_round_trip(PUB("gen-2003-names.pub"), report);
+    {
+        /* new text with no size, typeface or colour of its own keeps none: the
+           default style (which WordArt takes) holds only what every run has */
+        owf_deck *d = NULL, *back = NULL;
+        owf_pub *p = NULL;
+        unsigned char *data = NULL;
+        size_t n = 0;
+        int i2, j2, found = 0;
+        CHECK(opp_import_pub_file(PUB("gen-2003-columns.pub"), &d, report, NULL) == OWF_OK && d);
+        for (i2 = 0; d && i2 < d->nslides && !found; i2++)
+            for (j2 = 0; j2 < d->slides[i2].nobjs && !found; j2++) {
+                owf_obj *o = &d->slides[i2].objs[j2];
+                if (o->kind == OWF_OBJ_TEXT && o->text.nparas && o->text.paras[0].nruns) {
+                    owf_charfmt *f = &o->text.paras[0].runs[0].fmt;
+                    f->size = 0;
+                    f->font = -1;
+                    f->colour = OWF_COLOUR_AUTO;
+                    o->flow_story = -1;   /* its own story, so this copy is the one written */
+                    found = 1;
+                }
+            }
+        CHECK(found);
+        CHECK(d && opp_export_pub(d, &data, &n, report) == OWF_OK && data);
+        CHECK(data && owf_pub_read(data, n, &p, report) == OWF_OK && p);
+        CHECK(p && opp_pub_to_deck(p, &back, report) == OWF_OK && back);
+        found = 0;
+        for (i2 = 0; back && i2 < back->nslides && !found; i2++)
+            for (j2 = 0; j2 < back->slides[i2].nobjs && !found; j2++) {
+                const owf_obj *o = &back->slides[i2].objs[j2];
+                if (o->kind == OWF_OBJ_TEXT && o->text.nparas && o->text.paras[0].nruns) {
+                    const owf_charfmt *f = &o->text.paras[0].runs[0].fmt;
+                    CHECK(f->size == 0 && f->font == -1 && f->colour == OWF_COLOUR_AUTO);
+                    found = 1;
+                }
+            }
+        CHECK(found);
+        owf_free(data);
+        owf_pub_free(p);
+        owf_deck_free(d);
+        owf_deck_free(back);
+    }
+    {
+        /* the page model keeps no WordArt yet: opening says so (saving again keeps it as a shape) */
+        owf_report *notes = owf_report_new();
+        owf_deck *d = NULL;
+        int k, said = 0;
+        CHECK(notes && opp_import_pub_file(PUB("gen-2003-columns.pub"), &d, notes, NULL) == OWF_OK);
+        for (k = 0; notes && k < owf_report_count(notes); k++) {
+            const char *t = owf_report_note(notes, k, NULL, NULL);
+            if (t && strstr(t, "1 WordArt object(s) are shown, and saved, as shapes with text")) said = 1;
+        }
+        CHECK(said);
+        owf_deck_free(d);
+        owf_report_free(notes);
+    }
+    {
+        /* groups nested past what the reader reads back: left out, and said */
+        owf_deck *d = owf_deck_new_empty();
+        owf_report *notes = owf_report_new();
+        owf_slide *sl = d ? owf_deck_add_slide(d, -1, -1) : NULL;
+        owf_pub *p = NULL;
+        unsigned char *data = NULL;
+        size_t n = 0;
+        int k, said = 0;
+        CHECK(d && sl && notes);
+        if (d && sl && notes) {
+            d->width = 11906;
+            d->height = 16838;
+            for (k = 0; k < 21; k++) {
+                owf_obj *o = owf_slide_add(sl, k < 20 ? OWF_OBJ_GROUP : OWF_OBJ_SHAPE);
+                CHECK(o != NULL);
+                if (!o) break;
+                o->parent = k - 1;
+                o->x = o->y = 1440;
+                o->width = o->height = 2880;
+            }
+            CHECK(opp_export_pub(d, &data, &n, notes) == OWF_OK && data);
+            for (k = 0; k < owf_report_count(notes); k++) {
+                const char *t = owf_report_note(notes, k, NULL, NULL);
+                if (t && strstr(t, "5 object(s) in groups nested more than 16 deep")) said = 1;
+            }
+            CHECK(said);
+            CHECK(data && owf_pub_read(data, n, &p, report) == OWF_OK && p);
+            CHECK(p && p->npages == 1 && p->pages[0].nframes == 16);
+        }
+        owf_free(data);
+        owf_pub_free(p);
+        owf_report_free(notes);
+        owf_deck_free(d);
+    }
+    {
+        owf_pub *none = NULL;
+        unsigned char *data = (unsigned char *)"x";
+        size_t n = 1;
+        owf_deck *empty = owf_deck_new_empty();
+        CHECK(opp_deck_to_pub(NULL, &none, report) == OWF_ERR_FORMAT && !none);
+        CHECK(opp_export_pub(NULL, &data, &n, report) == OWF_ERR_FORMAT && !data && !n);
+        CHECK(opp_export_pub_file(empty, NULL, report) == OWF_ERR_FORMAT);
+        if (empty) {
+            empty->width = 11906;
+            empty->height = 16838;
+            CHECK(opp_export_pub(empty, &data, &n, report) == OWF_OK && data && n > 512);
+            owf_free(data);
+            owf_deck_free(empty);
+        }
+    }
+
     owf_report_free(report);
-    printf("openpublisher core tests passed (%d checks)\n", checks);
+    printf("openpressmaster core tests passed (%d checks)\n", checks);
     return failed ? 1 : 0;
 }

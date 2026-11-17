@@ -371,6 +371,7 @@ typedef struct {
     int state;                   /* 0 visible, 1 hidden, 2 very hidden */
     char part[PART_NAME];
     int sheet;                   /* the book's, or -1 */
+    long id;                     /* its sheetId (revisions name sheets by it) */
 } xsheet;
 
 typedef struct {
@@ -2047,6 +2048,63 @@ static void pivot_page_item(const owf_xml_node *table, const owf_xml_node *cache
     }
 }
 
+/* A row or column field grouped in place by Excel's fieldGroup: rangePr by
+ * numbers, years, quarters or months. *n is its group items' count (they
+ * run "<start", the groups, ">end"), *first_year a date grouping's first
+ * year. 0 when the field has none; -1 when Excel's grouping is not one
+ * GFOpenCalc keeps (by hand, by days or hours, or into a field of its own). */
+static int pivot_field_group(const owf_xml_node *cache_fields, unsigned field, owf_pivot_group *g, long *n,
+                             long *first_year)
+{
+    const owf_xml_node *fg = main_child(nth_child(cache_fields, (long)field), "fieldGroup"), *rp;
+    const char *by;
+    memset(g, 0, sizeof *g);
+    *n = 0;
+    *first_year = 0;
+    if (!fg)
+        return 0;
+    rp = main_child(fg, "rangePr");
+    if (!rp || xlong(attr(fg, "base"), (long)field, -1, 16383) != (long)field || main_child(fg, "discretePr"))
+        return -1;
+    g->field = field;
+    *n = xlong(attr(main_child(fg, "groupItems"), "count"), 0, 0, 0x7FFFFFFF);
+    by = attr(rp, "groupBy");
+    if (!by || !strcmp(by, "range")) {
+        g->by = OWF_PIVOT_GROUP_RANGE;
+        if (!xdouble(attr(rp, "startNum"), &g->start) || !xdouble(attr(rp, "endNum"), &g->end))
+            return -1;
+        if (!xdouble(attr(rp, "groupInterval"), &g->step))
+            g->step = 1.0;
+        return g->step > 0.0 && g->end >= g->start ? 1 : -1;
+    }
+    if (!strcmp(by, "years"))
+        g->by = OWF_PIVOT_GROUP_YEARS;
+    else if (!strcmp(by, "quarters"))
+        g->by = OWF_PIVOT_GROUP_QUARTERS;
+    else if (!strcmp(by, "months"))
+        g->by = OWF_PIVOT_GROUP_MONTHS;
+    else
+        return -1;
+    if (!attr(rp, "startDate"))
+        return -1;
+    *first_year = strtol(attr(rp, "startDate"), NULL, 10);   /* "2025-01-01T00:00:00": its year */
+    return *first_year >= 1 && *first_year <= 9999 ? 1 : -1;
+}
+
+/* A grouped field's item index as the key its cells take; 0 for none. */
+static int pivot_group_item(const owf_pivot_group *g, long n, long first_year, long index, double *key)
+{
+    if (index <= 0 || index >= n - 1)
+        *key = index <= 0 ? -1e300 : 1e300;
+    else if (g->by == OWF_PIVOT_GROUP_RANGE)
+        *key = g->start + g->step * (double)(index - 1);
+    else if (g->by == OWF_PIVOT_GROUP_YEARS)
+        *key = (double)(first_year + index - 1);
+    else
+        *key = (double)index;
+    return g->by == OWF_PIVOT_GROUP_RANGE || (index > 0 && index < n - 1);
+}
+
 static void drop_pivot_names(owf_book *book, int sheet)
 {
     int i, k;
@@ -2122,11 +2180,60 @@ static int read_pivot(xlsx *x, int sheet, const char *table_part)
         unsigned k;
         for (k = 0; k < def.nrow + def.ncol; k++) {
             unsigned f = k < def.nrow ? def.row[k] : def.col[k - def.nrow];
-            const char *sort = attr(nth_child(main_child(table, "pivotFields"), (long)f), "sortType");
+            const owf_xml_node *pf = nth_child(main_child(table, "pivotFields"), (long)f);
+            const char *sort = attr(pf, "sortType");
+            if (pf && xbool(attr(pf, "defaultSubtotal"), 1))    /* Excel's default: a subtotal per item */
+                owf_pivot_set_subtotal(&def, f, 1);
             if (sort && !strcmp(sort, "ascending"))
                 owf_pivot_set_sort(&def, f, OWF_PIVOT_SORT_ASCENDING);
             else if (sort && !strcmp(sort, "descending"))
                 owf_pivot_set_sort(&def, f, OWF_PIVOT_SORT_DESCENDING);
+        }
+    }
+    {                                            /* grouped row and column fields: cacheField fieldGroup */
+        unsigned k;
+        long count, year;
+        owf_pivot_group g;
+        for (k = 0; k < def.nrow + def.ncol; k++) {
+            int got = pivot_field_group(fields, k < def.nrow ? def.row[k] : def.col[k - def.nrow], &g, &count, &year);
+            if (got > 0)
+                owf_pivot_set_group(&def, &g);
+            else if (got < 0)
+                owf_report_add(x->report, OWF_NOTE_APPROX,
+                               "A pivot table field grouped by hand, by days or hours, or into a field of its own "
+                               "shows its items ungrouped");
+        }
+    }
+    {                                            /* hidden row and column items: item h="1" */
+        unsigned k;
+        for (k = 0; k < def.nrow + def.ncol; k++) {
+            unsigned f = k < def.nrow ? def.row[k] : def.col[k - def.nrow];
+            const owf_xml_node *items = main_child(nth_child(main_child(table, "pivotFields"), (long)f), "items");
+            const owf_xml_node *it;
+            const owf_pivot_group *grouped = owf_pivot_group_of(&def, f);
+            owf_pivot_group g;
+            long index = 0, count = 0, year = 0;
+            if (grouped && pivot_field_group(fields, f, &g, &count, &year) <= 0)
+                grouped = NULL;
+            for (it = main_child(items, "item"); it; it = main_next(it, "item"), index++) {
+                owf_pivot_page pg;
+                if (!xbool(attr(it, "h"), 0))
+                    continue;
+                memset(&pg, 0, sizeof pg);
+                if (grouped) {                   /* x is a group item, not a shared one */
+                    long x_item = xlong(attr(it, "x"), -1, 0, 0x7FFFFFFF);
+                    if (attr(it, "t") || x_item < 0 || x_item >= count ||
+                        !pivot_group_item(grouped, count, year, x_item, &pg.number))
+                        continue;
+                    pg.kind = OWF_PIVOT_NUMBER;
+                } else
+                    pivot_page_item(table, fields, (long)f, index, &pg);
+                pg.field = f;
+                if (pg.kind != OWF_PIVOT_ALL && !owf_pivot_set_hidden(&def, &pg, 1)) {
+                    owf_report_add(x->report, OWF_NOTE_LOST, "A pivot table with more than 32 hidden items shows the rest");
+                    break;
+                }
+            }
         }
     }
     for (n = main_child(main_child(table, "pageFields"), "pageField"); n; n = main_next(n, "pageField")) {
@@ -2141,11 +2248,20 @@ static int read_pivot(xlsx *x, int sheet, const char *table_part)
     }
     for (n = main_child(main_child(table, "dataFields"), "dataField"); n; n = main_next(n, "dataField")) {
         long f = xlong(attr(n, "fld"), -1, 0, 16383);
-        const char *fn = attr(n, "subtotal");
+        const char *fn = attr(n, "subtotal"), *as;
         int function = fn ? owf_pivot_function_from_word(fn) : OWF_PIVOT_FN_SUM;
         if (f < 0 || !function || def.ndata >= OWF_PIVOT_DATA)
             continue;
         def.data[def.ndata].field = (unsigned)f;
+        def.data[def.ndata].show = OWF_PIVOT_SHOW_NORMAL;
+        if ((as = attr(n, "showDataAs")) != NULL) {
+            int show = owf_pivot_show_from_word(as);
+            if (show >= 0)
+                def.data[def.ndata].show = show;
+            else
+                owf_report_add(x->report, OWF_NOTE_APPROX,
+                               "A pivot table data field shown as a difference or running total shows its values");
+        }
         def.data[def.ndata++].function = function;
     }
     def.row_grand = xbool(attr(table, "rowGrandTotals"), 1);
@@ -2534,12 +2650,53 @@ static void read_worksheet(xlsx *x, xsheet *xs)
 
 /* ---- The workbook ---- */
 
-/* Another book's file name, from an externalLink part: the last part of
- * its path. NULL for a link that is not to a book (DDE, OLE). */
+/* A node's text, joined; "" when it has none. Owned by b. */
+static const char *node_text(const owf_xml_node *n, owf_buf *b)
+{
+    const owf_xml_node *t;
+    b->length = 0;
+    for (t = n ? n->first : NULL; t; t = t->next)
+        if (t->type == OWF_XML_TEXT)
+            owf_buf_put(b, t->name, t->length);
+    owf_buf_put(b, "", 1);
+    return b->failed ? "" : (const char *)b->data;
+}
+
+/* An externalLink cell's cached value (t="n" by default, "str", "b", "e"). */
+static void external_cell(xlsx *x, owf_sheet *sheet, const owf_xml_node *cell, owf_buf *b)
+{
+    const char *ref = attr(cell, "r"), *t = attr(cell, "t");
+    const owf_xml_node *vn = main_child(cell, "v");
+    unsigned long row, col;
+    owf_cell *c;
+    const char *v;
+    double d;
+    if (!ref || !parse_cell(&ref, &row, &col) || *ref || !vn)
+        return;
+    v = node_text(vn, b);
+    if (!(c = owf_sheet_cell(sheet, (unsigned)row, (unsigned)col, 1))) {
+        x->failed = 1;
+        return;
+    }
+    if (t && !strcmp(t, "str")) {
+        set_text(x, c, v, unescape_xstring((char *)b->data, strlen(v)));
+    } else if (t && !strcmp(t, "b")) {
+        owf_cell_set_bool(c, xbool(v, 0));
+    } else if (t && !strcmp(t, "e")) {
+        int code = owf_xl_error_code(v, strlen(v));
+        owf_cell_set_error(c, code < 0 ? OWF_ERROR_NA : code);
+    } else if (owf_number_parse(v, strlen(v), &d)) {
+        owf_cell_set_number(c, d);
+    }
+}
+
+/* Another book, from an externalLink part: its name as formulas give it
+ * (NULL for a link that is not to a book: DDE, OLE), and in the model its
+ * target, sheets and the values the file last saw. */
 static char *external_book(xlsx *x, const char *part)
 {
     owf_xml *xml = read_xml(x->zip, part, NULL);
-    const owf_xml_node *eb;
+    const owf_xml_node *eb, *n, *set;
     const rel *it;
     rels r;
     char *name = NULL;
@@ -2548,13 +2705,34 @@ static char *external_book(xlsx *x, const char *part)
     eb = main_child(owf_xml_root(xml), "externalBook");
     read_rels(x->zip, part, &r);
     it = eb ? rel_by_id(&r, rel_attr(eb, "id")) : NULL;
-    if (it) {
-        const char *p, *start = it->target;
-        for (p = it->target; *p; p++)
-            if (*p == '/' || *p == '\\' || *p == ':')
-                start = p + 1;
-        if (*start)
-            name = copy(x, start, strlen(start));
+    if (it && (name = owf_link_name(it->target, strlen(it->target))) != NULL) {
+        owf_extbook *book = owf_book_add_extbook(x->book, name, it->target);
+        owf_sheet **sheets = NULL;
+        int count = count_children(main_child(eb, "sheetNames"), "sheetName"), i = 0;
+        owf_buf b;
+        owf_buf_init(&b);
+        if (!book || (count && !(sheets = calloc((size_t)count, sizeof *sheets))))
+            x->failed = 1;
+        for (n = main_child(main_child(eb, "sheetNames"), "sheetName"); n && sheets && i < count;
+             n = main_next(n, "sheetName"), i++) {
+            const char *val = attr(n, "val");
+            if (val && *val && !(sheets[i] = owf_extbook_sheet(book, val, 1)))
+                x->failed = 1;
+        }
+        set = main_child(eb, "sheetDataSet");
+        for (n = main_child(set, "sheetData"); n && sheets && !x->failed; n = main_next(n, "sheetData")) {
+            long id = xlong(attr(n, "sheetId"), -1, 0, count - 1);
+            const owf_xml_node *row, *cell;
+            if (id < 0 || !sheets[id])
+                continue;
+            for (row = main_child(n, "row"); row && !x->failed; row = main_next(row, "row"))
+                for (cell = main_child(row, "cell"); cell && !x->failed; cell = main_next(cell, "cell"))
+                    external_cell(x, sheets[id], cell, &b);
+        }
+        if (b.failed)
+            x->failed = 1;
+        owf_buf_free(&b);
+        free(sheets);
     }
     free_rels(&r);
     owf_xml_free(xml);
@@ -2621,6 +2799,255 @@ static void read_names(xlsx *x, const owf_xml_node *names)
     }
 }
 
+
+/* Excel's workbookProtection: lockStructure, and its password as the legacy 16-bit hash or a digest kept as
+   it was. lockWindows is not kept (GFOpenCalc's window has no fixed place). */
+static void read_book_protection(xlsx *x, const owf_xml_node *wp)
+{
+    static const char *const keep[4] = { "workbookAlgorithmName", "workbookHashValue", "workbookSaltValue",
+                                         "workbookSpinCount" };
+    const char *pw;
+    size_t k;
+    if (!wp || !xbool(attr(wp, "lockStructure"), 0))
+        return;
+    x->book->protect_structure = 1;
+    pw = attr(wp, "workbookPassword");
+    if (pw && strlen(pw) == 4) {
+        x->book->protect_hash = copy(x, pw, 4);
+        return;
+    }
+    if (attr(wp, "workbookAlgorithmName")) {
+        owf_buf b;
+        owf_buf_init(&b);
+        owf_buf_puts(&b, "xlsx:");
+        for (k = 0; k < 4; k++) {
+            const char *v = attr(wp, keep[k]);
+            if (!v)
+                continue;
+            owf_buf_printf(&b, " %s=\"", keep[k]);
+            owf_buf_puts(&b, v);
+            owf_buf_putc(&b, '"');
+        }
+        owf_buf_putc(&b, 0);
+        if (b.failed || !(x->book->protect_kept = copy(x, (const char *)b.data, strlen((const char *)b.data))))
+            x->failed = 1;
+        owf_buf_free(&b);
+    }
+}
+
+/* ---- Tracked changes (a shared workbook's revision log: xl/revisions) ----
+ * Each header's log in turn: rcc (a cell's old and new content, as typed), rrc (rows or columns inserted or
+ * deleted, with what deleted ones held), ris (a sheet inserted), rsnm (one renamed), each with its header's
+ * author and time, where it was when made (the book says so: changes_as_made). Sheets by their sheetId. */
+static int sheet_by_id(const xlsx *x, const char *id)
+{
+    long v = xlong(id, -1, 0, 0x7FFFFFFFL);
+    int i;
+    for (i = 0; v >= 0 && i < x->nsheets; i++)
+        if (x->sheets[i].id == v)
+            return x->sheets[i].sheet;
+    return -1;
+}
+
+static void all_t_text(const owf_xml_node *n, owf_buf *b)
+{
+    const owf_xml_node *t;
+    for (t = n ? n->first : NULL; t; t = t->next)
+        if (t->type == OWF_XML_ELEMENT) {
+            if (main_is(t, "t")) {
+                const owf_xml_node *k;
+                for (k = t->first; k; k = k->next)
+                    if (k->type == OWF_XML_TEXT)
+                        owf_buf_put(b, k->name, k->length);
+            } else if (!main_is(t, "rPh"))
+                all_t_text(t, b);
+        }
+}
+
+/* An oc or nc element's content as typed ("" empty), and its place; NULL when memory runs out. */
+static char *rev_input(xlsx *x, const owf_xml_node *cell, unsigned long *row, unsigned long *col, int *placed)
+{
+    const char *ref = attr(cell, "r"), *t = attr(cell, "t"), *v;
+    const owf_xml_node *vn = main_child(cell, "v"), *fn = main_child(cell, "f");
+    owf_cell c;
+    owf_buf b;
+    char *input;
+    double d;
+    memset(&c, 0, sizeof c);
+    owf_buf_init(&b);
+    *placed = ref && parse_cell(&ref, row, col) && !*ref;
+    if (fn && fn->first) {
+        const char *f = node_text(fn, &b);
+        char *text = *f ? owf_xl_formula_from_file(f, x->books, x->nbooks) : NULL;
+        if (text) {
+            if (owf_cell_set_formula(&c, text) < 0)
+                x->failed = 1;
+            free(text);
+        }
+    }
+    if (!c.formula) {
+        if (t && !strcmp(t, "inlineStr")) {
+            b.length = 0;
+            all_t_text(main_child(cell, "is"), &b);
+            owf_buf_put(&b, "", 1);
+            if (!b.failed)
+                set_text(x, &c, (const char *)b.data, unescape_xstring((char *)b.data, b.length - 1));
+        } else if (vn) {
+            v = node_text(vn, &b);
+            if (t && !strcmp(t, "s")) {
+                long i = xlong(v, -1, 0, 0x7FFFFFFFL);
+                const char *st = i >= 0 && (unsigned long)i < x->nsst ? (const char *)x->sst.data + x->sst_at[i] : "";
+                set_text(x, &c, st, strlen(st));
+            } else if (t && !strcmp(t, "str")) {
+                set_text(x, &c, v, unescape_xstring((char *)b.data, strlen(v)));
+            } else if (t && !strcmp(t, "b")) {
+                owf_cell_set_bool(&c, xbool(v, 0));
+            } else if (t && !strcmp(t, "e")) {
+                int code = owf_xl_error_code(v, strlen(v));
+                owf_cell_set_error(&c, code < 0 ? OWF_ERROR_NA : code);
+            } else if (owf_number_parse(v, strlen(v), &d)) {
+                owf_cell_set_number(&c, d);
+            }
+        }
+    }
+    owf_buf_free(&b);
+    input = owf_scenario_input(&c);
+    free(c.text);
+    free(c.formula);
+    if (!input)
+        x->failed = 1;
+    return input;
+}
+
+static owf_change *rev_new(xlsx *x, int kind, int sheet, const owf_xml_node *n, const char *author, const char *date)
+{
+    owf_book *b = x->book;
+    owf_change *c;
+    if (!(c = grow(x, b->changes, b->nchanges, &b->capchanges, sizeof *c)))
+        return NULL;
+    b->changes = c;
+    c = &b->changes[b->nchanges++];
+    memset(c, 0, sizeof *c);
+    c->kind = kind;
+    c->sheet = sheet;
+    c->id = (int)xlong(attr(n, "rId"), 0, 0, 0x7FFFFFF0L);
+    if ((author && !(c->author = copy(x, author, strlen(author)))) || (date && !(c->date = copy(x, date, strlen(date)))))
+        x->failed = 1;
+    return c;
+}
+
+static char *none_if_empty(char *s)
+{
+    if (s && !*s) {
+        free(s);
+        return NULL;
+    }
+    return s;
+}
+
+static void read_revision(xlsx *x, const owf_xml_node *n, const char *author, const char *date, int *lost)
+{
+    owf_change *c;
+    unsigned long row = 0, col = 0;
+    int placed = 0, sheet = sheet_by_id(x, attr(n, "sId"));
+    if (main_is(n, "rcc")) {
+        const owf_xml_node *oc = main_child(n, "oc"), *nc = main_child(n, "nc");
+        char *before = oc ? rev_input(x, oc, &row, &col, &placed) : NULL, *after;
+        int p2 = 0;
+        after = nc ? rev_input(x, nc, &row, &col, &p2) : NULL;
+        if (sheet < 0 || !(placed || p2) || !(c = rev_new(x, OWF_CHANGE_CELL, sheet, n, author, date))) {
+            free(before);
+            free(after);
+            return;
+        }
+        c->row = (unsigned)row;
+        c->col = (unsigned)col;
+        c->before = none_if_empty(before);
+        c->after = none_if_empty(after);
+    } else if (main_is(n, "rrc")) {
+        const char *action = attr(n, "action");
+        owf_range r;
+        int cols, del;
+        const owf_xml_node *k;
+        if (!action || sheet < 0 || !parse_range(attr(n, "ref"), &r))
+            return;
+        cols = !strcmp(action, "insertCol") || !strcmp(action, "deleteCol");
+        del = !strcmp(action, "deleteRow") || !strcmp(action, "deleteCol");
+        if (!cols && strcmp(action, "insertRow") && strcmp(action, "deleteRow"))
+            return;
+        if (!(c = rev_new(x, del ? (cols ? OWF_CHANGE_DELETE_COLS : OWF_CHANGE_DELETE_ROWS)
+                                 : (cols ? OWF_CHANGE_INSERT_COLS : OWF_CHANGE_INSERT_ROWS), sheet, n, author, date)))
+            return;
+        c->row = cols ? 0 : r.first_row;
+        c->col = cols ? r.first_col : 0;
+        c->count = cols ? r.last_col - r.first_col + 1 : r.last_row - r.first_row + 1;
+        for (k = main_child(n, "rcc"); del && k && !x->failed; k = main_next(k, "rcc")) {
+            const owf_xml_node *cell = main_child(k, "nc") ? main_child(k, "nc") : main_child(k, "oc");
+            char *input = cell ? rev_input(x, cell, &row, &col, &placed) : NULL;
+            owf_changecell *cc;
+            unsigned p;
+            if (!input || !*input || !placed || (p = (unsigned)(cols ? col : row)) < (cols ? c->col : c->row) ||
+                p - (cols ? c->col : c->row) >= c->count ||
+                !(cc = realloc(c->cells, (size_t)(c->ncells + 1) * sizeof *cc))) {
+                free(input);
+                continue;
+            }
+            c->cells = cc;
+            cc = &c->cells[c->ncells++];
+            cc->row = (unsigned)(cols ? row : row - c->row);
+            cc->col = (unsigned)(cols ? col - c->col : col);
+            cc->input = input;
+        }
+    } else if (main_is(n, "ris")) {
+        const char *name = attr(n, "name");
+        if ((sheet = sheet_by_id(x, attr(n, "sheetId"))) >= 0 &&
+            (c = rev_new(x, OWF_CHANGE_INSERT_SHEET, sheet, n, author, date)) != NULL && name &&
+            !(c->after = copy(x, name, strlen(name))))
+            x->failed = 1;
+    } else if (main_is(n, "rsnm")) {
+        const char *was = attr(n, "oldName"), *now = attr(n, "newName");
+        if (sheet >= 0 && (c = rev_new(x, OWF_CHANGE_RENAME_SHEET, sheet, n, author, date)) != NULL &&
+            ((was && !(c->before = copy(x, was, strlen(was)))) || (now && !(c->after = copy(x, now, strlen(now))))))
+            x->failed = 1;
+    } else if (n->type == OWF_XML_ELEMENT)
+        *lost = 1;                                   /* moves, formats, names, comments... */
+}
+
+static void read_revisions(xlsx *x)
+{
+    char headers[PART_NAME], part[PART_NAME];
+    owf_xml *xml, *logxml;
+    const owf_xml_node *h, *n;
+    rels hr;
+    int lost = 0, i, made = 0;
+    if (!rel_part(&x->wb_rels, rel_by_type(&x->wb_rels, "/revisionHeaders"), headers, sizeof headers))
+        return;
+    if (!(xml = read_xml(x->zip, headers, NULL)))
+        return;
+    x->book->track_changes = 1;
+    x->book->changes_as_made = 1;
+    read_rels(x->zip, headers, &hr);
+    for (h = main_child(owf_xml_root(xml), "header"); h && !x->failed; h = main_next(h, "header")) {
+        if (!rel_part(&hr, rel_by_id(&hr, rel_attr(h, "id")), part, sizeof part) ||
+            !(logxml = read_xml(x->zip, part, NULL)))
+            continue;
+        for (n = owf_xml_root(logxml)->first; n && !x->failed; n = n->next)
+            if (n->type == OWF_XML_ELEMENT)
+                read_revision(x, n, attr(h, "userName"), attr(h, "dateTime"), &lost);
+        owf_xml_free(logxml);
+    }
+    free_rels(&hr);
+    owf_xml_free(xml);
+    for (i = 0; i < x->book->nchanges; i++)          /* numbers the log left out */
+        if (x->book->changes[i].id > made)
+            made = x->book->changes[i].id;
+    for (i = 0; i < x->book->nchanges; i++)
+        if (!x->book->changes[i].id)
+            x->book->changes[i].id = ++made;
+    if (lost)
+        owf_report_add(x->report, OWF_NOTE_LOST, "Some tracked changes (moves, formats, names, comments) are not read");
+}
+
 static int read_workbook(xlsx *x)
 {
     owf_xml *xml;
@@ -2641,6 +3068,7 @@ static int read_workbook(xlsx *x)
     if (!strcmp(root->ns, NS_MAIN_STRICT))
         owf_report_add(x->report, OWF_NOTE_INFO, "This workbook is in Office Open XML's strict form");
     x->book->date1904 = xbool(attr(main_child(root, "workbookPr"), "date1904"), 0);
+    read_book_protection(x, main_child(root, "workbookProtection"));
     active = (int)xlong(attr(main_child(main_child(root, "bookViews"), "workbookView"), "activeTab"), 0, 0, 0xFFFF);
 
     memcpy(x->theme, office_theme, sizeof x->theme);
@@ -2669,6 +3097,7 @@ static int read_workbook(xlsx *x)
         const char *name = attr(n, "name"), *state = attr(n, "state");
         it = rel_by_id(&x->wb_rels, rel_attr(n, "id"));
         xs->sheet = -1;
+        xs->id = xlong(attr(n, "sheetId"), -1, 0, 0x7FFFFFFFL);
         xs->state = !state || !strcmp(state, "visible") ? 0 : !strcmp(state, "veryHidden") ? 2 : 1;
         xs->kind = !it ? 2 : type_is(it->type, "/worksheet") ? 0 : type_is(it->type, "/chartsheet") ? 1 : 2;
         x->nsheets++;
@@ -2712,6 +3141,8 @@ static int read_workbook(xlsx *x)
             read_worksheet(x, &x->sheets[i]);
     if (active < x->nsheets && x->sheets[active].sheet >= 0)
         x->book->active = x->sheets[active].sheet;
+    if (!x->failed)
+        read_revisions(x);
     if (x->pivots_kept || (pivot_caches && !x->pivots_read))
         owf_report_add(x->report, OWF_NOTE_LOST, "Pivot tables: some keep their cells only (GFOpenCalc reads one a sheet, "
                                                  "from a range of cells)");

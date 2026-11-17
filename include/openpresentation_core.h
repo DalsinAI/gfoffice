@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.39.0"
+#define OPR_CORE_VERSION "0.40.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -74,15 +74,32 @@ owf_font_kind opr_font_kind(const owf_deck *deck, int font);
 typedef enum {
     OPR_PDF_SLIDES,              /* a page a slide, at the slide's size */
     OPR_PDF_NOTES,               /* a notes page a slide: the slide above its notes */
-    OPR_PDF_HANDOUTS             /* handouts: handout_slides slides to a page */
+    OPR_PDF_HANDOUTS,            /* handouts: handout_slides slides to a page */
+    OPR_PDF_BOOKLET              /* a folded booklet: two pages side by side on each sheet side, in the order that
+                                    folds and staples in the middle (blank pages made up to a multiple of four) */
 } opr_pdf_pages;
+
+/* For a booklet of n pages: sheet side k's (0 the first sheet's front, 1 its back, ...) left and right page,
+   from 0, or -1 for a blank. The sides come to (n + 3) / 4 * 2. 0, or -1 when k is not a side. */
+int opr_booklet_side(int n, int k, int *left, int *right);
 
 typedef struct {
     int with_hidden;             /* hidden slides too */
     const char *today;           /* the date fields' text; NULL: today's */
     opr_pdf_pages pages;         /* 0: the slides */
     int handout_slides;          /* OPR_PDF_HANDOUTS: 1, 2, 3, 4, 6 or 9 (others: 6) */
+    /* For a printer, OPR_PDF_SLIDES only: bleed, twips each page prints past its trimmed edge (0 none, at
+       most OPR_PDF_MAX_BLEED), and crop marks at the trimmed corners, outside the bleed. Either makes each
+       PDF page larger than the slide by opr_pdf_margin's on every side, the slide in the middle. */
+    int bleed;
+    int crop_marks;
 } opr_pdf_options;
+
+#define OPR_PDF_MAX_BLEED 1440
+#define OPR_PDF_MARK_LENGTH 360  /* a crop mark, twips */
+#define OPR_PDF_MARK_GAP 120     /* the least room between a mark and the trimmed edge, twips */
+/* The room round each page for options' bleed and crop marks, twips (0: none). */
+int opr_pdf_margin(const opr_pdf_options *options);
 
 /* The deck as a PDF: by options->pages, one page a slide at the slide's
  * size, a notes page a slide, or handouts, both on the deck's notes page
@@ -90,6 +107,20 @@ typedef struct {
  * OWF_OK, or OWF_ERR_MEMORY. */
 int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigned char **data, size_t *length,
                    owf_report *report);
+
+/* A gradient fill as plain polygons, for a screen that fills polygons but can't clip (opr_gradient.c):
+ * band (0..bands-1) of the gradient inside the closed outline xy (n points, at most OL_MAX_SHAPE_POINTS)
+ * across the box x, y, w, h, into out (at most cap points) with its colour (0xRRGGBB). LINEAR runs from
+ * one colour to the other along angle (tenths anticlockwise, 0 left to right; each band overlaps the
+ * next by a unit); RADIAL's band 0 is the outermost ring, from at the centre, each band drawn over the
+ * one before. The point count (0: nothing to draw), or -1 when out is too small. */
+#define OPR_GRADIENT_LINEAR 1
+#define OPR_GRADIENT_RADIAL 2
+/* enough points for any band of an OL_MAX_SHAPE_POINTS outline: each cut keeps the outline's points
+ * and adds at most two per edge, and a ring adds its sides */
+#define OPR_GRADIENT_MAX_POINTS (3 * OL_MAX_SHAPE_POINTS + 32 + 8)
+int opr_gradient_band(const int *xy, int n, int x, int y, int w, int h, int kind, int angle, unsigned long from,
+                      unsigned long to, int band, int bands, int *out, int cap, unsigned long *colour);
 
 /* The deck as PowerPoint (PPTX, opr_pptx.c): its slides with their objects
  * where they are drawn, text with its look and levels, pictures, shapes,
@@ -162,6 +193,50 @@ typedef struct {
 int opr_text_find(const owf_deck *deck, int start_slide, int start_obj,
                   opr_pos start, const char *needle, int match_case,
                   opr_find_result *result);
+
+/* ---- Spelling (opr_spell.c) ----
+ *
+ * GFOpenWrite's dictionary and word rules (include/ow_spell_dict.h; the
+ * app opens one with ow_spell_open). The next misspelt word at or after
+ * (start_slide, start_obj, start): each slide's objects that can be typed
+ * in, in order, then its notes (obj OPR_NOTES), wrapping once to the first
+ * slide. A placeholder still showing its prompt is left alone. 1 with
+ * result's selection on the word and its text in word (cut to word_size),
+ * 0 when the deck is clean, -1 for bad input or no memory. */
+struct ow_spell;
+int opr_spell_next(const owf_deck *deck, struct ow_spell *spell, int start_slide, int start_obj,
+                   opr_pos start, opr_find_result *result, char *word, size_t word_size);
+/* The misspelt words of one paragraph's text (opr_para_text's), for the
+ * wavy underline as you type: up to max_ranges byte ranges written; the
+ * return is how many there are in all. */
+typedef struct {
+    size_t start, end;
+} opr_spell_range;
+int opr_spell_words(struct ow_spell *spell, const char *text, size_t length,
+                    opr_spell_range *ranges, int max_ranges);
+/* The misspelt words of one object's text (obj OPR_NOTES: the slide's
+ * notes), for the wavy underline as you type. With caret not NULL the word
+ * the caret is in, or just after, is left out: it is still being typed. A
+ * placeholder showing its prompt, a line or a hidden object has none. Up to
+ * max_marks written; the return is how many there are in all, -1 for bad
+ * input or no memory. */
+typedef struct {
+    int para;
+    size_t start, end;
+} opr_spell_mark;
+int opr_spell_marks(const owf_deck *deck, struct ow_spell *spell, int slide, int obj, const opr_pos *caret,
+                    opr_spell_mark *marks, int max_marks);
+/* ARexx SPELL, args being what follows the command word:
+ *   SPELL [COUNT]       how many misspelt words the deck has
+ *   SPELL LIST          one line each, "slide object word" counted from 1
+ *                       ("slide NOTES word" for the notes), as many as fit
+ *   SPELL CHECK word    1 when it is spelt right, else 0
+ *   SPELL SUGGEST word  the suggestions, a space between
+ *   SPELL ADD word      into the user's word list (saved)
+ *   SPELL IGNORE word   passed until the dictionary is closed
+ * The answer, or the reason, goes in out; the return is ARexx's code: 0,
+ * 5 with no dictionary, 10 for a bad command, 20 for no memory. */
+int opr_spell_rexx(const owf_deck *deck, struct ow_spell *spell, const char *args, char *out, size_t size);
 /* Delete exactly the selected characters and paragraph separators. Both ends
  * collapse to the start. The caller owns the Undo snapshot, as for typing. */
 int opr_text_delete_selection(owf_deck *deck, int slide, int obj,
@@ -298,6 +373,20 @@ int opr_table_apply_style(opr_undo *u, owf_deck *deck, int slide, int obj,
                           int row, int column, opr_table_scope scope,
                           unsigned long shading, int borders,
                           unsigned long border_colour);
+/* Presentation tables part 4: merge rows x cols cells from row, col into one
+ * (-2: one cell, past the table, or over a cell another merge has); split
+ * the merge that has row, col in it (-2: none); set a row's least height in
+ * twips (0: as its text needs); turn the design's parts on and off
+ * (OWF_TABLE_...). The text of the cells a merge covers is kept, not shown,
+ * and comes back on a split. Each is one Undo step. */
+int opr_table_merge(opr_undo *u, owf_deck *deck, int slide, int obj,
+                    int row, int column, int rows, int columns);
+int opr_table_split(opr_undo *u, owf_deck *deck, int slide, int obj,
+                    int row, int column);
+int opr_table_set_row_height(opr_undo *u, owf_deck *deck, int slide, int obj,
+                             int row, int twips);
+int opr_table_set_design(opr_undo *u, owf_deck *deck, int slide, int obj,
+                         unsigned design);
 /* A new embedded picture. The resource bytes and metadata are copied into
  * deck->res; coordinates are slide twips and crop is thousandths cut from
  * left, top, right and bottom. */
@@ -368,6 +457,13 @@ int opr_obj_set_wrap(opr_undo *u, owf_deck *deck, int slide, int obj,
  * consume them. */
 int opr_obj_set_picture_crop(opr_undo *u, owf_deck *deck, int slide, int obj,
                              const int crop[4]);
+/* Replace one top-level chart object's chart (its data and look, as the
+ * chart editor gives it back) with a copy of chart, as one undo step; the
+ * caller keeps chart. A chart object with no data gets one. -2 when the
+ * object is not a top-level chart or chart is NULL, -1 for no undo or
+ * memory, 0 done. */
+int opr_obj_set_chart(opr_undo *u, owf_deck *deck, int slide, int obj,
+                      const owf_chart *chart);
 /* Link a top-level text frame to a later empty top-level text frame, or remove
  * any non-first frame from a flow. A target must not already belong to another
  * flow; an insertion before a source's existing successor closes into the
@@ -668,6 +764,23 @@ int opr_show_next_hidden(opr_show *show);
  * timing expires. 0 means it is still showing; 1 means it advanced; -1 means
  * the show ended or the input/state was invalid. */
 int opr_show_tick(opr_show *show, unsigned long milliseconds);
+
+/* Where a show goes (design 7.1). Prefs choose OPR_SHOW_OWN_SCREEN or
+ * OPR_SHOW_WORKBENCH, or OPR_SHOW_AUTO: the Workbench screen when it is an
+ * RTG screen of 16 bits or more and at least 640 x 480, else a screen of
+ * the show's own (AGA, fewer than 256 colours, or too small). */
+enum { OPR_SHOW_AUTO, OPR_SHOW_OWN_SCREEN, OPR_SHOW_WORKBENCH };
+int opr_show_place(int choice, int wb_depth, int wb_width, int wb_height);
+/* The words Prefs keep a choice as ("auto", "own", "workbench"), and back
+ * (any case; anything else is OPR_SHOW_AUTO). */
+const char *opr_show_place_word(int choice);
+int opr_show_place_from(const char *word);
+/* The show's own screen for a slide of slide_w x slide_h (any units): its
+ * shape, at least 640 x 480 (480 high, wider for a wide slide; 640 wide,
+ * taller for a tall one); depth 8 on a planar (AGA) display, else 16, or
+ * 24 when the Workbench screen is 24 bits or more. */
+void opr_show_screen_size(long slide_w, long slide_h, int *width, int *height);
+int opr_show_screen_depth(int rtg, int wb_depth);
 
 /* Backend-independent transition geometry. A frame describes which rectangle
  * of the old and new full-screen bitmap to copy and where. Wipe has only a

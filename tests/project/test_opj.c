@@ -7,6 +7,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "openproject_core.h"
 
@@ -38,6 +39,7 @@ static oldraw *cur;
 static int fills_left_of;               /* fills that reached left of this x, when set */
 static int fills_left;
 static char texts[64][64];
+static unsigned long text_inks[64];     /* each text's colour, resolved */
 static int ntexts;
 
 static void t_fill(void *t, int x, int y, int w, int h, oldraw_colour c)
@@ -79,11 +81,12 @@ static int t_measure(void *t, const char *s, size_t n, const oldraw_font *f, old
 static int t_text(void *t, int x, int y, const char *s, size_t n, const oldraw_font *f, oldraw_colour c, unsigned st,
                   const oldraw_rect *clip)
 {
-    (void)t; (void)x; (void)y; (void)f; (void)c; (void)st; (void)clip;
+    (void)t; (void)x; (void)y; (void)f; (void)st; (void)clip;
     if (ntexts < 64) {
         size_t k = n < 63 ? n : 63;
         memcpy(texts[ntexts], s, k);
         texts[ntexts][k] = 0;
+        text_inks[ntexts] = oldraw_resolve(cur, c) & 0xFFFFFFUL;
         ntexts++;
     }
     return 1;
@@ -107,6 +110,15 @@ static int drew(const char *s)
     int i;
     for (i = 0; i < ntexts; i++)
         if (strcmp(texts[i], s) == 0) return 1;
+    return 0;
+}
+
+/* 1 when s was drawn in colour ink (0xRRGGBB). */
+static int drew_in(const char *s, unsigned long ink)
+{
+    int i;
+    for (i = 0; i < ntexts; i++)
+        if (strcmp(texts[i], s) == 0 && text_inks[i] == ink) return 1;
     return 0;
 }
 
@@ -667,6 +679,1009 @@ static void test_baseline(void)
     opj_doc_free(doc);
 }
 
+/* Assign Resources: units typed for each kind, the dialog's lines, Assign, Remove, Replace and Undo. */
+static void test_assign_dialog(void)
+{
+    opj_doc *doc = three();
+    opj_assign_info info;
+    long u = -1;
+    char text[80];
+    int uid;
+    CHECK_N(opj_add_resource(doc, "Dale", NULL), OWF_OK);                 /* 0 */
+    CHECK_N(opj_set_resource_cell(doc, 0, OPJ_RCOL_RATE, "20/h"), OWF_OK);
+    CHECK_N(opj_add_resource(doc, "Bob", NULL), OWF_OK);                  /* 1 */
+    CHECK_N(opj_add_resource(doc, "Steel", NULL), OWF_OK);                /* 2, a material at 5.00 */
+    CHECK_N(opj_set_resource_cell(doc, 2, OPJ_RCOL_TYPE, "m"), OWF_OK);
+    CHECK_N(opj_set_resource_cell(doc, 2, OPJ_RCOL_RATE, "5"), OWF_OK);
+    CHECK_N(opj_add_resource(doc, "Travel", NULL), OWF_OK);               /* 3, a cost */
+    CHECK_N(opj_set_resource_cell(doc, 3, OPJ_RCOL_TYPE, "c"), OWF_OK);
+
+    /* what the Units box takes */
+    CHECK_N(opj_units_parse(doc, 0, "50%", &u), OWF_OK);
+    CHECK_N(u, 50);
+    CHECK_N(opj_units_parse(doc, 0, " 150 ", &u), OWF_OK);
+    CHECK_N(u, 150);
+    CHECK_N(opj_units_parse(doc, 0, "50.5%", &u), OWF_ERR_FORMAT);
+    CHECK_N(opj_units_parse(doc, 0, "0%", &u), OWF_ERR_FORMAT);
+    CHECK_N(opj_units_parse(doc, 0, "", &u), OWF_ERR_FORMAT);
+    CHECK_N(opj_units_parse(doc, 0, "200000", &u), OWF_ERR_FORMAT);
+    CHECK_N(opj_units_parse(doc, 0, "half", &u), OWF_ERR_FORMAT);
+    CHECK_N(opj_units_parse(doc, 0, "50%%", &u), OWF_ERR_FORMAT);
+    CHECK_N(opj_units_parse(doc, 2, "2.5", &u), OWF_OK);
+    CHECK_N(u, 250);
+    CHECK_N(opj_units_parse(doc, 2, "2.5%", &u), OWF_ERR_FORMAT);
+    CHECK_N(opj_units_parse(doc, 3, "$120", &u), OWF_OK);
+    CHECK_N(u, 12000);
+    CHECK_N(opj_units_parse(doc, 3, "120.00", &u), OWF_OK);
+    CHECK_N(u, 12000);
+    CHECK_N(opj_units_parse(doc, 9, "1", &u), OWF_ERR_FORMAT);
+    CHECK_N(opj_units_parse(NULL, 0, "1", &u), OWF_ERR_FORMAT);
+    opj_units_text(doc, 0, 50, text, sizeof text);
+    CHECK_S(text, "50%");
+    opj_units_text(doc, 2, 250, text, sizeof text);
+    CHECK_S(text, "2.5");
+    opj_units_text(doc, 3, 12000, text, sizeof text);
+    CHECK_S(text, "120.00");
+    opj_units_text(doc, 9, 1, text, sizeof text);
+    CHECK_S(text, "");
+
+    /* Assign: 100% when no units are typed; Build is 3 days, 24h at 20.00 */
+    CHECK(opj_assign_get(doc, 1, 0, &info) && !info.assigned);
+    CHECK(!opj_assign_get(doc, 9, 0, &info) && !opj_assign_get(doc, 1, 9, &info));
+    opj_assign_line(doc, 1, 0, text, sizeof text);
+    CHECK_S(text, "  Dale                                    ");
+    CHECK_N(opj_assign_resource(doc, 1, 0, NULL), OWF_OK);
+    CHECK(opj_assign_get(doc, 1, 0, &info) && info.assigned);
+    CHECK_N(info.units, 100);
+    CHECK_N(info.work, 24 * 60);
+    CHECK_N(info.cost, 48000);
+    opj_assign_line(doc, 1, 0, text, sizeof text);
+    CHECK_S(text, "* Dale                     100%     480.00");
+    CHECK_N(opj_assign_resource(doc, 1, 0, "50%"), OWF_OK);
+    CHECK(opj_assign_get(doc, 1, 0, &info) && info.units == 50 && info.cost == 48000);   /* Fixed Units: */
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "6d");            /* half the units, twice as long, the same work */
+    CHECK_N(opj_assign_resource(doc, 1, 0, ""), OWF_OK);                   /* its own units stay */
+    CHECK(opj_assign_get(doc, 1, 0, &info) && info.units == 50);
+    CHECK_N(opj_assign_resource(doc, 1, 0, "lots"), OWF_ERR_FORMAT);
+    CHECK_N(opj_assign_resource(doc, 1, 3, NULL), OWF_ERR_FORMAT);          /* a cost needs its amount */
+    CHECK_N(opj_assign_resource(doc, 1, 3, "120"), OWF_OK);
+    CHECK_N(opj_assign_resource(doc, 7, 0, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_assign_resource(doc, 1, 7, NULL), OWF_ERR_FORMAT);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Dale[50%],Travel[120.00]");
+
+    /* Replace: Bob takes Dale's place, units and uid */
+    uid = doc->plan->assigns[0].uid;
+    CHECK_N(opj_replace_resource(doc, 1, 0, 1, NULL), OWF_OK);
+    CHECK(opj_assign_get(doc, 1, 0, &info) && !info.assigned);
+    CHECK(opj_assign_get(doc, 1, 1, &info) && info.assigned && info.units == 50);
+    CHECK_N(doc->plan->assigns[0].uid, uid);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Bob[50%],Travel[120.00]");
+    CHECK_N(opj_replace_resource(doc, 1, 1, 2, NULL), OWF_OK);             /* another kind: one unit */
+    opj_assign_line(doc, 1, 2, text, sizeof text);
+    CHECK_S(text, "* Steel                       1       5.00");
+    CHECK_N(opj_replace_resource(doc, 1, 2, 0, "75%"), OWF_OK);
+    CHECK(opj_assign_get(doc, 1, 0, &info) && info.units == 75);
+    CHECK_N(opj_replace_resource(doc, 1, 1, 2, NULL), OWF_ERR_FORMAT);     /* Bob isn't assigned now */
+    CHECK_N(opj_replace_resource(doc, 1, 0, 3, NULL), OWF_ERR_FORMAT);     /* Travel already is */
+    CHECK_N(opj_replace_resource(doc, 1, 0, 0, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_replace_resource(doc, 1, 0, 9, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_replace_resource(doc, 1, 0, 1, "0"), OWF_ERR_FORMAT);
+    CHECK(opj_assign_get(doc, 1, 0, &info) && info.units == 75);
+
+    /* Remove, and Undo brings it back */
+    CHECK_N(opj_remove_resource(doc, 1, 3), OWF_OK);
+    CHECK_N(opj_remove_resource(doc, 1, 3), OWF_ERR_FORMAT);
+    CHECK_N(opj_remove_resource(doc, 1, 9), OWF_ERR_FORMAT);
+    CHECK_N(opj_remove_resource(doc, 1, -1), OWF_ERR_FORMAT);
+    /* the name Replace... asks for */
+    CHECK_N(opj_find_resource(doc, "dale"), 0);
+    CHECK_N(opj_find_resource(doc, "  STEEL "), 2);
+    CHECK_N(opj_find_resource(doc, "4"), 3);
+    CHECK_N(opj_find_resource(doc, "5"), -1);
+    CHECK_N(opj_find_resource(doc, "0"), -1);
+    CHECK_N(opj_find_resource(doc, "Dal"), -1);
+    CHECK_N(opj_find_resource(doc, ""), -1);
+    CHECK_N(opj_find_resource(doc, NULL), -1);
+    CHECK_N(opj_find_resource(doc, "99999999"), -1);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Dale[75%]");
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Dale[75%],Travel[120.00]");
+    opj_doc_free(doc);
+}
+
+/* Level Resources and Clear Leveling as edits, and the Leveling Delay column: Dale on Plan and on a new
+ * Check beside it, both on Monday. */
+static void test_level_cells(void)
+{
+    opj_doc *doc = three();
+    int n = -1;
+    CHECK_S(opj_column_title(OPJ_COL_LEVELING_DELAY), "Leveling Delay");
+    CHECK(opj_column_typed(OPJ_COL_LEVELING_DELAY));
+    CHECK_N(opj_insert_task(doc, 3, "Check"), OWF_OK);                    /* 1 day, no links */
+    CHECK_N(opj_add_resource(doc, "Dale", NULL), OWF_OK);
+    CHECK_N(opj_set_assignment(doc, 0, 0, 100), OWF_OK);
+    CHECK_N(opj_set_assignment(doc, 3, 0, 100), OWF_OK);
+    CHECK(doc->plan->resources[0].overallocated);
+    CHECK_S(cell_of(doc, 3, OPJ_COL_LEVELING_DELAY), "0d");
+    CHECK_N(opj_level(doc, 0, &n), OWF_OK);
+    CHECK_N(n, 1);
+    CHECK(!doc->plan->resources[0].overallocated);
+    CHECK_S(cell_of(doc, 3, OPJ_COL_LEVELING_DELAY), "2d");                /* after Plan's two days */
+    CHECK_S(cell_of(doc, 3, OPJ_COL_START), "Wed 18/11/26");
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK_S(cell_of(doc, 3, OPJ_COL_LEVELING_DELAY), "0d");
+    CHECK_N(opj_redo(doc), OWF_OK);
+    CHECK_N(opj_clear_leveling(doc), OWF_OK);
+    CHECK_S(cell_of(doc, 3, OPJ_COL_START), "Mon 16/11/26");
+    doc->dirty = 0;
+    CHECK_N(opj_clear_leveling(doc), OWF_OK);                              /* nothing to clear: no edit */
+    CHECK_N(doc->dirty, 0);
+    CHECK_N(opj_undo(doc), OWF_OK);                                        /* the Undo is the first Clear's */
+    CHECK_S(cell_of(doc, 3, OPJ_COL_LEVELING_DELAY), "2d");
+    CHECK_N(opj_clear_leveling(doc), OWF_OK);
+    /* typed */
+    CHECK_N(opj_set_cell(doc, 3, OPJ_COL_LEVELING_DELAY, "1d"), OWF_OK);
+    CHECK_S(cell_of(doc, 3, OPJ_COL_START), "Tue 17/11/26");
+    CHECK_N(opj_set_cell(doc, 3, OPJ_COL_LEVELING_DELAY, "2ed"), OWF_OK);
+    CHECK_S(cell_of(doc, 3, OPJ_COL_LEVELING_DELAY), "2ed");
+    CHECK_S(cell_of(doc, 3, OPJ_COL_START), "Wed 18/11/26");
+    CHECK_N(opj_set_cell(doc, 3, OPJ_COL_LEVELING_DELAY, "soon"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cell(doc, 3, OPJ_COL_LEVELING_DELAY, "0d"), OWF_OK);
+    CHECK_S(cell_of(doc, 3, OPJ_COL_START), "Mon 16/11/26");
+    /* a summary has none */
+    CHECK_N(opj_indent(doc, 3, 1, 1), OWF_OK);                             /* Ship becomes Check's summary */
+    CHECK_S(cell_of(doc, 2, OPJ_COL_LEVELING_DELAY), "");
+    CHECK_N(opj_set_cell(doc, 2, OPJ_COL_LEVELING_DELAY, "1d"), OWF_ERR_FORMAT);
+    CHECK_N(opj_level(NULL, 0, &n), OWF_ERR_FORMAT);
+    CHECK_N(n, 0);
+    CHECK_N(opj_clear_leveling(NULL), OWF_ERR_FORMAT);
+    opj_doc_free(doc);
+}
+
+/* The names in row order, "Alpha,Build,..." */
+static const char *names_of(const opj_doc *doc)
+{
+    static char out[200];
+    size_t k = 0;
+    int i;
+    out[0] = 0;
+    for (i = 0; i < doc->plan->ntasks && k < sizeof out - 40; i++) {
+        const char *n = doc->plan->tasks[i].name ? doc->plan->tasks[i].name : "";
+        k += (size_t)snprintf(out + k, sizeof out - k, i ? ",%s" : "%s", n);
+    }
+    return out;
+}
+
+/* Project > Sort: by one key and by two, up and down; links and assignments follow; NA last; the outline. */
+static void test_sort(void)
+{
+    opj_doc *doc = three();
+    opj_sort_key k[3] = { { OPJ_COL_NAME, 0 }, { OPJ_COL_NAME, 0 }, { OPJ_COL_NAME, 0 } };
+    opj_sort_key bad[1] = { { OPJ_NCOLS, 0 } };
+    CHECK_N(opj_insert_task(doc, 3, "alpha"), OWF_OK);                    /* 1 day, no links */
+    CHECK_N(opj_add_resource(doc, "Dale", NULL), OWF_OK);
+    CHECK_N(opj_set_assignment(doc, 0, 0, 100), OWF_OK);                   /* Dale on Plan */
+    CHECK_N(opj_sort_tasks(doc, k, 1), OWF_OK);                            /* by name, case ignored */
+    CHECK_S(names_of(doc), "alpha,Build,Plan,Ship");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PREDECESSORS), "3");                   /* Build still after Plan */
+    CHECK_S(cell_of(doc, 3, OPJ_COL_PREDECESSORS), "2");
+    CHECK_S(cell_of(doc, 2, OPJ_COL_RESOURCES), "Dale");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_START), "Wed 18/11/26");               /* the dates didn't move */
+    k[0].column = OPJ_COL_DURATION, k[0].descending = 1;
+    CHECK_N(opj_sort_tasks(doc, k, 1), OWF_OK);
+    CHECK_S(names_of(doc), "Build,Plan,alpha,Ship");
+    k[0].column = OPJ_COL_START, k[0].descending = 0;                      /* Plan and alpha both Monday */
+    k[1].column = OPJ_COL_NAME;
+    CHECK_N(opj_sort_tasks(doc, k, 2), OWF_OK);
+    CHECK_S(names_of(doc), "alpha,Plan,Build,Ship");
+    CHECK_N(opj_sort_tasks(doc, k, 1), OWF_OK);                            /* ties keep their order */
+    CHECK_S(names_of(doc), "alpha,Plan,Build,Ship");
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK_S(names_of(doc), "Build,Plan,alpha,Ship");
+    /* NA after every value, up or down: only Build has an actual start */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_START, "Wed 18/11/26"), OWF_OK);
+    k[0].column = OPJ_COL_ACTUAL_START, k[0].descending = 1;
+    CHECK_N(opj_sort_tasks(doc, k, 1), OWF_OK);
+    CHECK_S(names_of(doc), "Build,Plan,alpha,Ship");
+    k[0].descending = 0;
+    k[0].column = OPJ_COL_NAME, k[0].descending = 1;
+    CHECK_N(opj_sort_tasks(doc, k, 1), OWF_OK);
+    CHECK_S(names_of(doc), "Ship,Plan,Build,alpha");
+    CHECK_N(opj_sort_tasks(doc, k, 0), OWF_ERR_FORMAT);
+    CHECK_N(opj_sort_tasks(doc, k, 4), OWF_ERR_FORMAT);
+    CHECK_N(opj_sort_tasks(doc, bad, 1), OWF_ERR_FORMAT);
+    CHECK_N(opj_sort_tasks(NULL, k, 1), OWF_ERR_FORMAT);
+    opj_doc_free(doc);
+
+    /* the outline: a summary carries its subtasks, which are sorted among themselves */
+    doc = opj_doc_new(NULL, AT(16, 8, 0));
+    CHECK_N(opj_insert_task(doc, 0, "Zed"), OWF_OK);
+    CHECK_N(opj_insert_task(doc, 1, "b"), OWF_OK);
+    CHECK_N(opj_insert_task(doc, 2, "a"), OWF_OK);
+    CHECK_N(opj_insert_task(doc, 3, "Top"), OWF_OK);
+    CHECK_N(opj_indent(doc, 1, 2, 1), OWF_OK);
+    k[0].column = OPJ_COL_NAME, k[0].descending = 0;
+    CHECK_N(opj_sort_tasks(doc, k, 1), OWF_OK);
+    CHECK_S(names_of(doc), "Top,Zed,a,b");
+    CHECK_N(doc->plan->tasks[1].level, 1);
+    CHECK_N(doc->plan->tasks[2].level, 2);
+    CHECK(doc->plan->tasks[1].summary);
+    opj_doc_free(doc);
+
+    /* names alike for their first 300 bytes sort by the rest */
+    {
+        char a[320], b[320];
+        memset(a, 'n', 300);
+        memcpy(b, a, 300);
+        strcpy(a + 300, "b");
+        strcpy(b + 300, "a");
+        doc = opj_doc_new(NULL, AT(16, 8, 0));
+        CHECK_N(opj_insert_task(doc, 0, a), OWF_OK);
+        CHECK_N(opj_insert_task(doc, 1, b), OWF_OK);
+        k[0].column = OPJ_COL_NAME, k[0].descending = 0;
+        CHECK_N(opj_sort_tasks(doc, k, 1), OWF_OK);
+        CHECK(strcmp(doc->plan->tasks[0].name, b) == 0);
+        opj_doc_free(doc);
+    }
+}
+
+/* A plan with two summaries: A over Plan (done) and Build (half), B over Ship (a milestone); then Docs. */
+static opj_doc *phases(void)
+{
+    opj_doc *doc = opj_doc_new(NULL, AT(16, 8, 0));
+    static const char *const names[] = { "A", "Plan", "Build", "B", "Ship", "Docs" };
+    int i;
+    for (i = 0; i < 6; i++) CHECK_N(opj_insert_task(doc, i, names[i]), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_DURATION, "2d"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 2, OPJ_COL_DURATION, "3d"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 2, OPJ_COL_PREDECESSORS, "2"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 4, OPJ_COL_DURATION, "0d"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 4, OPJ_COL_PREDECESSORS, "3"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 5, OPJ_COL_DURATION, "2d"), OWF_OK);
+    CHECK_N(opj_indent(doc, 1, 2, 1), OWF_OK);
+    CHECK_N(opj_indent(doc, 4, 1, 1), OWF_OK);
+    CHECK_N(opj_set_percent(doc, 1, 100), OWF_OK);
+    CHECK_N(opj_set_percent(doc, 2, 50), OWF_OK);
+    return doc;
+}
+
+/* The lines as "1,2,[3],4": task rows, a heading as its group's first task's row in brackets. */
+static const char *lines_text(const opj_lines *l)
+{
+    static char out[200];
+    size_t k = 0;
+    int i;
+    out[0] = 0;
+    for (i = 0; i < l->n && k < sizeof out - 20; i++)
+        k += (size_t)snprintf(out + k, sizeof out - k, l->task[i] >= 0 ? "%s%d" : "%s[%d]", i ? "," : "",
+                              l->task[i] >= 0 ? l->task[i] : l->heading[i]);
+    return out;
+}
+
+static const char *filtered(opj_lines *l, const opj_doc *doc, int kind, int summaries)
+{
+    memset(&l->filter, 0, sizeof l->filter);
+    l->filter.kind = kind;
+    l->filter.summaries = summaries;
+    CHECK_N(opj_lines_update(l, doc), OWF_OK);
+    return lines_text(l);
+}
+
+/* Project > Filtered For, the AutoFilter and Group By, as the lines a view shows. */
+static void test_filter_group(void)
+{
+    opj_doc *doc = phases();
+    opj_lines l;
+    char text[80];
+    opj_lines_init(&l);
+    CHECK(!opj_lines_active(&l));
+    CHECK_S(filtered(&l, doc, OPJ_FILTER_ALL, 0), "0,1,2,3,4,5");
+    CHECK_S(filtered(&l, doc, OPJ_FILTER_MILESTONES, 0), "4");
+    CHECK_S(filtered(&l, doc, OPJ_FILTER_MILESTONES, 1), "3,4");           /* with B above it */
+    CHECK(opj_lines_active(&l));
+    CHECK_S(filtered(&l, doc, OPJ_FILTER_COMPLETED, 0), "1");
+    CHECK_S(filtered(&l, doc, OPJ_FILTER_COMPLETED, 1), "0,1");
+    CHECK_S(filtered(&l, doc, OPJ_FILTER_INCOMPLETE, 0), "0,2,3,4,5");
+    CHECK_S(filtered(&l, doc, OPJ_FILTER_UNSTARTED, 0), "3,4,5");
+    CHECK_S(filtered(&l, doc, OPJ_FILTER_SUMMARY, 0), "0,3");
+    CHECK_S(filtered(&l, doc, OPJ_FILTER_CRITICAL, 0), "0,1,2,3,4");        /* Docs has slack */
+    CHECK_N(l.line_of[5], -1);
+    CHECK_N(l.line_of[4], 4);
+    /* the AutoFilter: a column's cell, contains, equals or begins; empty text keeps every task */
+    l.filter.kind = OPJ_FILTER_CELL;
+    l.filter.column = OPJ_COL_NAME;
+    strcpy(l.filter.text, "I");
+    l.filter.how = OPJ_FIND_CONTAINS;
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+    CHECK_S(lines_text(&l), "2,4");
+    l.filter.summaries = 1;
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+    CHECK_S(lines_text(&l), "0,2,3,4");
+    l.filter.summaries = 0;
+    l.filter.how = OPJ_FIND_BEGINS;
+    strcpy(l.filter.text, "b");
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+    CHECK_S(lines_text(&l), "2,3");
+    l.filter.how = OPJ_FIND_EQUALS;
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+    CHECK_S(lines_text(&l), "3");
+    l.filter.column = OPJ_COL_DURATION;
+    strcpy(l.filter.text, cell_of(doc, 1, OPJ_COL_DURATION));
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+    CHECK_S(lines_text(&l), "1,5");
+    l.filter.text[0] = 0;
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+    CHECK_S(lines_text(&l), "0,1,2,3,4,5");
+    l.filter.column = OPJ_NCOLS;
+    CHECK_N(opj_lines_update(&l, doc), OWF_ERR_FORMAT);
+    CHECK_S(lines_text(&l), "0,1,2,3,4,5");                               /* as they were */
+    l.filter.kind = OPJ_NFILTERS;
+    CHECK_N(opj_lines_update(&l, doc), OWF_ERR_FORMAT);
+    CHECK_N(opj_lines_update(NULL, doc), OWF_ERR_FORMAT);
+    CHECK_N(opj_lines_update(&l, NULL), OWF_ERR_FORMAT);
+
+    /* Group By Duration: no summaries; 0 days, 2 days (Plan, Docs), 3 days; then down */
+    memset(&l.filter, 0, sizeof l.filter);
+    l.group = OPJ_COL_DURATION;
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+    CHECK_S(lines_text(&l), "[4],4,[1],1,5,[2],2");
+    snprintf(text, sizeof text, "Duration: %s", cell_of(doc, 1, OPJ_COL_DURATION));
+    opj_lines_heading_text(&l, doc, 2, text + 40, 40);
+    CHECK_S(text + 40, text);
+    CHECK_N(l.line_of[5], 4);
+    CHECK_N(l.line_of[0], -1);
+    opj_lines_heading_text(&l, doc, 1, text, sizeof text);               /* a task's line: none */
+    CHECK_S(text, "");
+    l.group_descending = 1;
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+    CHECK_S(lines_text(&l), "[2],2,[1],1,5,[4],4");
+    l.filter.kind = OPJ_FILTER_INCOMPLETE;                                 /* grouped and filtered */
+    l.group_descending = 0;
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+    CHECK_S(lines_text(&l), "[4],4,[5],5,[2],2");
+    l.filter.kind = OPJ_FILTER_ALL;
+    l.group = OPJ_COL_NAME;                                                /* by text */
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+    CHECK_S(lines_text(&l), "[2],2,[5],5,[1],1,[4],4");
+    l.group = OPJ_NCOLS;
+    CHECK_N(opj_lines_update(&l, doc), OWF_ERR_FORMAT);
+    /* a big plan of distinct names, grouped by name, in order (n log n, not n^2) */
+    {
+        opj_doc *big = opj_doc_new(NULL, AT(16, 8, 0));
+        opj_lines g;
+        char name[16];
+        int i, ok = 1;
+        for (i = 0; i < 500 && big; i++) {
+            snprintf(name, sizeof name, "t%04d", (i * 293) % 500);     /* every name once, shuffled */
+            if (opj_insert_task(big, i, name) != OWF_OK) ok = 0;
+        }
+        CHECK(big && ok);
+        opj_lines_init(&g);
+        g.group = OPJ_COL_NAME;
+        CHECK_N(opj_lines_update(&g, big), OWF_OK);
+        CHECK_N(g.n, 1000);
+        for (i = 2; i < g.n && ok; i += 2)
+            if (strcmp(big->plan->tasks[g.task[i - 1]].name, big->plan->tasks[g.task[i + 1]].name) >= 0) ok = 0;
+        CHECK(ok);
+        CHECK_S(big->plan->tasks[g.task[1]].name, "t0000");
+        opj_lines_free(&g);
+        opj_doc_free(big);
+    }
+
+    /* the AutoFilter reads a cell whole: a match past a long note's 400th byte */
+    {
+        char note[1001];
+        memset(note, 'x', 1000);
+        memcpy(note + 900, "omega", 5);
+        note[1000] = 0;
+        CHECK_N(opj_set_notes(doc, 5, note), OWF_OK);
+        l.group = -1;
+        memset(&l.filter, 0, sizeof l.filter);
+        l.filter.kind = OPJ_FILTER_CELL;
+        l.filter.column = OPJ_COL_NOTES;
+        strcpy(l.filter.text, "omega");
+        CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+        CHECK_S(lines_text(&l), "5");
+        memset(&l.filter, 0, sizeof l.filter);
+    }
+
+    /* the names */
+    CHECK_S(opj_filter_name(OPJ_FILTER_CRITICAL), "Critical");
+    CHECK_S(opj_filter_name(OPJ_NFILTERS), "");
+    CHECK_N(opj_filter_parse("critical"), OPJ_FILTER_CRITICAL);
+    CHECK_N(opj_filter_parse("Incomplete Tasks"), OPJ_FILTER_INCOMPLETE);
+    CHECK_N(opj_filter_parse("autofilter"), OPJ_FILTER_CELL);
+    CHECK_N(opj_filter_parse("nope"), -1);
+    CHECK(opj_filter_passes(doc, NULL, 0));
+    CHECK(!opj_filter_passes(doc, NULL, 6));
+    /* column names, and Sort's keys as typed */
+    CHECK_N(opj_column_parse("Duration", 0), OPJ_COL_DURATION);
+    CHECK_N(opj_column_parse("% complete", 0), OPJ_COL_PERCENT);
+    CHECK_N(opj_column_parse("Resource Names", 0), OPJ_COL_RESOURCES);
+    CHECK_N(opj_column_parse("resources", 0), OPJ_COL_RESOURCES);
+    CHECK_N(opj_column_parse("Max. Units", 1), OPJ_RCOL_MAX);
+    CHECK_N(opj_column_parse("colour", 0), -1);
+    {
+        opj_sort_key k[3];
+        int n = -1;
+        CHECK_N(opj_sort_parse("Start, Duration desc,name UP", k, &n), OWF_OK);
+        CHECK_N(n, 3);
+        CHECK(k[0].column == OPJ_COL_START && !k[0].descending);
+        CHECK(k[1].column == OPJ_COL_DURATION && k[1].descending);
+        CHECK(k[2].column == OPJ_COL_NAME && !k[2].descending);
+        CHECK_N(opj_sort_parse("Finish Descending,", k, &n), OWF_OK);
+        CHECK(n == 1 && k[0].column == OPJ_COL_FINISH && k[0].descending);
+        CHECK_N(opj_sort_parse("Constraint Type", k, &n), OWF_OK);          /* a title with a space */
+        CHECK(n == 1 && k[0].column == OPJ_COL_CONSTRAINT_TYPE);
+        CHECK_N(opj_sort_parse("Start, Finish, Name, ID", k, &n), OWF_ERR_FORMAT);
+        CHECK_N(opj_sort_parse("Colour", k, &n), OWF_ERR_FORMAT);
+        CHECK_N(opj_sort_parse("", k, &n), OWF_ERR_FORMAT);
+        CHECK_N(n, 0);
+        CHECK_N(opj_sort_parse(NULL, k, &n), OWF_ERR_FORMAT);
+    }
+    opj_lines_free(&l);
+    opj_doc_free(doc);
+}
+
+/* A view with lines: hidden tasks have no bars or links, rows go by line, headings are drawn and hit. */
+static void test_view_lines(void)
+{
+    opj_doc *doc = phases();
+    opj_lines l;
+    opj_view v;
+    opj_bar b;
+    opj_path path;
+    opj_hit hit;
+    oldraw *d;
+    opj_print pr;
+    opj_lines_init(&l);
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    CHECK_N(opj_view_lines(&v, doc), 6);                                   /* no lines: a task each */
+    CHECK_N(opj_view_line_task(&v, doc, 5), 5);
+    CHECK_N(opj_view_task_line(&v, doc, 5), 5);
+    v.lines = &l;                                                          /* not worked out: the same */
+    CHECK_N(opj_view_lines(&v, doc), 6);
+    l.filter.kind = OPJ_FILTER_MILESTONES;
+    l.filter.summaries = 1;
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);                            /* B, Ship */
+    CHECK_N(opj_view_lines(&v, doc), 2);
+    CHECK_N(opj_view_line_task(&v, doc, 1), 4);
+    CHECK_N(opj_view_line_task(&v, doc, 2), -1);
+    CHECK_N(opj_view_task_line(&v, doc, 4), 1);
+    CHECK_N(opj_view_task_line(&v, doc, 2), -1);
+    CHECK_N(opj_row_y(&v, 4), 48);
+    CHECK(opj_row_y(&v, 2) < -1000);
+    CHECK(!opj_bar_of(&v, doc, 2, &b));                                    /* Build: hidden */
+    CHECK(opj_bar_of(&v, doc, 4, &b) && b.kind == OPJ_BAR_MILESTONE);
+    CHECK(!opj_link_path(&v, doc, 4, 0, &path));                           /* from Build: hidden */
+    opj_hit_test(&v, doc, 10, 50, &hit);
+    CHECK(hit.what == OPJ_HIT_CELL && hit.row == 4 && hit.line == 1);
+    opj_hit_test(&v, doc, 10, 70, &hit);                                   /* below the lines */
+    CHECK(hit.what == OPJ_HIT_NONE && hit.row == -1 && hit.line == -1);
+
+    /* grouped: the heading's line is hit as a heading and drawn shaded, with its text */
+    memset(&l.filter, 0, sizeof l.filter);
+    l.group = OPJ_COL_DURATION;
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);                            /* [4],4,[1],1,5,[2],2 */
+    opj_hit_test(&v, doc, 10, 40, &hit);
+    CHECK(hit.what == OPJ_HIT_HEADING && hit.row == -1 && hit.line == 0);
+    opj_hit_test(&v, doc, W - 5, 40 + 16 * 4, &hit);                        /* past Docs's bar */
+    CHECK(hit.what == OPJ_HIT_CHART && hit.row == 5 && hit.line == 4);
+    CHECK_N(opj_row_y(&v, 5), 32 + 16 * 4);
+    CHECK(opj_link_path(&v, doc, 2, 0, &path));                            /* Plan to Build: both shown */
+    CHECK_N(path.y[0], 32 + 16 * 3 + 8);
+    d = cur = oldraw_new(&ops, NULL, W, H, NULL);
+    CHECK(d != NULL);
+    memset(px, 0, sizeof px);
+    ntexts = 0;
+    v.selected = 5;
+    opj_draw(d, &v, doc, NULL);
+    CHECK_X(px[40][100], 0xFFF2CC);                                        /* the heading, in the table */
+    CHECK_X(px[40][opj_chart_left(&v) + 20], 0xFFF2CC);                   /* and across the chart */
+    CHECK_X(px[32 + 16 * 4 + 6][100], oldraw_resolve(d, OLDRAW_PEN(OLDRAW_PEN_FILL)) & 0xFFFFFFUL);  /* Docs */
+    CHECK(drew("Docs") && !drew("A"));
+    {
+        char want[80];
+        snprintf(want, sizeof want, "Duration: %s", cell_of(doc, 1, OPJ_COL_DURATION));
+        CHECK(drew(want));
+    }
+    oldraw_free(d);
+    /* printing goes by the lines too */
+    CHECK(opj_print_layout(&pr, &v, doc, 600, 32 + 16 * 4 + 16) > 0);   /* 4 lines a page: 7 lines, 2 down */
+    CHECK_N(pr.down, 2);
+    /* the usage views keep their own rows */
+    {
+        opj_view u;
+        opj_usage_view(&v, &u);
+        CHECK(u.lines == NULL);
+    }
+    opj_lines_free(&l);
+    opj_doc_free(doc);
+}
+
+/* Work, Actual Work, Remaining Work, Cost and Actual Cost: worked out, a summary's from its subtasks. */
+static void test_work_columns(void)
+{
+    opj_doc *doc = three();
+    long v;
+    int na;
+    CHECK_S(opj_column_title(OPJ_COL_WORK), "Work");
+    CHECK_S(opj_column_title(OPJ_COL_REMAINING_WORK), "Remaining Work");
+    CHECK_S(opj_column_title(OPJ_COL_ACTUAL_COST), "Actual Cost");
+    CHECK(!opj_column_typed(OPJ_COL_ACTUAL_WORK));
+    CHECK_N(opj_add_resource(doc, "Dale", NULL), OWF_OK);
+    CHECK_N(opj_set_resource_cell(doc, 0, OPJ_RCOL_RATE, "20"), OWF_OK);
+    CHECK_N(opj_set_assignment(doc, 0, 0, 100), OWF_OK);                   /* Dale on Plan, 2 days */
+    CHECK_S(cell_of(doc, 0, OPJ_COL_WORK), "16h");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_WORK), "0h");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_REMAINING_WORK), "16h");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_COST), "320.00");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_COST), "0.00");
+    CHECK_N(opj_set_percent(doc, 0, 50), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_WORK), "8h");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_REMAINING_WORK), "8h");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_COST), "160.00");
+    CHECK(opj_cell_value(doc, 0, OPJ_COL_ACTUAL_WORK, &v, &na) && v == 8 * 60 && !na);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_WORK), "0h");                          /* no one on Build */
+    /* a summary: its subtasks' added up */
+    CHECK_N(opj_insert_task(doc, 0, "Phase"), OWF_OK);
+    CHECK_N(opj_indent(doc, 1, 3, 1), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_WORK), "16h");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_WORK), "8h");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_REMAINING_WORK), "8h");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_COST), "160.00");
+    CHECK_N(opj_column_parse("Actual Work", 0), OPJ_COL_ACTUAL_WORK);
+    opj_doc_free(doc);
+}
+
+/* Priority, Overallocated, the "!" on an over-allocated task's ID, and Level Resources by an order. */
+static void test_level_order_cells(void)
+{
+    opj_doc *doc = three();
+    opj_view v;
+    oldraw *d;
+    int n = -1;
+    CHECK_S(opj_column_title(OPJ_COL_PRIORITY), "Priority");
+    CHECK_S(opj_column_title(OPJ_COL_OVERALLOCATED), "Overallocated");
+    CHECK(opj_column_typed(OPJ_COL_PRIORITY) && !opj_column_typed(OPJ_COL_OVERALLOCATED));
+    CHECK_N(opj_column_parse("over", 0), OPJ_COL_OVERALLOCATED);
+    CHECK_N(opj_column_parse("priority", 0), OPJ_COL_PRIORITY);
+    CHECK_S(opj_level_order_name(OWF_LEVEL_PRIORITY), "Priority, Standard");
+    CHECK_S(opj_level_order_name(OWF_LEVEL_ID_ONLY), "ID Only");
+    CHECK_S(opj_level_order_name(9), "");
+    CHECK_N(opj_level_order_parse("priority, standard"), OWF_LEVEL_PRIORITY);
+    CHECK_N(opj_level_order_parse("Priority"), OWF_LEVEL_PRIORITY);
+    CHECK_N(opj_level_order_parse("id only"), OWF_LEVEL_ID_ONLY);
+    CHECK_N(opj_level_order_parse("ID"), OWF_LEVEL_ID_ONLY);
+    CHECK_N(opj_level_order_parse("standard"), OWF_LEVEL_STANDARD);
+    CHECK_N(opj_level_order_parse("random"), -1);
+    CHECK_N(opj_level_order_parse(NULL), -1);
+    /* Check (1 day, no links) and Plan both on Dale on Monday */
+    CHECK_N(opj_insert_task(doc, 3, "Check"), OWF_OK);
+    CHECK_N(opj_add_resource(doc, "Dale", NULL), OWF_OK);
+    CHECK_N(opj_set_assignment(doc, 0, 0, 100), OWF_OK);
+    CHECK_N(opj_set_assignment(doc, 3, 0, 100), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ID), "1!");
+    CHECK_S(cell_of(doc, 3, OPJ_COL_ID), "4!");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_ID), "2");
+    CHECK_S(cell_of(doc, 3, OPJ_COL_OVERALLOCATED), "Yes");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_OVERALLOCATED), "No");
+    CHECK_S(cell_of(doc, 2, OPJ_COL_OVERALLOCATED), "No");                /* Ship, a milestone */
+    /* drawn: the over-allocated IDs red, the rest in the text pen */
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    d = cur = oldraw_new(&ops, NULL, W, H, NULL);
+    CHECK(d != NULL);
+    memset(px, 0, sizeof px);
+    ntexts = 0;
+    opj_draw(d, &v, doc, NULL);
+    CHECK(drew_in("1!", 0xD03030) && drew_in("4!", 0xD03030));
+    CHECK(drew("2") && !drew_in("2", 0xD03030));
+    v.selected = 3;                                                     /* not red on the selection */
+    ntexts = 0;
+    opj_draw(d, &v, doc, NULL);
+    CHECK(drew("4!") && !drew_in("4!", 0xD03030) && drew_in("1!", 0xD03030));
+    oldraw_free(d);
+    /* Priority, typed */
+    CHECK_S(cell_of(doc, 3, OPJ_COL_PRIORITY), "500");
+    CHECK_N(opj_set_cell(doc, 3, OPJ_COL_PRIORITY, " 1000 "), OWF_OK);
+    CHECK_S(cell_of(doc, 3, OPJ_COL_PRIORITY), "1000");
+    CHECK_N(opj_set_cell(doc, 3, OPJ_COL_PRIORITY, "1001"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cell(doc, 3, OPJ_COL_PRIORITY, "-1"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cell(doc, 3, OPJ_COL_PRIORITY, "high"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cell(doc, 3, OPJ_COL_PRIORITY, ""), OWF_ERR_FORMAT);
+    /* Do Not Level: Check stays on Monday, Plan goes to Tuesday (Build and Ship follow it) */
+    CHECK_N(opj_level_by(doc, 0, OWF_LEVEL_STANDARD, &n), OWF_OK);
+    CHECK_N(n, 1);
+    CHECK_S(cell_of(doc, 3, OPJ_COL_START), "Mon 16/11/26");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_START), "Tue 17/11/26");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ID), "1");
+    CHECK_S(cell_of(doc, 3, OPJ_COL_OVERALLOCATED), "No");
+    CHECK_N(opj_undo(doc), OWF_OK);                                     /* one edit */
+    CHECK_S(cell_of(doc, 0, OPJ_COL_START), "Mon 16/11/26");
+    /* ID Only with Check back at 500: Plan is first and keeps Monday; Check waits two days */
+    CHECK_N(opj_set_cell(doc, 3, OPJ_COL_PRIORITY, "500"), OWF_OK);
+    CHECK_N(opj_level_by(doc, 0, OWF_LEVEL_ID_ONLY, &n), OWF_OK);
+    CHECK_N(n, 1);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_START), "Mon 16/11/26");
+    CHECK_S(cell_of(doc, 3, OPJ_COL_START), "Wed 18/11/26");
+    /* Priority, Standard: Check at 900 keeps Monday */
+    CHECK_N(opj_set_cell(doc, 3, OPJ_COL_PRIORITY, "900"), OWF_OK);
+    CHECK_N(opj_level_by(doc, 0, OWF_LEVEL_PRIORITY, &n), OWF_OK);
+    CHECK_S(cell_of(doc, 3, OPJ_COL_START), "Mon 16/11/26");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_START), "Tue 17/11/26");
+    CHECK_N(opj_level_by(doc, 0, 7, &n), OWF_ERR_FORMAT);
+    CHECK_N(n, 0);
+    opj_doc_free(doc);
+}
+
+/* Update Tasks: % Complete, actual and remaining durations and actual dates, one edit. */
+/* Type, Effort Driven and Work typed: the cells, and what each type keeps through an edit. */
+static void test_task_type_cells(void)
+{
+    opj_doc *doc = three();
+    unsigned long before;
+    CHECK_S(opj_column_title(OPJ_COL_TYPE), "Type");
+    CHECK_S(opj_column_title(OPJ_COL_EFFORT_DRIVEN), "Effort Driven");
+    CHECK(opj_column_typed(OPJ_COL_TYPE) && opj_column_typed(OPJ_COL_EFFORT_DRIVEN) && opj_column_typed(OPJ_COL_WORK));
+    CHECK_S(cell_of(doc, 1, OPJ_COL_TYPE), "Fixed Units");                 /* MS Project's new task */
+    CHECK_S(cell_of(doc, 1, OPJ_COL_EFFORT_DRIVEN), "No");
+    /* Build, 3 days, Dale full time: 24h */
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_RESOURCES, "Dale"), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_WORK), "24h");
+    /* Work typed on Fixed Units: the duration follows */
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_WORK, "48h"), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "6d");
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_WORK, "3ed"), OWF_ERR_FORMAT);     /* work is never elapsed */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_WORK, "8h"), OWF_ERR_FORMAT);      /* Plan has no one on it */
+    /* effort driven: Bob added shares the 48h, 3 days again */
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_EFFORT_DRIVEN, "yes"), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_EFFORT_DRIVEN), "Yes");
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_RESOURCES, "Dale,Bob"), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "3d");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_WORK), "48h");
+    /* Fixed Duration: Work typed shares out units, the duration stays */
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_TYPE, "fixed duration"), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_TYPE), "Fixed Duration");
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_WORK, "24h"), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "3d");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Dale[50%],Bob[50%]");
+    /* Fixed Work, always effort driven: a longer duration lowers the units */
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_TYPE, "Work"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_EFFORT_DRIVEN, "No"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_DURATION, "6d"), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_WORK), "24h");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Dale[25%],Bob[25%]");
+    /* refused: nothing changes */
+    before = doc->changes;
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_TYPE, "fixed cost"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_EFFORT_DRIVEN, "maybe"), OWF_ERR_FORMAT);
+    CHECK_N(doc->changes, before);
+    /* one Undo puts the duration and the units back together */
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "3d");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Dale[50%],Bob[50%]");
+    /* a summary: blank, and refused */
+    CHECK_N(opj_insert_task(doc, 0, "Phase"), OWF_OK);
+    CHECK_N(opj_indent(doc, 1, 3, 1), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_TYPE), "");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_EFFORT_DRIVEN), "");
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_TYPE, "units"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_WORK, "8h"), OWF_ERR_FORMAT);
+    opj_doc_free(doc);
+}
+
+/* A Work typed on a copy that is then dropped (a refused Replace, a refused cell) leaves nothing behind:
+ * the next edit still keeps its type (Agnus's #13 probe). */
+static void test_typed_work_dropped(void)
+{
+    opj_doc *doc = three();
+    int changed = 0, refused = 0;
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_RESOURCES, "Dale"), OWF_OK);       /* Build: 3d, 24h */
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_TYPE, "Fixed Work"), OWF_OK);
+    /* Replace "h" in Work: Build's "24h" is taken (Work typed), Plan's "0h" refused (no one on it): dropped */
+    CHECK_N(opj_replace_text(doc, OPJ_COL_WORK, "h", "h", 0, -1, &changed, &refused), OWF_ERR_FORMAT);
+    CHECK(refused > 0);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_WORK), "24h");
+    /* the next edit: Fixed Work keeps the 24h over 6 days, the units halve */
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_DURATION, "6d"), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_WORK), "24h");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Dale[50%]");
+    /* the same through opj_set_cells: Work taken, then a refused cell drops the copy */
+    {
+        int cols[2] = { OPJ_COL_WORK, OPJ_COL_PERCENT }, bad = -1;
+        const char *texts[2] = { "48h", "150" };
+        CHECK_N(opj_set_cells(doc, 1, cols, texts, 2, &bad), OWF_ERR_FORMAT);
+        CHECK_N(bad, 1);
+    }
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_DURATION, "3d"), OWF_OK);          /* back: the units again */
+    CHECK_S(cell_of(doc, 1, OPJ_COL_WORK), "24h");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Dale");
+    opj_doc_free(doc);
+}
+
+/* Base Calendar on the resource sheet: the tasks a resource works on are scheduled on its calendar. */
+static void test_resource_calendar(void)
+{
+    opj_doc *doc = three();
+    int four = -1, dale = -1;
+    char out[64];
+    CHECK_S(opj_resource_column_title(OPJ_RCOL_CALENDAR), "Base Calendar");
+    CHECK_N(opj_column_parse("calendar", 1), OPJ_RCOL_CALENDAR);
+    CHECK_N(opj_add_calendar(doc, "Four days", -1, &four), OWF_OK);
+    CHECK_N(opj_add_resource(doc, "Dale", &dale), OWF_OK);
+    if (four < 0 || dale < 0) { opj_doc_free(doc); return; }
+    opj_resource_cell_text(doc, dale, OPJ_RCOL_CALENDAR, out, sizeof out);
+    CHECK_S(out, "Standard");                                       /* none of its own: the plan's */
+    CHECK_N(opj_set_resource_cell(doc, dale, OPJ_RCOL_CALENDAR, "four DAYS"), OWF_OK);
+    opj_resource_cell_text(doc, dale, OPJ_RCOL_CALENDAR, out, sizeof out);
+    CHECK_S(out, "Four days");
+    CHECK_N(opj_set_resource_cell(doc, dale, OPJ_RCOL_CALENDAR, "Nights"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_resource_cell(doc, dale, OPJ_RCOL_CALENDAR, "9"), OWF_ERR_FORMAT);
+    /* Fridays off on Dale's calendar: Plan (Mon 16, 2 days) is the same, Build (from Wed 18, 3 days) skips Fri 20 */
+    doc->plan->calendars[four].week[5].nspans = 0;
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_RESOURCES, "Dale"), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_FINISH), "Mon 23/11/26");
+    CHECK_N(opj_set_resource_cell(doc, dale, OPJ_RCOL_CALENDAR, ""), OWF_OK);   /* back to the plan's */
+    CHECK_S(cell_of(doc, 1, OPJ_COL_FINISH), "Fri 20/11/26");
+    CHECK_N(opj_set_resource_cell(doc, dale, OPJ_RCOL_CALENDAR, "2"), OWF_OK);  /* by number */
+    CHECK_S(cell_of(doc, 1, OPJ_COL_FINISH), "Mon 23/11/26");
+    opj_doc_free(doc);
+}
+
+static void test_update_task(void)
+{
+    opj_doc *doc = three();
+    unsigned long before;
+    /* Build, 3 days from Wed 18: a day done */
+    before = doc->changes;
+    CHECK_N(opj_update_task(doc, 1, NULL, "1d", NULL, NULL, NULL), OWF_OK);
+    CHECK_N(doc->changes, before + 1);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "33%");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_ACTUAL_START), "Wed 18/11/26");       /* started where it was */
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "3d");
+    /* both: 1 of 3 days */
+    CHECK_N(opj_update_task(doc, 1, NULL, "1d", "2d", NULL, NULL), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "3d");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "33%");
+    /* half done, then a day left: the duration becomes the actual (1.5 days) plus it */
+    CHECK_N(opj_update_task(doc, 1, "50", NULL, NULL, NULL, NULL), OWF_OK);
+    CHECK_N(opj_update_task(doc, 1, NULL, NULL, "1d", NULL, NULL), OWF_OK);
+    CHECK_N(doc->plan->tasks[1].duration, 20 * 60L);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "60%");
+    /* more done than planned: the task stretches to it, done, with an actual finish */
+    CHECK_N(opj_update_task(doc, 1, NULL, "4d", NULL, NULL, NULL), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "4d");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "100%");
+    CHECK(doc->plan->tasks[1].has_actual_finish);
+    /* nearly done never rounds to 100% */
+    CHECK_N(opj_update_task(doc, 1, NULL, "1000h", "1m", NULL, NULL), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "99%");
+    CHECK(!doc->plan->tasks[1].has_actual_finish);
+    /* an actual start, then % Complete, then an actual finish, in that order */
+    CHECK_N(opj_update_task(doc, 0, "0", NULL, NULL, NULL, NULL), OWF_OK);
+    CHECK_N(opj_update_task(doc, 0, "50", NULL, NULL, "Tue 17/11/26", NULL), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_START), "Tue 17/11/26");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_PERCENT), "50%");
+    CHECK_N(opj_update_task(doc, 0, "", "", "", "", "Thu 19/11/26"), OWF_OK);   /* "" leaves each alone */
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_FINISH), "Thu 19/11/26");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_PERCENT), "100%");
+    /* text a cell won't take: nothing changes, no edit */
+    before = doc->changes;
+    CHECK_N(opj_update_task(doc, 2, "50", "x", NULL, NULL, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_update_task(doc, 2, "150", NULL, NULL, NULL, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_update_task(doc, 2, NULL, NULL, NULL, "someday", NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_update_task(doc, 3, "50", NULL, NULL, NULL, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_update_task(NULL, 0, "50", NULL, NULL, NULL, NULL), OWF_ERR_FORMAT);
+    CHECK_N(doc->changes, before);
+    CHECK_S(cell_of(doc, 2, OPJ_COL_PERCENT), "0%");
+    /* Undo puts it back as one step */
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK(!doc->plan->tasks[0].has_actual_finish);
+    /* the Milestone flag stays as set: Build at 0 days is not one, Ship at 3 days still is */
+    CHECK_N(opj_update_task(doc, 1, NULL, "0d", "0d", NULL, NULL), OWF_OK);
+    CHECK_N(doc->plan->tasks[1].duration, 0);
+    CHECK_N(doc->plan->tasks[1].milestone, 0);
+    CHECK_N(doc->plan->tasks[2].milestone, 1);
+    /* elapsed: "2ed" done and "2ed" to go make Ship an elapsed 4ed task, half done */
+    CHECK_N(opj_update_task(doc, 2, NULL, "2ed", "2ed", NULL, NULL), OWF_OK);
+    CHECK_N(doc->plan->tasks[2].milestone, 1);
+    CHECK_N(doc->plan->tasks[2].elapsed, 1);
+    CHECK_N(doc->plan->tasks[2].duration, 4 * 24 * 60L);
+    CHECK_S(cell_of(doc, 2, OPJ_COL_DURATION), "4ed");
+    CHECK_S(cell_of(doc, 2, OPJ_COL_PERCENT), "50%");
+    before = doc->changes;                                     /* working and elapsed won't mix */
+    CHECK_N(opj_update_task(doc, 2, NULL, "1d", "1ed", NULL, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_update_task(doc, 2, NULL, NULL, "1d", NULL, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_update_task(doc, 2, NULL, "1d", NULL, NULL, NULL), OWF_ERR_FORMAT);   /* actual alone, too */
+    CHECK_N(opj_update_task(doc, 0, NULL, "1ed", NULL, NULL, NULL), OWF_ERR_FORMAT);  /* 1ed of Plan's 2d */
+    CHECK_S(cell_of(doc, 0, OPJ_COL_DURATION), "2d");
+    CHECK_N(doc->changes, before);
+    CHECK_N(opj_update_task(doc, 2, NULL, NULL, "1ed", NULL, NULL), OWF_OK);   /* 2ed done, 1ed to go */
+    CHECK_S(cell_of(doc, 2, OPJ_COL_DURATION), "3ed");
+    CHECK_N(opj_update_task(doc, 2, NULL, "3ed", NULL, NULL, NULL), OWF_OK);   /* the same kind: all done */
+    CHECK_S(cell_of(doc, 2, OPJ_COL_PERCENT), "100%");
+    /* a summary takes only % Complete */
+    CHECK_N(opj_insert_task(doc, 0, "Phase"), OWF_OK);
+    CHECK_N(opj_indent(doc, 1, 3, 1), OWF_OK);
+    CHECK_N(opj_update_task(doc, 0, NULL, "1d", NULL, NULL, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_update_task(doc, 0, "40", NULL, NULL, NULL, NULL), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_PERCENT), "40%");
+    opj_doc_free(doc);
+}
+
+/* Progress lines at the status date: straight past a task done or not yet due, jagged to one under way. */
+static void test_progress_lines(void)
+{
+    opj_doc *doc = three();
+    opj_view v;
+    oldraw *d;
+    opj_bar b;
+    long sx, pt;
+    int changed;
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    v.progress_lines = 1;
+    CHECK(!opj_status_x(&v, doc, &sx));                                    /* no status date yet */
+    CHECK_N(opj_update_project(doc, AT(18, 12, 0), 0, &changed), OWF_OK);   /* Plan done, Build begun */
+    CHECK(opj_status_x(&v, doc, &sx));
+    CHECK_N(sx, opj_view_x(&v, AT(18, 12, 0)));
+    CHECK(!opj_progress_point(&v, doc, 0, &pt));                           /* Plan: done by then */
+    CHECK(opj_progress_point(&v, doc, 1, &pt));                            /* Build: as far as it has got */
+    CHECK(opj_bar_of(&v, doc, 1, &b));
+    CHECK_N(pt, b.bar.x + (long)b.bar.w * doc->plan->tasks[1].percent / 100);
+    CHECK(doc->plan->tasks[1].percent > 0 && pt > b.bar.x);
+    CHECK(!opj_progress_point(&v, doc, 2, &pt));                           /* Ship: not due yet */
+    CHECK(!opj_progress_point(&v, doc, 5, &pt));
+    CHECK_N(opj_set_percent(doc, 1, 0), OWF_OK);          /* started at 8:00 but 0% by 12:00: behind */
+    CHECK(opj_bar_of(&v, doc, 1, &b));
+    CHECK(opj_progress_point(&v, doc, 1, &pt) && pt == b.bar.x && pt < sx);
+    CHECK_N(opj_set_percent(doc, 1, 25), OWF_OK);
+    CHECK(opj_bar_of(&v, doc, 1, &b));
+    d = cur = oldraw_new(&ops, NULL, W, H, NULL);
+    CHECK(d != NULL);
+    memset(px, 0, sizeof px);
+    opj_draw(d, &v, doc, NULL);
+    CHECK_X(px[40][sx], 0xE02020);                                        /* straight down Plan's row */
+    CHECK_X(px[48 + 8][b.bar.x + b.bar.w / 4], 0xE02020);                 /* out to Build's point */
+    v.progress_lines = 0;
+    CHECK(!opj_status_x(&v, doc, &sx));
+    memset(px, 0, sizeof px);
+    opj_draw(d, &v, doc, NULL);
+    CHECK((px[40][opj_view_x(&v, AT(18, 12, 0))] & 0xFFFFFFUL) != 0xE02020UL);
+    oldraw_free(d);
+    opj_doc_free(doc);
+}
+
+/* Edit > Find and Replace on the task sheet, Find on the resource sheet. */
+static void test_find_replace(void)
+{
+    opj_doc *doc = three();
+    int changed = -1, refused = -1;
+    CHECK_N(opj_add_resource(doc, "Dale", NULL), OWF_OK);
+    CHECK_N(opj_add_resource(doc, "Bob", NULL), OWF_OK);
+    /* Plan, Build, Ship */
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "i", OPJ_FIND_CONTAINS, -1, 0), 1);       /* Build */
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "i", OPJ_FIND_CONTAINS, 1, 0), 2);        /* Ship */
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "I", OPJ_FIND_CONTAINS, 2, 0), 1);        /* round the end */
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "i", OPJ_FIND_CONTAINS, -1, 1), 2);       /* from the bottom */
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "i", OPJ_FIND_CONTAINS, 2, 1), 1);
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "i", OPJ_FIND_CONTAINS, 1, 1), 2);        /* round the top */
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "ship", OPJ_FIND_EQUALS, -1, 0), 2);
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "shi", OPJ_FIND_EQUALS, -1, 0), -1);
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "pl", OPJ_FIND_BEGINS, -1, 0), 0);
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "an", OPJ_FIND_BEGINS, -1, 0), -1);
+    CHECK_N(opj_find_task(doc, OPJ_COL_DURATION, "3d", OPJ_FIND_EQUALS, -1, 0), 1);
+    CHECK_N(opj_find_task(doc, OPJ_COL_START, "Wed", OPJ_FIND_CONTAINS, -1, 0), 1);
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "", OPJ_FIND_CONTAINS, -1, 0), -1);
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "zzz", OPJ_FIND_CONTAINS, -1, 0), -1);
+    CHECK_N(opj_find_task(doc, OPJ_NCOLS, "a", OPJ_FIND_CONTAINS, -1, 0), -1);
+    CHECK_N(opj_find_task(doc, OPJ_COL_NAME, "a", OPJ_FIND_CONTAINS, 99, 0), 0);       /* from out of range: the top */
+    CHECK_N(opj_find_task(NULL, OPJ_COL_NAME, "a", OPJ_FIND_CONTAINS, -1, 0), -1);
+    CHECK_N(opj_find_resource_row(doc, OPJ_RCOL_NAME, "BOB", OPJ_FIND_EQUALS, -1, 0), 1);
+    CHECK_N(opj_find_resource_row(doc, OPJ_RCOL_NAME, "x", OPJ_FIND_CONTAINS, -1, 0), -1);
+    CHECK_N(opj_find_resource_row(doc, OPJ_NRCOLS, "Bob", OPJ_FIND_CONTAINS, -1, 0), -1);
+
+    /* Replace All in names, then in durations ("3d" to "5d" moves Ship) */
+    CHECK_N(opj_replace_text(doc, OPJ_COL_NAME, "build", "Make", 0, -1, &changed, &refused), OWF_OK);
+    CHECK_N(changed, 1);
+    CHECK_N(refused, 0);
+    CHECK_S(names_of(doc), "Plan,Make,Ship");
+    CHECK_N(opj_replace_text(doc, OPJ_COL_NAME, "a", "aa", 0, -1, &changed, NULL), OWF_OK);   /* every place */
+    CHECK_S(names_of(doc), "Plaan,Maake,Ship");
+    CHECK_N(changed, 2);
+    CHECK_N(opj_replace_text(doc, OPJ_COL_DURATION, "3", "5", 0, -1, &changed, NULL), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "5d");
+    CHECK_S(cell_of(doc, 2, OPJ_COL_START), "Tue 24/11/26");                /* Build ends a week later */
+    /* only row 1 */
+    CHECK_N(opj_replace_text(doc, OPJ_COL_NAME, "aa", "a", 1, 1, &changed, NULL), OWF_OK);
+    CHECK_S(names_of(doc), "Plaan,Make,Ship");
+    /* a new text a cell won't take: nothing changes */
+    CHECK_N(opj_replace_text(doc, OPJ_COL_DURATION, "d", "x", 0, -1, &changed, &refused), OWF_ERR_FORMAT);
+    CHECK_N(changed, 0);
+    CHECK_N(refused, 3);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "5d");
+    /* nothing found: no edit */
+    doc->dirty = 0;
+    CHECK_N(opj_replace_text(doc, OPJ_COL_NAME, "zzz", "y", 0, -1, &changed, NULL), OWF_OK);
+    CHECK_N(changed, 0);
+    CHECK_N(doc->dirty, 0);
+    CHECK_N(opj_replace_text(doc, OPJ_COL_ID, "1", "2", 0, -1, NULL, NULL), OWF_ERR_FORMAT);  /* not typed */
+    CHECK_N(opj_replace_text(doc, OPJ_COL_NAME, "", "2", 0, -1, NULL, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_replace_text(doc, OPJ_COL_NAME, "a", "b", 2, 5, NULL, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK_S(names_of(doc), "Plaan,Maake,Ship");
+
+    /* a note far longer than any buffer: replaced whole, and found past its 400th byte */
+    {
+        char *note = malloc(1101), *want = malloc(1101);
+        CHECK(note && want);
+        if (note && want) {
+            memset(note, 'x', 1100);
+            memcpy(note, "alpha", 5);
+            memcpy(note + 1000, "omega", 5);
+            note[1100] = 0;
+            CHECK_N(opj_set_notes(doc, 0, note), OWF_OK);
+            CHECK_N(opj_find_task(doc, OPJ_COL_NOTES, "omega", OPJ_FIND_CONTAINS, -1, 0), 0);
+            CHECK_N(opj_replace_text(doc, OPJ_COL_NOTES, "alpha", "beta", 0, -1, &changed, NULL), OWF_OK);
+            CHECK_N(changed, 1);
+            strcpy(want, "beta");
+            strcat(want, note + 5);
+            CHECK_N((long)strlen(doc->plan->tasks[0].notes), 1099L);
+            CHECK(strcmp(doc->plan->tasks[0].notes, want) == 0);
+            CHECK_N(opj_replace_text(doc, OPJ_COL_NOTES, "x", "yy", 0, -1, &changed, NULL), OWF_OK);
+            CHECK_N((long)strlen(doc->plan->tasks[0].notes), 1099L + 1090L);   /* all 1,090 x doubled */
+        }
+        free(note);
+        free(want);
+    }
+    opj_doc_free(doc);
+}
+
+/* Baselines 1 to 10 in the core: set, clear, Undo, which are saved, and the names the window takes. */
+static void test_baseline_n(void)
+{
+    opj_doc *doc = three();
+    owf_pbaseline b;
+    char text[40];
+    CHECK_N(opj_baselines_saved(doc), 0);
+    opj_baselines_text(doc, text, sizeof text);
+    CHECK_S(text, "none");
+    CHECK_N(opj_set_baseline_n(doc, 11, 0, -1), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_baseline_n(doc, -1, 0, -1), OWF_ERR_FORMAT);
+    CHECK_N(opj_clear_baseline_n(doc, 11, 0, -1), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_baseline_n(doc, 2, 0, 9), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_baseline_n(doc, 2, 1, 1), OWF_OK);                    /* Build alone */
+    CHECK(owf_ptask_baseline(&doc->plan->tasks[1], 2, &b));
+    CHECK_N(b.start, AT(18, 8, 0));
+    CHECK(!owf_ptask_baseline(&doc->plan->tasks[0], 2, &b));
+    CHECK_S(cell_of(doc, 1, OPJ_COL_BASELINE_START), "NA");                /* Baseline (0) is another */
+    CHECK_N(opj_baselines_saved(doc), 1u << 2);
+    CHECK_N(opj_set_baseline(doc, 0, -1), OWF_OK);
+    CHECK_N(opj_set_baseline_n(doc, 10, 0, -1), OWF_OK);
+    opj_baselines_text(doc, text, sizeof text);
+    CHECK_S(text, "0 2 10");
+    opj_baselines_text(doc, text, 4);                                      /* cut short, still a string */
+    CHECK_S(text, "0 2");
+    CHECK_N(opj_clear_baseline_n(doc, 10, 0, -1), OWF_OK);
+    CHECK_N(opj_baselines_saved(doc), (1u << 0) | (1u << 2));
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK_N(opj_baselines_saved(doc), (1u << 0) | (1u << 2) | (1u << 10));
+    CHECK_N(opj_clear_baseline(doc, 0, -1), OWF_OK);                       /* 0 is the old call */
+    CHECK_N(opj_baselines_saved(doc), (1u << 2) | (1u << 10));
+    /* what Tools > Set Baseline... takes */
+    CHECK_N(opj_baseline_parse(""), 0);
+    CHECK_N(opj_baseline_parse("Baseline"), 0);
+    CHECK_N(opj_baseline_parse(" 3 "), 3);
+    CHECK_N(opj_baseline_parse("Baseline 10"), 10);
+    CHECK_N(opj_baseline_parse("baseline7"), 7);
+    CHECK_N(opj_baseline_parse("BASELINE 1"), 1);
+    CHECK_N(opj_baseline_parse("11"), -1);
+    CHECK_N(opj_baseline_parse("0010"), -1);
+    CHECK_N(opj_baseline_parse("two"), -1);
+    CHECK_N(opj_baseline_parse("Baseline 3x"), -1);
+    CHECK_N(opj_baseline_parse(NULL), 0);
+    opj_doc_free(doc);
+}
+
 /* Printing: pages down then across; the table only on the first pages across; a footer on each. */
 static void test_print(void)
 {
@@ -724,6 +1739,966 @@ static void test_print(void)
     opj_doc_free(doc);
 }
 
+/* The Resource Usage view: each resource, its assignments under it, and the work in each period. Dale
+ * full time on Plan (Mon-Tue) and on Build, which no longer follows Plan, so both from Monday: 16h on an 8
+ * hour Monday, over-allocated. Bob half time on Plan. */
+static void test_usage(void)
+{
+    opj_doc *doc = three();
+    opj_view v, u;
+    oldraw *d;
+    char out[64];
+    int r = -1, a = -2;
+    unsigned long bg;
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_RESOURCES, "Dale,Bob[50%]"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_RESOURCES, "Dale"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_PREDECESSORS, ""), OWF_OK);
+    /* Rows: Dale, his Plan and Build; Bob, his Plan. */
+    CHECK_N(opj_usage_rows(doc), 5);
+    CHECK(opj_usage_row(doc, 0, &r, &a) && r == 0 && a == -1);
+    CHECK(opj_usage_row(doc, 2, &r, &a) && r == 0 && a >= 0 && doc->plan->assigns[a].task == 1);
+    CHECK(opj_usage_row(doc, 3, &r, &a) && r == 1 && a == -1);
+    CHECK(opj_usage_row(doc, 4, &r, &a) && r == 1 && doc->plan->assigns[a].task == 0);
+    CHECK_N(opj_usage_row(doc, 5, &r, &a), 0);
+    CHECK_N(opj_usage_row(doc, -1, &r, &a), 0);
+    CHECK_N(opj_usage_row(NULL, 0, &r, &a), 0);
+    CHECK_N(opj_usage_rows(NULL), 0);
+    /* The table: the resource sheet's ID, name and work; an assignment's task and work. */
+    CHECK_S(opj_usage_column_title(OPJ_UCOL_NAME), "Resource Name");
+    CHECK_S(opj_usage_column_title(9), "");
+    opj_usage_cell_text(doc, 0, OPJ_UCOL_ID, out, sizeof out);
+    CHECK_S(out, "1!");
+    opj_usage_cell_text(doc, 0, OPJ_UCOL_WORK, out, sizeof out);
+    CHECK_S(out, "40h");                                                   /* Plan's 16h and Build's 24h */
+    opj_usage_cell_text(doc, 1, OPJ_UCOL_NAME, out, sizeof out);
+    CHECK_S(out, "Plan");
+    opj_usage_cell_text(doc, 1, OPJ_UCOL_ID, out, sizeof out);
+    CHECK_S(out, "");
+    opj_usage_cell_text(doc, 2, OPJ_UCOL_WORK, out, sizeof out);
+    CHECK_S(out, "24h");
+    opj_usage_cell_text(doc, 4, OPJ_UCOL_WORK, out, sizeof out);
+    CHECK_S(out, "8h");                                                    /* half of Plan's 16h */
+    opj_usage_cell_text(doc, 9, OPJ_UCOL_NAME, out, sizeof out);
+    CHECK_S(out, "");
+    /* Its places: a table of 32 + 180 + 72, then the split, then the Days chart from Monday. */
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    opj_usage_view(&v, &u);
+    CHECK_N(opj_chart_left(&u), 288);
+    CHECK_N(opj_view_x(&u, AT(17, 0, 0)), 312);
+    /* Drawn: titles, names, each day's work; a resource's row shaded across the chart. */
+    v.selected = 1;
+    d = cur = oldraw_new(&ops, NULL, W, H, NULL);
+    CHECK(d != NULL);
+    bg = oldraw_resolve(d, OLDRAW_PEN(OLDRAW_PEN_BACKGROUND)) & 0xFFFFFFUL;
+    memset(px, 0, sizeof px);
+    ntexts = 0;
+    opj_usage_draw(d, &v, doc, NULL);
+    CHECK(drew("Resource Name") && drew("Work") && drew("Dale") && drew("Bob") && drew("Build") && drew("1!"));
+    CHECK(drew("16h") && drew("8h") && drew("4h"));                         /* Dale's, his Plan's, Bob's Monday */
+    CHECK(!drew("Task Name"));                                              /* not the Gantt view's table */
+    CHECK_X(px[40][300], 0xF0F0F0);                                        /* Dale's row */
+    CHECK_X(px[56][300], bg);                                              /* his Plan's */
+    CHECK_X(px[40][311], 0xC8C8C8);                                        /* Monday's right edge */
+    CHECK_X(px[56][10], oldraw_resolve(d, OLDRAW_PEN(OLDRAW_PEN_FILL)) & 0xFFFFFFUL);   /* row 1 selected */
+    /* Scrolled to Bob: only his rows. */
+    v.first_row = 3;
+    v.selected = -1;
+    ntexts = 0;
+    opj_usage_draw(d, &v, doc, NULL);
+    CHECK(drew("Bob") && !drew("Dale") && drew("Plan") && !drew("Build"));
+    oldraw_free(d);
+    opj_doc_free(doc);
+}
+
+/* Task Usage, from test_usage's plan: each task, then who works on it, and the work each day. */
+static void test_task_usage(void)
+{
+    opj_doc *doc = three();
+    opj_view v;
+    oldraw *d;
+    char out[64];
+    int t = -1, a = -2, e;
+    unsigned long bg;
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_RESOURCES, "Dale,Bob[50%]"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_RESOURCES, "Dale"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_PREDECESSORS, ""), OWF_OK);
+    /* Rows: Plan, its Dale and Bob; Build, its Dale; Ship. */
+    CHECK_N(opj_task_usage_rows(doc), 6);
+    CHECK(opj_task_usage_row(doc, 0, &t, &a) && t == 0 && a == -1);
+    CHECK(opj_task_usage_row(doc, 2, &t, &a) && t == 0 && a >= 0 && doc->plan->assigns[a].resource == 1);
+    CHECK(opj_task_usage_row(doc, 3, &t, &a) && t == 1 && a == -1);
+    CHECK(opj_task_usage_row(doc, 4, &t, &a) && t == 1 && doc->plan->assigns[a].resource == 0);
+    CHECK(opj_task_usage_row(doc, 5, &t, &a) && t == 2 && a == -1);
+    CHECK_N(opj_task_usage_row(doc, 6, &t, &a), 0);
+    CHECK_N(opj_task_usage_row(doc, -1, &t, &a), 0);
+    CHECK_N(opj_task_usage_rows(NULL), 0);
+    /* The table: a task's ID, name and work; an assignment's resource and work. */
+    CHECK_S(opj_task_usage_column_title(OPJ_UCOL_NAME), "Task Name");
+    CHECK_S(opj_task_usage_column_title(-1), "");
+    opj_task_usage_cell_text(doc, 0, OPJ_UCOL_ID, out, sizeof out);
+    CHECK_S(out, "1!");                                                    /* Dale on Plan and Build on Monday */
+    opj_task_usage_cell_text(doc, 5, OPJ_UCOL_ID, out, sizeof out);
+    CHECK_S(out, "3");                                                     /* Ship: a milestone */
+    opj_task_usage_cell_text(doc, 0, OPJ_UCOL_WORK, out, sizeof out);
+    CHECK_S(out, "24h");                                                   /* Dale's 16h and Bob's 8h */
+    opj_task_usage_cell_text(doc, 1, OPJ_UCOL_NAME, out, sizeof out);
+    CHECK_S(out, "Dale");
+    opj_task_usage_cell_text(doc, 1, OPJ_UCOL_ID, out, sizeof out);
+    CHECK_S(out, "");
+    opj_task_usage_cell_text(doc, 2, OPJ_UCOL_WORK, out, sizeof out);
+    CHECK_S(out, "8h");
+    opj_task_usage_cell_text(doc, 5, OPJ_UCOL_NAME, out, sizeof out);
+    CHECK_S(out, "Ship");
+    opj_task_usage_cell_text(doc, 9, OPJ_UCOL_NAME, out, sizeof out);
+    CHECK_S(out, "");
+    /* Work on Monday the 16th: Plan's 8h and 4h; Build's 8h; Ship none */
+    opj_task_usage_text(doc, 0, -1, AT(16, 0, 0), AT(17, 0, 0), out, sizeof out);
+    CHECK_S(out, "12h");
+    opj_task_usage_text(doc, 1, -1, AT(16, 0, 0), AT(17, 0, 0), out, sizeof out);
+    CHECK_S(out, "8h");
+    CHECK(opj_task_usage_row(doc, 2, &t, &a));
+    opj_task_usage_text(doc, 0, a, AT(16, 0, 0), AT(17, 0, 0), out, sizeof out);
+    CHECK_S(out, "4h");
+    opj_task_usage_text(doc, 1, a, AT(16, 0, 0), AT(17, 0, 0), out, sizeof out);   /* not Build's */
+    CHECK_S(out, "");
+    opj_task_usage_text(doc, 2, -1, AT(16, 0, 0), AT(30, 0, 0), out, sizeof out);
+    CHECK_S(out, "");
+    opj_task_usage_text(doc, 0, -1, AT(17, 0, 0), AT(16, 0, 0), out, sizeof out);   /* backwards */
+    CHECK_S(out, "");
+    /* Drawn: its own titles, names, each day's work; a task's row shaded across the chart. */
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    d = cur = oldraw_new(&ops, NULL, W, H, NULL);
+    CHECK(d != NULL);
+    bg = oldraw_resolve(d, OLDRAW_PEN(OLDRAW_PEN_BACKGROUND)) & 0xFFFFFFUL;
+    memset(px, 0, sizeof px);
+    ntexts = 0;
+    opj_task_usage_draw(d, &v, doc, NULL);
+    CHECK(drew("Task Name") && drew("Work") && drew("Plan") && drew("Dale") && drew("Bob") && drew("Ship"));
+    CHECK(drew("12h") && drew("4h"));
+    CHECK(!drew("Resource Name"));
+    CHECK_X(px[40][300], 0xF0F0F0);                                        /* Plan's row */
+    CHECK_X(px[56][300], bg);                                              /* its Dale's */
+    /* a summary's row holds its subtasks' work */
+    CHECK_N(opj_insert_task(doc, 0, "Phase"), OWF_OK);
+    CHECK_N(opj_indent(doc, 1, 3, 1), OWF_OK);
+    CHECK_N(opj_task_usage_rows(doc), 7);
+    opj_task_usage_text(doc, 0, -1, AT(16, 0, 0), AT(17, 0, 0), out, sizeof out);
+    CHECK_S(out, "20h");
+    opj_task_usage_text(doc, 1, -1, AT(16, 0, 0), AT(17, 0, 0), out, sizeof out);
+    CHECK_S(out, "12h");
+    ntexts = 0;
+    opj_task_usage_draw(d, &v, doc, NULL);
+    CHECK(drew("Phase") && drew("20h"));
+    /* read only, with its own reason */
+    for (e = OPJ_EDIT_CELL; e < OPJ_NEDITS; ++e)
+        CHECK(opj_edit_refused(OPJ_VIEW_TASK_USAGE, e) != NULL &&
+              !strcmp(opj_edit_refused(OPJ_VIEW_TASK_USAGE, e), "Task Usage is read only: Gantt Chart (G) edits tasks"));
+    CHECK(opj_edit_refused(OPJ_VIEW_TASK_USAGE, OPJ_EDIT_NONE) == NULL);
+    oldraw_free(d);
+    opj_doc_free(doc);
+}
+
+/* The Resource Graph, from test_usage's plan: Dale 200% on Monday and Tuesday (Plan and Build), 100% on
+ * Wednesday (Build); Bob 50% on Monday and Tuesday. */
+static void test_graph(void)
+{
+    opj_doc *doc = three();
+    opj_view v;
+    oldraw_rect in, ov;
+    oldraw *d;
+    unsigned long bg;
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_RESOURCES, "Dale,Bob[50%]"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_RESOURCES, "Dale"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_PREDECESSORS, ""), OWF_OK);
+    CHECK_N(opj_graph_percent(doc, 0, AT(16, 0, 0), AT(17, 0, 0)), 200);
+    CHECK_N(opj_graph_percent(doc, 0, AT(18, 0, 0), AT(19, 0, 0)), 100);
+    CHECK_N(opj_graph_percent(doc, 0, AT(19, 0, 0), AT(20, 0, 0)), 0);
+    CHECK_N(opj_graph_percent(doc, 1, AT(16, 0, 0), AT(17, 0, 0)), 50);
+    CHECK_N(opj_graph_percent(doc, 0, AT(21, 0, 0), AT(23, 0, 0)), -1);   /* the weekend: no working time */
+    CHECK_N(opj_graph_percent(doc, 0, AT(17, 0, 0), AT(16, 0, 0)), -1);
+    CHECK_N(opj_graph_percent(doc, 5, AT(16, 0, 0), AT(17, 0, 0)), -1);
+    CHECK_N(opj_graph_percent(doc, 0, AT(16, 0, 0), AT(23, 0, 0)), 100);  /* the week: 40h of 40h */
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    CHECK_N(opj_graph_scale(&v, doc, 0), 200);
+    CHECK_N(opj_graph_scale(&v, doc, 1), 100);
+    /* Dale's Monday: 0-100% blue, 100-200% red, the plot from y 48 down to 184 */
+    CHECK(opj_graph_bar(&v, doc, 0, AT(16, 10, 0), 200, &in, &ov));
+    CHECK_N(in.x, 289); CHECK_N(in.w, 22);
+    CHECK_N(in.y, 116); CHECK_N(in.h, 68);
+    CHECK_N(ov.y, 48); CHECK_N(ov.h, 68);
+    CHECK(opj_graph_bar(&v, doc, 0, AT(18, 0, 0), 200, &in, &ov));   /* Wednesday: at its max */
+    CHECK_N(in.y, 116); CHECK_N(ov.h, 0);
+    CHECK(!opj_graph_bar(&v, doc, 0, AT(19, 0, 0), 200, &in, &ov));  /* Thursday: nothing */
+    CHECK(opj_graph_bar(&v, doc, 1, AT(16, 0, 0), 100, &in, &ov));   /* Bob: half */
+    CHECK_N(in.y, 116); CHECK_N(in.h, 68); CHECK_N(ov.h, 0);
+    d = cur = oldraw_new(&ops, NULL, W, H, NULL);
+    CHECK(d != NULL);
+    bg = oldraw_resolve(d, OLDRAW_PEN(OLDRAW_PEN_BACKGROUND)) & 0xFFFFFFUL;
+    memset(px, 0, sizeof px);
+    ntexts = 0;
+    opj_graph_draw(d, &v, doc, 0, NULL);
+    CHECK_X(px[100][300], 0xD03030);                       /* Monday over */
+    CHECK_X(px[150][300], 0x4A7BD0);                       /* and within */
+    CHECK_X(px[100][340], bg);                             /* Wednesday: not over */
+    CHECK_X(px[150][340], 0x4A7BD0);
+    CHECK_X(px[116][500], 0x202020);                       /* the max units line */
+    CHECK_X(px[184][500], 0x202020);                       /* 0% */
+    CHECK_X(px[150][500], bg);
+    CHECK(drew("Dale") && drew("Peak: 200%") && drew("Max Units: 100%") && drew("200%") && drew("0%"));
+    CHECK(drew("16 Nov '26"));
+    ntexts = 0;
+    opj_graph_draw(d, &v, doc, 9, NULL);
+    CHECK(drew("No resource: Resources... adds them"));
+    CHECK(opj_edit_refused(OPJ_VIEW_GRAPH, OPJ_EDIT_INFO) != NULL);
+    oldraw_free(d);
+    opj_doc_free(doc);
+}
+
+/* The Tracking Gantt: Build baselined at 3 days, then made 5, half done. */
+static void test_tracking(void)
+{
+    opj_doc *doc = three();
+    opj_view v;
+    opj_bar b;
+    oldraw_rect r, base;
+    oldraw *d;
+    char text[64];
+    CHECK_N(opj_set_baseline(doc, 0, -1), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_DURATION, "5d"), OWF_OK);
+    CHECK_N(opj_set_percent(doc, 1, 50), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_RESOURCES, "Dale"), OWF_OK);
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    /* the plain Gantt chart: no baseline unless asked for, resource names beside the bars */
+    CHECK(!opj_baseline_bar(&v, doc, 1, &r));
+    CHECK(opj_bar_of(&v, doc, 1, &b));
+    CHECK_N(b.bar.y, 52); CHECK_N(b.bar.h, 8);
+    CHECK(!opj_label_box(&v, doc, 2, &r));                                /* Ship: nobody on it */
+    opj_label_text(&v, doc, 0, text, sizeof text);
+    CHECK_S(text, "Dale");
+    /* tracking: the bar in the upper half, the baseline as high under it, the done part solid */
+    v.tracking = 1;
+    CHECK(opj_bar_of(&v, doc, 1, &b));
+    CHECK_N(b.bar.y, 50); CHECK_N(b.bar.h, 5);
+    CHECK_N(b.done.y, 50); CHECK_N(b.done.h, 5);
+    CHECK_N(b.done.w, b.bar.w / 2);
+    CHECK(opj_baseline_bar(&v, doc, 1, &base));
+    CHECK_N(base.y, 56); CHECK_N(base.h, 5);
+    CHECK_N(base.x, b.bar.x);                                             /* both from Wednesday */
+    CHECK_N(base.w, 57);                                                  /* Wed 08:00 to Fri 17:00 */
+    CHECK(b.bar.w > base.w);                                              /* now to Tuesday */
+    CHECK(opj_label_box(&v, doc, 2, &r));                                 /* every bar has its % */
+    opj_label_text(&v, doc, 1, text, sizeof text);
+    CHECK_S(text, "50%");
+    opj_label_text(&v, doc, 2, text, sizeof text);
+    CHECK_S(text, "0%");
+    opj_label_text(&v, doc, 7, text, sizeof text);
+    CHECK_S(text, "");
+    d = cur = oldraw_new(&ops, NULL, W, H, NULL);
+    CHECK(d != NULL);
+    memset(px, 0, sizeof px);
+    ntexts = 0;
+    opj_draw(d, &v, doc, NULL);
+    CHECK_X(px[52][b.bar.x + b.bar.w - 3], 0xD03030);                    /* Build's undone part, critical */
+    CHECK_X(px[52][b.bar.x + 2], 0x1A1A1A);                               /* its done part, the bar's height */
+    CHECK_X(px[50][b.bar.x + 2], 0x1A1A1A);
+    CHECK_X(px[58][base.x + 2], 0x909090);                                /* the baseline under it */
+    CHECK(drew("50%") && drew("0%") && !drew("Dale"));
+    oldraw_free(d);
+    opj_doc_free(doc);
+}
+
+static int has_bytes(const unsigned char *data, size_t n, const char *what)
+{
+    size_t k = strlen(what), i;
+    for (i = 0; i + k <= n; i++)
+        if (memcmp(data + i, what, k) == 0) return 1;
+    return 0;
+}
+
+/* The printed Gantt view as a PDF (opj_pdf.c): a page each opj_print page, text searchable, the footer. */
+/* Lisette's review of #240: the task edits act on the Gantt chart's selection, which Resource Usage
+ * hides, so none runs while it shows, from the menu or a key; all run on the Gantt chart. */
+static void test_usage_edits(void)
+{
+    int e;
+    CHECK_N(opj_edit_for_key(13, 0), OPJ_EDIT_CELL);
+    CHECK_N(opj_edit_for_key(127, 0), OPJ_EDIT_DELETE);
+    CHECK_N(opj_edit_for_key(9, 0), OPJ_EDIT_INDENT);
+    CHECK_N(opj_edit_for_key(9, 1), OPJ_EDIT_OUTDENT);
+    CHECK_N(opj_edit_for_key('g', 0), OPJ_EDIT_NONE);
+    CHECK_N(opj_edit_for_key(27, 1), OPJ_EDIT_NONE);
+    for (e = OPJ_EDIT_CELL; e < OPJ_NEDITS; ++e) {
+        CHECK(opj_edit_refused(0, e) == NULL);
+        CHECK(opj_edit_refused(1, e) != NULL &&
+              !strcmp(opj_edit_refused(1, e),
+                      "Resource Usage is read only: Gantt Chart (G) edits tasks, Resources... edits resources"));
+    }
+    CHECK(opj_edit_refused(1, OPJ_EDIT_NONE) == NULL);                    /* other keys and menu items */
+    CHECK(opj_edit_refused(1, OPJ_NEDITS) == NULL);
+}
+
+/* The column chooser: widths, showing and hiding in the sheet's order, the table keeping one column, a
+ * selection moved off a hidden column, and the chart's edge following the table. */
+static void test_columns(void)
+{
+    opj_view v;
+    int c, left;
+    opj_view_init(&v, NULL, 800, 400, 16, OPJ_ZOOM_DAYS);
+    for (c = 0; c < OPJ_NCOLS; c++)
+        CHECK_N(opj_view_column_shown(&v, c), c <= OPJ_COL_PREDECESSORS);
+    CHECK_N(opj_column_width(OPJ_COL_RESOURCES), 140);
+    CHECK_N(opj_column_width(OPJ_COL_PERCENT), 64);
+    CHECK_N(opj_column_width(-1), 0);
+    CHECK_N(opj_column_width(OPJ_NCOLS), 0);
+    left = opj_chart_left(&v);
+    CHECK(opj_view_show_column(&v, OPJ_COL_RESOURCES, 1));
+    CHECK_N(v.columns[OPJ_COL_RESOURCES], 140);
+    CHECK_N(opj_chart_left(&v), left + 140);
+    v.columns[OPJ_COL_NAME] = 250;                                        /* a width of its own stays */
+    CHECK(opj_view_show_column(&v, OPJ_COL_NAME, 1));
+    CHECK_N(v.columns[OPJ_COL_NAME], 250);
+    CHECK(opj_view_show_column(&v, OPJ_COL_DURATION, 0));
+    CHECK_N(opj_view_column_shown(&v, OPJ_COL_DURATION), 0);
+    CHECK(opj_view_show_column(&v, OPJ_COL_DURATION, 0));                 /* already hidden */
+    CHECK_N(opj_view_near_column(&v, OPJ_COL_DURATION), OPJ_COL_START);
+    CHECK_N(opj_view_near_column(&v, OPJ_COL_NAME), OPJ_COL_NAME);
+    CHECK_N(opj_view_near_column(&v, OPJ_COL_WBS), OPJ_COL_RESOURCES);
+    CHECK_N(opj_view_near_column(&v, OPJ_COL_FINISH_VARIANCE), OPJ_COL_RESOURCES);
+    CHECK(!opj_view_show_column(&v, -1, 1) && !opj_view_show_column(&v, OPJ_NCOLS, 0));
+    CHECK(!opj_view_show_column(NULL, OPJ_COL_NAME, 1));
+    CHECK(opj_view_show_column(&v, OPJ_COL_WBS, 1));
+    for (c = 0; c < OPJ_NCOLS; c++)
+        if (c != OPJ_COL_WBS) CHECK(opj_view_show_column(&v, c, 0));
+    CHECK(!opj_view_show_column(&v, OPJ_COL_WBS, 0));                     /* the table keeps one column */
+    CHECK_N(v.columns[OPJ_COL_WBS], 48);
+    CHECK_N(opj_view_near_column(&v, OPJ_COL_ID), OPJ_COL_WBS);
+    v.columns[OPJ_COL_WBS] = 0;
+    CHECK_N(opj_view_near_column(&v, OPJ_COL_ID), -1);
+    CHECK_N(opj_view_near_column(NULL, 0), -1);
+}
+
+/* Task Information's fields: Constraint Type, Constraint Date and Notes as cells, and several cells typed
+ * as one edit (one Undo step, nothing changed when one is refused). Build is Wed 18 to Fri 20 Nov. */
+static void test_task_info(void)
+{
+    opj_doc *doc = three();
+    static const int cols[3] = { OPJ_COL_CONSTRAINT_TYPE, OPJ_COL_CONSTRAINT_DATE, OPJ_COL_NOTES };
+    static const char *const ok[3] = { "Start No Earlier Than", "23/11/26", "Two crews" };
+    static const int cols2[2] = { OPJ_COL_DURATION, OPJ_COL_CONSTRAINT_TYPE };
+    static const char *const bad2[2] = { "5d", "Sideways" };
+    int bad = 9;
+    long changes;
+    CHECK_S(opj_column_title(OPJ_COL_CONSTRAINT_TYPE), "Constraint Type");
+    CHECK_S(opj_column_title(OPJ_COL_NOTES), "Notes");
+    CHECK_S(opj_constraint_name(OWF_CON_FNLT), "Finish No Later Than");
+    CHECK_S(opj_constraint_name(99), "");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_TYPE), "As Soon As Possible");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_DATE), "NA");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_NOTES), "");
+    /* OK: all three at once, one step, scheduled once */
+    changes = doc->changes;
+    CHECK_N(opj_set_cells(doc, 1, cols, ok, 3, &bad), OWF_OK);
+    CHECK_N(bad, -1);
+    CHECK_N(doc->changes, changes + 1);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_TYPE), "Start No Earlier Than");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_DATE), "Mon 23/11/26");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_NOTES), "Two crews");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_START), "Mon 23/11/26");
+    CHECK_S(cell_of(doc, 2, OPJ_COL_FINISH), "Wed 25/11/26");
+    CHECK_N(opj_undo(doc), OWF_OK);                                       /* one step takes it all back */
+    CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_TYPE), "As Soon As Possible");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_NOTES), "");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_START), "Wed 18/11/26");
+    CHECK_N(opj_redo(doc), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_NOTES), "Two crews");
+    /* one refused: nothing changes, and bad says which */
+    changes = doc->changes;
+    CHECK_N(opj_set_cells(doc, 1, cols2, bad2, 2, &bad), OWF_ERR_FORMAT);
+    CHECK_N(bad, 1);
+    CHECK_N(doc->changes, changes);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "3d");
+    CHECK_N(opj_set_cells(doc, 1, cols, ok, 0, &bad), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cells(doc, 1, NULL, ok, 1, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cells(doc, 7, cols, ok, 1, &bad), OWF_ERR_FORMAT);
+    {   /* As Soon As Possible chosen with a date edited too: the type stands, the date is left alone */
+        static const char *const asap[3] = { "As Soon As Possible", "30/11/26", "Two crews" };
+        CHECK_N(opj_set_cells(doc, 1, cols, asap, 3, &bad), OWF_OK);
+        CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_TYPE), "As Soon As Possible");
+        CHECK_S(cell_of(doc, 1, OPJ_COL_START), "Wed 18/11/26");
+        CHECK_N(opj_undo(doc), OWF_OK);
+        CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_TYPE), "Start No Earlier Than");
+    }
+    /* a type with a date and none yet: where the task is now; short names, any case */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, "mso"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_CONSTRAINT_TYPE), "Must Start On");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_CONSTRAINT_DATE), "Mon 16/11/26");
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, "Must  finish on"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_CONSTRAINT_DATE), "Mon 16/11/26");   /* the date it had stays */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_DATE, "NA"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_CONSTRAINT_TYPE), "As Soon As Possible");
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, "alap"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_CONSTRAINT_DATE), "NA");
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_DATE, "17/11/26"), OWF_OK);   /* a date: SNET */
+    CHECK_S(cell_of(doc, 0, OPJ_COL_CONSTRAINT_TYPE), "Start No Earlier Than");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_START), "Tue 17/11/26");
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_DATE, "the 30th"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, ""), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_NOTES, ""), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_BASELINE_START, "16/11/26"), OWF_ERR_FORMAT);
+    /* a summary takes only As Soon As Possible, Start No Earlier Than and Finish No Later Than */
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_PREDECESSORS, ""), OWF_OK);     /* a link to its summary is a loop */
+    CHECK_N(opj_indent(doc, 1, 1, 1), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, "Must Start On"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, "FNLT"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_CONSTRAINT_TYPE, "ASAP"), OWF_OK);
+    opj_doc_free(doc);
+}
+
+/* Dragging on the chart, at Days zoom (24 pixels a day). Plan Mon 16-Tue 17, Build Wed 18-Fri 20, Ship
+ * (a milestone) Fri 20 17:00. */
+static int mid_y(const opj_view *v, int row)
+{
+    return opj_row_y(v, row) + v->row_height / 2;
+}
+
+static void test_drag(void)
+{
+    opj_doc *doc = three();
+    opj_view v;
+    opj_hit h;
+    opj_drag d;
+    opj_bar b;
+    char text[80], want[40];
+    int x, y;
+    unsigned long changes;
+    opj_view_init(&v, doc, 800, 400, 16, OPJ_ZOOM_DAYS);
+    /* move: Build's middle two days on, to Fri 20 (Start No Earlier Than) */
+    CHECK(opj_bar_of(&v, doc, 1, &b));
+    x = b.bar.x + b.bar.w / 2;
+    y = mid_y(&v, 1);
+    opj_hit_test(&v, doc, x, y, &h);
+    CHECK(opj_drag_begin(&v, doc, &h, x, y, &d));
+    CHECK_N(d.kind, OPJ_DRAG_MOVE);
+    CHECK_N(d.row, 1);
+    CHECK(!opj_drag_text(&v, doc, &d, x + 5, y, text, sizeof text));     /* under half a day: nothing */
+    CHECK_S(text, "");
+    CHECK_N(opj_drag_end(doc, &v, &d, x + 5, y), OWF_ERR_FORMAT);
+    CHECK(opj_drag_text(&v, doc, &d, x + 48, y, text, sizeof text));
+    CHECK_S(text, "Start: Fri 20/11/26");
+    CHECK(opj_drag_text(&v, doc, &d, x + 72, y, text, sizeof text));     /* Saturday: the next working day */
+    CHECK_S(text, "Start: Mon 23/11/26");
+    CHECK(!opj_drag_text(&v, doc, &d, x + 48, mid_y(&v, 0) - 20, text, sizeof text));   /* off its row */
+    changes = doc->changes;
+    CHECK_N(opj_drag_end(doc, &v, &d, x + 48, y), OWF_OK);
+    CHECK_N(doc->changes, changes + 1);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_START), "Fri 20/11/26");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_TYPE), "Start No Earlier Than");
+    CHECK_S(cell_of(doc, 2, OPJ_COL_FINISH), "Tue 24/11/26");
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_START), "Wed 18/11/26");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_CONSTRAINT_TYPE), "As Soon As Possible");
+    /* stretch: Build's right end three days on, to Mon 23: 4 days */
+    CHECK(opj_bar_of(&v, doc, 1, &b));
+    x = b.bar.x + b.bar.w - 1;
+    opj_hit_test(&v, doc, x, y, &h);
+    CHECK_N(h.part, 1);
+    CHECK(opj_drag_begin(&v, doc, &h, x, y, &d));
+    CHECK_N(d.kind, OPJ_DRAG_STRETCH);
+    CHECK(!opj_drag_text(&v, doc, &d, x + 24, y, text, sizeof text));    /* to Saturday: still 3 days */
+    CHECK(opj_drag_text(&v, doc, &d, x + 72, y, text, sizeof text));
+    CHECK_S(text, "Duration: 4d");
+    CHECK_N(opj_drag_end(doc, &v, &d, x + 72, y), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "4d");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_FINISH), "Mon 23/11/26");
+    CHECK(!opj_drag_text(&v, doc, &d, x - 200, y, text, sizeof text));   /* its finish before its start */
+    CHECK_N(opj_drag_end(doc, &v, &d, x - 200, y), OWF_ERR_FORMAT);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "4d");
+    /* % Complete: from the left end to the middle */
+    CHECK(opj_bar_of(&v, doc, 1, &b));
+    x = b.bar.x + 1;
+    opj_hit_test(&v, doc, x, y, &h);
+    CHECK(opj_drag_begin(&v, doc, &h, x, y, &d));
+    CHECK_N(d.kind, OPJ_DRAG_PROGRESS);
+    changes = doc->changes;                     /* Lisette's review of #346: a click is not a drag */
+    CHECK(!opj_drag_text(&v, doc, &d, x, y, text, sizeof text));
+    CHECK_N(opj_drag_end(doc, &v, &d, x, y), OWF_ERR_FORMAT);
+    CHECK_N(opj_drag_end(doc, &v, &d, x + OPJ_DRAG_SLOP, y - OPJ_DRAG_SLOP), OWF_ERR_FORMAT);   /* a shake */
+    CHECK_N(doc->changes, changes);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "0%");
+    CHECK(opj_drag_text(&v, doc, &d, b.bar.x + b.bar.w / 4, y, text, sizeof text));
+    sprintf(want, "%% Complete: %d%%", (b.bar.w / 4 * 100 + b.bar.w / 2) / b.bar.w);   /* a quarter, rounded */
+    CHECK_S(text, want);
+    CHECK_N(opj_drag_end(doc, &v, &d, b.bar.x + b.bar.w / 4, y), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), want + 12);
+    CHECK_N(opj_drag_end(doc, &v, &d, b.bar.x + b.bar.w + 40, y), OWF_OK);   /* past the end: 100 */
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "100%");
+    CHECK(opj_bar_of(&v, doc, 1, &b));          /* a click on the done part (all of it now) */
+    x = b.bar.x + b.bar.w / 2;
+    opj_hit_test(&v, doc, x, y, &h);
+    CHECK_N(h.part, 2);
+    CHECK(opj_drag_begin(&v, doc, &h, x, y, &d));
+    CHECK_N(d.kind, OPJ_DRAG_PROGRESS);
+    changes = doc->changes;
+    CHECK_N(opj_drag_end(doc, &v, &d, x, y), OWF_ERR_FORMAT);
+    CHECK_N(doc->changes, changes);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "100%");
+    /* a link: Plan's bar dropped on Ship's diamond */
+    CHECK(opj_bar_of(&v, doc, 0, &b));
+    x = b.bar.x + b.bar.w / 2;
+    opj_hit_test(&v, doc, x, mid_y(&v, 0), &h);
+    CHECK(opj_drag_begin(&v, doc, &h, x, mid_y(&v, 0), &d));
+    CHECK(opj_bar_of(&v, doc, 2, &b));
+    CHECK(opj_drag_text(&v, doc, &d, b.bar.x + b.bar.w / 2, mid_y(&v, 2), text, sizeof text));
+    CHECK_S(text, "Link 1 to 3, finish to start");
+    CHECK_N(opj_drag_end(doc, &v, &d, b.bar.x + b.bar.w / 2, mid_y(&v, 2)), OWF_OK);
+    CHECK_S(cell_of(doc, 2, OPJ_COL_PREDECESSORS), "2,1");
+    CHECK_N(opj_drag_end(doc, &v, &d, b.bar.x + b.bar.w / 2, mid_y(&v, 2)), OWF_ERR_FORMAT);   /* linked already */
+    /* Ship's diamond on Plan's bar would be a loop: refused, the plan as it was */
+    x = b.bar.x + b.bar.w / 2;
+    opj_hit_test(&v, doc, x, mid_y(&v, 2), &h);
+    CHECK(opj_drag_begin(&v, doc, &h, x, mid_y(&v, 2), &d));
+    CHECK_N(d.kind, OPJ_DRAG_MOVE);
+    CHECK(!opj_drag_text(&v, doc, &d, x + 48, mid_y(&v, 2), text, sizeof text));   /* a milestone isn't moved */
+    CHECK(opj_bar_of(&v, doc, 0, &b));
+    changes = doc->changes;
+    CHECK_N(opj_drag_end(doc, &v, &d, b.bar.x + 4, mid_y(&v, 0)), OWF_ERR_FORMAT);
+    CHECK_N(doc->changes, changes);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_PREDECESSORS), "");
+    /* not on a bar; the core's own refusals */
+    opj_hit_test(&v, doc, 790, mid_y(&v, 0), &h);
+    CHECK(!opj_drag_begin(&v, doc, &h, 790, mid_y(&v, 0), &d));
+    CHECK(!opj_drag_begin(NULL, doc, &h, 0, 0, &d));
+    CHECK_N(opj_link_tasks(doc, 1, 1), OWF_ERR_FORMAT);
+    CHECK_N(opj_link_tasks(doc, 0, 9), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_duration(doc, 1, -1), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_duration(doc, 1, 960), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_DURATION), "2d");
+    opj_doc_free(doc);
+}
+
+static void test_pdf(void)
+{
+    opj_doc *doc = three(), *empty;
+    opj_view proto;
+    unsigned char *data = NULL;
+    size_t n = 0;
+    int pages = -1;
+    doc->plan->title = owf_malloc(8);
+    if (doc->plan->title) strcpy(doc->plan->title, "Kitchen");
+    opj_view_init(&proto, doc, 0, 0, 16, OPJ_ZOOM_DAYS);
+    /* A4 landscape less 1 cm round it, 12 twips a pixel: 1308 by 897. Rows 17 high, 49 a page; 31 days of chart on
+     * the first page across (1308 - 548 = 760, 24 a day): the plan's 6 days fit on one page. */
+    CHECK_N(opj_pdf_write(doc, &proto, &data, &n, &pages), OWF_OK);
+    CHECK_N(pages, 1);
+    CHECK(data && n > 5 && memcmp(data, "%PDF-", 5) == 0);
+    CHECK(has_bytes(data, n, "(Kitchen) Tj") && has_bytes(data, n, "(Page 1 of 1) Tj"));
+    CHECK(has_bytes(data, n, "(Task Name) Tj") && has_bytes(data, n, "(Plan) Tj") && has_bytes(data, n, "(Build) Tj"));
+    CHECK(has_bytes(data, n, "/Title "));                                  /* the plan's title names the PDF */
+    CHECK(has_bytes(data, n, "/Count 1"));
+    owf_free(data);
+    /* Build at 60 working days runs the plan past 31 days and 31 + 54: two more pages across (4 pixels of
+     * split, then 54 days a page). */
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_DURATION, "60d"), OWF_OK);
+    CHECK_N(opj_pdf_write(doc, &proto, &data, &n, &pages), OWF_OK);
+    CHECK_N(pages, 3);
+    CHECK(has_bytes(data, n, "(Page 3 of 3) Tj") && has_bytes(data, n, "/Count 3"));
+    owf_free(data);
+    /* Refused: a plan with no tasks, a missing argument; nothing is handed back. */
+    empty = opj_doc_new(NULL, AT(16, 8, 0));
+    CHECK(empty != NULL);
+    data = (unsigned char *)"x";
+    pages = 9;
+    CHECK_N(opj_pdf_write(empty, &proto, &data, &n, &pages), OWF_ERR_FORMAT);
+    CHECK(data == NULL && n == 0 && pages == 0);
+    CHECK_N(opj_pdf_write(doc, NULL, &data, &n, NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_pdf_write(NULL, &proto, &data, &n, NULL), OWF_ERR_FORMAT);
+    opj_doc_free(empty);
+    opj_doc_free(doc);
+}
+
+/* The Network Diagram: Plan, then Build and Docs (both after Plan), then Ship (after Build). */
+static void test_network(void)
+{
+    opj_doc *doc = three();
+    opj_network net;
+    opj_view v;
+    opj_path path;
+    oldraw_rect b;
+    oldraw *d;
+    char text[80];
+    int w, h;
+    unsigned long bg;
+    CHECK_N(opj_insert_task(doc, 3, "Docs"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 3, OPJ_COL_DURATION, "1d"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 3, OPJ_COL_PREDECESSORS, "1"), OWF_OK);
+    CHECK_N(opj_network_layout(doc, &net), OWF_OK);
+    CHECK_N(net.ntasks, 4);
+    CHECK_N(net.columns, 3);
+    CHECK_N(net.lines, 2);
+    CHECK_N(net.column[0], 0); CHECK_N(net.line[0], 0);
+    CHECK_N(net.column[1], 1); CHECK_N(net.line[1], 0);
+    CHECK_N(net.column[2], 2); CHECK_N(net.line[2], 0);
+    CHECK_N(net.column[3], 1); CHECK_N(net.line[3], 1);
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    CHECK(opj_network_box(&v, &net, 3, &b));
+    CHECK_N(b.x, 216); CHECK_N(b.y, 100); CHECK_N(b.w, 160); CHECK_N(b.h, 68);
+    CHECK(!opj_network_box(&v, &net, 4, &b));
+    opj_network_size(&v, &net, &w, &h);
+    CHECK_N(w, 592);
+    CHECK_N(h, 184);
+    CHECK_N(opj_network_hit(&v, &net, 20, 20), 0);
+    CHECK_N(opj_network_hit(&v, &net, 200, 20), -1);         /* between the columns */
+    CHECK_N(opj_network_hit(&v, &net, 220, 110), 3);
+    CHECK_N(opj_network_hit(&v, &net, -1, 20), -1);
+    /* links: straight along a line, or down in the gap before the successor's column */
+    CHECK(opj_network_link_path(&v, &net, doc, 1, 0, &path));
+    CHECK_N(path.n, 2);
+    CHECK_N(path.x[0], 176); CHECK_N(path.y[0], 50); CHECK_N(path.x[1], 215); CHECK_N(path.y[1], 50);
+    CHECK(opj_network_link_path(&v, &net, doc, 3, 0, &path));
+    CHECK_N(path.n, 4);
+    CHECK_N(path.x[1], 195); CHECK_N(path.y[2], 134); CHECK_N(path.x[3], 215);
+    CHECK(!opj_network_link_path(&v, &net, doc, 0, 0, &path));   /* Plan has no predecessor */
+    CHECK(!opj_network_link_path(&v, &net, doc, 1, 1, &path));
+    /* the boxes' text */
+    opj_network_line_text(doc, 1, 0, text, sizeof text);
+    CHECK_S(text, "Build");
+    opj_network_line_text(doc, 1, 1, text, sizeof text);
+    CHECK_S(text, "ID: 2  Dur: 3d");
+    opj_network_line_text(doc, 1, 2, text, sizeof text);
+    CHECK_S(text, "Start: Wed 18/11/26");
+    opj_network_line_text(doc, 1, 3, text, sizeof text);
+    CHECK_S(text, "Finish: Fri 20/11/26");
+    opj_network_line_text(doc, 9, 0, text, sizeof text);
+    CHECK_S(text, "");
+    /* scrolling stays on the diagram; reveal shows a box whole */
+    v.width = 300;
+    v.height = 120;
+    opj_network_reveal(&v, &net, 2);
+    CHECK_N(v.scroll_x, 292);
+    CHECK_N(v.scroll_y, 0);
+    CHECK_N(opj_network_hit(&v, &net, 130, 20), 2);
+    opj_network_reveal(&v, &net, 0);
+    CHECK_N(v.scroll_x, 0);
+    opj_network_scroll(&v, &net, 1000, 1000);
+    CHECK_N(v.scroll_x, 292);
+    CHECK_N(v.scroll_y, 64);
+    opj_network_scroll(&v, &net, -5000, -5);
+    CHECK_N(v.scroll_x, 0);
+    CHECK_N(v.scroll_y, 59);
+    /* drawing: Plan critical and finished (crossed), Docs not critical, Build selected */
+    CHECK_N(opj_set_percent(doc, 0, 100), OWF_OK);
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    v.selected = 1;
+    d = cur = oldraw_new(&ops, NULL, W, H, NULL);
+    CHECK(d != NULL);
+    bg = oldraw_resolve(d, OLDRAW_PEN(OLDRAW_PEN_BACKGROUND)) & 0xFFFFFFUL;
+    memset(px, 0, sizeof px);
+    ntexts = 0;
+    opj_network_draw(d, &v, &net, doc, NULL);
+    CHECK_X(px[16][16], 0xD03030);                        /* Plan's edge: critical */
+    CHECK_X(px[17][17], 0xD03030);                        /* two pixels thick */
+    CHECK_X(px[18][18], 0xC8C8C8);                        /* finished: crossed, down */
+    CHECK_X(px[81][18], 0xC8C8C8);                        /* and up */
+    CHECK_X(px[100][216], 0x4A7BD0);                      /* Docs's edge: not critical */
+    CHECK_X(px[40][300], oldraw_resolve(d, OLDRAW_PEN(OLDRAW_PEN_FILL)) & 0xFFFFFFUL);   /* Build: selected */
+    CHECK_X(px[50][190], 0xD03030);                       /* Plan to Build: both critical */
+    CHECK_X(px[90][195], 0x3050A0);                       /* Plan to Docs */
+    CHECK_X(px[60][200], bg);                             /* beside Docs's line, where it turns down */
+    CHECK_X(px[195][700], bg);
+    CHECK(drew("Plan") && drew("Build") && drew("Docs") && drew("Ship"));
+    CHECK(drew("ID: 2  Dur: 3d") && drew("Start: Wed 18/11/26"));
+    oldraw_free(d);
+    cur = NULL;
+    opj_network_free(&net);
+    CHECK(net.column == NULL && net.ntasks == 0);
+    /* a summary has no box, and the boxes under it keep their order */
+    CHECK_N(opj_insert_task(doc, 0, "Phase"), OWF_OK);
+    CHECK_N(opj_indent(doc, 1, 4, 1), OWF_OK);
+    CHECK_N(opj_network_layout(doc, &net), OWF_OK);
+    CHECK_N(net.column[0], -1);
+    CHECK(!opj_network_box(&v, &net, 0, &b));
+    CHECK_N(net.column[1], 0);
+    CHECK_N(net.column[4], 1);
+    CHECK_N(net.line[4], 1);
+    opj_network_free(&net);
+    CHECK_N(opj_network_layout(NULL, &net), OWF_ERR_FORMAT);
+    opj_doc_free(doc);
+}
+
+/* Change Working Time: hours as text, base calendars, a weekday's hours, holidays and a task's own calendar,
+ * each one Undo step with the plan scheduled again. A 2-day task from Mon 16 Nov 2026 08:00. */
+static void test_worktime(void)
+{
+    opj_doc *doc = opj_doc_new(NULL, AT(16, 8, 0));
+    owf_pday h;
+    char text[80];
+    int cal = -9, night = -9;
+    long thu = owf_ptime_make(2026, 11, 19, 0, 0) / 1440;
+    CHECK(doc != NULL);
+    if (!doc) return;
+    /* Hours as typed and back. */
+    CHECK(opj_hours_parse("08:00-12:00, 13:00-17:00", &h) && h.nspans == 2 && h.from[1] == 780 && h.to[1] == 1020);
+    opj_hours_text(&h, text);
+    CHECK_S(text, "08:00-12:00, 13:00-17:00");
+    CHECK(opj_hours_parse("8-12 13:30-17", &h) && h.nspans == 2 && h.from[1] == 810);
+    CHECK(opj_hours_parse("22:00-24:00", &h) && h.nspans == 1 && h.to[0] == 1440);
+    CHECK(opj_hours_parse("OFF", &h) && h.nspans == 0);
+    CHECK(opj_hours_parse("", &h) && h.nspans == 0);
+    opj_hours_text(&h, text);
+    CHECK_S(text, "off");
+    CHECK(!opj_hours_parse("12-8", &h));                             /* backwards */
+    CHECK(!opj_hours_parse("8-12, 11-13", &h));                      /* overlapping */
+    CHECK(!opj_hours_parse("8-25", &h) && !opj_hours_parse("8:70-9", &h) && !opj_hours_parse("8", &h));
+    CHECK(!opj_hours_parse("1-2 3-4 5-6 7-8 9-10 11-12", &h));       /* six spans */
+    CHECK(!opj_hours_parse("8-12x", &h) && !opj_hours_parse(NULL, &h));
+
+    CHECK_N(opj_insert_task(doc, 0, "Lay"), OWF_OK);
+    CHECK_N(opj_set_duration(doc, 0, 2 * 480), OWF_OK);
+    CHECK_N(doc->plan->tasks[0].early_finish, AT(17, 17, 0));
+    /* Calendars by name (case ignored) or number. */
+    CHECK_N(opj_find_calendar(doc->plan, "standard"), 0);
+    CHECK_N(opj_find_calendar(doc->plan, "1"), 0);
+    CHECK_N(opj_find_calendar(doc->plan, "2"), -1);
+    CHECK_N(opj_find_calendar(doc->plan, "Night"), -1);
+    /* Standard's Monday made a half day: Lay runs on to Wed noon; Undo puts it back. */
+    CHECK_N(opj_set_week_hours(doc, 0, 1, "08:00-12:00"), OWF_OK);
+    CHECK_N(doc->plan->tasks[0].early_finish, AT(18, 12, 0));
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK_N(doc->plan->tasks[0].early_finish, AT(17, 17, 0));
+    CHECK_N(opj_set_week_hours(doc, 0, 7, "8-12"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_week_hours(doc, 3, 1, "8-12"), OWF_ERR_FORMAT);  /* no calendar 3 */
+    CHECK_N(opj_set_week_hours(doc, 0, 1, "nonsense"), OWF_ERR_FORMAT);
+    /* Holidays Mon 16 and Tue 17: Lay moves to Wed and Thu. */
+    CHECK_N(opj_set_day_hours(doc, 0, thu - 3, thu - 2, "off"), OWF_OK);
+    CHECK_N(doc->plan->tasks[0].early_start, AT(18, 8, 0));
+    CHECK_N(doc->plan->tasks[0].early_finish, AT(19, 17, 0));
+    CHECK_N(doc->plan->calendars[0].nexceptions, 2);
+    /* Tuesday back to the week's hours: Lay Tue and Wed. */
+    CHECK_N(opj_set_day_hours(doc, 0, thu - 2, thu - 2, NULL), OWF_OK);
+    CHECK_N(doc->plan->calendars[0].nexceptions, 1);
+    CHECK_N(doc->plan->tasks[0].early_start, AT(17, 8, 0));
+    CHECK_N(opj_set_day_hours(doc, 0, thu, thu - 1, "off"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_day_hours(doc, 0, thu, thu + 3660, "off"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_day_hours(doc, 0, thu, thu, "25-26"), OWF_ERR_FORMAT);
+    /* A new calendar, a copy of Standard with its holiday; names must be new and not a number. */
+    CHECK_N(opj_add_calendar(doc, "Night", 0, &night), OWF_OK);
+    CHECK_N(night, 1);
+    CHECK_N(doc->plan->calendars[night].nexceptions, 1);
+    CHECK_N(doc->plan->calendars[night].week[1].nspans, 2);
+    CHECK_N(opj_add_calendar(doc, "NIGHT", -1, &cal), OWF_ERR_FORMAT);
+    CHECK_N(opj_add_calendar(doc, "  ", -1, &cal), OWF_ERR_FORMAT);
+    CHECK_N(opj_add_calendar(doc, "24", -1, &cal), OWF_ERR_FORMAT);
+    CHECK_N(opj_add_calendar(doc, "Odd", 5, &cal), OWF_ERR_FORMAT);
+    CHECK_N(cal, -9);
+    CHECK_N(opj_add_calendar(doc, "Plain", -1, &cal), OWF_OK);        /* Standard's hours, no holidays */
+    CHECK_N(doc->plan->calendars[cal].nexceptions, 0);
+    CHECK_N(opj_find_calendar(doc->plan, "night"), night);
+    /* Night works 22:00-24:00 every day; Lay on its own Night calendar takes 4 days of 2 hours from Mon. */
+    {
+        int d;
+        for (d = 0; d < 7; d++) CHECK_N(opj_set_week_hours(doc, night, d, "22:00-24:00"), OWF_OK);
+    }
+    CHECK_N(opj_set_day_hours(doc, night, thu - 3, thu - 3, NULL), OWF_OK);   /* Mon not a holiday there */
+    CHECK_N(opj_set_task_calendar(doc, 0, night), OWF_OK);
+    CHECK_N(doc->plan->tasks[0].calendar, night);
+    CHECK_N(doc->plan->tasks[0].early_start, AT(16, 22, 0));
+    CHECK_N(doc->plan->tasks[0].early_finish, owf_ptime_make(2026, 11, 24, 0, 0));   /* 8 nights of 2 hours */
+    CHECK_N(opj_set_task_calendar(doc, 0, -1), OWF_OK);
+    CHECK_N(doc->plan->tasks[0].calendar, -1);
+    CHECK_N(opj_set_task_calendar(doc, 0, 9), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_task_calendar(doc, 4, 0), OWF_ERR_FORMAT);
+    /* The plan's calendar: Night for every task without its own. */
+    CHECK_N(opj_set_plan_calendar(doc, night), OWF_OK);
+    CHECK_N(doc->plan->calendar, night);
+    CHECK_N(doc->plan->tasks[0].early_start, AT(16, 22, 0));
+    CHECK_N(opj_set_plan_calendar(doc, -1), OWF_ERR_FORMAT);
+    {
+        unsigned long before = doc->changes;
+        CHECK_N(opj_set_plan_calendar(doc, 7), OWF_ERR_FORMAT);
+        CHECK_N(doc->changes, before);                                /* a refused edit is no step */
+    }
+    opj_doc_free(doc);
+    CHECK_N(opj_set_week_hours(NULL, 0, 1, "8-12"), OWF_ERR_FORMAT);
+    CHECK_N(opj_find_calendar(NULL, "Standard"), -1);
+}
+
+/* Tracking in the sheet: Actual Start, Actual Finish, Actual and Remaining Duration, % Complete moving the
+ * actual dates, and Update Project as one Undo step. Two 2-day tasks, A then B, from Mon 16 Nov 2026. */
+static void test_actual_cells(void)
+{
+    opj_doc *doc = opj_doc_new(NULL, AT(16, 8, 0));
+    int changed = -1;
+    unsigned long before;
+    CHECK(doc != NULL);
+    if (!doc) return;
+    CHECK_N(opj_insert_task(doc, 0, "A"), OWF_OK);
+    CHECK_N(opj_insert_task(doc, 1, "B"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_DURATION, "2d"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_DURATION, "2d"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_PREDECESSORS, "1"), OWF_OK);
+    CHECK_S(opj_column_title(OPJ_COL_ACTUAL_START), "Actual Start");
+    CHECK_S(opj_column_title(OPJ_COL_REMAINING_DURATION), "Remaining Dur.");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_START), "NA");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_FINISH), "NA");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_DURATION), "0d");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_REMAINING_DURATION), "2d");
+    /* Which columns are typed. */
+    CHECK(opj_column_typed(OPJ_COL_ACTUAL_START) && opj_column_typed(OPJ_COL_NOTES) && opj_column_typed(OPJ_COL_CONSTRAINT_TYPE));
+    CHECK(!opj_column_typed(OPJ_COL_ACTUAL_DURATION) && !opj_column_typed(OPJ_COL_ID) && !opj_column_typed(OPJ_COL_START_VARIANCE));
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_DURATION, "1d"), OWF_ERR_FORMAT);
+    /* 50% gives A its scheduled start as its actual start; a day done, a day to go. */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_PERCENT, "50"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_START), "Mon 16/11/26");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_FINISH), "NA");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_DURATION), "1d");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_REMAINING_DURATION), "1d");
+    /* 100% finishes it at its scheduled finish; 0% takes both away. */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_PERCENT, "100%"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_FINISH), "Tue 17/11/26");
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_PERCENT, "60"), OWF_OK);     /* not finished after all */
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_FINISH), "NA");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_START), "Mon 16/11/26");
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_PERCENT, "0"), OWF_OK);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_START), "NA");
+    /* A typed Actual Start a day late moves A and B; Actual Finish before it is refused. */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_START, "17/11/26"), OWF_OK);
+    CHECK_N(doc->plan->tasks[0].actual_start, AT(17, 8, 0));
+    CHECK_N(doc->plan->tasks[1].early_start, AT(19, 8, 0));
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_FINISH, "16/11/26"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_FINISH, "someday"), OWF_ERR_FORMAT);
+    /* Finished Wed at 17:00: 100%, 2 days, B from Thu. */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_FINISH, "18/11/26"), OWF_OK);
+    CHECK_N(doc->plan->tasks[0].actual_finish, AT(18, 17, 0));
+    CHECK_S(cell_of(doc, 0, OPJ_COL_PERCENT), "100%");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_REMAINING_DURATION), "0d");
+    /* An Actual Start later than the finish drops the finish. */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_START, "19/11/26"), OWF_OK);
+    CHECK(!doc->plan->tasks[0].has_actual_finish);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_PERCENT), "99%");                /* no longer finished */
+    /* NA on the finish leaves it started, below 100%; NA on the start clears both and the percent. */
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_FINISH, "20/11/26"), OWF_OK);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_FINISH, "NA"), OWF_OK);
+    CHECK(doc->plan->tasks[0].has_actual_start && doc->plan->tasks[0].percent == 99);
+    CHECK_N(opj_set_cell(doc, 0, OPJ_COL_ACTUAL_START, "na"), OWF_OK);
+    CHECK(!doc->plan->tasks[0].has_actual_start && doc->plan->tasks[0].percent == 0);
+    /* An Actual Finish with no start: the scheduled start is taken. */
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_ACTUAL_FINISH, "18/11/26"), OWF_OK);
+    CHECK_N(doc->plan->tasks[1].actual_start, AT(18, 8, 0));         /* B starts Wed, after A */
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK(!doc->plan->tasks[1].has_actual_start);
+    /* Update Project through Tue 17 17:00: A done, B not started; one Undo step. */
+    before = doc->changes;
+    CHECK_N(opj_update_project(doc, AT(17, 17, 0), 0, &changed), OWF_OK);
+    CHECK_N(changed, 1);
+    CHECK_N(doc->changes, before + 1);
+    CHECK_S(cell_of(doc, 0, OPJ_COL_PERCENT), "100%");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ACTUAL_FINISH), "Tue 17/11/26");
+    CHECK(doc->plan->has_status_date && doc->plan->status_date == AT(17, 17, 0));
+    CHECK_N(opj_update_project(doc, AT(18, 12, 0), 0, &changed), OWF_OK);
+    CHECK_N(changed, 1);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "25%");
+    CHECK_N(opj_undo(doc), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "0%");
+    CHECK_N(opj_update_project(doc, AT(18, 12, 0), 1, NULL), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_PERCENT), "0%");                 /* 0% or 100% only */
+    CHECK_S(cell_of(doc, 1, OPJ_COL_ACTUAL_START), "Wed 18/11/26");
+    /* Earned value columns: NA for BCWS and SV until there is a status date; money otherwise. */
+    {
+        opj_doc *ev = opj_doc_new(NULL, AT(16, 8, 0));
+        CHECK(ev != NULL);
+        if (ev) {
+            CHECK_N(opj_insert_task(ev, 0, "Dig"), OWF_OK);
+            CHECK_N(opj_set_cell(ev, 0, OPJ_COL_DURATION, "2d"), OWF_OK);
+            CHECK_N(opj_add_resource(ev, "Dale", NULL), OWF_OK);
+            CHECK_N(opj_set_resource_cell(ev, 0, OPJ_RCOL_RATE, "10"), OWF_OK);
+            CHECK_N(opj_set_cell(ev, 0, OPJ_COL_RESOURCES, "Dale"), OWF_OK);
+            CHECK_N(opj_set_baseline(ev, 0, -1), OWF_OK);
+            CHECK_S(opj_column_title(OPJ_COL_BCWS), "BCWS");
+            CHECK_S(cell_of(ev, 0, OPJ_COL_BCWS), "NA");
+            CHECK_S(cell_of(ev, 0, OPJ_COL_SV), "NA");
+            CHECK_S(cell_of(ev, 0, OPJ_COL_BCWP), "0.00");
+            CHECK(!opj_column_typed(OPJ_COL_CV));
+            CHECK_N(opj_update_project(ev, AT(16, 17, 0), 0, NULL), OWF_OK);   /* a day of two done */
+            CHECK_S(cell_of(ev, 0, OPJ_COL_BCWS), "80.00");
+            CHECK_S(cell_of(ev, 0, OPJ_COL_BCWP), "80.00");
+            CHECK_S(cell_of(ev, 0, OPJ_COL_ACWP), "80.00");
+            CHECK_S(cell_of(ev, 0, OPJ_COL_SV), "0.00");
+            CHECK_S(cell_of(ev, 0, OPJ_COL_CV), "0.00");
+            opj_doc_free(ev);
+        }
+    }
+    CHECK_N(opj_update_project(NULL, AT(18, 12, 0), 0, &changed), OWF_ERR_FORMAT);
+    CHECK_N(changed, 0);
+    opj_doc_free(doc);
+}
+
+/* Change Working Time's days line: weekdays, a date, a range; the hours shown for it; setting them. */
+static void test_worktime_days(void)
+{
+    opj_doc *doc = opj_doc_new(NULL, AT(16, 8, 0));
+    int wd = -1;
+    long a = -1, b = -1, mon = AT(16, 0, 0) / 1440;
+    char text[80];
+    CHECK(doc != NULL);
+    if (!doc) return;
+    CHECK_N(opj_days_parse("Mon", &wd, &a, &b), 1);
+    CHECK_N(wd, 1);
+    CHECK_N(opj_days_parse(" saturday ", &wd, NULL, NULL), 1);
+    CHECK_N(wd, 6);
+    CHECK_N(opj_days_parse("WED", &wd, NULL, NULL), 1);
+    CHECK_N(wd, 3);
+    CHECK_N(opj_days_parse("Mo", &wd, NULL, NULL), 0);                /* too short */
+    CHECK_N(opj_days_parse("Mond", &wd, NULL, NULL), 0);              /* neither three letters nor the name */
+    CHECK_N(opj_days_parse("Fridays", &wd, NULL, NULL), 0);
+    CHECK_N(opj_days_parse("24/12/26", &wd, &a, &b), 2);
+    CHECK_N(a, mon + 38);
+    CHECK_N(b, a);
+    CHECK_N(opj_days_parse("24/12/26 - 1/1/27", NULL, &a, &b), 2);
+    CHECK_N(b - a, 8);
+    CHECK_N(opj_days_parse("16/11/26 to 18/11/26", NULL, &a, &b), 2);
+    CHECK_N(a, mon);
+    CHECK_N(b, mon + 2);
+    CHECK_N(opj_days_parse("2026-11-16 TO 2026-11-17", NULL, &a, &b), 2);   /* ISO dates keep their dashes */
+    CHECK_N(b, mon + 1);
+    CHECK_N(opj_days_parse("18/11/26 - 16/11/26", NULL, &a, &b), 0);  /* backwards */
+    CHECK_N(opj_days_parse("16/11/26 13:00", NULL, &a, &b), 0);       /* a time is not a day */
+    CHECK_N(opj_days_parse("1/1/26 - 1/1/40", NULL, &a, &b), 0);      /* over 3660 days */
+    CHECK_N(opj_days_parse("", NULL, NULL, NULL), 0);
+    CHECK_N(opj_days_parse(NULL, NULL, NULL, NULL), 0);
+    CHECK_N(opj_days_parse("someday", NULL, NULL, NULL), 0);
+    /* The hours they work now. */
+    opj_days_hours_text(doc->plan, 0, "Mon", text);
+    CHECK_S(text, "08:00-12:00, 13:00-17:00");
+    opj_days_hours_text(doc->plan, 0, "Sun", text);
+    CHECK_S(text, "off");
+    opj_days_hours_text(doc->plan, 0, "21/11/26", text);              /* a Saturday */
+    CHECK_S(text, "off");
+    opj_days_hours_text(doc->plan, 3, "Mon", text);
+    CHECK_S(text, "");
+    opj_days_hours_text(doc->plan, 0, "nonsense", text);
+    CHECK_S(text, "");
+    /* Setting them: a weekday, a range of holidays, back to default; default is for dates only. */
+    CHECK_N(opj_set_days_hours(doc, 0, "Fri", "08:00-12:00"), OWF_OK);
+    opj_days_hours_text(doc->plan, 0, "Friday", text);
+    CHECK_S(text, "08:00-12:00");
+    CHECK_N(opj_set_days_hours(doc, 0, "24/12/26 - 1/1/27", "off"), OWF_OK);
+    CHECK_N(doc->plan->calendars[0].nexceptions, 9);
+    opj_days_hours_text(doc->plan, 0, "28/12/26", text);
+    CHECK_S(text, "off");
+    CHECK_N(opj_set_days_hours(doc, 0, "28/12/26", " Default "), OWF_OK);
+    CHECK_N(doc->plan->calendars[0].nexceptions, 8);
+    opj_days_hours_text(doc->plan, 0, "28/12/26", text);
+    CHECK_S(text, "08:00-12:00, 13:00-17:00");
+    CHECK_N(opj_set_days_hours(doc, 0, "Mon", "default"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_days_hours(doc, 0, "someday", "off"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_days_hours(doc, 0, "Mon", "12-8"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_days_hours(doc, 0, "Mon", NULL), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_days_hours(doc, 5, "Mon", "off"), OWF_ERR_FORMAT);
+    CHECK_N(opj_undo(doc), OWF_OK);                                   /* the default undone */
+    CHECK_N(doc->plan->calendars[0].nexceptions, 9);
+    opj_doc_free(doc);
+}
+
 int main(void)
 {
     test_dates();
@@ -735,7 +2710,34 @@ int main(void)
     test_hits();
     test_resources();
     test_baseline();
+    test_baseline_n();
+    test_level_cells();
+    test_level_order_cells();
+    test_sort();
+    test_find_replace();
+    test_filter_group();
+    test_view_lines();
+    test_work_columns();
+    test_update_task();
+    test_task_type_cells();
+    test_typed_work_dropped();
+    test_resource_calendar();
+    test_progress_lines();
+    test_assign_dialog();
     test_print();
+    test_pdf();
+    test_usage();
+    test_usage_edits();
+    test_task_usage();
+    test_graph();
+    test_tracking();
+    test_columns();
+    test_task_info();
+    test_network();
+    test_drag();
+    test_worktime();
+    test_actual_cells();
+    test_worktime_days();
     if (fails) {
         printf("project view tests: %d of %d checks failed\n", fails, checks);
         return 1;

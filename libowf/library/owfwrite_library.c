@@ -39,13 +39,44 @@
  * 3.10: libowf 1.11, tracked format changes of runs (owf_run.format_change, owf_doc.format_changes,
  * owf_format_change): DOCX w:rPrChange in and out; other formats the format as it is now (accepted). No new
  * calls; owf_run and owf_doc grew, so the three libraries go together again.
+ * 3.11: libowf 1.12, a picture in the line may be a tracked change (owf_run.revision on OWF_RUN_IMAGE): DOCX
+ * w:ins and w:del round its w:drawing, ODT changed regions, in and out. A frame's run may be one too (DOCX in
+ * and out; ODT saves it accepted). No new calls and no struct grew.
+ * 3.12: libowf 1.12.1 (after 3.11's 1.12.0), footnote and endnote numbering (owf_page.note_format and
+ * note_start): DOCX w:footnotePr and w:endnotePr, ODT text:notes-configuration, in and out; the marks in every
+ * format numbered by them. No new calls; owf_page grew, and owf_doc with it, so the three libraries go together
+ * again.
+ * 3.13: libowf 1.12.2, the notes' text with its formats (owf_doc.note_stories, OWF_DOC_NOTE_STORY): DOCX's
+ * notes' runs in and out. No new calls; owf_doc grew, so the three libraries go together again.
+ * 3.14: libowf 1.12.3, notes numbered again at each section or page (owf_page.note_restart): DOCX
+ * w:numRestart, ODT text:start-numbering-at, in and out. No new calls; owf_page grew, and owf_doc with it.
+ * 3.15: libowf 1.12.4, number ranges (OWF_FIELD_SEQ): DOCX SEQ fields, ODT text:sequence and its
+ * text:sequence-decl, in and out. No new calls and no structure grew, so owfpub and owfpresent stay.
+ * 3.16: libowf 1.12.5 (3.14 and 3.15, libowf 1.12.3 and 1.12.4, are #288's and #292's), a table row may be a
+ * tracked change (owf_para.row_revision: DOCX w:trPr/w:ins and w:del; ODT saves it accepted). No new calls;
+ * owf_para grew, so the three libraries go together again.
+ * 3.17: libowf 1.12.6, 3.15's number ranges (OWF_FIELD_SEQ) on top of 3.16: #292 was numbered 3.15 before
+ * #255's 3.16 merged first, so the library that knows SEQ is 3.17. No new calls and no structure grew.
+ * 3.19: libowf 1.14 (3.18, libowf 1.13, is #368's), hidden text (OWF_HIDDEN): DOCX w:vanish, ODT
+ * text:display="none" and RTF \v in and out; PDF and Markdown leave it out. No new calls and no structure
+ * grew, so owfpub and owfpresent stay.
+ * 3.21: libowf 1.16 (3.18 to 3.20, libowf 1.13 to 1.15, are #368's, #373's and #375's), conditional text
+ * (OWF_FIELD_IF, owf_ifform.h): DOCX IF with its fields nested in its code, and ODT text:conditional-text,
+ * in and out. No new calls and no structure grew, so owfpub and owfpresent stay.
+ * 3.22: libowf 1.19 (was 3.20 and libowf 1.15 before #376 and the presentation work merged first), input
+ * fields (OWF_FIELD_FILLIN): DOCX FILLIN and ODT text:text-input in and out. No new calls and no structure
+ * grew, so owfpub and owfpresent stay.
+ * 3.23: libowf 1.20 (3.22, libowf 1.19, is the input fields'), hidden paragraphs (OWF_FIELD_HIDE_PARA,
+ * owf_para_hidden) and hidden text: ODT text:hidden-paragraph and text:hidden-text in and out; a hidden
+ * paragraph is left out of Markdown, HTML and PDF and is DOCX w:vanish while it holds. No new calls and no
+ * structure grew, so owfpub and owfpresent stay.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 10
-#define OWF_LIB_VERS "3.10"
-#define OWF_LIB_DATE "14.11.2026"
+#define OWF_LIB_REVISION 23
+#define OWF_LIB_VERS "3.23"
+#define OWF_LIB_DATE "17.11.2026"
 #define OWF_LIB_CALLS_H "owfwrite_calls.h"
 #include "owf_libbase.h"

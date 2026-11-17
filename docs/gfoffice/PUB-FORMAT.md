@@ -1,6 +1,6 @@
 # Microsoft Publisher's .pub format: the clean-room notes
 
-GFOpenPublisher's record of what we know about .pub and where each fact came
+GFOpenPressmaster's record of what we know about .pub and where each fact came
 from. Microsoft never published a specification of .pub. Everything below
 was worked out from sample files only: their bytes, their structure, and
 what Publisher itself shows for them (the thumbnail Publisher saves in each
@@ -225,6 +225,27 @@ page height [V 24]. In halloween-flyer it holds one shape, which the
 thumbnail doesn't show. This is the scratch area, the space around the page
 [H].
 
+Masters needn't have 0x10 = 3 [V tdf100639 (2010); tdf67299, tdf69080 x2
+(2002/2003)]: their 0x10 is 1 (or 0), and only the pages naming them in
+0x0D show they are masters. In tdf100639 the page list starts with two
+pages named "A" (0x0E) whose 0x10 is 1 and 0, and the 13 pages' 0x0D name
+them in turn, the first page the 0x10 = 1 one. Those masters carry the
+0x03 field the pages lack, and no 0x0D. The reader takes a page as a master
+when its 0x10 is 3 or another page of the list names it in 0x0D.
+
+Such a pair is one two-page master: 0x10 = 1 is its right page and 0 its
+left, and both have the same name (0x0F) [V 3: tdf69080's pair is named
+"Default Master" with the letters (0x0E) "R" on the 0x10 = 1 page and "L"
+on the 0 one; in tdf69080, tdf67299 and tdf100639 page 1, the first right
+page, takes the 0x10 = 1 one, and the pages after it take the two in
+turn]. tdf100639 and tdf67299 give both halves the letter "A". The reader
+pairs a left and a right master of one name (a half without its pair is a
+one-page master) and then shows the pages as facing; the writer writes a
+pair's 0x10 as 1 and 0 and both halves with one letter. Whether a
+publication can face its pages without a two-page master is not known. Each of tdf100639's
+two masters holds a right-aligned text box near the foot whose text is " #"
+in the dump [H: a page number field, not decoded yet].
+
 The rule the reader uses [V 24, on the page counts the samples show: Sample
 2, SampleBrochure 2, SampleNewsletter 4, the others 1]: a page is the
 document's when it is not a master, its field 0x06's first u32 is not 0,
@@ -326,7 +347,12 @@ one page and chunk to the next. The fields seen:
 | 0x237, 0x238, 0x239 | beside 0x202, 0x203 and 0x20C with the same values in the 2002-or-later files; not in the 98/2000 files | [V 6]; [H]: complex-script bold, italic and size |
 | 0x212, 0x23E | 0x809 (English, UK), 0x409, 0xC09 | [H]: languages (Windows LCIDs) |
 | 0x22D | set on SampleBrochure's en dashes | unknown |
-| 0x21E, 0x244, 0x248, 0x22E, 0x200 | on Sample's hyperlinks | [H]: underline and colour; not read yet |
+| 0x21E | underline: type 0x10, its low byte 1 for a single line (0: none); the high byte 8 or 4, unknown. Only 1 has been seen: the reader takes any low byte but 0 as a single line, so other kinds (double, dotted), if Publisher has them, read as single | [V 2: every hyperlink's text in Sample (2007, 2010, 2000, 98) and the Link files has 0x801, as Publisher underlines its links; govdocs1-923566's e-mail addresses and its "New Positions" headings have 0x401]; read as underline from 0.3.29 |
+| 0x244 | the colour: a block whose 0x200 is a place in the text's colour list, `PL` (6.9) | [V 3: christmas's "C", "Toy" (place 2, red 0xFF) and "Drive" (place 4, 0x6600 green) as its thumbnail shows them; Sample's hyperlinks (place 1, scheme place 5, #0066FF blue); halloween-flyer's "..." (0xC0, dark red)]; 0xFFFFFFFE seen too: not known, left as the default; read from 0.3.30 |
+| 0x200 (type 0x10) | the run's field: its low byte 5 is a page number. The run is the one character "#" (what Publisher shows for the field on a master), and 0x222 = 0xFFFFFFFF is beside it. The high byte is 0 or 0xFF, unknown. The reader makes one page number field of the run's characters; the writer writes "#" with 0x200 = 5 and 0x222 | [V 3: tdf100639's two masters' " #" (Publisher 2010, 0x0005); SampleNewsletter's and govdocs1-923566's "Page #" headers (2003, 0xFF05)]; read and written from 0.3.33 |
+| 0x200, low byte 6 | on a "#" that starts a paragraph in Sample, after its "page two" line (0x0006, 0x6D06 in its 2010 saves), beside 0x21E and 0x244 | unknown ([H]: a link's field); left as text |
+| 0x222 | 0xFFFFFFFF beside every page number's 0x200 | unknown ([H]: the number's format, -1 the section's) |
+| 0x248, 0x22E, 0x200 | on Sample's hyperlinks (0x248 a block holding 0x200 = 1; the 2000 form 0x22E = 0xE0E40005) | unknown ([H]: 0x248 a followed link's colour; 0x22E the 98/2000 colour) |
 
 A run's fields are laid over its paragraph style's (6.6): Sample's plain
 text says it is Times New Roman 10 point, has no fields of its own, and its
@@ -364,6 +390,77 @@ u32 the style's number [V 8].
 - No style seems to name another as its parent [H: the `STSH` 2 i32 that
   could is -1 in all 8]. A style without a size or typeface takes style 0's
   [H].
+
+### 6.7 Hyperlinks: `TOKN` [V 7: Sample's stories 4 and 5, and POI's six LinkAt files, whose names say where their links are]
+
+`TOKN` n (a `PLC` chunk) holds story n's links. The six LinkAt files settle
+the places: `LinkAt10` has one link at character 10, `LinkAt0And10` two at
+0 and 10, and so on, and each file's text shows "LINK" there.
+
+| Offset | What |
+|---|---|
+| 0x00 | u32 n, the number of links |
+| 0x04, 0x08 | u32 12, u32 0x1FFFF [unknown] |
+| 0x0C | n + 1 u32: each link's first character in the story, then the story's length |
+
+Then n blocks (u32 length counting itself, then fields with 11-bit ids,
+6.3), one per link. Each holds only what changed from the link before it,
+so an empty block (length 4) is a link like the one before:
+
+| Field | What | Mark |
+|---|---|---|
+| 0x200 | 0x8C0, in the first block only | unknown |
+| 0x201 | the link's length in characters | [V 7: "LINK" 4, "LINK2" 5, "Link to a file" 14, "email link" 10, "Within doc to page 1" 20] |
+| 0x202 | the kind: 1 a web address or a file, 3 a place in the publication, 4 an e-mail address | [V 3; the e-mail one is a `mailto:`] |
+
+Then n more blocks, one per link, each with 0x200, the link's place in the
+table that follows [V 3: `LinkAt10And20And30`'s three links go to its
+three addresses in order; Sample's story 5 goes 1, 0, 2].
+
+The table: u32 the size of the offsets and strings, u32 the count, 12 bytes
+(a u32 that changes from file to file, then 8 zero bytes) [unknown], then
+count u32 offsets counted from the first offset, and at each a u16 length
+and that many UTF-16 characters [V 7: all their addresses]. A place in the
+publication is one character (0x010A in Sample) [H: the page's chunk
+number]; the reader keeps those links' words as plain text for now.
+
+### 6.8 Table cells: `TCD ` [V 4: Sample, Sample98 and Sample2000's 3 x 2 table, govdocs1-923566's 4 x 2 contents table]
+
+`TCD ` n (a `PLC` chunk, its name ending in a space) says which of story n's
+paragraphs go in which cell of the table whose text it is:
+
+| Offset | What |
+|---|---|
+| 0x00 | u32 n: the cells less one |
+| 0x04, 0x08 | u32 0, u32 0xFF00 [unknown] |
+| 0x0C | n + 1 u32: each cell's last character in the story, its last paragraph's mark; the last cell's is the story's length |
+
+A paragraph is in the cell whose end is the first at or after its start.
+Cells go across a row, then down: Sample's six paragraphs are "Table on
+page 2" and "Top right", then "P2 table left" and "P2 table right", then
+"Bottom Left" and "Bottom Right", the 2 x 3 its thumbnail shows; the
+table's chunk (0x67, 5.3) gives the columns. The 98 and 2000 forms have the
+same chunk. Merged cells: not seen yet.
+
+### 6.9 Text colours: `PL  ` [V 3: christmas, Sample, halloween-flyer, as 6.4 says]
+
+`PL  ` number 0 (in a later directory block in christmas and govdocs1-923566,
+5 and 8 entries; Sample has 2) lists the colours the text uses; a character
+run's 0x244 names one by its place:
+
+| Offset | What |
+|---|---|
+| 0x00 | u32 n: the colours |
+| 0x04, 0x08 | u32 0x1C (0x28 in easter-egg-hunt-flyer), u32 0 [unknown] |
+| 0x0C | n blocks, one after another, each a u32 length counting itself and fields |
+
+A block's 0x201 is the colour: 0x00BBGGRR (red in the low byte), or 0x08 in
+the top byte and a place in the colour scheme (5.5), as the drawing's
+colours are. Block 0 is the same in every sample (0x201 = scheme place 0,
+0x202 and 0x204-0x205 = 0xFFFFFFFF, 0x203 = 0x20000000); govdocs1-923566's
+block 1 has 0x202 and 0x203 as well [unknown: tints or a second colour].
+Each block ends with an empty 0x206 block. The 98 and 2000 forms have no
+`PL`: their colour (0x22E, 6.4) is not read yet.
 
 ## 7. The drawing: `Escher/EscherStm`
 
@@ -506,18 +603,52 @@ and what kind each shape is. `tools/publab/thumbdib.py` writes it as a PNG.
 The author's name is property 4 [V 26]: personal data, like the temporary
 path in section 5.1.
 
+## 11b. Writing (out_pub.c, step 3)
+
+`owf_pub_write` (libowf/src/out_pub.c, owfpub.library 3.3) writes only the
+2007 form that sections 4-7 describe, from an `owf_pub` the reader made:
+`Contents` (header, index, document, pages, masters, frames, tables, scheme),
+`Escher/EscherStm` (one F004 per frame: shape number, look, anchor in EMU
+about the page centre, F011 chunk, F00D text id), `Quill/QuillSub/CONTENTS`
+(TEXT, FDPC/FDPP pages, STRS, SYID, FONT, an empty STSH 0/1, TOKN, TCD, PL)
+and a DocumentSummaryInformation that says 12.0. The compound file is
+libowf/src/owf_cfbw.c (MS-CFB v3, 512-byte sectors, deterministic).
+Pictures (section 8): one F007 entry per picture the publication holds, in
+its order, the picture itself in `Escher/EscherDelayStm` (PNG and GIF in
+0xF01E, JPEG 0xF01D, DIB 0xF01F, WMF 0xF01B and EMF 0xF01A with the 34-byte
+header and zlib data in stored blocks), and the frame's 0x4104 naming its
+entry; the 16-byte ids are written as zero (MD4 in [MS-ODRAW], not checked by
+our reader; whether Publisher checks them is not known). Groups: an F003
+container whose first shape has F009 (the group's rectangle, set to its own
+box about the page centre, so its frames' F00F boxes are the same numbers)
+and flags 0x201; its frames follow with flag 0x2 and their Contents chunks
+have the group's chunk as parent. Groups nest 16 deep at most (the reader
+reads 24 containers); frames deeper are left out with a note. Shape numbers are the file's own for the
+2002-or-later forms (202 for text boxes). WordArt: its shape number, and its
+text in 0xC0C0 (UTF-16, paragraphs apart by CR, a NUL), not in Quill. The
+default style (STSH 1, style 0) gets the first WordArt's size, typeface and
+colour, each only when every run written has its own (runs from our reader
+always do; new text may not, and would take the default's instead).
+Not written yet, named in the report: the scratch area (the reader keeps only
+its count). GFOpenPressmaster's own pages reach the writer through
+`opp_deck_to_pub` (src/pub/opp_export.c), the inverse of `opp_pub_to_deck`:
+frames sharing a text flow share one story, boxes are kept in twips. PL holds 255 text colours; runs past them keep the automatic colour,
+with a note. tests/pub/test_pub_save.py reads every generated file back through
+our own reader; whether Publisher itself opens these files has not been
+checked yet.
+
 ## 12. Not known yet (phase 1's work)
 
 - Paragraph spacing, indents and the alignments other than left, right and
-  centred (6.5, 6.6; justified not seen yet, SampleBrochure's 6 unknown); style names; colour schemes (`Contents` kinds 0x46-0x8C); underline
-  and colour in `FDPC` (6.4).
+  centred (6.5, 6.6; justified not seen yet, SampleBrochure's 6 unknown); style names; colour schemes (`Contents` kinds 0x46-0x8C); the
+  98/2000 text colour (0x22E) and underline kinds other than single in `FDPC` (6.4).
 - A frame's own text columns (none of the samples has one: their columns
   are linked frames, 5.3), text wrap (5.3's 0x47 is a guess), layering beyond the back-to-front order, rotation and flips.
-- Tables' cell borders, merged cells, and which paragraph goes in which cell
-  (`TCD `).
+- Tables' cell borders and merged cells.
 - Master pages' own frames (the samples' masters are empty), headers and
   footers, page numbers.
-- Hyperlinks and fields (`TOKN`), catalog and mail-merge data.
+- Links to places in the publication (6.7), fields, catalog and mail-merge
+  data.
 - Shape numbers beyond those in 7.3, gradients, picture crops and fills;
   rotation and flips (not looked for yet); columns and wrap.
 - The 98/2000 form's masters and pictures; the older form (section 10).
@@ -526,8 +657,8 @@ path in section 5.1.
 ## 13. PageStream
 
 PageStream (Soft-Logik, later Grasshopper) is the Amiga's desktop
-publisher: versions 1-2 (the `.pgs` era), 3, 4 and 5. GFOpenPublisher will
-import it (Design-OpenPublisher.md, section 9).
+publisher: versions 1-2 (the `.pgs` era), 3, 4 and 5. GFOpenPressmaster will
+import it (Design-OpenPressmaster.md, section 9).
 
 No PageStream document was found on GitHub, the only place this session's
 shell reaches (tests/pub/CORPUS.md). So nothing is known yet: no container,

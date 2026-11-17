@@ -26,10 +26,17 @@ typedef struct {
     int width;
 } pdf_piece;
 
+#define PDF_MAX_LINE_MARKS 16
 typedef struct {
     pdf_piece p[PDF_MAX_LINE_PIECES];
     int n, width, max_size;
+    int marks[PDF_MAX_LINE_MARKS], nmarks;   /* 1.12.1: the comments whose marks are on the line */
 } pdf_line;
+
+/* 1.12.1: a comment's mark as laid out, for its note in the margin */
+typedef struct {
+    int comment, page, y;
+} pdf_mark;
 
 typedef struct {
     owf_buf *pages;
@@ -43,6 +50,14 @@ typedef struct {
     char (*comment_marks)[16];   /* 1.10.1: with comments, each comment's mark ("[1]"); "" for one not shown */
     int *comment_order;          /* 1.10.1: the comments' indexes in the order they are numbered */
     int ncomment_order;
+    /* 1.12.1: "pdf-comments-margin": notes beside their lines in a strip at the text's right (strip > 0, its
+     * width; the text narrowed by it), the marks as laid out, and the comments whose notes did not fit there
+     * (listed after the text instead) */
+    int strip;
+    pdf_mark *placed;
+    int nplaced, capplaced;
+    unsigned char *listed;
+    int crowded;                 /* 2.0.44: marks past PDF_MAX_LINE_MARKS on a line: listed, and the report says */
 } pdf_layout;
 
 static int pdf_points(int twips)
@@ -113,6 +128,7 @@ static void pdf_put_encoded(owf_buf *out, const char *s, size_t len)
         else if (c == 0x201c || c == 0x201d) v = c == 0x201c ? 0x93 : 0x94;
         else if (c == 0x2013) v = 0x96;
         else if (c == 0x2014) v = 0x97;
+        else if (c == 0x2020 || c == 0x2021) v = c == 0x2020 ? 0x86 : 0x87;   /* 1.12.1: notes' daggers */
         else if (c >= 160 && c <= 255) v = (unsigned)c;
         if (v == '(' || v == ')' || v == '\\') {
             owf_buf_putc(out, '\\'); owf_buf_putc(out, (int)v);
@@ -305,12 +321,14 @@ static void pdf_story_para(owf_buf *out, const owf_doc *doc, const owf_para *p,
         for (j = 0; j < p->nruns; ++j) {
             const owf_run *r = &p->runs[j];
             char field[32]; const char *text = NULL; size_t n = 0;
+            if (r->fmt.flags & OWF_HIDDEN) continue;   /* 1.14: hidden text is not printed */
             int size = r->fmt.size ? pdf_points(r->fmt.size) : 9;
             if (r->kind == OWF_RUN_TEXT && r->text) { text = r->text; n = strlen(text); }
             else if (r->kind == OWF_RUN_TAB) { text = "    "; n = 4; }
             else if (r->kind == OWF_RUN_FIELD) {
                 if (r->field == OWF_FIELD_PAGE) snprintf(field,sizeof field,"%d",page_num);
                 else if (r->field == OWF_FIELD_PAGES) snprintf(field,sizeof field,"%d",total_pages);
+                else if (r->field == OWF_FIELD_HIDE_PARA) field[0] = 0;   /* 1.20: it shows nothing */
                 else if (r->field > OWF_FIELD_TIME) snprintf(field,sizeof field,"%s",r->text?r->text:"");
                 else snprintf(field,sizeof field,"%s",r->field==OWF_FIELD_DATE?"date":"time");
                 text=field;n=strlen(field);
@@ -432,6 +450,19 @@ static int pdf_flush_line(pdf_layout *l, const owf_para *para, pdf_line *line,
             if (extra && p->len == 1 && p->text[0] == ' ') ex += extra;
         }
     }
+    for (i = 0; i < line->nmarks; ++i) {          /* 1.12.1: where each comment's mark went */
+        if (l->nplaced == l->capplaced) {
+            int want = l->capplaced ? l->capplaced * 2 : 16;
+            pdf_mark *grown = (pdf_mark *)realloc(l->placed, (size_t)want * sizeof(*grown));
+            if (!grown) return 0;
+            l->placed = grown;
+            l->capplaced = want;
+        }
+        l->placed[l->nplaced].comment = line->marks[i];
+        l->placed[l->nplaced].page = l->current;
+        l->placed[l->nplaced].y = l->y;
+        ++l->nplaced;
+    }
     l->y -= line_height;
     pdf_line_reset(line);
     return 1;
@@ -486,6 +517,7 @@ static int pdf_layout_para(pdf_layout *l, const owf_para *p, int i)
         pdf_line_reset(&line);
         for(j=0;j<p->nruns;++j){
             const owf_run *r=&p->runs[j];
+            if((r->fmt.flags&OWF_HIDDEN)&&r->note<=0&&!r->comment)continue;   /* 1.14: hidden text is not printed */
             if(r->kind==OWF_RUN_TEXT&&r->note>0&&r->note<=l->doc->nnotes&&l->note_marks){
                 /* 1.8: a note's mark, raised; the notes follow the text */
                 owf_run fake=*r;fake.text=l->note_marks[r->note-1];fake.fmt.flags|=OWF_SUPER;
@@ -493,7 +525,10 @@ static int pdf_layout_para(pdf_layout *l, const owf_para *p, int i)
             else if(r->kind==OWF_RUN_TEXT&&r->comment>0&&r->comment<=l->doc->ncomments&&l->comment_marks){
                 /* 1.10.1: a comment's mark, raised where it is anchored; the comments follow the text */
                 owf_run fake=*r;fake.text=l->comment_marks[r->comment-1];fake.fmt.flags|=OWF_SUPER;
-                if(fake.text[0]&&!pdf_layout_text_run(l,p,&fake,&line,&first))return 0;}
+                if(fake.text[0]&&!pdf_layout_text_run(l,p,&fake,&line,&first))return 0;
+                if(fake.text[0]&&l->strip){
+                    if(line.nmarks<PDF_MAX_LINE_MARKS)line.marks[line.nmarks++]=r->comment-1;
+                    else ++l->crowded;}}     /* 2.0.44: no room beside the line: listed (pdf_layout_document) */
             else if(r->kind==OWF_RUN_TEXT){if(!pdf_layout_text_run(l,p,r,&line,&first))return 0;}
             else if(r->kind==OWF_RUN_TAB){owf_run fake=*r;fake.kind=OWF_RUN_TEXT;fake.text=(char *)"    ";if(!pdf_layout_text_run(l,p,&fake,&line,&first))return 0;}
             else if(r->kind==OWF_RUN_LINEBREAK){if(!pdf_flush_line(l,p,&line,first))return 0;first=0;}
@@ -505,7 +540,7 @@ static int pdf_layout_para(pdf_layout *l, const owf_para *p, int i)
                 /* 1.3: a frame's picture where it is anchored, as before frames were read */
                 if(line.n){if(!pdf_flush_line(l,p,&line,first))return 0;first=0;}
                 if(!pdf_place_image(l,p,l->doc->frames[r->image].image))return 0;}
-            else if(r->kind==OWF_RUN_FIELD){owf_run fake=*r;fake.kind=OWF_RUN_TEXT;fake.text=(char *)(r->field>OWF_FIELD_TIME?(r->text?r->text:""):"#");   /* a literal: the line keeps the pointer until it is flushed, after this block */
+            else if(r->kind==OWF_RUN_FIELD){owf_run fake=*r;fake.kind=OWF_RUN_TEXT;fake.text=(char *)(r->field==OWF_FIELD_HIDE_PARA?"":r->field>OWF_FIELD_TIME?(r->text?r->text:""):"#");   /* a literal: the line keeps the pointer until it is flushed, after this block */
                 if(!pdf_layout_text_run(l,p,&fake,&line,&first))return 0;}
         }
         if(line.n || !p->nruns){if(!pdf_flush_line(l,p,&line,first))return 0;}
@@ -565,9 +600,14 @@ static int pdf_layout_comments(pdf_layout *l)
 {
     const owf_doc *doc=l->doc; int k;
     if(!l->ncomment_order)return 1;
+    if(l->listed){                                   /* 1.12.1: the margin's: only those it had no room for */
+        for(k=0;k<l->ncomment_order&&!l->listed[l->comment_order[k]];++k){}
+        if(k==l->ncomment_order)return 1;
+    }
     if(!pdf_comment_para(l,"Comments",NULL,0,240))return 0;
     for(k=0;k<l->ncomment_order;++k){
         const owf_annotation *c=&doc->comments[l->comment_order[k]];
+        if(l->listed&&!l->listed[l->comment_order[k]])continue;
         char head[64],who[200],when[24]; const char *t,*nl; size_t n;
         snprintf(head,sizeof head,"%s ",l->comment_marks[l->comment_order[k]]);
         when[0]=0;
@@ -594,13 +634,96 @@ static int pdf_layout_comments(pdf_layout *l)
     return 1;
 }
 
+/* 1.12.1: one line of a margin note, at 8 points: x, its baseline, the font (1 Helvetica, 2 bold) */
+static void pdf_note_text(owf_buf *out, int x, int y, int font, const char *s, size_t len)
+{
+    owf_buf_printf(out, "0 g BT /F%d 8 Tf %d %d Td ", font, x, y);
+    pdf_put_encoded(out, s, len);
+    owf_buf_puts(out, " Tj ET\n");
+}
+
+/* The width at 8 points of Helvetica, about 4 points a character */
+static int pdf_note_width(const char *s, size_t len)
+{
+    return (pdf_char_count(s, len) * 8 * 5 + 5) / 10;
+}
+
+/* The lines a comment's note takes in width points at 8 points: its head (cut to the width), then its text,
+ * wrapped at spaces (a word wider than the width on a line of its own) and at its new lines. With out, drawn
+ * from x, the first baseline 8 under y, 10 apart. */
+static int pdf_note_lines(const char *head, const char *text, int width, owf_buf *out, int x, int y)
+{
+    const char *t = text ? text : "";
+    size_t n = strlen(t), start = 0, hn = strlen(head);
+    int lines = 1;
+    while (hn > 1 && pdf_note_width(head, hn) > width) --hn;
+    if (out) pdf_note_text(out, x, y - 8, 2, head, hn);
+    while (start < n) {
+        size_t cut = start;
+        while (cut < n && t[cut] != '\n') {
+            size_t we = cut;
+            while (we < n && t[we] == ' ') ++we;
+            while (we < n && t[we] != ' ' && t[we] != '\n') ++we;
+            if (cut > start && pdf_note_width(t + start, we - start) > width) break;
+            cut = we;
+        }
+        ++lines;
+        if (out) pdf_note_text(out, x, y - 8 - (lines - 1) * 10, 1, t + start, cut - start);
+        start = cut;
+        while (start < n && t[start] == ' ') ++start;
+        if (start < n && t[start] == '\n') ++start;
+    }
+    return lines;
+}
+
+/* 1.12.1: the notes in the strip beside their marks, page by page: stacked 4 points apart, a reply indented
+ * 8, each in a pale box with a rule from the text's edge at its mark's line. One that runs past the foot of
+ * the page is listed after the text instead (l->listed). */
+static int pdf_place_margin_notes(pdf_layout *l)
+{
+    const owf_doc *doc = l->doc;
+    int k, page = -1, bottom = 0;
+    int edge = l->page_w - l->right, x0 = edge + 10, x1 = edge + l->strip;
+    for (k = 0; k < l->nplaced; ++k) {
+        const pdf_mark *m = &l->placed[k];
+        const owf_annotation *c = &doc->comments[m->comment];
+        char head[220], when[24];
+        int x = x0 + (c->parent >= 0 ? 8 : 0), w = x1 - x, lines, h, top;
+        owf_buf *out;
+        if (m->page != page) { page = m->page; bottom = l->page_h; }
+        when[0] = 0;
+        if (c->date && c->date[0]) {
+            snprintf(when, sizeof when, "%.10s", c->date);
+        }
+        snprintf(head, sizeof head, "%s %s%s%s%s", l->comment_marks[m->comment],
+                 c->author && c->author[0] ? c->author : "Unknown", when[0] ? ", " : "", when, c->done ? ", done" : "");
+        lines = pdf_note_lines(head, c->text, w - 8, NULL, 0, 0);
+        h = lines * 10 + 6;
+        top = m->y < bottom - 4 ? m->y : bottom - 4;
+        if (top - h < l->bottom) { l->listed[m->comment] = 1; continue; }
+        out = &l->pages[m->page];
+        owf_buf_printf(out, "q %s rg %d %d %d %d re f 0.6 G 0.5 w %d %d %d %d re S Q\n",
+                       c->done ? "0.93 0.93 0.93" : "1 0.96 0.75", x, top - h, w, h, x, top - h, w, h);
+        owf_buf_printf(out, "q 0.6 G 0.5 w %d %d m %d %d l S Q\n", edge + 2, m->y - 4, x, top - 4);   /* mark's line to note */
+        pdf_note_lines(head, c->text, w - 8, out, x + 4, top - 2);
+        bottom = top - h;
+    }
+    return 1;
+}
+
 static int pdf_layout_document(pdf_layout *l)
 {
     int i;
     if(!pdf_new_page(l))return 0;
     for(i=0;i<l->doc->body.nparas;++i)
-        if(!pdf_layout_para(l,&l->doc->body.paras[i],i))return 0;
+        if((l->doc->body.paras[i].table_id>=0||!owf_para_hidden(&l->doc->body.paras[i]))&&   /* 1.20: a hidden paragraph isn't printed */
+           !pdf_layout_para(l,&l->doc->body.paras[i],i))return 0;
     if(l->note_marks&&(!pdf_layout_notes(l,0)||!pdf_layout_notes(l,1)))return 0;
+    if(l->strip&&l->comment_marks){                  /* 1.12.1: those with no mark in the body: listed */
+        for(i=0;i<l->doc->ncomments;++i)l->listed[i]=1;
+        for(i=0;i<l->nplaced;++i)l->listed[l->placed[i].comment]=0;
+        if(!pdf_place_margin_notes(l))return 0;
+    }
     if(l->comment_marks&&!pdf_layout_comments(l))return 0;
     pdf_add_headers_footers(l);
     return 1;
@@ -656,7 +779,24 @@ static int export_pdf_as(const owf_doc *doc, unsigned char **data, size_t *lengt
         for(i=0;i<doc->nnotes;++i)owf_note_mark_text(doc,i,l.note_marks[i],sizeof l.note_marks[i]);
     }
     if(comments&&doc->ncomments>0&&!pdf_number_comments(&l)){result=OWF_ERR_MEMORY;goto done;}   /* 1.10.1 */
+    if(comments==2&&doc->ncomments>0){               /* 1.12.1: a strip for the notes, a third of the text's width */
+        int text=l.page_w-l.left-l.right;
+        l.strip=text/3>180?180:text/3;
+        if(text-l.strip<144)l.strip=0;               /* too narrow a page: the list after the text, as before */
+        else{
+            l.right+=l.strip;
+            l.listed=(unsigned char *)calloc((size_t)doc->ncomments,1);
+            if(!l.listed){result=OWF_ERR_MEMORY;goto done;}
+        }
+    }
     if(!pdf_layout_document(&l)){result=OWF_ERR_MEMORY;goto done;}
+    if(l.strip){                                     /* 2.0.44 (Budgie, #269): */
+        int shown=0;
+        for(i=0;i<doc->ncomments&&!shown;++i)shown=!l.listed[i];
+        if(!shown){result=-1;goto done;}             /* none in the margin: laid out again with the text full width */
+        if(l.crowded)owf_report_add(report,OWF_NOTE_APPROX,"%d comment%s on lines with more than %d marks %s listed after the text, not in the margin",
+                                    l.crowded,l.crowded==1?"":"s",PDF_MAX_LINE_MARKS,l.crowded==1?"is":"are");
+    }
     /* objects after the pages: each picture drawn, and its soft mask */
     nextobj=15+l.npages*2;
     for(i=0;i<doc->nimages;++i){
@@ -691,10 +831,15 @@ static int export_pdf_as(const owf_doc *doc, unsigned char **data, size_t *lengt
     result=owf_buf_take(&out,data,length);
 done:
     free(l.note_marks);
-    free(l.comment_marks);free(l.comment_order);
+    free(l.comment_marks);free(l.comment_order);free(l.placed);free(l.listed);
     free(offs);for(i=0;i<l.npages;++i)owf_buf_free(&l.pages[i]);free(l.pages);
     for(i=0;imgs&&i<doc->nimages;++i){if(!imgs[i].dct)free(imgs[i].data);free(imgs[i].mask);}
-    free(imgs);free(imobj);free(l.image_used);return result;
+    free(imgs);free(imobj);free(l.image_used);
+    if(result==-1){                                  /* 2.0.44: no note had room in the margin */
+        owf_report_add(report,OWF_NOTE_APPROX,"No comment had room in the margin, so they are listed after the text and the text keeps its width");
+        return export_pdf_as(doc,data,length,report,1);
+    }
+    return result;
 }
 
 static int export_pdf(const owf_doc *doc, unsigned char **data, size_t *length, owf_report *report)
@@ -715,6 +860,19 @@ const owf_format owf_format_pdf = {
 
 const owf_format owf_format_pdf_comments = {
     "pdf-comments", "Portable Document Format, with the comments", "pdf", NULL, NULL, export_pdf_comments
+};
+
+/* 1.12.1: the comments beside their lines, as Word prints markup in balloons: the text narrowed by a strip at
+ * its right where each comment's note is drawn level with its mark; one with no room there (or no mark in the
+ * body) is listed after the text */
+static int export_pdf_comments_margin(const owf_doc *doc, unsigned char **data, size_t *length, owf_report *report)
+{
+    return export_pdf_as(doc, data, length, report, 2);
+}
+
+const owf_format owf_format_pdf_comments_margin = {
+    "pdf-comments-margin", "Portable Document Format, with the comments in the margin", "pdf", NULL, NULL,
+    export_pdf_comments_margin
 };
 
 /* ---- Pictures for the page writer (owf_pdf.c) ---- */

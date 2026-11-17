@@ -1066,6 +1066,53 @@ static int val_at(const ods_out *w, const owf_sheet *sh, unsigned long row, unsi
     return v ? w->val_base + (int)(v - sh->validations) + 1 : 0;
 }
 
+/* "['Other.xlsx'#": the other books' formulas name them by where they are, as their value tables do. */
+static void put_quoted_link(owf_buf *b, const char *s)
+{
+    for (; *s; s++) {
+        owf_buf_putc(b, *s);
+        if (*s == '\'')
+            owf_buf_putc(b, '\'');
+    }
+}
+
+static char *with_targets(ods_out *w, char *of)
+{
+    int i;
+    for (i = 0; of && i < w->book->nextbooks; i++) {
+        const owf_extbook *eb = &w->book->extbooks[i];
+        owf_buf needle, out;
+        const char *p, *hit;
+        unsigned char *data;
+        size_t length;
+        if (!eb->target || !strcmp(eb->target, eb->name))
+            continue;
+        owf_buf_init(&needle);
+        owf_buf_puts(&needle, "['");
+        put_quoted_link(&needle, eb->name);
+        owf_buf_puts(&needle, "'#");
+        owf_buf_putc(&needle, 0);
+        if (needle.failed || !strstr(of, (const char *)needle.data)) {
+            owf_buf_free(&needle);
+            continue;
+        }
+        owf_buf_init(&out);
+        for (p = of; (hit = strstr(p, (const char *)needle.data)) != NULL; p = hit + needle.length - 1) {
+            owf_buf_put(&out, p, (size_t)(hit - p));
+            owf_buf_puts(&out, "['");
+            put_quoted_link(&out, eb->target);
+            owf_buf_puts(&out, "'#");
+        }
+        owf_buf_puts(&out, p);
+        owf_buf_free(&needle);
+        free(of);
+        of = owf_buf_take(&out, &data, &length) == OWF_OK ? (char *)data : NULL;
+        if (!of)
+            w->failed = 1;
+    }
+    return of;
+}
+
 /* A cell's or a name's formula for table:formula or table:expression. OpenFormula when it holds the
  * formula; Excel's own text under msoxl: (which LibreOffice and libowf read) when the formula names
  * another workbook's name or one sheet's own ("Other.xls!Rate", "Sheet2!Rate"): of: would keep only
@@ -1073,7 +1120,7 @@ static int val_at(const ods_out *w, const owf_sheet *sh, unsigned long row, unsi
 static char *table_formula(ods_out *w, const char *excel)
 {
     int lost = 0;
-    char *of = owf_excel_to_of_lossy(excel, &lost);
+    char *of = with_targets(w, owf_excel_to_of_lossy(excel, &lost));
     if (of && lost) {
         owf_buf b;
         unsigned char *data;
@@ -1393,7 +1440,7 @@ static void put_address(ods_out *w, owf_buf *b, const char *sheet, unsigned row,
 static char *of_expr(ods_out *w, const char *excel)
 {
     int lost = 0;
-    char *of = excel ? owf_excel_to_of_lossy(excel, &lost) : NULL;
+    char *of = excel ? with_targets(w, owf_excel_to_of_lossy(excel, &lost)) : NULL;
     if (lost)
         owf_report_add(w->report, OWF_NOTE_APPROX, "Names of one sheet or of another workbook in formulas lost their sheet or workbook: ODF formulas have no such names");
     if (of && !strncmp(of, "of:=", 4))
@@ -2875,16 +2922,67 @@ static void put_pivot_field(ods_out *w, owf_buf *b, const owf_pivotdef *def, uns
     owf_buf_printf(b, " gfocalc:field=\"%u\" gfocalc:position=\"%u\"", field, position);
 }
 
-/* A row or column field's end: its items' order, when sorted, as the level's sort-info by name. */
-static void put_pivot_sort(owf_buf *b, int sort)
+/* A row or column field's end: its level, when it has hidden items (data-pilot-members, each
+ * hidden one display="false", with libowf's own item kind) or sorted items (sort-info by name). */
+static void put_pivot_level(ods_out *w, owf_buf *b, const owf_pivotdef *def, unsigned field)
 {
-    if (sort == OWF_PIVOT_SORT_SOURCE) {
+    int sort = owf_pivot_sort_of(def, field), any = 0;
+    const owf_pivot_group *group = owf_pivot_group_of(def, field);
+    unsigned k;
+    int subtotal = owf_pivot_subtotal_of(def, field);
+    for (k = 0; k < def->nhide && k < OWF_PIVOT_HIDES; k++)
+        any |= def->hide[k].field == field;
+    if (sort == OWF_PIVOT_SORT_SOURCE && !any && !group && !subtotal) {
         owf_buf_puts(b, "/>");
         return;
     }
-    owf_buf_printf(b, "><table:data-pilot-level><table:data-pilot-sort-info table:sort-mode=\"name\" "
-                      "table:order=\"%s\"/></table:data-pilot-level></table:data-pilot-field>",
-                   sort == OWF_PIVOT_SORT_DESCENDING ? "descending" : "ascending");
+    owf_buf_puts(b, ">");
+    if (sort == OWF_PIVOT_SORT_SOURCE && !any && !subtotal)
+        goto groups;
+    owf_buf_puts(b, "<table:data-pilot-level>");
+    if (subtotal)                            /* a subtotal per item, each data field's own function */
+        owf_buf_puts(b, "<table:data-pilot-subtotals><table:data-pilot-subtotal table:function=\"auto\"/>"
+                        "</table:data-pilot-subtotals>");
+    if (any) {
+        owf_buf_puts(b, "<table:data-pilot-members>");
+        for (k = 0; k < def->nhide && k < OWF_PIVOT_HIDES; k++) {
+            char item[OWF_PIVOT_ITEM + 8];
+            if (def->hide[k].field != field)
+                continue;
+            owf_pivot_item_text(&def->hide[k], item, sizeof item);
+            owf_buf_puts(b, "<table:data-pilot-member table:name=\"");
+            attr(w, b, item);
+            owf_buf_printf(b, "\" table:display=\"false\" gfocalc:item-kind=\"%d\"/>", def->hide[k].kind);
+        }
+        owf_buf_puts(b, "</table:data-pilot-members>");
+    }
+    if (sort != OWF_PIVOT_SORT_SOURCE)
+        owf_buf_printf(b, "<table:data-pilot-sort-info table:sort-mode=\"name\" table:order=\"%s\"/>",
+                       sort == OWF_PIVOT_SORT_DESCENDING ? "descending" : "ascending");
+    owf_buf_puts(b, "</table:data-pilot-level>");
+groups:
+    if (group && group->by == OWF_PIVOT_GROUP_RANGE) {
+        /* numbers in ranges: start, end and step */
+        char heading[160], n[32];
+        owf_pivot_field_heading(w->book, def, field, heading, sizeof heading);
+        owf_buf_puts(b, "<table:data-pilot-groups table:source-field-name=\"");
+        attr(w, b, heading);
+        owf_number_text(group->start, n);
+        owf_buf_printf(b, "\" table:start=\"%s\"", n);
+        owf_number_text(group->end, n);
+        owf_buf_printf(b, " table:end=\"%s\"", n);
+        owf_number_text(group->step, n);
+        owf_buf_printf(b, " table:step=\"%s\"/>", n);
+    } else if (group) {
+        char heading[160];
+        owf_pivot_field_heading(w->book, def, field, heading, sizeof heading);
+        owf_buf_puts(b, "<table:data-pilot-groups table:source-field-name=\"");
+        attr(w, b, heading);
+        owf_buf_printf(b, "\" table:date-start=\"auto\" table:date-end=\"auto\" table:grouped-by=\"%s\"/>",
+                       group->by == OWF_PIVOT_GROUP_YEARS ? "years"
+                       : group->by == OWF_PIVOT_GROUP_QUARTERS ? "quarters" : "months");
+    }
+    owf_buf_puts(b, "</table:data-pilot-field>");
 }
 
 static void put_pivots(ods_out *w, owf_buf *b)
@@ -2898,6 +2996,9 @@ static void put_pivots(ods_out *w, owf_buf *b)
         if (!owf_pivot_get(book, i, &def))
             continue;
         src_name = book->sheets[def.source_sheet].name;
+        if (def.nmember)                     /* Data Pilot keeps them as a field of their own: a later step */
+            owf_report_add(w->report, OWF_NOTE_APPROX,
+                           "Pivot table items grouped by hand are saved ungrouped; the table's cells keep the groups");
         if (!any)
             owf_buf_puts(b, "<table:data-pilot-tables>");
         any = 1;
@@ -2931,15 +3032,20 @@ static void put_pivots(ods_out *w, owf_buf *b)
         }
         for (k = 0; k < def.nrow; k++) {
             put_pivot_field(w, b, &def, def.row[k], "row", k);
-            put_pivot_sort(b, owf_pivot_sort_of(&def, def.row[k]));
+            put_pivot_level(w, b, &def, def.row[k]);
         }
         for (k = 0; k < def.ncol; k++) {
             put_pivot_field(w, b, &def, def.col[k], "column", k);
-            put_pivot_sort(b, owf_pivot_sort_of(&def, def.col[k]));
+            put_pivot_level(w, b, &def, def.col[k]);
         }
         for (k = 0; k < def.ndata; k++) {
             put_pivot_field(w, b, &def, def.data[k].field, "data", k);
-            owf_buf_printf(b, " table:function=\"%s\"/>", owf_pivot_function_word(def.data[k].function, 0));
+            owf_buf_printf(b, " table:function=\"%s\"", owf_pivot_function_word(def.data[k].function, 0));
+            if (def.data[k].show > OWF_PIVOT_SHOW_NORMAL && def.data[k].show <= OWF_PIVOT_SHOW_LAST)
+                owf_buf_printf(b, "><table:data-pilot-field-reference table:field-name=\"\" table:type=\"%s\"/>"
+                                  "</table:data-pilot-field>", owf_pivot_show_word(def.data[k].show, 0));
+            else
+                owf_buf_puts(b, "/>");
         }
         if (def.ndata > 1)                       /* the data fields' own place: under the column fields */
             owf_buf_printf(b, "<table:data-pilot-field table:source-field-name=\"\" table:orientation=\"%s\" "
@@ -2950,38 +3056,132 @@ static void put_pivots(ods_out *w, owf_buf *b)
         owf_buf_puts(b, "</table:data-pilot-tables>");
 }
 
+/* ---- Other books' last values: a table each of their sheets, as LibreOffice keeps them ---- */
+
+static void put_link_cell(ods_out *w, owf_buf *b, const owf_cell *c)
+{
+    char num[48];
+    switch (c->type) {
+    case OWF_VALUE_NUMBER:
+        owf_number_text(c->number, num);
+        owf_buf_printf(b, "<table:table-cell office:value-type=\"float\" office:value=\"%s\"/>", num);
+        break;
+    case OWF_VALUE_BOOL:
+        owf_buf_printf(b, "<table:table-cell office:value-type=\"boolean\" office:boolean-value=\"%s\"/>",
+                       c->number ? "true" : "false");
+        break;
+    case OWF_VALUE_ERROR:
+        owf_buf_printf(b, "<table:table-cell office:value-type=\"string\" office:string-value=\"\" "
+                          "calcext:value-type=\"error\"><text:p>%s</text:p></table:table-cell>", owf_xl_error_text(c->error));
+        break;
+    default:
+        owf_buf_puts(b, "<table:table-cell office:value-type=\"string\">");
+        put_paragraphs(w, b, c->text);
+        owf_buf_puts(b, "</table:table-cell>");
+        break;
+    }
+}
+
+static void put_link_tables(ods_out *w, owf_buf *b)
+{
+    int i, k, c;
+    for (i = 0; i < w->book->nextbooks; i++) {
+        const owf_extbook *eb = &w->book->extbooks[i];
+        const char *target = eb->target ? eb->target : eb->name;
+        for (k = 0; k < eb->nsheets; k++) {
+            const owf_sheet *sh = &eb->sheets[k];
+            unsigned long row = 0, col = 0, cols = 1;
+            int open = 0;
+            owf_buf name;
+            for (c = 0; c < sh->ncells; c++)
+                if (sh->cells[c].col + 1ul > cols)
+                    cols = sh->cells[c].col + 1ul;
+            owf_buf_init(&name);
+            owf_buf_putc(&name, '\'');
+            put_quoted_link(&name, target);
+            owf_buf_puts(&name, "'#");
+            owf_buf_puts(&name, sh->name);
+            owf_buf_putc(&name, 0);
+            if (name.failed) {
+                w->failed = 1;
+                owf_buf_free(&name);
+                return;
+            }
+            owf_buf_puts(b, "<table:table table:name=\"");
+            attr(w, b, (const char *)name.data);
+            owf_buf_free(&name);
+            owf_buf_puts(b, "\"><table:table-source xlink:type=\"simple\" xlink:href=\"");
+            attr(w, b, target);
+            owf_buf_puts(b, "\" table:table-name=\"");
+            attr(w, b, sh->name);
+            owf_buf_printf(b, "\" table:mode=\"copy-results-only\"/><table:table-column table:number-columns-repeated=\"%lu\"/>",
+                           cols);
+            for (c = 0; c < sh->ncells; c++) {
+                const owf_cell *cell = &sh->cells[c];
+                if (cell->type == OWF_VALUE_EMPTY)
+                    continue;
+                if (!open || cell->row + 1ul != row) {   /* row: the next row to write */
+                    if (open)
+                        owf_buf_puts(b, "</table:table-row>");
+                    if (cell->row > row)
+                        owf_buf_printf(b, "<table:table-row table:number-rows-repeated=\"%lu\"><table:table-cell/>"
+                                          "</table:table-row>", cell->row - row);
+                    owf_buf_puts(b, "<table:table-row>");
+                    open = 1;
+                    row = cell->row + 1ul;
+                    col = 0;
+                }
+                if (cell->col > col)
+                    owf_buf_printf(b, "<table:table-cell table:number-columns-repeated=\"%lu\"/>", cell->col - col);
+                put_link_cell(w, b, cell);
+                col = cell->col + 1ul;
+            }
+            owf_buf_puts(b, open ? "</table:table-row>" : "<table:table-row><table:table-cell/></table:table-row>");
+            owf_buf_puts(b, "</table:table>");
+        }
+    }
+}
+
 /* ---- Scenarios: each a scenario table after its sheet, holding the scenario's cells ---- */
 
-static void put_scenario_cell(ods_out *w, owf_buf *b, const char *input)
+/* A cell as typed (input: "=A1*2", "5", "TRUE", "'0123", text; "" empty) as element el: a scenario's
+ * table:table-cell, a tracked change's table:change-track-table-cell. */
+static void put_input_cell(ods_out *w, owf_buf *b, const char *el, const char *input)
 {
     double v;
     size_t n = strlen(input);
     if (!n) {
-        owf_buf_puts(b, "<table:table-cell/>");
+        owf_buf_printf(b, "<%s/>", el);
     } else if (input[0] == '=') {
         char *of = of_expr(w, input + 1);
         if (!of) {
-            owf_report_add(w->report, OWF_NOTE_LOST, "A scenario's formula could not be written: its cell is left empty");
-            owf_buf_puts(b, "<table:table-cell/>");
+            owf_report_add(w->report, OWF_NOTE_LOST, "A scenario's or tracked change's formula could not be written: "
+                                                     "its cell is left empty");
+            owf_buf_printf(b, "<%s/>", el);
             return;
         }
-        owf_buf_puts(b, "<table:table-cell table:formula=\"of:=");
+        owf_buf_printf(b, "<%s table:formula=\"of:=", el);
         attr(w, b, of);
         owf_buf_puts(b, "\"/>");
         free(of);
     } else if (input[0] != '\'' && owf_number_parse(input, n, &v)) {
         char num[48];
         owf_number_text(v, num);
-        owf_buf_printf(b, "<table:table-cell office:value-type=\"float\" office:value=\"%s\"/>", num);
+        owf_buf_printf(b, "<%s office:value-type=\"float\" office:value=\"%s\"/>", el, num);
     } else if (!strcmp(input, "TRUE") || !strcmp(input, "FALSE")) {
-        owf_buf_printf(b, "<table:table-cell office:value-type=\"boolean\" office:boolean-value=\"%s\"/>",
+        owf_buf_printf(b, "<%s office:value-type=\"boolean\" office:boolean-value=\"%s\"/>", el,
                        input[0] == 'T' ? "true" : "false");
     } else {
         const char *t = input[0] == '\'' ? input + 1 : input;
-        owf_buf_puts(b, "<table:table-cell office:value-type=\"string\"><text:p>");
+        owf_buf_printf(b, "<%s office:value-type=\"string\"><text:p>", el);
         put_xml(b, t, strlen(t), 0, &w->dropped);
-        owf_buf_puts(b, "</text:p></table:table-cell>");
+        owf_buf_printf(b, "</text:p></%s>", el);
     }
+}
+
+static void put_scenario_cell(ods_out *w, owf_buf *b, const char *input)
+{
+    put_input_cell(w, b, "table:table-cell", input);
 }
 
 /* The cell of a scenario at row, col: its value's index, or -1. */
@@ -3089,10 +3289,166 @@ static void put_scenarios(ods_out *w, owf_buf *b, int sheet)
     }
 }
 
+/* The workbook's structure protection, as table:structure-protected on office:spreadsheet: the password as
+   Excel's 16-bit hash in gfocalc's own attribute, or ODF's digest as it was read. */
+static void put_book_protection(ods_out *w, owf_buf *b)
+{
+    const owf_book *book = w->book;
+    if (!book->protect_structure)
+        return;
+    owf_buf_puts(b, " table:structure-protected=\"true\"");
+    if (book->protect_hash && strlen(book->protect_hash) == 4) {
+        owf_buf_puts(b, " gfocalc:protection-key-excel=\"");
+        attr(w, b, book->protect_hash);
+        owf_buf_putc(b, '"');
+    } else if (book->protect_kept && !strncmp(book->protect_kept, "ods:", 4) && strchr(book->protect_kept, ' ')) {
+        const char *sp = strchr(book->protect_kept, ' ');
+        char alg[128];
+        size_t n = (size_t)(sp - book->protect_kept - 4);
+        if (n < sizeof alg) {
+            memcpy(alg, book->protect_kept + 4, n);
+            alg[n] = 0;
+            owf_buf_puts(b, " table:protection-key=\"");
+            attr(w, b, sp + 1);
+            owf_buf_puts(b, "\" table:protection-key-digest-algorithm=\"");
+            attr(w, b, alg);
+            owf_buf_putc(b, '"');
+        }
+    } else if (book->protect_kept)
+        owf_report_add(w->report, OWF_NOTE_APPROX,
+                       "The workbook's password from an Excel file is not kept in ODS: its structure stays protected "
+                       "without one");
+}
+
+/* ---- Tracked changes (table:tracked-changes) ----
+ * Each change as ODF's: a cell's (table:cell-content-change, its old content in table:previous; the new is the
+ * cell's), rows, columns or a sheet inserted (table:insertion), rows or columns deleted (table:deletion, one for
+ * each, as LibreOffice writes them, with what they held and the changes in them named in table:deletions). A
+ * sheet renamed has no ODF element: gfocalc:table-rename. Places are the book's as it is now; a deletion's
+ * changes are where they were before it. */
+static int track_top_id(const owf_change *list, int n)
+{
+    int i, id = 0, k;
+    for (i = 0; i < n; i++) {
+        if (list[i].id > id)
+            id = list[i].id;
+        if ((k = track_top_id(list[i].children, list[i].nchildren)) > id)
+            id = k;
+    }
+    return id;
+}
+
+static void put_change_info(ods_out *w, owf_buf *b, const owf_change *c)
+{
+    owf_buf_puts(b, "<office:change-info><dc:creator>");
+    attr(w, b, c->author ? c->author : "Unknown Author");
+    owf_buf_puts(b, "</dc:creator><dc:date>");
+    attr(w, b, c->date ? c->date : "1970-01-01T00:00:00");
+    owf_buf_puts(b, "</dc:date></office:change-info>");
+}
+
+static void put_track_address(owf_buf *b, int sheet, unsigned row, unsigned col)
+{
+    owf_buf_printf(b, "<table:cell-address table:column=\"%u\" table:row=\"%u\" table:table=\"%d\"/>", col, row, sheet);
+}
+
+/* A list of changes; a deletion's own are counted from its place (at, on axis 0 rows or 1 columns; -1: none:
+ * the book's own list). */
+static void put_change_list(ods_out *w, owf_buf *b, const owf_change *list, int n, int axis, unsigned at, int *next)
+{
+    int i, k, j;
+    for (i = 0; i < n && !w->failed; i++) {
+        owf_change c = list[i];
+        int cols = c.kind == OWF_CHANGE_INSERT_COLS || c.kind == OWF_CHANGE_DELETE_COLS;
+        if (axis == 0)                               /* a deletion's: each has a place on its axis */
+            c.row += at;
+        else if (axis == 1)
+            c.col += at;
+        switch (c.kind) {
+        case OWF_CHANGE_CELL:
+            owf_buf_printf(b, "<table:cell-content-change table:id=\"ct%d\">", c.id);
+            put_track_address(b, c.sheet, c.row, c.col);
+            put_change_info(w, b, &c);
+            owf_buf_puts(b, "<table:previous>");
+            put_input_cell(w, b, "table:change-track-table-cell", c.before ? c.before : "");
+            owf_buf_puts(b, "</table:previous></table:cell-content-change>");
+            break;
+        case OWF_CHANGE_INSERT_ROWS:
+        case OWF_CHANGE_INSERT_COLS:
+        case OWF_CHANGE_INSERT_SHEET:
+            owf_buf_printf(b, "<table:insertion table:id=\"ct%d\" table:type=\"%s\" table:position=\"%u\"", c.id,
+                           c.kind == OWF_CHANGE_INSERT_SHEET ? "table" : cols ? "column" : "row",
+                           c.kind == OWF_CHANGE_INSERT_SHEET ? (unsigned)c.sheet : cols ? c.col : c.row);
+            if (c.kind != OWF_CHANGE_INSERT_SHEET)
+                owf_buf_printf(b, " table:count=\"%u\" table:table=\"%d\"", c.count, c.sheet);
+            owf_buf_putc(b, '>');
+            put_change_info(w, b, &c);
+            owf_buf_puts(b, "</table:insertion>");
+            break;
+        case OWF_CHANGE_DELETE_ROWS:
+        case OWF_CHANGE_DELETE_COLS: {
+            int ax = cols, own = ax ? 1 : 0;
+            unsigned p = ax ? c.col : c.row;
+            /* one deletion for each row (column), each at p as it was when it went, LibreOffice's way: the
+               changes that were in it first, at p too, then it, naming them */
+            for (k = 0; k < (int)c.count; k++) {
+                for (j = 0; j < c.nchildren; j++)
+                    if ((ax ? c.children[j].col : c.children[j].row) == (unsigned)k)
+                        put_change_list(w, b, &c.children[j], 1, own, p - (unsigned)k, next);
+                owf_buf_printf(b, "<table:deletion table:id=\"ct%d\" table:type=\"%s\" table:position=\"%u\" "
+                                  "table:table=\"%d\">", k ? (*next)++ : c.id, ax ? "column" : "row", p, c.sheet);
+                put_change_info(w, b, &c);
+                owf_buf_puts(b, "<table:deletions>");
+                for (j = 0; j < c.ncells; j++) {
+                    const owf_changecell *cell = &c.cells[j];
+                    if ((ax ? cell->col : cell->row) != (unsigned)k)
+                        continue;
+                    owf_buf_puts(b, "<table:cell-content-deletion>");
+                    put_track_address(b, c.sheet, ax ? cell->row : p + (unsigned)k, ax ? p + (unsigned)k : cell->col);
+                    put_input_cell(w, b, "table:change-track-table-cell", cell->input);
+                    owf_buf_puts(b, "</table:cell-content-deletion>");
+                }
+                for (j = 0; j < c.nchildren; j++)
+                    if ((ax ? c.children[j].col : c.children[j].row) == (unsigned)k)
+                        owf_buf_printf(b, "<table:change-deletion table:id=\"ct%d\"/>", c.children[j].id);
+                owf_buf_puts(b, "</table:deletions></table:deletion>");
+            }
+            break;
+        }
+        case OWF_CHANGE_RENAME_SHEET:
+            owf_buf_printf(b, "<gfocalc:table-rename table:id=\"ct%d\" table:table=\"%d\" gfocalc:old-name=\"", c.id,
+                           c.sheet);
+            attr(w, b, c.before ? c.before : "");
+            owf_buf_puts(b, "\" gfocalc:new-name=\"");
+            attr(w, b, c.after ? c.after : "");
+            owf_buf_puts(b, "\">");
+            put_change_info(w, b, &c);
+            owf_buf_puts(b, "</gfocalc:table-rename>");
+            break;
+        }
+    }
+}
+
+static void put_tracked_changes(ods_out *w, owf_buf *b)
+{
+    const owf_book *book = w->book;
+    int next;
+    if (!book->track_changes && !book->nchanges)
+        return;
+    next = track_top_id(book->changes, book->nchanges) + 1;
+    owf_buf_puts(b, book->track_changes ? "<table:tracked-changes>"
+                                        : "<table:tracked-changes table:track-changes=\"false\">");
+    put_change_list(w, b, book->changes, book->nchanges, -1, 0, &next);
+    owf_buf_puts(b, "</table:tracked-changes>");
+}
+
 static void body(ods_out *w, owf_buf *b)
 {
     int i;
-    owf_buf_puts(b, "<office:body><office:spreadsheet>");
+    owf_buf_puts(b, "<office:body><office:spreadsheet");
+    put_book_protection(w, b);
+    owf_buf_putc(b, '>');
+    put_tracked_changes(w, b);
     if (w->book->date1904)
         owf_buf_puts(b, "<table:calculation-settings><table:null-date table:date-value=\"1904-01-01\"/></table:calculation-settings>");
     put_validations(w, b);
@@ -3105,6 +3461,7 @@ static void body(ods_out *w, owf_buf *b)
     if (!w->book->nsheets)
         owf_buf_puts(b, "<table:table table:name=\"Sheet1\"><table:table-column/><table:table-row><table:table-cell/>"
                         "</table:table-row></table:table>");
+    put_link_tables(w, b);
     put_names(w, b, -1);
     put_autofilters(w, b);
     put_pivots(w, b);

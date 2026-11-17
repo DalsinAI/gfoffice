@@ -1,6 +1,6 @@
 /*
  * libowf: a WMF drawn into pixels (owf_metafile.h, owf_metafile_render), for the screens that show pictures as
- * pixels (GFOpenPresentation's and GFOpenPublisher's picture cache) where there is no metafile datatype. The
+ * pixels (GFOpenPresentation's and GFOpenPressmaster's picture cache) where there is no metafile datatype. The
  * player's shapes are filled a row at a time at sixteenths of a pixel; lines are drawn as thin polygons; text is
  * left out here (counted), the PDF writer draws it. Integer arithmetic only.
  * MIT, Copyright (c) 2026 AmiCradle Team.

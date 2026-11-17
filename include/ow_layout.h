@@ -39,6 +39,15 @@ ow_layout *ow_layout_new(const owf_doc *doc, ol_measure_text_fn measure,
  * malloc otherwise kept 3 MB of a 30-page document's in its pools after each change). */
 ow_layout *ow_layout_new_reserved(const owf_doc *doc, ol_measure_text_fn measure, void *measure_userdata,
                                   size_t ops);
+/* 2.0.37: the same, in a view: OW_LAYOUT_FINAL lays the document out as it is with its tracked changes
+ * accepted (deleted text takes no room, inserted and reformatted text has no change colours), while the
+ * document keeps them; a deleted paragraph end still ends its paragraph. 0: changes shown, as above. */
+#define OW_LAYOUT_FINAL 1u
+/* 2.0.46: hidden text (OWF_HIDDEN) shown, underlined (Word's Show hidden text); without it hidden text takes
+ * no room, as a deletion's does in the final view. A note's mark or a comment's place is always shown. */
+#define OW_LAYOUT_SHOW_HIDDEN 2u
+ow_layout *ow_layout_new_view(const owf_doc *doc, ol_measure_text_fn measure, void *measure_userdata, size_t ops,
+                              unsigned view);
 /* 2.0.22: about how many display ops the document's layout makes, a little more than it does, worked out
  * from its words, runs, paragraphs and frames without laying it out. ow_layout_new and a 0 for ops above
  * reserve that many, so a first layout's display list is made once instead of doubling. */
@@ -46,6 +55,14 @@ size_t ow_layout_estimate_ops(const owf_doc *doc);
 void ow_layout_free(ow_layout *layout);
 
 ol_document *ow_layout_body(const ow_layout *layout);
+
+/* 2.0.38: a picture in the line that is a tracked change, where the layout shows changes (not in the final
+ * view): OW_PICTURE_INSERTED or OW_PICTURE_DELETED for its node (an OL_OP_IMAGE's node_id), *rgb its author's
+ * colour (0xRRGGBB, as the changed text's); 0 for anything else. The window draws a frame round it in that
+ * colour, and a deleted one crossed out. */
+#define OW_PICTURE_INSERTED 1
+#define OW_PICTURE_DELETED 2
+int ow_layout_picture_change(const ow_layout *layout, ol_id node, unsigned long *rgb);
 int ow_layout_page_count(const ow_layout *layout);
 /* The page in GFOpenLayout units (twips times 4). */
 const ol_page *ow_layout_page(const ow_layout *layout);
@@ -111,6 +128,26 @@ int ow_layout_add_story(ol_document *od, ol_node *parent, const owf_doc *doc, co
 int ow_layout_note_mark(const owf_doc *doc, int index, char *out, size_t size);
 int ow_layout_footnote_count(const ow_layout *layout, int page);
 ol_document *ow_layout_footnotes(const ow_layout *layout, int page, ol_unit *x, ol_unit *y);
+
+/* 2.0.40: the comment notes in a page's right margin, as the window draws them: each beside its place's
+ * line, stacked 3 pixels apart so they do not overlap, a reply indented 8 under its comment; only comments the
+ * author filter shows (ow_comment_info.shown). In pixels at scale s, a note line_height * 2 + 4 high. None when
+ * the margin is under 24 pixels wide (the highlighted text shows them). Fills up to max of notes (NULL: none)
+ * and answers how many the page has. ow_margin_note_at answers the comment index of the note under a point,
+ * -1: none; ow_editor_select_comment(editor, index) makes it the comment at the caret. */
+typedef struct {
+    int index;                    /* the comment (ow_editor_comment_info) */
+    int x, y, width, height;      /* the note */
+    int margin_x;                 /* the margin's left edge, where the line from its place starts */
+    int place_x, place_y, place_height;   /* its place in the text */
+} ow_margin_note;
+/* Where a comment's place (its run, which has nothing laid out) shows: the end of the text before it in its
+ * paragraph, else as ow_layout_caret. */
+int ow_layout_comment_place(const ow_layout *layout, ow_position pos, int *page, ol_rect *box);
+/* (ow_layout_margin_notes and ow_margin_note_at are in src/core/ow_margin.c, with the editor) */
+int ow_layout_margin_notes(const ow_layout *layout, ow_editor *editor, int page, const ol_scale *s,
+                           int line_height, ow_margin_note *notes, int max);
+int ow_margin_note_at(const ow_margin_note *notes, int n, int x, int y);
 
 /* A page number as the document writes it: 1, iv, IV, d or D. */
 void ow_layout_page_number(const owf_page *page, int number, char *out, size_t size);

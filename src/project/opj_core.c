@@ -95,10 +95,15 @@ static void trim(opj_doc *doc)
 }
 
 /* The edited copy becomes the plan: OWF_OK, or OWF_ERR_FORMAT (it would make a loop) with work freed. */
-static int commit(opj_doc *doc, owf_project *work)
+/* typed_work: the edit typed a task's Work, which is then what its type keeps; otherwise each changed task
+ * keeps what its type fixes (Fixed Units, Duration or Work, as MS Project). The flag is the edit's own,
+ * never kept between edits, so a copy dropped on a refusal leaves nothing behind. */
+static int commit_typed(opj_doc *doc, owf_project *work, int typed_work)
 {
     opj_state *s;
-    int rc = owf_project_schedule(work);
+    int rc;
+    if (!typed_work) owf_project_keep_types(doc->plan, work);
+    rc = owf_project_schedule(work);
     if (rc == OWF_ERR_FORMAT && doc->schedule_error != OWF_ERR_FORMAT) {
         owf_project_free(work);
         return OWF_ERR_FORMAT;
@@ -167,6 +172,11 @@ static owf_project *begin(opj_doc *doc, int row, int *rc)
     if (!doc || row < 0 || row >= doc->plan->ntasks) return NULL;
     if (!(work = owf_project_copy(doc->plan))) *rc = OWF_ERR_MEMORY;
     return work;
+}
+
+static int commit(opj_doc *doc, owf_project *work)
+{
+    return commit_typed(doc, work, 0);
 }
 
 static int fail(owf_project *work, int rc)
@@ -287,6 +297,36 @@ int opj_link_rows(opj_doc *doc, int first, int count)
     return commit(doc, work);
 }
 
+int opj_link_tasks(opj_doc *doc, int pred, int succ)
+{
+    owf_project *work;
+    const owf_ptask *t;
+    int i, rc;
+    if (!doc || pred < 0 || succ < 0 || pred == succ || pred >= doc->plan->ntasks || succ >= doc->plan->ntasks)
+        return OWF_ERR_FORMAT;
+    t = &doc->plan->tasks[succ];
+    for (i = 0; i < t->nlinks; i++)
+        if (t->links[i].pred == pred) return OWF_ERR_FORMAT;   /* linked already */
+    if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
+    if ((rc = owf_project_link(work, pred, succ, OWF_LINK_FS, 0, 0)) != OWF_OK) return fail(work, rc);
+    return commit(doc, work);
+}
+
+int opj_set_duration(opj_doc *doc, int row, long minutes)
+{
+    owf_project *work;
+    owf_ptask *t;
+    int rc;
+    if (minutes < 0 || minutes > 200000000L) return OWF_ERR_FORMAT;
+    if (!(work = begin(doc, row, &rc))) return rc;
+    t = &work->tasks[row];
+    if (t->summary) return fail(work, OWF_ERR_FORMAT);
+    t->duration = minutes;
+    t->estimated = 0;
+    t->milestone = minutes == 0;
+    return commit(doc, work);
+}
+
 int opj_unlink_rows(opj_doc *doc, int first, int count)
 {
     owf_project *work;
@@ -343,6 +383,296 @@ int opj_set_notes(opj_doc *doc, int row, const char *notes)
     owf_project *work = begin(doc, row, &rc);
     if (!work) return rc;
     if ((rc = replace_text(&work->tasks[row].notes, notes)) != OWF_OK) return fail(work, rc);
+    return commit(doc, work);
+}
+
+/* ---- Change Working Time ---- */
+
+static const char *skip_blanks(const char *s)
+{
+    while (*s == ' ' || *s == ',' || *s == ';' || *s == '\t') s++;
+    return s;
+}
+
+/* "8", "08:00", "17:30", "24:00" into minutes after midnight; 1 when it is one. */
+static int take_clock(const char **s, long *minutes)
+{
+    const char *p = *s;
+    long h = 0, m = 0;
+    int k = 0;
+    while (*p >= '0' && *p <= '9' && k < 3) h = h * 10 + (*p++ - '0'), k++;
+    if (!k) return 0;
+    if (*p == ':' || *p == '.') {
+        p++;
+        if (!(p[0] >= '0' && p[0] <= '5' && p[1] >= '0' && p[1] <= '9')) return 0;
+        m = (p[0] - '0') * 10 + (p[1] - '0');
+        p += 2;
+    }
+    if (h > 24 || (h == 24 && m)) return 0;
+    *minutes = h * 60 + m;
+    *s = p;
+    return 1;
+}
+
+static int word_ci(const char *s, const char *w)
+{
+    while (*w && (*s == *w || *s == *w - 32)) s++, w++;
+    return !*w && !*skip_blanks(s);
+}
+
+int opj_hours_parse(const char *text, owf_pday *out)
+{
+    unsigned short pairs[2 * OWF_PCAL_SPANS];
+    owf_pday day;
+    int n = 0;
+    const char *s;
+    if (!text || !out) return 0;
+    s = skip_blanks(text);
+    if (!*s || word_ci(s, "off")) {
+        memset(out, 0, sizeof *out);
+        return 1;
+    }
+    while (*s) {
+        long a, b;
+        if (n == OWF_PCAL_SPANS || !take_clock(&s, &a)) return 0;
+        while (*s == ' ') s++;
+        if (*s != '-') return 0;
+        s++;
+        while (*s == ' ') s++;
+        if (!take_clock(&s, &b) || b <= a || (n && a < pairs[2 * n - 1])) return 0;
+        pairs[2 * n] = (unsigned short)a;
+        pairs[2 * n + 1] = (unsigned short)b;
+        n++;
+        if (*s && *s != ' ' && *s != ',' && *s != ';' && *s != '\t') return 0;
+        s = skip_blanks(s);
+    }
+    memset(&day, 0, sizeof day);
+    day.nspans = (unsigned char)n;
+    for (n = 0; n < day.nspans; n++) {
+        day.from[n] = pairs[2 * n];
+        day.to[n] = pairs[2 * n + 1];
+    }
+    *out = day;
+    return 1;
+}
+
+void opj_hours_text(const owf_pday *h, char *out)
+{
+    int i;
+    size_t at = 0;
+    if (!h || !h->nspans) {
+        strcpy(out, "off");
+        return;
+    }
+    for (i = 0; i < h->nspans && i < OWF_PCAL_SPANS; i++)
+        at += (size_t)sprintf(out + at, "%s%02u:%02u-%02u:%02u", i ? ", " : "", h->from[i] / 60u, h->from[i] % 60u,
+                              h->to[i] / 60u, h->to[i] % 60u);
+}
+
+static int same_name_ci(const char *a, const char *b)
+{
+    int x, y;
+    if (!a || !b) return 0;
+    for (;; a++, b++) {
+        x = *a >= 'A' && *a <= 'Z' ? *a + 32 : *a;
+        y = *b >= 'A' && *b <= 'Z' ? *b + 32 : *b;
+        if (x != y) return 0;
+        if (!x) return 1;
+    }
+}
+
+int opj_find_calendar(const owf_project *p, const char *name)
+{
+    const char *s;
+    long n = 0;
+    int i, k = 0;
+    if (!p || !name) return -1;
+    for (s = name; *s >= '0' && *s <= '9' && k < 6; s++, k++) n = n * 10 + (*s - '0');
+    if (k && !*s) return n >= 1 && n <= p->ncalendars ? (int)n - 1 : -1;
+    for (i = 0; i < p->ncalendars; i++)
+        if (same_name_ci(p->calendars[i].name, name)) return i;
+    return -1;
+}
+
+/* A copy to edit for calendar cal, or NULL as begin. */
+static owf_project *begin_cal(opj_doc *doc, int cal, int *rc)
+{
+    owf_project *work;
+    *rc = OWF_ERR_FORMAT;
+    if (!doc || cal < 0 || cal >= doc->plan->ncalendars) return NULL;
+    if (!(work = owf_project_copy(doc->plan))) *rc = OWF_ERR_MEMORY;
+    return work;
+}
+
+static int pairs_of(const owf_pday *h, unsigned short *pairs)
+{
+    int i;
+    for (i = 0; i < h->nspans; i++) pairs[2 * i] = h->from[i], pairs[2 * i + 1] = h->to[i];
+    return h->nspans;
+}
+
+int opj_add_calendar(opj_doc *doc, const char *name, int from, int *index)
+{
+    owf_project *work;
+    owf_pcal *c;
+    const char *s = name;
+    int at, i;
+    if (!doc || !name) return OWF_ERR_FORMAT;
+    while (*s == ' ') s++;
+    if (!*s || opj_find_calendar(doc->plan, name) >= 0 || (from >= doc->plan->ncalendars) || from < -1)
+        return OWF_ERR_FORMAT;
+    for (i = 0; s[i]; i++)
+        if (s[i] < '0' || s[i] > '9') break;
+    if (!s[i]) return OWF_ERR_FORMAT;    /* a number alone would be read as a calendar's number */
+    if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
+    if ((at = owf_project_add_calendar(work, name)) < 0) return fail(work, OWF_ERR_MEMORY);
+    c = &work->calendars[at];
+    if (from >= 0) {
+        const owf_pcal *f = &work->calendars[from];
+        unsigned short pairs[2 * OWF_PCAL_SPANS];
+        int d;
+        for (d = 0; d < 7; d++) owf_pcal_set_week(c, d, pairs_of(&f->week[d], pairs), pairs);
+        for (i = 0; i < f->nexceptions; i++)
+            if (owf_pcal_set_exception(c, f->exceptions[i].day, pairs_of(&f->exceptions[i].hours, pairs), pairs) != OWF_OK)
+                return fail(work, OWF_ERR_MEMORY);
+    }
+    if (index) *index = at;
+    return commit(doc, work);
+}
+
+int opj_set_week_hours(opj_doc *doc, int cal, int weekday, const char *hours)
+{
+    owf_pday h;
+    unsigned short pairs[2 * OWF_PCAL_SPANS];
+    int rc;
+    owf_project *work;
+    if (weekday < 0 || weekday > 6 || !opj_hours_parse(hours, &h)) return OWF_ERR_FORMAT;
+    if (!(work = begin_cal(doc, cal, &rc))) return rc;
+    if ((rc = owf_pcal_set_week(&work->calendars[cal], weekday, pairs_of(&h, pairs), pairs)) != OWF_OK) return fail(work, rc);
+    return commit(doc, work);
+}
+
+int opj_set_day_hours(opj_doc *doc, int cal, long first, long last, const char *hours)
+{
+    owf_pday h;
+    unsigned short pairs[2 * OWF_PCAL_SPANS];
+    int rc, n = 0;
+    long d;
+    owf_project *work;
+    if (first < 0 || last < first || last - first >= 3660 || (hours && !opj_hours_parse(hours, &h))) return OWF_ERR_FORMAT;
+    if (!(work = begin_cal(doc, cal, &rc))) return rc;
+    if (hours) n = pairs_of(&h, pairs);
+    for (d = first; d <= last; d++) {
+        if (!hours) owf_pcal_clear_exception(&work->calendars[cal], d);
+        else if ((rc = owf_pcal_set_exception(&work->calendars[cal], d, n, pairs)) != OWF_OK) return fail(work, rc);
+    }
+    return commit(doc, work);
+}
+
+static int weekday_named(const char *s, size_t n)
+{
+    static const char *const names[7] = { "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday" };
+    int d;
+    size_t i;
+    if (n < 3) return -1;
+    for (d = 0; d < 7; d++) {
+        for (i = 0; i < n && names[d][i]; i++) {
+            int c = s[i] >= 'A' && s[i] <= 'Z' ? s[i] + 32 : s[i];
+            if (c != names[d][i]) break;
+        }
+        if (i == n && (n == 3 || !names[d][i])) return d;
+    }
+    return -1;
+}
+
+int opj_days_parse(const char *text, int *weekday, long *first, long *last)
+{
+    char a[40], b[40];
+    const char *s, *sep = NULL;
+    size_t n;
+    owf_ptime t1, t2;
+    if (!text) return 0;
+    while (*text == ' ') text++;
+    n = strlen(text);
+    while (n && text[n - 1] == ' ') n--;
+    if (!n || n >= sizeof a) return 0;
+    if (weekday_named(text, n) >= 0) {
+        if (weekday) *weekday = weekday_named(text, n);
+        return 1;
+    }
+    for (s = text; s < text + n; s++)
+        if ((*s == '-' && s > text && s[-1] == ' ') || ((s[0] == 't' || s[0] == 'T') && (s[1] == 'o' || s[1] == 'O') &&
+                                                         s > text && s[-1] == ' ' && s[2] == ' ')) {
+            sep = s;
+            break;
+        }
+    if (sep) {
+        memcpy(a, text, (size_t)(sep - text));
+        a[sep - text] = 0;
+        s = sep + (*sep == '-' ? 1 : 2);
+        memcpy(b, s, (size_t)(text + n - s));
+        b[text + n - s] = 0;
+    } else {
+        memcpy(a, text, n);
+        a[n] = 0;
+        strcpy(b, a);
+    }
+    {   /* dates only, no times */
+        size_t k = strlen(a);
+        while (k && a[k - 1] == ' ') a[--k] = 0;
+    }
+    if (!opj_date_parse(a, 0, &t1) || !opj_date_parse(b, 0, &t2)) return 0;
+    if (t1 % 1440 || t2 % 1440 || t2 < t1 || t2 / 1440 - t1 / 1440 >= 3660) return 0;
+    if (first) *first = t1 / 1440;
+    if (last) *last = t2 / 1440;
+    return 2;
+}
+
+void opj_days_hours_text(const owf_project *p, int cal, const char *text, char *out)
+{
+    int wd;
+    long first, last;
+    int kind = opj_days_parse(text, &wd, &first, &last);
+    out[0] = 0;
+    if (!p || cal < 0 || cal >= p->ncalendars || !kind) return;
+    opj_hours_text(kind == 1 ? &p->calendars[cal].week[wd] : owf_pcal_day(&p->calendars[cal], first), out);
+}
+
+int opj_set_days_hours(opj_doc *doc, int cal, const char *days, const char *hours)
+{
+    int wd, kind = opj_days_parse(days, &wd, NULL, NULL), def;
+    long first, last;
+    const char *h = hours;
+    if (!kind || !hours) return OWF_ERR_FORMAT;
+    while (*h == ' ') h++;
+    {   /* "default" with spaces around it */
+        char word[16];
+        size_t n = strlen(h);
+        while (n && h[n - 1] == ' ') n--;
+        def = n < sizeof word && (memcpy(word, h, n), word[n] = 0, same_name_ci(word, "default"));
+    }
+    if (kind == 1) return def ? OWF_ERR_FORMAT : opj_set_week_hours(doc, cal, wd, hours);
+    opj_days_parse(days, NULL, &first, &last);
+    return opj_set_day_hours(doc, cal, first, last, def ? NULL : hours);
+}
+
+int opj_set_plan_calendar(opj_doc *doc, int cal)
+{
+    int rc;
+    owf_project *work = begin_cal(doc, cal, &rc);
+    if (!work) return rc;
+    work->calendar = cal;
+    return commit(doc, work);
+}
+
+int opj_set_task_calendar(opj_doc *doc, int row, int cal)
+{
+    int rc;
+    owf_project *work;
+    if (!doc || cal < -1 || cal >= doc->plan->ncalendars) return OWF_ERR_FORMAT;
+    if (!(work = begin(doc, row, &rc))) return rc;
+    if (work->tasks[row].summary) return fail(work, OWF_ERR_FORMAT);
+    work->tasks[row].calendar = cal;
     return commit(doc, work);
 }
 
@@ -411,10 +741,75 @@ int opj_date_parse(const char *s, int default_minute, owf_ptime *t)
 
 /* ---- The task sheet ---- */
 
+/* s in upper case without spaces, into out (cut to size). */
+static void squeeze(const char *s, char *out, size_t size)
+{
+    size_t k = 0;
+    for (; s && *s && k + 1 < size; s++)
+        if (*s != ' ' && *s != '\t') out[k++] = (char)(*s >= 'a' && *s <= 'z' ? *s - 32 : *s);
+    out[k] = 0;
+}
+
+/* n times percent / 100, kept from overflowing a 32-bit long. */
+static long percent_of(long n, int percent)
+{
+    return n / 100 * percent + n % 100 * percent / 100;
+}
+
+/* A task's actual work: its work times its % complete; a summary's, its subtasks' added up. */
+static long actual_work(const owf_project *p, int row)
+{
+    const owf_ptask *t = &p->tasks[row];
+    long sum = 0;
+    int j;
+    if (!t->summary) return percent_of(t->work, t->percent);
+    for (j = row + 1; j < p->ntasks && p->tasks[j].level > t->level; j++)
+        if (!p->tasks[j].summary) sum += percent_of(p->tasks[j].work, p->tasks[j].percent);
+    return sum;
+}
+
 static const char *const column_titles[OPJ_NCOLS] = {
     "ID", "Task Name", "Duration", "Start", "Finish", "Predecessors", "% Complete", "WBS", "Resource Names",
-    "Baseline Start", "Baseline Finish", "Start Var.", "Finish Var.",
+    "Baseline Start", "Baseline Finish", "Start Var.", "Finish Var.", "Constraint Type", "Constraint Date", "Notes",
+    "Actual Start", "Actual Finish", "Actual Duration", "Remaining Dur.", "BCWS", "BCWP", "ACWP", "SV", "CV", "Leveling Delay",
+    "Work", "Actual Work", "Remaining Work", "Cost", "Actual Cost", "Type", "Effort Driven",
+    "Priority", "Overallocated",
 };
+
+static const char *const type_names[] = { "Fixed Units", "Fixed Duration", "Fixed Work" };   /* OWF_TT_ */
+
+static const char *const constraint_names[] = {   /* OWF_CON_ order */
+    "As Soon As Possible", "As Late As Possible", "Must Start On", "Must Finish On",
+    "Start No Earlier Than", "Start No Later Than", "Finish No Earlier Than", "Finish No Later Than",
+};
+#define NCONSTRAINTS ((int)(sizeof constraint_names / sizeof *constraint_names))
+
+const char *opj_constraint_name(int constraint)
+{
+    return constraint >= 0 && constraint < NCONSTRAINTS ? constraint_names[constraint] : "";
+}
+
+/* A typed constraint type: its name or short name, spaces and case ignored; -1 when it is neither. */
+static int constraint_parse(const char *text)
+{
+    static const char *const shorts[] = { "ASAP", "ALAP", "MSO", "MFO", "SNET", "SNLT", "FNET", "FNLT" };
+    char want[40], have[40];
+    int i;
+    squeeze(text, want, sizeof want);
+    if (!want[0]) return -1;
+    for (i = 0; i < NCONSTRAINTS; i++) {
+        squeeze(constraint_names[i], have, sizeof have);
+        if (!strcmp(want, have)) return i;
+        squeeze(shorts[i], have, sizeof have);
+        if (!strcmp(want, have)) return i;
+    }
+    return -1;
+}
+
+static int dated(int constraint)
+{
+    return constraint != OWF_CON_ASAP && constraint != OWF_CON_ALAP;
+}
 
 const char *opj_column_title(int column)
 {
@@ -451,7 +846,7 @@ void opj_cell_text(const opj_doc *doc, int row, int column, char *out, size_t si
     t = &doc->plan->tasks[row];
     text[0] = 0;
     switch (column) {
-    case OPJ_COL_ID: sprintf(text, "%d", row + 1); break;
+    case OPJ_COL_ID: sprintf(text, owf_ptask_overallocated(doc->plan, row) ? "%d!" : "%d", row + 1); break;
     case OPJ_COL_NAME: s = t->name ? t->name : ""; break;
     case OPJ_COL_DURATION: {
         int estimated = t->estimated, i;
@@ -481,6 +876,51 @@ void opj_cell_text(const opj_doc *doc, int row, int column, char *out, size_t si
         owf_pduration_text(doc->plan, var < 0 ? -var : var, 0, 0, text + (var < 0));
         break;
     }
+    case OPJ_COL_CONSTRAINT_TYPE: s = opj_constraint_name(t->constraint); break;
+    case OPJ_COL_CONSTRAINT_DATE:
+        if (!dated(t->constraint)) strcpy(text, "NA");
+        else opj_date_text(t->constraint_date, 0, text);
+        break;
+    case OPJ_COL_NOTES: s = t->notes ? t->notes : ""; break;
+    case OPJ_COL_ACTUAL_START:
+    case OPJ_COL_ACTUAL_FINISH:
+        if (!(column == OPJ_COL_ACTUAL_START ? t->has_actual_start : t->has_actual_finish)) strcpy(text, "NA");
+        else opj_date_text(column == OPJ_COL_ACTUAL_START ? t->actual_start : t->actual_finish, 0, text);
+        break;
+    case OPJ_COL_ACTUAL_DURATION:
+        owf_pduration_text(doc->plan, owf_ptask_actual_duration(t), t->elapsed, 0, text);
+        break;
+    case OPJ_COL_REMAINING_DURATION:
+        owf_pduration_text(doc->plan, owf_ptask_remaining_duration(t), t->elapsed, 0, text);
+        break;
+    case OPJ_COL_BCWS: case OPJ_COL_BCWP: case OPJ_COL_ACWP: case OPJ_COL_SV: case OPJ_COL_CV: {
+        static const int which[] = { OWF_EV_BCWS, OWF_EV_BCWP, OWF_EV_ACWP, OWF_EV_SV, OWF_EV_CV };
+        if (!doc->plan->has_status_date && (column == OPJ_COL_BCWS || column == OPJ_COL_SV)) strcpy(text, "NA");
+        else opj_money_text(owf_ptask_earned(doc->plan, row, doc->plan->status_date, which[column - OPJ_COL_BCWS]), text);
+        break;
+    }
+    case OPJ_COL_LEVELING_DELAY:
+        if (!t->summary) owf_pduration_text(doc->plan, t->level_delay, t->level_delay_elapsed, 0, text);
+        break;
+    case OPJ_COL_WORK: opj_work_text(t->work, text); break;
+    case OPJ_COL_ACTUAL_WORK: opj_work_text(actual_work(doc->plan, row), text); break;
+    case OPJ_COL_REMAINING_WORK: opj_work_text(t->work - actual_work(doc->plan, row), text); break;
+    case OPJ_COL_COST: opj_money_text(t->cost, text); break;
+    case OPJ_COL_ACTUAL_COST:
+        opj_money_text(owf_ptask_earned(doc->plan, row, doc->plan->status_date, OWF_EV_ACWP), text);
+        break;
+    case OPJ_COL_TYPE:
+        if (!t->summary && t->type >= 0 && t->type <= OWF_TT_FIXED_WORK) s = type_names[t->type];
+        break;
+    case OPJ_COL_EFFORT_DRIVEN:
+        if (!t->summary) s = t->effort_driven || t->type == OWF_TT_FIXED_WORK ? "Yes" : "No";
+        break;
+    case OPJ_COL_PRIORITY:
+        if (!t->summary) sprintf(text, "%d", t->priority);
+        break;
+    case OPJ_COL_OVERALLOCATED:
+        if (!t->summary) s = owf_ptask_overallocated(doc->plan, row) ? "Yes" : "No";
+        break;
     default: return;
     }
     n = strlen(s);
@@ -497,83 +937,704 @@ static int day_edge(const owf_project *p, int end)
     return end ? h->to[h->nspans - 1] : h->from[0];
 }
 
-int opj_set_cell(opj_doc *doc, int row, int column, const char *text)
+/* One typed cell on the working copy: OWF_OK, or the code that refuses it (work is left to the caller). */
+static int set_field(owf_project *work, int row, int column, const char *text, int *typed_work)
 {
-    owf_project *work;
-    owf_ptask *t;
+    owf_ptask *t = &work->tasks[row];
     owf_ptime when;
     long v;
-    int rc, el, es;
-    if (!(work = begin(doc, row, &rc))) return rc;
+    int rc, el, es, c;
     if (!text) text = "";
-    t = &work->tasks[row];
     switch (column) {
     case OPJ_COL_NAME:
-        if ((rc = replace_text(&t->name, text)) != OWF_OK) return fail(work, rc);
-        if (!t->name && !(t->name = dup_text(""))) return fail(work, OWF_ERR_MEMORY);
-        break;
+        if ((rc = replace_text(&t->name, text)) != OWF_OK) return rc;
+        if (!t->name && !(t->name = dup_text(""))) return OWF_ERR_MEMORY;
+        return OWF_OK;
     case OPJ_COL_DURATION:
-        if (t->summary || owf_pduration_parse(work, text, &v, &el, &es) != OWF_OK || v < 0)
-            return fail(work, OWF_ERR_FORMAT);
+        if (t->summary || owf_pduration_parse(work, text, &v, &el, &es) != OWF_OK || v < 0) return OWF_ERR_FORMAT;
         t->duration = v;
         t->elapsed = el;
         t->estimated = es;
         t->milestone = v == 0;
-        break;
+        return OWF_OK;
+    case OPJ_COL_LEVELING_DELAY:
+        if (t->summary || owf_pduration_parse(work, text, &v, &el, &es) != OWF_OK || v < 0) return OWF_ERR_FORMAT;
+        t->level_delay = v;
+        t->level_delay_elapsed = v ? el : 0;
+        return OWF_OK;
     case OPJ_COL_START:
     case OPJ_COL_FINISH:
-        if (t->summary || !opj_date_parse(text, day_edge(work, column == OPJ_COL_FINISH), &when))
-            return fail(work, OWF_ERR_FORMAT);
+        if (t->summary || !opj_date_parse(text, day_edge(work, column == OPJ_COL_FINISH), &when)) return OWF_ERR_FORMAT;
         t->constraint = column == OPJ_COL_START ? OWF_CON_SNET : OWF_CON_FNET;
         t->constraint_date = when;
-        break;
+        return OWF_OK;
     case OPJ_COL_PREDECESSORS:
-        if ((rc = owf_ppredecessors_parse(work, row, text)) != OWF_OK) return fail(work, rc);
-        break;
+        return owf_ppredecessors_parse(work, row, text);
     case OPJ_COL_PERCENT: {
         const char *s = text;
         while (*s == ' ') s++;
-        if (!take_int(&s, &v, NULL)) return fail(work, OWF_ERR_FORMAT);
+        if (!take_int(&s, &v, NULL)) return OWF_ERR_FORMAT;
         while (*s == ' ' || *s == '%') s++;
-        if (*s || v > 100) return fail(work, OWF_ERR_FORMAT);
+        if (*s || v > 100) return OWF_ERR_FORMAT;
         t->percent = (int)v;
-        break;
+        if (!t->summary) {               /* the actual dates follow, as MS Project's */
+            if (v == 0) t->has_actual_start = t->has_actual_finish = 0;
+            else if (!t->has_actual_start) t->has_actual_start = 1, t->actual_start = t->early_start;
+            if (v < 100) t->has_actual_finish = 0;
+            else if (!t->has_actual_finish) {
+                t->has_actual_finish = 1;
+                t->actual_finish = t->early_finish < t->actual_start ? t->actual_start : t->early_finish;
+            }
+        }
+        return OWF_OK;
+    }
+    case OPJ_COL_ACTUAL_START:
+    case OPJ_COL_ACTUAL_FINISH: {
+        char word[8];
+        int fin = column == OPJ_COL_ACTUAL_FINISH, keep;
+        squeeze(text, word, sizeof word);
+        if (t->summary) return OWF_ERR_FORMAT;
+        if (!strcmp(word, "NA") || !word[0]) {
+            if (fin) {
+                t->has_actual_finish = 0;
+                if (t->percent == 100) t->percent = 99;
+            } else
+                t->has_actual_start = t->has_actual_finish = 0, t->percent = 0;
+            return OWF_OK;
+        }
+        if (!opj_date_parse(text, day_edge(work, fin), &when)) return OWF_ERR_FORMAT;
+        if (!fin) {
+            keep = t->has_actual_finish && t->actual_finish >= when;
+            if (!keep && t->percent == 100) t->percent = 99;   /* no longer finished */
+            return owf_project_set_actual(work, row, 1, when, keep, keep ? t->actual_finish : 0);
+        }
+        return owf_project_set_actual(work, row, 1, t->has_actual_start ? t->actual_start : t->early_start, 1, when);
     }
     case OPJ_COL_RESOURCES:
-        if ((rc = owf_presource_names_parse(work, row, text, 1)) != OWF_OK) return fail(work, rc);
-        break;
-    default:
-        return fail(work, OWF_ERR_FORMAT);
+        return owf_presource_names_parse(work, row, text, 1);
+    case OPJ_COL_CONSTRAINT_TYPE:
+        if ((c = constraint_parse(text)) < 0 || (t->summary && c != OWF_CON_ASAP && c != OWF_CON_SNET && c != OWF_CON_FNLT))
+            return OWF_ERR_FORMAT;               /* a summary takes only these three, as MS Project */
+        if (dated(c) && !dated(t->constraint))   /* a date of its own: where the task is now */
+            t->constraint_date = c == OWF_CON_MFO || c == OWF_CON_FNET || c == OWF_CON_FNLT ? t->early_finish : t->early_start;
+        t->constraint = c;
+        return OWF_OK;
+    case OPJ_COL_CONSTRAINT_DATE: {
+        char word[8];
+        squeeze(text, word, sizeof word);
+        if (!strcmp(word, "NA") || !word[0]) {
+            t->constraint = OWF_CON_ASAP;
+            return OWF_OK;
+        }
+        c = dated(t->constraint) ? t->constraint : OWF_CON_SNET;
+        if (t->summary && c != OWF_CON_SNET && c != OWF_CON_FNLT) return OWF_ERR_FORMAT;
+        if (!opj_date_parse(text, day_edge(work, c == OWF_CON_MFO || c == OWF_CON_FNET || c == OWF_CON_FNLT), &when))
+            return OWF_ERR_FORMAT;
+        t->constraint = c;
+        t->constraint_date = when;
+        return OWF_OK;
     }
+    case OPJ_COL_NOTES:
+        return replace_text(&t->notes, text);
+    case OPJ_COL_WORK:
+        if (owf_pduration_parse(work, text, &v, &el, &es) != OWF_OK || el) return OWF_ERR_FORMAT;
+        if ((rc = owf_project_set_work(work, row, v)) == OWF_OK && typed_work) *typed_work = 1;   /* as its type takes it */
+        return rc;
+    case OPJ_COL_TYPE: {
+        char word[24];
+        static const char *const shorts[] = { "UNITS", "DURATION", "WORK" };
+        squeeze(text, word, sizeof word);
+        if (t->summary) return OWF_ERR_FORMAT;
+        for (c = 0; c <= OWF_TT_FIXED_WORK; c++) {
+            char have[24];
+            squeeze(type_names[c], have, sizeof have);
+            if (!strcmp(word, have) || !strcmp(word, shorts[c])) break;
+        }
+        if (c > OWF_TT_FIXED_WORK) return OWF_ERR_FORMAT;
+        t->type = c;
+        if (c == OWF_TT_FIXED_WORK) t->effort_driven = 1;   /* Fixed Work is always effort driven */
+        return OWF_OK;
+    }
+    case OPJ_COL_EFFORT_DRIVEN: {
+        char word[8];
+        squeeze(text, word, sizeof word);
+        if (t->summary) return OWF_ERR_FORMAT;
+        if (!strcmp(word, "YES") || !strcmp(word, "Y") || !strcmp(word, "1") || !strcmp(word, "TRUE")) c = 1;
+        else if (!strcmp(word, "NO") || !strcmp(word, "N") || !strcmp(word, "0") || !strcmp(word, "FALSE")) c = 0;
+        else return OWF_ERR_FORMAT;
+        if (!c && t->type == OWF_TT_FIXED_WORK) return OWF_ERR_FORMAT;
+        t->effort_driven = c;
+        return OWF_OK;
+    }
+    case OPJ_COL_PRIORITY: {
+        const char *s = text;
+        if (t->summary) return OWF_ERR_FORMAT;
+        while (*s == ' ') s++;
+        if (!take_int(&s, &v, NULL)) return OWF_ERR_FORMAT;
+        while (*s == ' ') s++;
+        if (*s || v < 0 || v > OWF_PRIORITY_DO_NOT_LEVEL) return OWF_ERR_FORMAT;
+        t->priority = (int)v;
+        return OWF_OK;
+    }
+    default:
+        return OWF_ERR_FORMAT;
+    }
+}
+
+int opj_column_typed(int column)
+{
+    switch (column) {
+    case OPJ_COL_NAME: case OPJ_COL_DURATION: case OPJ_COL_START: case OPJ_COL_FINISH: case OPJ_COL_PREDECESSORS:
+    case OPJ_COL_PERCENT: case OPJ_COL_RESOURCES: case OPJ_COL_CONSTRAINT_TYPE: case OPJ_COL_CONSTRAINT_DATE:
+    case OPJ_COL_NOTES: case OPJ_COL_ACTUAL_START: case OPJ_COL_ACTUAL_FINISH: case OPJ_COL_LEVELING_DELAY:
+    case OPJ_COL_WORK: case OPJ_COL_TYPE: case OPJ_COL_EFFORT_DRIVEN: case OPJ_COL_PRIORITY:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+int opj_set_cell(opj_doc *doc, int row, int column, const char *text)
+{
+    return opj_set_cells(doc, row, &column, &text, 1, NULL);
+}
+
+int opj_set_cells(opj_doc *doc, int row, const int *columns, const char *const *texts, int n, int *bad)
+{
+    owf_project *work;
+    int rc, i, undated = 0, typed = 0;
+    if (bad) *bad = -1;
+    if (!columns || !texts || n < 1) return OWF_ERR_FORMAT;
+    if (!(work = begin(doc, row, &rc))) return rc;
+    for (i = 0; i < n; i++) {
+        if (undated && columns[i] == OPJ_COL_CONSTRAINT_DATE) continue;   /* ASAP or ALAP chosen: no date */
+        if ((rc = set_field(work, row, columns[i], texts[i], &typed)) != OWF_OK) {
+            if (bad) *bad = i;
+            return fail(work, rc);
+        }
+        if (columns[i] == OPJ_COL_CONSTRAINT_TYPE && texts[i]) {
+            int k = constraint_parse(texts[i]);
+            undated = k == OWF_CON_ASAP || k == OWF_CON_ALAP;
+        }
+    }
+    return commit_typed(doc, work, typed);
+}
+
+int opj_set_baseline_n(opj_doc *doc, int n, int first, int count)
+{
+    owf_project *work;
+    if (!doc || n < 0 || n >= OWF_NBASELINES) return OWF_ERR_FORMAT;
+    if (count < 0) first = 0, count = doc->plan->ntasks;
+    if (first < 0 || count < 1 || first > doc->plan->ntasks - count) return OWF_ERR_FORMAT;
+    if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
+    owf_project_set_baseline_n(work, n, first, count);
+    return commit(doc, work);
+}
+
+int opj_clear_baseline_n(opj_doc *doc, int n, int first, int count)
+{
+    owf_project *work;
+    if (!doc || n < 0 || n >= OWF_NBASELINES) return OWF_ERR_FORMAT;
+    if (count < 0) first = 0, count = doc->plan->ntasks;
+    if (first < 0 || count < 1 || first > doc->plan->ntasks - count) return OWF_ERR_FORMAT;
+    if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
+    owf_project_clear_baseline_n(work, n, first, count);
     return commit(doc, work);
 }
 
 int opj_set_baseline(opj_doc *doc, int first, int count)
 {
-    owf_project *work;
-    if (!doc) return OWF_ERR_FORMAT;
-    if (count < 0) first = 0, count = doc->plan->ntasks;
-    if (first < 0 || count < 1 || first > doc->plan->ntasks - count) return OWF_ERR_FORMAT;
-    if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
-    owf_project_set_baseline(work, first, count);
-    return commit(doc, work);
+    return opj_set_baseline_n(doc, 0, first, count);
 }
 
 int opj_clear_baseline(opj_doc *doc, int first, int count)
 {
+    return opj_clear_baseline_n(doc, 0, first, count);
+}
+
+unsigned opj_baselines_saved(const opj_doc *doc)
+{
+    unsigned bits = 0;
+    owf_pbaseline b;
+    int i, n;
+    if (!doc) return 0;
+    for (i = 0; i < doc->plan->ntasks; i++)
+        for (n = 0; n < OWF_NBASELINES; n++)
+            if (owf_ptask_baseline(&doc->plan->tasks[i], n, &b)) bits |= 1u << n;
+    return bits;
+}
+
+int opj_baseline_parse(const char *text)
+{
+    static const char word[] = "baseline";
+    int n = 0, digits = 0, i;
+    if (!text) return 0;
+    while (*text == ' ' || *text == '\t') text++;
+    for (i = 0; word[i] && (text[i] == word[i] || text[i] == word[i] - 32); i++)
+        ;
+    if (!word[i]) text += i;
+    while (*text == ' ' || *text == '\t') text++;
+    while (*text >= '0' && *text <= '9' && digits < 3) n = n * 10 + (*text++ - '0'), digits++;
+    while (*text == ' ' || *text == '\t') text++;
+    if (*text || n >= OWF_NBASELINES) return -1;
+    return n;
+}
+
+void opj_baselines_text(const opj_doc *doc, char *out, size_t size)
+{
+    unsigned bits = opj_baselines_saved(doc);
+    size_t len = 0;
+    int n;
+    if (!out || !size) return;
+    *out = 0;
+    for (n = 0; n < OWF_NBASELINES; n++)
+        if (bits & (1u << n)) {
+            int w = snprintf(out + len, size - len, len ? " %d" : "%d", n);
+            if (w < 0 || (size_t)w >= size - len) break;
+            len += (size_t)w;
+        }
+    if (!len) snprintf(out, size, "none");
+}
+
+int opj_update_project(opj_doc *doc, owf_ptime status, int whole, int *changed)
+{
     owf_project *work;
+    int n;
+    if (changed) *changed = 0;
     if (!doc) return OWF_ERR_FORMAT;
-    if (count < 0) first = 0, count = doc->plan->ntasks;
-    if (first < 0 || count < 1 || first > doc->plan->ntasks - count) return OWF_ERR_FORMAT;
     if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
-    owf_project_clear_baseline(work, first, count);
+    n = owf_project_update(work, status, whole);
+    if (changed) *changed = n;
     return commit(doc, work);
+}
+
+static const char *const level_order_names[OWF_LEVEL_NORDERS] = { "Standard", "ID Only", "Priority, Standard" };
+
+const char *opj_level_order_name(int order)
+{
+    return order >= 0 && order < OWF_LEVEL_NORDERS ? level_order_names[order] : "";
+}
+
+int opj_level_order_parse(const char *name)
+{
+    static const char *const shorts[OWF_LEVEL_NORDERS] = { "STANDARD", "ID", "PRIORITY" };
+    char word[24], have[24];
+    int i;
+    if (!name) return -1;
+    squeeze(name, word, sizeof word);
+    for (i = 0; i < OWF_LEVEL_NORDERS; i++) {
+        squeeze(level_order_names[i], have, sizeof have);
+        if (!strcmp(word, have) || !strcmp(word, shorts[i])) return i;
+    }
+    return -1;
+}
+
+int opj_level(opj_doc *doc, int within_slack, int *delayed)
+{
+    return opj_level_by(doc, within_slack, OWF_LEVEL_STANDARD, delayed);
+}
+
+int opj_level_by(opj_doc *doc, int within_slack, int order, int *delayed)
+{
+    owf_project *work;
+    int n;
+    if (delayed) *delayed = 0;
+    if (!doc || order < 0 || order >= OWF_LEVEL_NORDERS) return OWF_ERR_FORMAT;
+    if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
+    if ((n = owf_project_level_by(work, within_slack, order)) < 0) return fail(work, OWF_ERR_FORMAT);
+    if (delayed) *delayed = n;
+    return commit(doc, work);
+}
+
+int opj_clear_leveling(opj_doc *doc)
+{
+    owf_project *work;
+    int i, any = 0;
+    if (!doc) return OWF_ERR_FORMAT;
+    for (i = 0; i < doc->plan->ntasks; i++) any |= doc->plan->tasks[i].level_delay != 0;
+    if (!any) return OWF_OK;                     /* nothing to clear: no Undo step, the plan not changed */
+    if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
+    for (i = 0; i < work->ntasks; i++) work->tasks[i].level_delay = 0, work->tasks[i].level_delay_elapsed = 0;
+    return commit(doc, work);
+}
+
+/* ---- Update Tasks (Tools > Tracking > Update Tasks...) ---- */
+
+static int given(const char *s)
+{
+    return s && *s;
+}
+
+int opj_update_task(opj_doc *doc, int row, const char *percent, const char *actual, const char *remaining,
+                    const char *actual_start, const char *actual_finish)
+{
+    int rc;
+    owf_project *work = begin(doc, row, &rc);
+    owf_ptask *t;
+    if (!work) return rc;
+    t = &work->tasks[row];
+    if (t->summary && (given(actual) || given(remaining) || given(actual_start) || given(actual_finish)))
+        return fail(work, OWF_ERR_FORMAT);       /* a summary's come from its subtasks */
+    if (given(actual_start) && (rc = set_field(work, row, OPJ_COL_ACTUAL_START, actual_start, NULL)) != OWF_OK)
+        return fail(work, rc);
+    if (given(actual) || given(remaining)) {
+        long a = 0, r = 0, d;
+        int ea = -1, er = -1, es, pc;
+        char pct[8];
+        if (given(actual) && (owf_pduration_parse(work, actual, &a, &ea, &es) != OWF_OK || a < 0)) return fail(work, OWF_ERR_FORMAT);
+        if (given(remaining) && (owf_pduration_parse(work, remaining, &r, &er, &es) != OWF_OK || r < 0))
+            return fail(work, OWF_ERR_FORMAT);
+        if (ea >= 0 && er >= 0 && ea != er) return fail(work, OWF_ERR_FORMAT);   /* "2d" done, "1ed" to go */
+        if (!given(actual)) {
+            a = owf_ptask_actual_duration(t);                          /* the remaining changes the duration */
+            if (er != t->elapsed && a > 0) return fail(work, OWF_ERR_FORMAT);  /* done in the other kind */
+        } else if (!given(remaining) && ea != t->elapsed && t->duration > 0)
+            return fail(work, OWF_ERR_FORMAT);   /* "1ed" done of a 3d (working) task: the other kind */
+        if (given(remaining)) d = a + r;
+        else d = a > t->duration ? a : t->duration;                     /* more done than planned: longer */
+        t->duration = d;
+        t->elapsed = ea >= 0 ? ea : er;      /* "1ed" makes the duration elapsed, as the Duration cell does */
+        /* the Milestone flag stays as set (MS Project's), whatever the duration becomes */
+        if (d == 0) pc = t->percent;                  /* a milestone: % Complete says whether it's done */
+        else if (a >= d) pc = 100;
+        else if ((pc = (int)((a * 100 + d / 2) / d)) > 99) pc = 99;      /* not all done: never 100% */
+        snprintf(pct, sizeof pct, "%d", pc);
+        if ((rc = set_field(work, row, OPJ_COL_PERCENT, pct, NULL)) != OWF_OK) return fail(work, rc);
+    }
+    if (given(percent) && (rc = set_field(work, row, OPJ_COL_PERCENT, percent, NULL)) != OWF_OK) return fail(work, rc);
+    if (given(actual_finish) && (rc = set_field(work, row, OPJ_COL_ACTUAL_FINISH, actual_finish, NULL)) != OWF_OK)
+        return fail(work, rc);
+    return commit(doc, work);
+}
+
+/* ---- Sort ---- */
+
+static char *cell_dup(const opj_doc *doc, int resources, int row, int column);
+
+char *opj_cell_text_dup(const opj_doc *doc, int row, int column)
+{
+    return cell_dup(doc, 0, row, column);
+}
+
+/* A cell's whole text however long (a Name or Notes can be any length), as the sheet shows it; owf_malloc'd,
+ * NULL for memory. */
+static char *cell_dup(const opj_doc *doc, int resources, int row, int column)
+{
+    size_t size = 256;
+    for (;;) {
+        char *s = owf_malloc(size);
+        if (!s) return NULL;
+        if (resources) opj_resource_cell_text(doc, row, column, s, size);
+        else opj_cell_text(doc, row, column, s, size);
+        if (strlen(s) < size - 1) return s;
+        owf_free(s);
+        size *= 2;
+    }
+}
+
+int opj_cell_value(const opj_doc *doc, int row, int column, long *v, int *na)
+{
+    const owf_ptask *t = &doc->plan->tasks[row];
+    *na = 0;
+    *v = 0;
+    switch (column) {
+    case OPJ_COL_ID: *v = row; return 1;
+    case OPJ_COL_DURATION: *v = t->duration; return 1;
+    case OPJ_COL_START: *v = t->early_start; return 1;
+    case OPJ_COL_FINISH: *v = t->early_finish; return 1;
+    case OPJ_COL_PERCENT: *v = t->percent; return 1;
+    case OPJ_COL_BASELINE_START: *na = !t->baselined; *v = t->baseline_start; return 1;
+    case OPJ_COL_BASELINE_FINISH: *na = !t->baselined; *v = t->baseline_finish; return 1;
+    case OPJ_COL_START_VARIANCE: *v = owf_ptask_variance(doc->plan, row, OWF_VAR_START); return 1;
+    case OPJ_COL_FINISH_VARIANCE: *v = owf_ptask_variance(doc->plan, row, OWF_VAR_FINISH); return 1;
+    case OPJ_COL_CONSTRAINT_DATE:
+        *na = t->constraint == OWF_CON_ASAP || t->constraint == OWF_CON_ALAP;
+        *v = t->constraint_date;
+        return 1;
+    case OPJ_COL_ACTUAL_START: *na = !t->has_actual_start; *v = t->actual_start; return 1;
+    case OPJ_COL_ACTUAL_FINISH: *na = !t->has_actual_finish; *v = t->actual_finish; return 1;
+    case OPJ_COL_ACTUAL_DURATION: *v = owf_ptask_actual_duration(t); return 1;
+    case OPJ_COL_REMAINING_DURATION: *v = owf_ptask_remaining_duration(t); return 1;
+    case OPJ_COL_BCWS: case OPJ_COL_BCWP: case OPJ_COL_ACWP: case OPJ_COL_SV: case OPJ_COL_CV: {
+        static const int which[] = { OWF_EV_BCWS, OWF_EV_BCWP, OWF_EV_ACWP, OWF_EV_SV, OWF_EV_CV };
+        *na = !doc->plan->has_status_date && (column == OPJ_COL_BCWS || column == OPJ_COL_SV);
+        *v = owf_ptask_earned(doc->plan, row, doc->plan->status_date, which[column - OPJ_COL_BCWS]);
+        return 1;
+    }
+    case OPJ_COL_LEVELING_DELAY: *v = t->level_delay; return 1;
+    case OPJ_COL_WORK: *v = t->work; return 1;
+    case OPJ_COL_ACTUAL_WORK: *v = actual_work(doc->plan, row); return 1;
+    case OPJ_COL_REMAINING_WORK: *v = t->work - actual_work(doc->plan, row); return 1;
+    case OPJ_COL_COST: *v = t->cost; return 1;
+    case OPJ_COL_ACTUAL_COST: *v = owf_ptask_earned(doc->plan, row, doc->plan->status_date, OWF_EV_ACWP); return 1;
+    case OPJ_COL_TYPE: *na = t->summary; *v = t->type; return 1;
+    case OPJ_COL_EFFORT_DRIVEN: *na = t->summary; *v = t->effort_driven || t->type == OWF_TT_FIXED_WORK; return 1;
+    case OPJ_COL_PRIORITY: *na = t->summary; *v = t->priority; return 1;
+    case OPJ_COL_OVERALLOCATED: *na = t->summary; *v = owf_ptask_overallocated(doc->plan, row); return 1;
+    default: return 0;
+    }
+}
+
+static int lower(int c)
+{
+    return c >= 'A' && c <= 'Z' ? c + 32 : c;
+}
+
+int opj_text_cmp(const char *a, const char *b)
+{
+    for (; *a && lower((unsigned char)*a) == lower((unsigned char)*b); a++, b++)
+        ;
+    return lower((unsigned char)*a) - lower((unsigned char)*b);
+}
+
+/* A row's keys, worked out once before sorting: each key's value, or its text for a text column. */
+typedef struct {
+    long v[3];
+    int na[3];
+    char *text[3];                       /* NULL for a value */
+} sort_row;
+
+/* Every row's keys into rows[]; 0 for memory (rows then freed by free_sort_rows all the same). */
+static int make_sort_rows(const opj_doc *doc, const opj_sort_key *k, int nk, sort_row *rows, int nt)
+{
+    int r, i;
+    for (r = 0; r < nt; r++)
+        for (i = 0; i < nk; i++)
+            if (!opj_cell_value(doc, r, k[i].column, &rows[r].v[i], &rows[r].na[i]) &&
+                !(rows[r].text[i] = cell_dup(doc, 0, r, k[i].column)))
+                return 0;
+    return 1;
+}
+
+static void free_sort_rows(sort_row *rows, int nt)
+{
+    int r, i;
+    if (!rows) return;
+    for (r = 0; r < nt; r++)
+        for (i = 0; i < 3; i++) owf_free(rows[r].text[i]);
+    owf_free(rows);
+}
+
+/* Row a against row b by the keys: below 0 when a goes first. */
+static int sort_cmp(const sort_row *rows, const opj_sort_key *k, int nk, int a, int b)
+{
+    int i;
+    for (i = 0; i < nk; i++) {
+        const sort_row *ra = &rows[a], *rb = &rows[b];
+        int d;
+        if (!ra->text[i] && !rb->text[i]) {
+            if (ra->na[i] != rb->na[i]) return ra->na[i] ? 1 : -1;   /* NA last, either way */
+            d = ra->na[i] || ra->v[i] == rb->v[i] ? 0 : ra->v[i] < rb->v[i] ? -1 : 1;
+        } else {
+            d = opj_text_cmp(ra->text[i] ? ra->text[i] : "", rb->text[i] ? rb->text[i] : "");
+            d = d < 0 ? -1 : d > 0 ? 1 : 0;
+        }
+        if (d) return k[i].descending ? -d : d;
+    }
+    return 0;
+}
+
+static int row_end(const owf_project *p, int row)
+{
+    int j = row + 1;
+    while (j < p->ntasks && p->tasks[j].level > p->tasks[row].level) j++;
+    return j;
+}
+
+/* The rows of [first, end), one outline level, in sorted order into order[*n...], each followed by its
+ * own subtasks sorted the same way. 0 for memory. */
+static int sort_range(const opj_doc *doc, const sort_row *rows, const opj_sort_key *k, int nk, int first, int end,
+                      int *order, int *n)
+{
+    int *starts, count = 0, i, j;
+    if (first >= end) return 1;
+    for (i = first; i < end; i = row_end(doc->plan, i)) count++;
+    if (!(starts = owf_malloc((size_t)count * sizeof *starts))) return 0;
+    for (count = 0, i = first; i < end; i = row_end(doc->plan, i)) {
+        int x = i;
+        for (j = count; j > 0 && sort_cmp(rows, k, nk, x, starts[j - 1]) < 0; j--) starts[j] = starts[j - 1];
+        starts[j] = x;
+        count++;
+    }
+    for (i = 0; i < count; i++) {
+        order[(*n)++] = starts[i];
+        if (!sort_range(doc, rows, k, nk, starts[i] + 1, row_end(doc->plan, starts[i]), order, n)) {
+            owf_free(starts);
+            return 0;
+        }
+    }
+    owf_free(starts);
+    return 1;
+}
+
+int opj_sort_tasks(opj_doc *doc, const opj_sort_key *keys, int nkeys)
+{
+    owf_project *work;
+    owf_ptask *moved;
+    int *order, *map, i, j, n = 0, nt, ok;
+    sort_row *rows;
+    if (!doc || !keys || nkeys < 1 || nkeys > 3) return OWF_ERR_FORMAT;
+    for (i = 0; i < nkeys; i++)
+        if (keys[i].column < 0 || keys[i].column >= OPJ_NCOLS) return OWF_ERR_FORMAT;
+    nt = doc->plan->ntasks;
+    if (nt < 2) return OWF_OK;
+    order = owf_malloc((size_t)nt * sizeof *order);
+    map = owf_malloc((size_t)nt * sizeof *map);
+    rows = owf_malloc((size_t)nt * sizeof *rows);
+    if (rows) memset(rows, 0, (size_t)nt * sizeof *rows);
+    ok = order && map && rows && make_sort_rows(doc, keys, nkeys, rows, nt) &&
+         sort_range(doc, rows, keys, nkeys, 0, nt, order, &n) && n == nt;
+    free_sort_rows(rows, nt);
+    if (!ok) {
+        owf_free(order), owf_free(map);
+        return OWF_ERR_MEMORY;
+    }
+    for (i = 0; i < nt && order[i] == i; i++)
+        ;
+    if (i == nt) {                               /* already in that order: nothing to do */
+        owf_free(order), owf_free(map);
+        return OWF_OK;
+    }
+    if (!(work = owf_project_copy(doc->plan)) || !(moved = owf_malloc((size_t)nt * sizeof *moved))) {
+        if (work) owf_project_free(work);
+        owf_free(order), owf_free(map);
+        return OWF_ERR_MEMORY;
+    }
+    for (i = 0; i < nt; i++) {
+        moved[i] = work->tasks[order[i]];
+        map[order[i]] = i;
+    }
+    memcpy(work->tasks, moved, (size_t)nt * sizeof *moved);
+    owf_free(moved);
+    for (i = 0; i < nt; i++)
+        for (j = 0; j < work->tasks[i].nlinks; j++) {
+            int pr = work->tasks[i].links[j].pred;
+            if (pr >= 0 && pr < nt) work->tasks[i].links[j].pred = map[pr];
+        }
+    owf_project_remap_assignments(work, map, nt);
+    owf_free(order), owf_free(map);
+    return commit(doc, work);
+}
+
+/* ---- Find and Replace ---- */
+
+/* Where needle is in hay, case ignored; NULL when it isn't. */
+static const char *find_ci(const char *hay, const char *needle)
+{
+    size_t n = strlen(needle);
+    for (; *hay; hay++) {
+        size_t i;
+        for (i = 0; i < n && hay[i] && lower((unsigned char)hay[i]) == lower((unsigned char)needle[i]); i++)
+            ;
+        if (i == n) return hay;
+    }
+    return NULL;
+}
+
+int opj_text_matches(const char *cell, const char *text, int how)
+{
+    switch (how) {
+    case OPJ_FIND_EQUALS: return opj_text_cmp(cell, text) == 0;
+    case OPJ_FIND_BEGINS: return find_ci(cell, text) == cell;
+    default: return find_ci(cell, text) != NULL;
+    }
+}
+
+/* The next of rows 0..n-1 after from (or before, backward) whose cell matches; round once; -1 for none. */
+static int find_row(const opj_doc *doc, int resources, int column, const char *text, int how, int from,
+                    int backward)
+{
+    int n, k, row;
+    if (!doc || !text || !*text) return -1;
+    n = resources ? doc->plan->nresources : doc->plan->ntasks;
+    if (column < 0 || column >= (resources ? OPJ_NRCOLS : OPJ_NCOLS) || n < 1) return -1;
+    if (from < -1 || from >= n) from = -1;
+    for (k = 1; k <= n; k++) {
+        if (backward) row = from < 0 ? n - k : ((from - k) % n + n) % n;
+        else row = from < 0 ? k - 1 : (from + k) % n;
+        char *cell = cell_dup(doc, resources, row, column);
+        int match = cell && opj_text_matches(cell, text, how);
+        owf_free(cell);
+        if (match) return row;
+    }
+    return -1;
+}
+
+int opj_find_task(const opj_doc *doc, int column, const char *text, int how, int from, int backward)
+{
+    return find_row(doc, 0, column, text, how, from, backward);
+}
+
+int opj_find_resource_row(const opj_doc *doc, int column, const char *text, int how, int from, int backward)
+{
+    return find_row(doc, 1, column, text, how, from, backward);
+}
+
+int opj_replace_text(opj_doc *doc, int column, const char *find, const char *with, int first, int count,
+                     int *changed, int *refused)
+{
+    owf_project *work;
+    int i, done = 0, bad = 0, typed = 0;
+    if (changed) *changed = 0;
+    if (refused) *refused = 0;
+    if (!doc || !find || !*find || !opj_column_typed(column)) return OWF_ERR_FORMAT;
+    if (!with) with = "";
+    if (count < 0) first = 0, count = doc->plan->ntasks;
+    if (first < 0 || count < 0 || first > doc->plan->ntasks - count) return OWF_ERR_FORMAT;
+    if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
+    for (i = first; i < first + count; i++) {
+        const char *s, *at;
+        size_t k = 0, fl = strlen(find), wl = strlen(with), places = 0;
+        char *cell = cell_dup(doc, 0, i, column), *now;
+        int rc;
+        if (!cell) {
+            owf_project_free(work);
+            return OWF_ERR_MEMORY;
+        }
+        for (s = cell; (at = find_ci(s, find)) != NULL; s = at + fl) places++;
+        if (!places) {
+            owf_free(cell);
+            continue;
+        }
+        if (!(now = owf_malloc(strlen(cell) + places * wl + 1))) {   /* the whole cell, however long */
+            owf_free(cell);
+            owf_project_free(work);
+            return OWF_ERR_MEMORY;
+        }
+        for (s = cell; (at = find_ci(s, find)) != NULL; s = at + fl) {
+            size_t lead = (size_t)(at - s);
+            memcpy(now + k, s, lead);
+            memcpy(now + k + lead, with, wl);
+            k += lead + wl;
+        }
+        strcpy(now + k, s);
+        rc = set_field(work, i, column, now, &typed);
+        owf_free(now);
+        owf_free(cell);
+        if (rc == OWF_ERR_MEMORY) {
+            owf_project_free(work);
+            return OWF_ERR_MEMORY;
+        }
+        if (rc == OWF_OK) done++;
+        else bad++;
+    }
+    if (changed) *changed = bad ? 0 : done;
+    if (refused) *refused = bad;
+    if (bad) {                                   /* a refused cell may be part-set on the copy: drop it all */
+        owf_project_free(work);
+        return OWF_ERR_FORMAT;
+    }
+    if (!done) {
+        owf_project_free(work);
+        return OWF_OK;
+    }
+    return commit_typed(doc, work, typed);
 }
 
 /* ---- The resource sheet ---- */
 
 static const char *const resource_titles[OPJ_NRCOLS] = {
-    "ID", "Resource Name", "Type", "Initials", "Group", "Max. Units", "Std. Rate", "Work", "Cost",
+    "ID", "Resource Name", "Type", "Initials", "Group", "Max. Units", "Std. Rate", "Work", "Cost", "Base Calendar",
 };
 
 const char *opj_resource_column_title(int column)
@@ -644,6 +1705,12 @@ void opj_resource_cell_text(const opj_doc *doc, int resource, int column, char *
         if (r->type == OWF_RES_WORK) opj_work_text(r->work, text);
         break;
     case OPJ_RCOL_COST: opj_money_text(r->cost, text); break;
+    case OPJ_RCOL_CALENDAR: {
+        const owf_project *p = doc->plan;
+        int cal = r->calendar >= 0 && r->calendar < p->ncalendars ? r->calendar : p->calendar;
+        s = cal >= 0 && cal < p->ncalendars && p->calendars[cal].name ? p->calendars[cal].name : "";
+        break;
+    }
     default: return;
     }
     copy_out(s, out, size);
@@ -772,6 +1839,11 @@ int opj_set_resource_cell(opj_doc *doc, int resource, int column, const char *te
             return fail(work, OWF_ERR_FORMAT);
         r->rate = v;
         break;
+    case OPJ_RCOL_CALENDAR:                /* "" (or "-"): the plan's calendar again */
+        if (!*s || word_is(s, "-")) r->calendar = -1;
+        else if ((v = opj_find_calendar(work, s)) >= 0) r->calendar = (int)v;
+        else return fail(work, OWF_ERR_FORMAT);
+        break;
     default:
         return fail(work, OWF_ERR_FORMAT);
     }
@@ -807,6 +1879,165 @@ int opj_set_assignment(opj_doc *doc, int task, int resource, long units)
     if (resource < 0 || resource >= work->nresources || units < 0) return fail(work, OWF_ERR_FORMAT);
     if (units == 0) owf_project_unassign(work, task, resource);
     else if (owf_project_assign(work, task, resource, units) < 0) return fail(work, OWF_ERR_MEMORY);
+    return commit(doc, work);
+}
+
+/* ---- Assign Resources ---- */
+
+static int find_assign(const owf_project *p, int task, int resource)
+{
+    int i;
+    for (i = 0; i < p->nassigns; i++)
+        if (p->assigns[i].task == task && p->assigns[i].resource == resource) return i;
+    return -1;
+}
+
+int opj_assign_get(const opj_doc *doc, int task, int resource, opj_assign_info *out)
+{
+    int a;
+    if (!out) return 0;
+    memset(out, 0, sizeof *out);
+    if (!doc || task < 0 || task >= doc->plan->ntasks || resource < 0 || resource >= doc->plan->nresources) return 0;
+    if ((a = find_assign(doc->plan, task, resource)) >= 0) {
+        out->assigned = 1;
+        out->units = doc->plan->assigns[a].units;
+        out->work = doc->plan->assigns[a].work;
+        out->cost = doc->plan->assigns[a].cost;
+    }
+    return 1;
+}
+
+int opj_units_parse(const opj_doc *doc, int resource, const char *text, long *units)
+{
+    const char *s = text;
+    long v = 0;
+    int type;
+    if (!doc || !units || !s || resource < 0 || resource >= doc->plan->nresources) return OWF_ERR_FORMAT;
+    type = doc->plan->resources[resource].type;
+    while (*s == ' ') s++;
+    if (type == OWF_RES_COST) {
+        if (!take_money(&s, &v)) return OWF_ERR_FORMAT;
+    } else if (!take_hundredths(&s, &v)) {
+        return OWF_ERR_FORMAT;
+    }
+    if (type == OWF_RES_WORK) {
+        if (v % 100) return OWF_ERR_FORMAT;          /* whole percent */
+        v /= 100;
+        if (*s == '%') s++;
+        if (v > 100000L) return OWF_ERR_FORMAT;
+    }
+    while (*s == ' ') s++;
+    if (*s || v <= 0) return OWF_ERR_FORMAT;
+    *units = v;
+    return OWF_OK;
+}
+
+void opj_units_text(const opj_doc *doc, int resource, long units, char *out, size_t size)
+{
+    char t[32];
+    if (!out || !size) return;
+    *out = 0;
+    if (!doc || resource < 0 || resource >= doc->plan->nresources) return;
+    switch (doc->plan->resources[resource].type) {
+    case OWF_RES_WORK: sprintf(t, "%ld%%", units); break;
+    case OWF_RES_MATERIAL: put_hundredths(units, 1, t); break;
+    default: put_hundredths(units, 0, t); break;
+    }
+    copy_out(t, out, size);
+}
+
+void opj_assign_line(const opj_doc *doc, int task, int resource, char *out, size_t size)
+{
+    opj_assign_info info;
+    char units[32] = "", cost[32] = "";
+    const char *name;
+    if (!out || !size) return;
+    *out = 0;
+    if (!opj_assign_get(doc, task, resource, &info)) return;
+    name = doc->plan->resources[resource].name ? doc->plan->resources[resource].name : "";
+    if (info.assigned) {
+        opj_units_text(doc, resource, info.units, units, sizeof units);
+        opj_money_text(info.cost, cost);
+    }
+    snprintf(out, size, "%c %-20.20s %8s %10s", info.assigned ? '*' : ' ', name, units, cost);
+}
+
+/* Units typed for the resource, or when none are typed: had (an assignment's own, 0 for none), else one of
+ * the resource's kind (100% or a unit; a cost resource has no default). */
+static int units_or(const opj_doc *doc, int resource, const char *text, long had, long *units)
+{
+    const char *s = text;
+    while (s && *s == ' ') s++;
+    if (s && *s) return opj_units_parse(doc, resource, s, units);
+    if (had > 0) *units = had;
+    else if (doc->plan->resources[resource].type == OWF_RES_COST) return OWF_ERR_FORMAT;
+    else *units = 100;
+    return OWF_OK;
+}
+
+int opj_assign_resource(opj_doc *doc, int task, int resource, const char *units)
+{
+    owf_project *work;
+    long u;
+    int a, rc;
+    if (!doc || task < 0 || task >= doc->plan->ntasks || resource < 0 || resource >= doc->plan->nresources)
+        return OWF_ERR_FORMAT;
+    a = find_assign(doc->plan, task, resource);
+    if ((rc = units_or(doc, resource, units, a >= 0 ? doc->plan->assigns[a].units : 0, &u)) != OWF_OK) return rc;
+    if (!(work = begin(doc, task, &rc))) return rc;
+    if (owf_project_assign(work, task, resource, u) < 0) return fail(work, OWF_ERR_MEMORY);
+    return commit(doc, work);
+}
+
+int opj_find_resource(const opj_doc *doc, const char *name)
+{
+    char want[128];
+    size_t n;
+    long row = 0;
+    int i, digits = 1;
+    if (!doc || !name) return -1;
+    while (*name == ' ') name++;
+    n = strlen(name);
+    while (n && name[n - 1] == ' ') n--;
+    if (!n || n >= sizeof want) return -1;
+    memcpy(want, name, n);
+    want[n] = 0;
+    for (i = 0; i < doc->plan->nresources; i++)
+        if (doc->plan->resources[i].name && same_name(doc->plan->resources[i].name, want)) return i;
+    for (i = 0; want[i]; i++) {
+        if (want[i] < '0' || want[i] > '9' || i > 6) digits = 0;
+        else row = row * 10 + (want[i] - '0');
+    }
+    return digits && row >= 1 && row <= doc->plan->nresources ? (int)row - 1 : -1;
+}
+
+int opj_remove_resource(opj_doc *doc, int task, int resource)
+{
+    owf_project *work;
+    int rc;
+    if (!doc || task < 0 || task >= doc->plan->ntasks || resource < 0 || resource >= doc->plan->nresources ||
+        find_assign(doc->plan, task, resource) < 0)
+        return OWF_ERR_FORMAT;
+    if (!(work = begin(doc, task, &rc))) return rc;
+    owf_project_unassign(work, task, resource);
+    return commit(doc, work);
+}
+
+int opj_replace_resource(opj_doc *doc, int task, int from, int to, const char *units)
+{
+    owf_project *work;
+    long u;
+    int a, rc;
+    if (!doc || task < 0 || task >= doc->plan->ntasks || from == to || to < 0 || to >= doc->plan->nresources ||
+        (a = find_assign(doc->plan, task, from)) < 0 || find_assign(doc->plan, task, to) >= 0)
+        return OWF_ERR_FORMAT;
+    rc = units_or(doc, to, units,
+                  doc->plan->resources[from].type == doc->plan->resources[to].type ? doc->plan->assigns[a].units : 0,
+                  &u);
+    if (rc != OWF_OK) return rc;
+    if (!(work = begin(doc, task, &rc))) return rc;
+    work->assigns[a].resource = to;              /* its place and uid stay */
+    work->assigns[a].units = u;
     return commit(doc, work);
 }
 
@@ -848,6 +2079,49 @@ owf_ptime opj_period_next(int zoom, owf_ptime start)
         return owf_ptime_make(y, mo, 1, 0, 0);
     default: return start + DAY;
     }
+}
+
+long opj_graph_percent(const opj_doc *doc, int resource, owf_ptime from, owf_ptime to)
+{
+    const owf_project *p;
+    const owf_presource *r;
+    long work, avail;
+    if (!doc || resource < 0 || resource >= doc->plan->nresources || to <= from || !doc->plan->ncalendars) return -1;
+    p = doc->plan;
+    r = &p->resources[resource];
+    if (r->type != OWF_RES_WORK) return -1;
+    avail = owf_pcal_work(&p->calendars[r->calendar >= 0 && r->calendar < p->ncalendars ? r->calendar : p->calendar],
+                          from, to);
+    if (avail <= 0) return -1;
+    work = owf_presource_work(p, resource, from, to);
+    return work / avail * 100 + work % avail * 100 / avail;   /* no overflow at 32 bits */
+}
+
+void opj_task_usage_text(const opj_doc *doc, int task, int assign, owf_ptime from, owf_ptime to, char *out,
+                         size_t size)
+{
+    const owf_project *p;
+    char text[24];
+    long work = 0;
+    int i, last;
+    if (!out || !size) return;
+    out[0] = 0;
+    if (!doc || task < 0 || task >= doc->plan->ntasks || to <= from) return;
+    p = doc->plan;
+    if (assign >= 0) {
+        if (assign >= p->nassigns || p->assigns[assign].task != task) return;
+        work = owf_passign_work(p, assign, from, to);
+    } else {
+        for (last = task + 1; last < p->ntasks && p->tasks[last].level > p->tasks[task].level; last++) {}
+        for (i = 0; i < p->nassigns; i++)            /* its own and its subtasks' (a summary's) */
+            if (p->assigns[i].task >= task && p->assigns[i].task < last) {
+                work += owf_passign_work(p, i, from, to);
+                if (work > 2000000000L) work = 2000000000L;
+            }
+    }
+    if (!work) return;
+    opj_work_text(work, text);
+    copy_out(text, out, size);
 }
 
 void opj_usage_text(const opj_doc *doc, int resource, int assign, owf_ptime from, owf_ptime to, char *out,

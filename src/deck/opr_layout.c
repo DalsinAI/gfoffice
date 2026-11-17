@@ -226,10 +226,14 @@ static int prepare_text(const owf_deck *deck, const owf_master *m, const owf_obj
             if (r->fmt.colour == OWF_COLOUR_AUTO) r->fmt.colour = lv->chars.colour;
             if (r->fmt.colour == OWF_COLOUR_AUTO) r->fmt.colour = auto_colour;
             r->fmt.size = (int)((long long)r->fmt.size * scale / 100);
-            if (r->kind == OWF_RUN_FIELD) {
+            if (r->kind == OWF_RUN_FIELD && r->field > OWF_FIELD_TIME) {
+                /* a field the page does not work out (a merge field): the value it last showed */
                 r->kind = OWF_RUN_TEXT;
-                r->text = (char *)(fields && fields[r->field <= OWF_FIELD_TIME ? r->field : 0]
-                                   ? fields[r->field <= OWF_FIELD_TIME ? r->field : 0] : "");
+                if (!r->text) r->text = (char *)"";
+                r->href = NULL;
+            } else if (r->kind == OWF_RUN_FIELD) {
+                r->kind = OWF_RUN_TEXT;
+                r->text = (char *)(fields && fields[r->field] ? fields[r->field] : "");
                 r->href = NULL;
             }
             if (r->kind == OWF_RUN_IMAGE) {
@@ -352,9 +356,18 @@ static opr_frame *add_frame(builder *b, const owf_obj *obj, int from_master)
     return f;
 }
 
+/* a gradient fill (owf_look.gradient) on a filled object */
+static int has_gradient(const owf_obj *o)
+{
+    return o && OWF_SHADE_SET(o->look.fill) && OWF_SHADE_SET(o->look.fill2) &&
+           (o->look.gradient == OWF_GRADIENT_LINEAR || o->look.gradient == OWF_GRADIENT_RADIAL);
+}
+
+/* drawn as an OpenLayout shape: shapes, and text boxes with a gradient (a box's plain background
+ * can't hold one), as their rectangle */
 static int is_openlayout_shape(const owf_obj *o)
 {
-    return o && o->kind == OWF_OBJ_SHAPE;
+    return o && (o->kind == OWF_OBJ_SHAPE || (o->kind == OWF_OBJ_TEXT && has_gradient(o)));
 }
 
 static unsigned shape_stroke_style(unsigned char line)
@@ -397,6 +410,11 @@ static int set_shape(ol_node *node, const owf_obj *o)
     s.stroke_width = TW(o->look.line_width > 0 ? o->look.line_width : 5);
     s.stroke_style = shape_stroke_style(o->look.line_style);
     s.rotation_tenths = o->rotation;
+    if (has_gradient(o)) {
+        s.gradient = o->look.gradient == OWF_GRADIENT_RADIAL ? OL_GRADIENT_RADIAL : OL_GRADIENT_LINEAR;
+        s.fill2_argb = argb(o->look.fill2);
+        s.gradient_angle_tenths = o->look.gradient_angle;
+    }
     if (o->look.arrows & OWF_ARROW_START) s.flags |= OL_SHAPE_ARROW_START;
     if (o->look.arrows & OWF_ARROW_END) s.flags |= OL_SHAPE_ARROW_END;
     w = o->width > 0 ? o->width : 1;
@@ -853,24 +871,76 @@ int opr_frame_text_overflow(opr_slide *s, int frame,
     return f->text_overflow;
 }
 
-/* A table's column widths onto its grid. */
+/* A table's k-th child of a role (its rows, or a row's cells), or NULL. */
+static ol_node *table_child(const ol_node *parent, ol_role role, int k)
+{
+    const ol_node *c;
+    if (!parent || k < 0)
+        return NULL;
+    for (c = ol_node_first_child(parent); c; c = ol_node_next_sibling(c))
+        if (ol_node_role(c) == role && k-- == 0)
+            return (ol_node *)c;    /* ours: built just now in this document */
+    return NULL;
+}
+
+static ol_node *table_cell(const ol_node *table, int row, int col)
+{
+    return table_child(table_child(table, OL_ROLE_ROW, row), OL_ROLE_CELL, col);
+}
+
+/* A table's column widths, row heights and merged cells onto its grid: a
+ * row at least its height, a merged cell across its columns and down its
+ * rows, the cells it covers not drawn. */
 static void table_columns(builder *b, const opr_frame *f, const owf_obj *o)
 {
     ol_id id;
     ol_unit widths[OL_MAX_COLUMNS];
+    ol_node *table = NULL;
     int i, n;
-    if (!o->col_widths || o->ncols <= 0)
-        return;
-    n = o->ncols < OL_MAX_COLUMNS ? o->ncols : OL_MAX_COLUMNS;
-    for (i = 0; i < n; i++)
-        widths[i] = TW(o->col_widths[i]);
-    for (id = f->first; id < f->end; id++) {
+    for (id = f->first; id < f->end && !table; id++) {
         const ol_node *node = ol_node_by_id(b->out->doc, id);
-        if (node && ol_node_role(node) == OL_ROLE_TABLE) {
-            /* ours: built just now in this document */
-            ol_node_set_columns((ol_node *)node, n, widths);
-            break;
-        }
+        if (node && ol_node_role(node) == OL_ROLE_TABLE)
+            table = (ol_node *)node;    /* ours: built just now in this document */
+    }
+    if (!table)
+        return;
+    if (o->col_widths && o->ncols > 0) {
+        n = o->ncols < OL_MAX_COLUMNS ? o->ncols : OL_MAX_COLUMNS;
+        for (i = 0; i < n; i++)
+            widths[i] = TW(o->col_widths[i]);
+        ol_node_set_columns(table, n, widths);
+    }
+    for (i = 0; o->row_heights && i < o->nrows; i++) {
+        ol_node *row = table_child(table, OL_ROLE_ROW, i);
+        ol_box_style box;
+        if (!row || o->row_heights[i] <= 0)
+            continue;
+        box = *ol_node_box(row);
+        box.size = sizeof box;
+        box.height = TW(o->row_heights[i]);
+        ol_node_set_box(row, &box);
+    }
+    for (i = 0; o->merges && i < o->nmerges; i++) {
+        const owf_table_merge *m = &o->merges[i];
+        ol_node *cell = table_cell(table, m->row, m->col);
+        ol_box_style box;
+        int r, c;
+        if (!cell)
+            continue;
+        box = *ol_node_box(cell);
+        box.size = sizeof box;
+        box.column_span = m->cols;
+        box.row_span = m->rows;
+        ol_node_set_box(cell, &box);
+        for (r = m->row; r < m->row + m->rows; r++)
+            for (c = m->col; c < m->col + m->cols; c++) {
+                ol_node *covered = r == m->row && c == m->col ? NULL : table_cell(table, r, c);
+                if (covered) {
+                    ol_style s = *ol_node_style(covered);
+                    s.display = OL_DISPLAY_NONE;
+                    ol_node_set_style(covered, &s);
+                }
+            }
     }
 }
 
@@ -1160,14 +1230,18 @@ static int build(builder *b)
     const owf_master *m = b->master;
     opr_frame *f;
     ol_node *n;
-    unsigned long bg = s->background;
-    int bg_image = s->background_image, i;
+    unsigned long bg = s->background, bg2 = s->background2;
+    int bg_image = s->background_image, bg_angle = s->background_angle, i;
+    unsigned char bg_gradient = s->background_gradient;
 
     b->out->nframes = 0;
     /* the background: the slide's, else its master's, else white */
     if (!OWF_SHADE_SET(bg) && bg_image < 0 && m) {
         bg = m->background;
         bg_image = m->background_image;
+        bg_gradient = m->background_gradient;
+        bg_angle = m->background_angle;
+        bg2 = m->background2;
     }
     if (!OWF_SHADE_SET(bg))
         bg = OWF_SHADE(0xFFFFFF);
@@ -1181,6 +1255,21 @@ static int build(builder *b)
         ol_style st = *ol_node_style(n);
         st.background = argb(bg);
         ol_node_set_style(n, &st);
+    }
+    /* a gradient background: the page's rectangle as a shape with it, over the plain colour */
+    if (bg_image < 0 && OWF_SHADE_SET(bg2) &&
+        (bg_gradient == OWF_GRADIENT_LINEAR || bg_gradient == OWF_GRADIENT_RADIAL)) {
+        ol_shape_style sh;
+        ol_shape_style_init(&sh);
+        sh.type = OL_SHAPE_RECT;
+        sh.fill_argb = argb(bg);
+        sh.stroke_argb = 0;
+        sh.stroke_width = 0;
+        sh.gradient = bg_gradient == OWF_GRADIENT_RADIAL ? OL_GRADIENT_RADIAL : OL_GRADIENT_LINEAR;
+        sh.fill2_argb = argb(bg2);
+        sh.gradient_angle_tenths = bg_angle;
+        if (!ol_node_set_shape(n, &sh, 0, NULL))
+            return 0;
     }
     f->first = ol_node_id(n) + 1;
     if (bg_image >= 0 && !add_picture(b, n, bg_image, NULL, d->width, d->height))

@@ -19,8 +19,44 @@ docs/gfoffice/Impress-Parity.md.
 | 12 Nov 2026 | 0.6.30 | 81% | P7: the Master view and Slide Design |
 | 12 Nov 2026 | 0.6.31 | 83% | P8: slides on the clipboard, Insert Slides from File |
 | 12 Nov 2026 | 0.6.32 | 84% | P9: Export as Pictures (PNG, IFF ILBM); Phase 2 done |
+| 16 Nov 2026 | 0.6.32 | 85% | WMF and EMF pictures drawn on the slide and in the PDF (#232, #267, #278, #279): charts' and objects' replacement pictures and clip art from PPTX and ODP show as drawn, not left out |
+| 16 Nov 2026 (2) | 0.6.33 | 88% | Spelling: Tools > Spelling..., underlining as you type and ARexx SPELL (#337, #342, #344, #352); slide charts kept as charts with their data, saved to PPTX and ODP, with an editing core and Undo (#348, #354, #355, #356, #358); the show on a screen of its own (#281) |
+| 16 Nov 2026 (3) | 0.6.34 | 89% | Gradient fills (linear and radial) read, saved, printed and shown (gap 2.8) |
+| 16 Nov 2026 (4) | 0.6.35 | 89% | Gradient slide and master backgrounds (gap 2.8) |
 
 Phase 1 target: 76% after P1 to P5. Phase 2 (P6 to P9) aims at 84%.
+
+Re-scored 16 Nov 2026 at 12:25 against main 3569cf3, counting only what
+is merged. The first 16 Nov row (main 72b77cb) came from WMF and EMF
+pictures in libowf. This one adds:
+
+- **Spelling** (#337, #342, #344, #352): the deck's text and notes are
+  checked with GFOpenWrite's dictionary. Tools > Spelling... has Ignore,
+  Ignore All, Add, Change and suggestions, and each change is one Undo
+  step. Tools > Spelling as You Type puts a wavy line under misspelt words.
+  ARexx SPELL counts, lists, checks, suggests, adds and ignores.
+- **Charts kept as charts** (#348, #354, #355, #356, #358): a chart read
+  from PPTX or ODP keeps its type, series, data, titles and legend. It is
+  saved back to PPTX (chart part plus its embedded workbook, so
+  PowerPoint's Edit Data works) and to ODP and .fodp as a chart document.
+  The editor's core (on GFOpenCalc's) and putting an edited chart back
+  with Undo are in. The chart window is not, so charts are not yet edited
+  or drawn as charts in the program: the slide shows their box, or their
+  picture when the file has one.
+- **The show on a screen of its own** (#281): on AGA, or a small or
+  low-colour Workbench, the show opens its own screen in the slide's
+  shape. Show > Show On picks Automatic, Its Own Screen or the Workbench.
+
+**Waiting to merge, not scored:** #291 (clipping in WMF and EMF pictures)
+and the chart editor window.
+
+**Largest gaps, workflow-weighted:**
+1. Fills: hatching, bitmap and transparency on objects and backgrounds,
+   and shadows (gradients done).
+2. Charts: a window to edit them, and drawing them as charts on the slide
+   and in the PDF; OLE objects other than charts are still kept only.
+3. Tables: merged cells, row heights, designs and banding. Also no
+   PowerPoint 97-2003 (.ppt).
 
 ## Phase 1 deliverables
 
@@ -40,6 +76,7 @@ Phase 1 target: 76% after P1 to P5. Phase 2 (P6 to P9) aims at 84%.
 | P7 Master view | Done in 0.6.30 | View > Master Slides shows each master as a slide: its art, its title, outline, date, footer and number boxes, and its background, edited with every slide command (move, resize, type, pictures, shapes, delete, Undo); New, Duplicate, Rename, Delete and Move make, name, remove and order masters. Leaving the view (or saving, printing, the show) writes the masters back as one Undo step; a master's slides follow it, and a deleted master's go to the first (`opr_master.c`, `opr_masters_set` in `opr_edit.c`). Slide > Slide Design... puts this slide, or the slides picked in the sorter, on a master. ARexx VIEW MASTER, MASTERS, MASTER [n], SETMASTER n. Host test tests/deck/test_opr_master.c; lab: tests/arexx/presentation.rexx |
 | P8 Slide clipboard, Insert Slide from file | Done in 0.6.31 | In the Slide Sorter, Cut, Copy and Paste work on the picked slides: the copies keep their pictures, fonts, master, layout, notes, transition and effects, and paste after the focused slide in this deck or another one opened later, as one Undo step. Slide > Insert Slides from File... puts every slide of another ODP or PPTX after this one the same way. A master or layout of the same name is reused, otherwise it comes along; names already taken get " (2)". Charts and embedded objects kept only as file XML are left out and counted (`opr_clip.c`, `opr_slide_insert_owned` in `opr_edit.c`). ARexx COPYSLIDES, CUTSLIDES, PASTESLIDES, INSERTFILE path. Host test tests/deck/test_opr_clip.c; lab: tests/arexx/presentation.rexx |
 | P9 Export slides as pictures | Done in 0.6.32 | File > Export as Pictures... writes this slide, or every slide in the show (hidden ones left out, named Name-01.png and on), painted as the show paints it, 1024 pixels wide. PNG, or IFF ILBM (24 planes, ByteRun1) when the name ends in .iff or .ilbm. PNG is deflated through z.library when it is there and written stored otherwise (`opr_picture.c`). Needs a graphics card screen (cybergraphics.library). ARexx EXPORTPICTURES path [ALL] [WIDTH n]. Host test tests/deck/test_opr_picture.c; lab: tests/arexx/presentation.rexx |
+| P10 The show on its own screen | Done in 0.6.33 | The show opens a screen of its own, the slide's shape and at least 640 x 480 (BestModeID; 8 bits on AGA, 16 or 24 on RTG), when the Workbench screen has fewer than 65,536 colours or is smaller than 640 x 480, and a backdrop window on the Workbench screen otherwise. Show > Show On (Automatic, Its Own Screen, The Workbench Screen) chooses it and is kept in ENV: and ENVARC:. On its own screen the right button gives the show's menu: Next, Previous, Go to Slide (the first 40), Black Screen, White Screen and End Show. If no mode or screen can be had, the show goes on the Workbench screen (`opr_show_place`, `opr_show_screen_size`, `opr_show_screen_depth` in `opr_show.c`) |
 
 ## What Export as Pictures does not do yet
 

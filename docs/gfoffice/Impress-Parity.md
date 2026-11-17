@@ -37,7 +37,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Save as PowerPoint 2007-365 | P4 | Yes (0.6.27): Save and Save As .pptx (`src/deck/opr_pptx.c`); tables saved as text boxes, groups ungrouped, animations not written (ODP keeps them), all reported |
 | PowerPoint 97-2003 (`.ppt`, `.pps`, `.pot`) open and save | Later | No |
 | OpenOffice.org 1.x (`.sxi`), StarImpress | Later, if samples appear | No |
-| Export as PDF (Export as PDF..., Export Directly as PDF) | P1 | Yes: a page a slide, searchable text, JPEG and PNG pictures, hidden slides left out |
+| Export as PDF (Export as PDF..., Export Directly as PDF) | P1 | Yes: a page a slide, searchable text, JPEG and PNG pictures, WMF and EMF pictures as vectors (16 Nov, libowf #232, #267, #278, #279), hidden slides left out |
 | PDF options: page range, notes pages, handouts, hidden slides, bookmarks, tagged PDF, image compression | P2-P4 | Notes pages and handouts: Yes (0.6.25); the rest No |
 | Export slides as pictures (PNG, JPEG, GIF, BMP, SVG...) | P9 | Yes in 0.6.32: File > Export as Pictures..., this slide or all, PNG or IFF ILBM; JPEG, GIF, BMP, SVG: No |
 | Export as HTML (Web Page wizard), Flash | Not planned | No |
@@ -55,7 +55,7 @@ P1 (the deck model, ODP open and save, PDF export: no window yet) leaves it.
 | Slide layouts (Blank, Title Slide, Title Content, Title and 2 Content, Title Only, Centered Text, and the rest) | P3 | Model: a new deck has six; a file's layouts are read and written with their placeholders |
 | Page setup: slide size (Screen 4:3, 16:9, 16:10, A4, Letter, custom), orientation, numbering format | P3 | Model: any size, orientation from it; numbering format No |
 | Slide background: colour | P1 | Yes |
-| Background: gradient, hatching | Later | Approx.: drawn and saved in one colour |
+| Background: gradient, hatching | Later | Gradient: linear and radial slide and master backgrounds read from ODP and PPTX, saved to both, drawn in the PDF, print and on screen (GFOpenPresentation 0.6.35). Hatching: one colour |
 | Background: bitmap | P1 | Yes (stretched) |
 | Insert slide from file, expand slide, summary slide | P8 | Insert Slides from File: Yes in 0.6.31 (every slide of an ODP or PPTX, one Undo step); expand and summary slide: No |
 | Header and footer: date (fixed or current), footer text, slide number, per slide or all | P1 (data), P3 (dialog) | Yes: read, written, drawn in the master's boxes |
@@ -131,7 +131,7 @@ Undo and ODP persistence.
 | Hyperlinks in text | P1 | Yes, and links in the PDF |
 | Fields: date, time, slide number, slide count, author, file name | P1 (date, number, count) | Date, number and count yes; others No |
 | Text animation (scrolling text), Fontwork | Later | No (Fontwork shapes are kept) |
-| Find and replace, spelling, autocorrect, thesaurus, hyphenation | P3, P4 (Shared E11) | Find/Find Next across the deck and Replace/Replace All in the active text box: Yes in 0.6.16; spelling, autocorrect, thesaurus and hyphenation: No |
+| Find and replace, spelling, autocorrect, thesaurus, hyphenation | P3, P4 (Shared E11) | Find/Find Next across the deck and Replace/Replace All in the active text box: Yes in 0.6.16; spelling: Yes (16 Nov, #337, #342, #344, #352): Tools > Spelling... through every slide and the notes, Spelling as You Type, ARexx SPELL; autocorrect, thesaurus and hyphenation: No |
 | Pictures inside text | Later | No (reported) |
 
 ## 5. Drawing objects
@@ -150,7 +150,7 @@ Undo and ODP persistence.
 | Connectors, glue points | Later | Kept |
 | 3-D objects, extrusion | Not planned | Kept |
 | Line: colour, width, solid or dashed; area: colour | P1 | Yes in the model and renderer; GFOpenPresentation 0.5.0 adds undoable UI editing of solid fill, line colour/width, solid/dashed/dotted/dash-dot style and start/end arrowheads for one top-level text box or shape |
-| Area: gradient, hatching, bitmap, transparency; shadow | Later | Approx.: one colour; transparency and shadow No |
+| Area: gradient, hatching, bitmap, transparency; shadow | Later | Gradient: linear and radial from ODP and PPTX (axial drawn linear; ellipsoid, square and rectangular drawn round), saved to both, drawn in the PDF and print as 48 bands and on screen as 16 (GFOpenPresentation 0.6.34). Hatching (single, double, triple; colour, spacing, angle; over a colour or on its own), transparency (graded transparency read as even) and shadows (offset, colour, transparency; soft ones read sharp) on objects, and hatched and see-through slide and master backgrounds, read from ODP and PPTX (pattFill presets that are lines; other presets mixed to one colour) and saved to both, kept on the slide clipboard and in the Master view (libowf 1.18.0, owfpresent.library 3.16); not drawn yet. Bitmap: one colour |
 | Position and size | P1 | Yes: GFOpenPresentation 0.3.4 added single-object drag move, eight resize handles, one/ten-pixel keyboard nudge and undo/redo; 0.3.9 added independent deep-copy duplication with a clamped offset; 0.5.1 adds exact numeric left, top, width and height; 0.6.17 adds an optional half-inch grid with move/resize snapping; 0.6.18 adds fixed margin/centre guides. 0.6.28 adds several objects picked (Shift+click, a drag round them) moved together by drag and arrow keys. Resizing several together, custom guides and aspect lock remain |
 | Rotation | P1 | Shape outlines are rotated through OpenLayout 0.14 and saved to ODP; GFOpenPresentation 0.3.7 adds undoable 15-degree left/right rotation for a selected shape. Shape text, pictures, groups, exact angle entry and rotation handles remain |
 | Flip, slant | P1 (flip of lines and arrows) | Lines and arrows yes; slant: Approx. (drawn in its box) |
@@ -171,7 +171,7 @@ Undo and ODP persistence.
 | Colour modes (greyscale, black and white, watermark), filters, transparency | Later | No |
 | Linked pictures | Later | No (reported) |
 | A picture in several versions (SVG with a PNG) | P1 | Approx.: the one the PDF can draw is kept |
-| Pictures other than JPEG and PNG in the PDF | P2 (datatypes) | No (left out, reported) |
+| Pictures other than JPEG and PNG in the PDF | P2 (datatypes) | Partly (16 Nov): WMF and EMF are drawn as vectors, and on screen as pixels (`owf_metafile.c`), with arcs, chords, pies and ArcTo; clipping, world transforms and pictures inside them are left out and reported. Other formats: No (left out, reported) |
 | Image map | Not planned | No |
 
 ## 7. Tables
@@ -189,7 +189,7 @@ Undo and ODP persistence.
 
 | Impress | Phase | P1 |
 | --- | --- | --- |
-| Charts (column, bar, line, area, pie, XY and others), their data | P2-P4 (Shared, section 4) | Kept, with their parts; drawn as their replacement picture |
+| Charts (column, bar, line, area, pie, XY and others), their data | P2-P4 (Shared, section 4) | Kept as charts with their data (type, series, titles, legend) from PPTX and ODP, saved back to both as charts (16 Nov, #348, #354, #358); editing core with Undo in (#355, #356), the editor window not yet; shown as their box or their replacement picture (WMF and EMF ones too), not drawn as charts |
 | Spreadsheet, formula, drawing objects (OLE) | Later | Kept, as charts are |
 | Sound and video | Later | Kept, shown as a box |
 | Floating frames, plug-ins, applets | Not planned | Kept |
@@ -209,7 +209,7 @@ Undo and ODP persistence.
 | Impress | Phase | P1 |
 | --- | --- | --- |
 | Start from the first slide, from the current | P2 | Yes: Show menu, F5 and Shift-F5 |
-| Next, previous, first, last, go to a slide by number, black and white screen, end | P2 | Yes in the borderless public-screen player; H explicitly visits the next hidden slide |
+| Next, previous, first, last, go to a slide by number, black and white screen, end | P2 | Yes in the borderless player, on the Workbench screen or (0.6.33, #281) a screen of its own in the slide's shape, chosen by Show > Show On; H explicitly visits the next hidden slide |
 | Advance on click, or automatically after a time | P2 | Yes, through the host-tested reusable `opr_show` state machine |
 | Rehearse timings | P4 | No |
 | Slide show settings: range, loop with a pause, pointer visible, pen, navigator, animations allowed, slides change on click, always on top | P2, P4 | Loop and first/current range: Yes; the rest kept or No |
@@ -250,7 +250,7 @@ Undo and ODP persistence.
 | Undo and redo | P3 (per slide) | Text editing, slide insertion/deletion/movement, and object insertion/duplication/deletion/position/size/shape rotation/drawing order/alignment/appearance: Yes (`opr_edit.c`); other object edits: No |
 | Clipboard: objects and slides | P3 (Shared E10) | Top-level supported objects: system Cut/Copy/Paste Yes in 0.6.15; slide clipboard Yes in 0.6.31 (the sorter's own); groups/charts/opaque objects: No |
 | Macros (Basic) | Not planned: ARexx instead (Design 9) | No |
-| ARexx port `GFOPENPRESENTATION` | P4 | No |
+| ARexx port `GFOPENPRESENTATION` | P4 | Yes: VERSION, OPEN, SAVE and the view, slide, object, notes, outline, animation, master, clipboard and export commands named in docs/parity/impress.md |
 
 ## Sources
 

@@ -99,10 +99,17 @@ void owf_obj_clear(owf_obj *obj)
     free(obj->list);
     free(obj->points);
     free(obj->col_widths);
+    free(obj->row_heights);
+    free(obj->merges);
+    free(obj->table_style);
     free(obj->name);
     free(obj->alt);
     free(obj->flow_next);
     free(obj->xml_id);
+    if (obj->chart) {
+        owf_chart_clear(obj->chart);
+        free(obj->chart);
+    }
     memset(obj, 0, sizeof *obj);
     obj->parent = -1;
     obj->flow_story = -1;
@@ -264,6 +271,40 @@ fail:
     return -1;
 }
 
+int owf_table_add_merge(owf_obj *obj, int row, int col, int rows, int cols)
+{
+    owf_table_merge *m;
+    if (row < 0 || col < 0 || rows < 1 || cols < 1 || rows > 1024 || cols > 1024 || (rows == 1 && cols == 1) ||
+        obj->nmerges >= OWF_TABLE_MAX_MERGES)
+        return 0;
+    m = realloc(obj->merges, (size_t)(obj->nmerges + 1) * sizeof *m);
+    if (!m)
+        return -1;
+    obj->merges = m;
+    m += obj->nmerges++;
+    m->row = row;
+    m->col = col;
+    m->rows = rows;
+    m->cols = cols;
+    return 1;
+}
+
+int owf_table_set_row_height(owf_obj *obj, int row, int twips)
+{
+    if (row < 0 || row >= 4096)
+        return 0;
+    if (row >= obj->nrows) {
+        int *h = realloc(obj->row_heights, (size_t)(row + 1) * sizeof *h);
+        if (!h)
+            return -1;
+        memset(h + obj->nrows, 0, (size_t)(row + 1 - obj->nrows) * sizeof *h);
+        obj->row_heights = h;
+        obj->nrows = row + 1;
+    }
+    obj->row_heights[row] = twips > 0 ? twips : 0;
+    return 1;
+}
+
 int owf_obj_copy(owf_obj *to, const owf_obj *from)
 {
     size_t n;
@@ -278,11 +319,23 @@ int owf_obj_copy(owf_obj *to, const owf_obj *from)
     to->levels = NULL;
     to->list = NULL;
     to->col_widths = NULL;
+    to->row_heights = NULL;
+    to->merges = NULL;
+    to->table_style = NULL;
     to->name = NULL;
     to->alt = NULL;
     to->flow_next = NULL;
+    to->chart = NULL;
     if (story_copy(&to->text, &from->text) < 0)
         goto fail;
+    if (from->chart) {
+        if (!(to->chart = malloc(sizeof *to->chart))) goto fail;
+        if (owf_chart_copy(to->chart, from->chart) != OWF_OK) {
+            free(to->chart);
+            to->chart = NULL;
+            goto fail;
+        }
+    }
     if (from->points && from->npoints > 0) {
         if ((size_t)from->npoints > (size_t)-1 / (2 * sizeof *from->points)) goto fail;
         n = (size_t)from->npoints * 2 * sizeof *from->points;
@@ -309,6 +362,22 @@ int owf_obj_copy(owf_obj *to, const owf_obj *from)
         if (!to->col_widths) goto fail;
         memcpy(to->col_widths, from->col_widths, n);
     }
+    if (from->row_heights && from->nrows > 0) {
+        if ((size_t)from->nrows > (size_t)-1 / sizeof *from->row_heights) goto fail;
+        n = (size_t)from->nrows * sizeof *from->row_heights;
+        to->row_heights = malloc(n);
+        if (!to->row_heights) goto fail;
+        memcpy(to->row_heights, from->row_heights, n);
+    }
+    if (from->merges && from->nmerges > 0) {
+        if ((size_t)from->nmerges > (size_t)-1 / sizeof *from->merges) goto fail;
+        n = (size_t)from->nmerges * sizeof *from->merges;
+        to->merges = malloc(n);
+        if (!to->merges) goto fail;
+        memcpy(to->merges, from->merges, n);
+    }
+    if (from->table_style && !(to->table_style = owf_deck_strdup(from->table_style, strlen(from->table_style))))
+        goto fail;
     to->name = from->name ? owf_deck_strdup(from->name, strlen(from->name)) : NULL;
     to->alt = from->alt ? owf_deck_strdup(from->alt, strlen(from->alt)) : NULL;
     to->flow_next = from->flow_next ? owf_deck_strdup(from->flow_next, strlen(from->flow_next)) : NULL;
@@ -927,6 +996,7 @@ static const owf_deck_format *const deck_formats[] = {
     &owf_deck_format_odp,
     &owf_deck_format_fodp,
     &owf_deck_format_pptx,
+    &owf_deck_format_ppt,
 };
 
 #define NDECKFORMATS ((int)(sizeof deck_formats / sizeof deck_formats[0]))

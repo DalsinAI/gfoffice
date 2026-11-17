@@ -47,6 +47,8 @@ void owf_pcal_standard(owf_pcal *cal);
 int owf_pcal_set_week(owf_pcal *cal, int weekday, int nspans, const unsigned short *pairs);
 /* A day off (nspans 0) or a day with its own hours; replaces an exception on that day. */
 int owf_pcal_set_exception(owf_pcal *cal, long day, int nspans, const unsigned short *pairs);
+/* Takes away day's exception, so it works the week's hours again; no exception there is no change. */
+void owf_pcal_clear_exception(owf_pcal *cal, long day);
 void owf_pcal_free(owf_pcal *cal);
 /* The working hours of the day holding t. */
 const owf_pday *owf_pcal_day(const owf_pcal *cal, long day);
@@ -76,6 +78,14 @@ typedef struct {
     int lag_percent;                     /* 1: lag is a percentage */
 } owf_plink;
 
+/* A saved baseline: Baseline 0 is kept in the task's own baseline_ fields, Baselines 1 to 10 here. */
+typedef struct {
+    owf_ptime start, finish;
+    long duration, work, cost;
+} owf_pbaseline;
+
+#define OWF_NBASELINES 11                /* Baseline 0 (MS Project's "Baseline") and Baselines 1 to 10 */
+
 typedef struct {
     char *name;
     char *notes;
@@ -102,7 +112,30 @@ typedef struct {
     int baselined;
     owf_ptime baseline_start, baseline_finish;
     long baseline_duration, baseline_work, baseline_cost;
+    unsigned short more_baselined;       /* bit n set: Baseline n (1..10) is saved in more_baselines[n - 1] */
+    owf_pbaseline more_baselines[OWF_NBASELINES - 1];
+    /* tracking: what really happened (owf_project_set_actual, owf_project_update); the scheduler starts a
+     * task with an actual start there, whatever its links and constraint, and ends one with an actual
+     * finish there */
+    int has_actual_start, has_actual_finish;
+    owf_ptime actual_start, actual_finish;
+    /* levelling (owf_project_level): the scheduler starts the task this much later than its links and
+     * constraint allow; working minutes on its calendar, or every minute with level_delay_elapsed (MSPDI's
+     * "edays"). Not for a task that must start or finish on a date, or an ALAP one. */
+    long level_delay;
+    int level_delay_elapsed;
+    /* what an edit keeps fixed (owf_project_keep_types): MSPDI's Type and EffortDriven */
+    int type;                            /* OWF_TT_; 0, Fixed Units, as MS Project's new tasks */
+    int effort_driven;                   /* adding or removing a resource keeps the work (Fixed Work always) */
+    /* MSPDI's Priority, 0..1000 (500 for a new task, as MS Project): at a levelling clash with
+     * OWF_LEVEL_PRIORITY the higher keeps its place; 1000 is "Do Not Level", never moved */
+    int priority;
 } owf_ptask;
+
+#define OWF_PRIORITY_DEFAULT 500
+#define OWF_PRIORITY_DO_NOT_LEVEL 1000
+
+enum { OWF_TT_FIXED_UNITS, OWF_TT_FIXED_DURATION, OWF_TT_FIXED_WORK };
 
 /* ---- Resources and assignments (owf_presource.c) ---- */
 
@@ -114,8 +147,8 @@ typedef struct {
     int type;                            /* OWF_RES_ */
     long max_units;                      /* percent: 100 is one full time (work resources) */
     long rate;                           /* hundredths of the currency an hour of work, or a unit of material */
-    int calendar;                        /* index into the project's calendars, -1: the project's; kept in files
-                                          * and used for usage, not yet for scheduling */
+    int calendar;                        /* index into the project's calendars, -1: the project's; tasks it
+                                          * works on are scheduled on it (owf_ptask_calendar) */
     /* worked out by owf_project_schedule */
     long work;                           /* minutes, over all its assignments (work resources) */
     long cost;                           /* hundredths of the currency */
@@ -150,11 +183,20 @@ typedef struct {
     owf_passign *assigns;
     int nassigns, capassigns;
     int next_resource_uid, next_assign_uid;
+    int has_status_date;                 /* the date Update Project last brought the plan up to */
+    owf_ptime status_date;
 } owf_project;
 
 /* A new project starting at start, with the Standard calendar as its calendar. NULL: memory. */
 owf_project *owf_project_new(owf_ptime start);
 void owf_project_free(owf_project *p);
+/* The calendar task is scheduled on: none (NULL) for an elapsed task (every minute counts); its own
+ * calendar; else the calendar of its first work resource that has one (MS Project schedules on resource
+ * calendars; with several resources on different calendars it spans them all, here the first wins); else
+ * the project's. A task's own calendar wins outright here; MS Project schedules such a task only where
+ * its calendar and its resources' calendars overlap. NULL for a task out of range or a project with no
+ * calendars. Walks the task's assignments each call. */
+const owf_pcal *owf_ptask_calendar(const owf_project *p, int task);
 /* Adds a task at the end (level 1, one working day, ASAP); its index, or -1 for memory. */
 int owf_project_add_task(owf_project *p, const char *name, long duration);
 /* Adds a calendar (a copy of Standard named name); its index, or -1 for memory. */
@@ -195,16 +237,85 @@ long owf_passign_work(const owf_project *p, int assign, owf_ptime a, owf_ptime b
  * over-allocated. */
 void owf_project_resources_update(owf_project *p);
 
+/* ---- Task types (owf_presource.c): work = duration x units, and which of them an edit keeps ---- */
+
+/* The units of task's work-resource assignments added up (percent: 200 is two full time). */
+long owf_ptask_units(const owf_project *p, int task);
+/* After an edit made after (a copy of before) from before, puts back what each changed task's type keeps,
+ * as MS Project does. A task is compared only when both plans have it at the same row (same uid), is not a
+ * summary, and has work resources before and after. Duration changed, units not: Fixed Work scales the
+ * units to keep the work. Units changed on the same resources: Fixed Units and Fixed Work change the
+ * duration to keep the work (Fixed Duration: the work changes). A resource added or removed with Effort
+ * Driven (Fixed Work always): Fixed Units and Fixed Work change the duration, Fixed Duration scales every
+ * assignment's units, to keep the work; without it the work changes. Integer arithmetic, rounded down. */
+void owf_project_keep_types(const owf_project *before, owf_project *after);
+/* Sets task's work (minutes) as its type takes it: Fixed Duration scales its work assignments' units,
+ * the others change its duration. OWF_OK; OWF_ERR_FORMAT for a summary, a task with no work resource,
+ * work below 0 or out of range (a 0 work on Fixed Duration, which would take every unit away). */
+int owf_project_set_work(owf_project *p, int task, long work);
+
 /* ---- The baseline (owf_presource.c) ---- */
 
 /* Saves the scheduled dates, duration, work and cost of tasks first..first+count-1 (count -1: every task)
  * as their baseline, MS Project's Set Baseline; schedule first. */
 void owf_project_set_baseline(owf_project *p, int first, int count);
 void owf_project_clear_baseline(owf_project *p, int first, int count);
+/* The same for Baseline n, 0..10 (0 is the one above); n out of range does nothing. */
+void owf_project_set_baseline_n(owf_project *p, int n, int first, int count);
+void owf_project_clear_baseline_n(owf_project *p, int n, int first, int count);
+/* Baseline n of a task into *out; 1 when it is saved, else 0 (and *out zeroed). */
+int owf_ptask_baseline(const owf_ptask *t, int n, owf_pbaseline *out);
+/* ---- Levelling (owf_presource.c) ---- */
+
+/* Leveling order, MS Project's and ProjectLibre's: at a clash, who keeps their place first.
+ * OWF_LEVEL_STANDARD: the earlier start, then less total slack, then the first in the plan (by ID).
+ * OWF_LEVEL_ID_ONLY: the first in the plan.
+ * OWF_LEVEL_PRIORITY ("Priority, Standard"): the higher priority, then as Standard. */
+enum { OWF_LEVEL_STANDARD, OWF_LEVEL_ID_ONLY, OWF_LEVEL_PRIORITY, OWF_LEVEL_NORDERS };
+
+/* MS Project's Level Resources: clears every task's leveling delay, then delays tasks until no work
+ * resource has more assigned at once than its max units, where moving a task can mend it. These keep
+ * their place: summaries, milestones, tasks with an actual start, tasks that must start or finish on a
+ * date, ALAP tasks, tasks of priority 1000 (Do Not Level). At a clash the tasks keep theirs in the
+ * order's turn (OWF_LEVEL_); the next is moved to where one of them finishes, until it fits.
+ * within_slack: a task is only moved within the total slack it had (MS Project's "Level only within
+ * available slack"). Schedules p. How many tasks it delayed; -1 when the plan won't schedule (a loop),
+ * for memory, or for an order out of range. owf_project_level is owf_project_level_by with Standard. */
+int owf_project_level_by(owf_project *p, int within_slack, int order);
+int owf_project_level(owf_project *p, int within_slack);
+/* 1 when one of task's work resources has more assigned at some time within the task than its max
+ * units allow (MS Project's task Overallocated field); 0 else, or out of range. Uses the scheduled dates. */
+int owf_ptask_overallocated(const owf_project *p, int task);
+/* Every task's leveling delay back to 0, and schedules p; OWF_OK or what owf_project_schedule gave. */
+int owf_project_clear_leveling(owf_project *p);
+
 /* A task's variance from its baseline, now less then; 0 with no baseline. Start and finish in working
  * minutes on the task's calendar (later is above 0), duration and work in minutes, cost in hundredths. */
 enum { OWF_VAR_START, OWF_VAR_FINISH, OWF_VAR_DURATION, OWF_VAR_WORK, OWF_VAR_COST };
 long owf_ptask_variance(const owf_project *p, int task, int which);
+/* Earned value at status, in hundredths of the currency, against Baseline 0 (a summary: its subtasks'):
+ * BCWS the baseline cost of the work planned by status (in proportion to the baseline's working time),
+ * BCWP the baseline cost times % complete, ACWP the cost times % complete (GFOpenProject keeps no
+ * separate actual cost yet), SV = BCWP - BCWS, CV = BCWP - ACWP. 0 with no baseline. */
+enum { OWF_EV_BCWS, OWF_EV_BCWP, OWF_EV_ACWP, OWF_EV_SV, OWF_EV_CV };
+long owf_ptask_earned(const owf_project *p, int task, owf_ptime status, int which);
+
+/* ---- Tracking (owf_project.c) ---- */
+
+/* Sets or clears (has_ 0) a task's actual start and finish. A finish makes the task 100% complete and,
+ * with a start, sets its duration to the working time between them (every minute for an elapsed task).
+ * OWF_OK; OWF_ERR_FORMAT for a summary, a task out of range, or a finish without a start or before it. */
+int owf_project_set_actual(owf_project *p, int task, int has_start, owf_ptime start, int has_finish, owf_ptime finish);
+/* MS Project's Update Project, "update work as complete through" status: every task (not summaries)
+ * scheduled to start before status gets its scheduled start as its actual start, and one scheduled to
+ * finish by then is 100% complete with its finish as actual finish. A task part way through gets the
+ * percent of its duration worked by status (whole set: left as it is, MS Project's "0% or 100% complete
+ * only"); a percent is never lowered. Records status as the status date. Schedule first and again after.
+ * The number of tasks changed. */
+int owf_project_update(owf_project *p, owf_ptime status, int whole);
+/* A task's actual and remaining duration in minutes: its duration times percent complete, and the rest. */
+long owf_ptask_actual_duration(const owf_ptask *t);
+long owf_ptask_remaining_duration(const owf_ptask *t);
 
 /* A deep copy (for Undo); NULL for memory. */
 owf_project *owf_project_copy(const owf_project *p);

@@ -37,7 +37,7 @@ so real files from the programs are the test.
 `build/host/pub-dump`; OWConvert names a `.pub` but doesn't convert it yet),
 the clean-room notes ([PUB-FORMAT.md](PUB-FORMAT.md)) and the corpus
 (`tests/pub/CORPUS.md`). No .pub was written by us: the format has no
-specification, and the clean room ([Design-OpenPublisher.md](Design-OpenPublisher.md),
+specification, and the clean room ([Design-OpenPressmaster.md](Design-OpenPressmaster.md),
 section 2) learns it only from Publisher's own files. For the same reason no
 sample was opened in LibreOffice (libmspub) to compare: the corpus has never
 been through another .pub reader.
@@ -81,7 +81,7 @@ Only Publisher can make these (section 9).
 
 ## 3. PageStream
 
-**What exists:** nothing reads PageStream yet (Design-OpenPublisher.md,
+**What exists:** nothing reads PageStream yet (Design-OpenPressmaster.md,
 section 9: import in P2). OWConvert answers "not a document format
 GFOpenWrite knows" for all 17 documents. What the samples show of the
 containers, for whoever writes the reader:

@@ -91,6 +91,40 @@ static void *dup_array(const void *p, size_t n)
     return q;
 }
 
+/* Other books' last values, copied with the calls owfcalc.library has: zeroed arrays, counted as soon as they
+ * are made, so that owf_book_free frees a half-made copy. 0 when memory ran out. */
+static int copy_extbooks(owf_book *c, const owf_book *b)
+{
+    int i, k, j;
+    if (!b->nextbooks)
+        return 1;
+    if (!(c->extbooks = owf_calloc((size_t)b->nextbooks, sizeof *c->extbooks)))
+        return 0;
+    c->nextbooks = c->capextbooks = b->nextbooks;
+    for (i = 0; i < b->nextbooks; i++) {
+        const owf_extbook *s = &b->extbooks[i];
+        owf_extbook *d = &c->extbooks[i];
+        if (!(d->name = oc_strdup(s->name)) || (s->target && !(d->target = oc_strdup(s->target))))
+            return 0;
+        if (s->nsheets && !(d->sheets = owf_calloc((size_t)s->nsheets, sizeof *d->sheets)))
+            return 0;
+        d->nsheets = d->capsheets = s->nsheets;
+        for (k = 0; k < s->nsheets; k++) {
+            const owf_sheet *from = &s->sheets[k];
+            owf_sheet *to = &d->sheets[k];
+            if (!(to->name = oc_strdup(from->name)))
+                return 0;
+            if (from->ncells && !(to->cells = owf_calloc((size_t)from->ncells, sizeof *to->cells)))
+                return 0;
+            to->ncells = to->capcells = from->ncells;
+            for (j = 0; j < from->ncells; j++)
+                if (!oc_copy_cell(&to->cells[j], &from->cells[j]))
+                    return 0;
+        }
+    }
+    return 1;
+}
+
 owf_book *oc_book_copy(const owf_book *b)
 {
     owf_book *c = owf_calloc(1, sizeof *c);
@@ -99,7 +133,11 @@ owf_book *oc_book_copy(const owf_book *b)
         return NULL;
     c->date1904 = b->date1904;
     c->active = b->active;
-    if (owf_book_copy_parts(c, b) < 0)                   /* kept drawings, charts... */
+    c->protect_structure = b->protect_structure;
+    if ((b->protect_hash && !(c->protect_hash = oc_strdup(b->protect_hash))) ||
+        (b->protect_kept && !(c->protect_kept = oc_strdup(b->protect_kept))))
+        goto fail;
+    if (owf_book_copy_parts(c, b) < 0 || !copy_extbooks(c, b))   /* kept drawings, charts...; other books */
         goto fail;
     if (b->nstyles && !(c->styles = dup_array(b->styles, (size_t)b->nstyles * sizeof *b->styles)))
         goto fail;
@@ -186,6 +224,16 @@ static long book_bytes(const owf_book *b)
         n += (long)strlen(b->names[i].formula) + 32;
     for (i = 0; i < b->nparts; i++)
         n += (long)b->parts[i].length + 64;
+    for (i = 0; i < b->nextbooks; i++) {                 /* other books' last values */
+        int k;
+        n += (long)sizeof *b->extbooks;
+        for (k = 0; k < b->extbooks[i].nsheets; k++) {
+            const owf_sheet *s = &b->extbooks[i].sheets[k];
+            n += (long)sizeof *s;
+            for (j = 0; j < s->ncells; j++)
+                n += cell_bytes(&s->cells[j]);
+        }
+    }
     return n;
 }
 
@@ -193,7 +241,9 @@ static long book_bytes(const owf_book *b)
 
 oc_undo *oc_undo_new(oc_core *core, int kind)
 {
-    oc_undo *u = calloc(1, sizeof *u);
+    oc_undo *u;
+    oc_track_hint(core, OC_HINT_NONE, 0, 0, 0, 0, NULL);   /* a command begins: what one before said is gone */
+    u = calloc(1, sizeof *u);
     if (!u)
         return NULL;
     u->kind = kind;
@@ -201,6 +251,10 @@ oc_undo *oc_undo_new(oc_core *core, int kind)
     u->state = *oc_state(core);
     u->dirty = core->dirty;
     u->bytes = (long)sizeof *u;
+    if (oc_track_save(core, u) != OWF_OK) {             /* without them Undo would lose the changes' record */
+        free(u);
+        return NULL;
+    }
     return u;
 }
 
@@ -229,6 +283,7 @@ void oc_undo_free(oc_undo *u)
     free(u->states);
     owf_free(u->part_name);
     owf_free(u->part_data);
+    oc_track_free_list(u->changes, u->nchanges);
     free(u);
 }
 
@@ -427,6 +482,7 @@ static oc_undo *capture_like(oc_core *core, const oc_undo *u)
     int i;
     if (!r)
         return NULL;
+    r->track_pending = 0;                                /* going back is no new change */
     for (i = 0; i < u->nsaves; i++)
         if (oc_undo_save_range(core, r, u->saves[i].sheet, &u->saves[i].range, u->saves[i].has_cols) != OWF_OK)
             goto fail;
@@ -529,6 +585,22 @@ static void restore(oc_core *core, oc_undo *u, oc_undo *back)
         owf_book t = *core->book;
         *core->book = *u->book;
         *u->book = t;
+        /* the workbook's protection is not an Undo step: the present one stays */
+        u->book->protect_structure = core->book->protect_structure;
+        u->book->protect_hash = core->book->protect_hash;
+        u->book->protect_kept = core->book->protect_kept;
+        core->book->protect_structure = t.protect_structure;
+        core->book->protect_hash = t.protect_hash;
+        core->book->protect_kept = t.protect_kept;
+        /* nor are the tracked changes in it: they come back from the step's own copy, below */
+        u->book->track_changes = core->book->track_changes;
+        u->book->nchanges = core->book->nchanges;
+        u->book->capchanges = core->book->capchanges;
+        u->book->changes = core->book->changes;
+        core->book->track_changes = t.track_changes;
+        core->book->nchanges = t.nchanges;
+        core->book->capchanges = t.capchanges;
+        core->book->changes = t.changes;
         back->book = u->book;                            /* what was there goes to the other stack */
         back->bytes += book_bytes(back->book);
         u->book = NULL;
@@ -540,6 +612,7 @@ static void restore(oc_core *core, oc_undo *u, oc_undo *back)
             u->states = NULL;
         }
     }
+    oc_track_restore(core, u);
 }
 
 /* Undo (from undo to redo) or redo. */

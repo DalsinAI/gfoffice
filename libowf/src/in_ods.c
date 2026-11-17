@@ -141,6 +141,9 @@ typedef struct {
     long field, position;        /* libowf's own (gfocalc:): its column in the source, its place; -1 */
     int orientation, function, kind, has_page;
     int sort;                    /* table:data-pilot-sort-info by name: OWF_PIVOT_SORT_... */
+    int show;                    /* table:data-pilot-field-reference: OWF_PIVOT_SHOW_... */
+    int subtotal;                /* a table:data-pilot-subtotal: a subtotal per item */
+    owf_pivot_group group;       /* table:data-pilot-groups (by NONE when it has none) */
     char *page;                  /* table:selected-page */
 } ods_pivot_field;
 
@@ -151,6 +154,12 @@ typedef struct {
     ods_pivot_field fields[ODS_PIVOT_FIELDS];
     int nfields;
     int open_field;              /* the data-pilot-field being read was kept as fields[nfields - 1] */
+    struct {                     /* hidden items (data-pilot-member display="false") */
+        int slot;                /* in fields[] */
+        int kind;                /* gfocalc:item-kind, or -1 */
+        char *name;
+    } hides[OWF_PIVOT_HIDES];
+    int nhides;
 } ods_pivot;
 
 /* A scenario table (table:scenario): the sheet it was read into, its ranges and words. */
@@ -232,6 +241,7 @@ typedef struct {
     ods_array *arrays;
     int narrays, caparrays;
     int default_width, default_height;   /* from libowf's own attributes, or -1 */
+    char *link_href, *link_sheet;        /* a table:table-source copy-results-only: another book's last values */
 
     /* the cell being read */
     int in_cell, skip_depth;
@@ -290,6 +300,17 @@ typedef struct {
     ods_frame *frames;
     int nframes, capframes, frame_depth, frame_ok, inline_depth, in_shapes;
     owf_buf inline_xml;
+    /* tracked changes: table:tracked-changes' depth (0: not in it), the change being read (its index in the
+     * book's list, -1 none) and its element's depth, what text is being kept (1 dc:creator, 2 dc:date, 3 a
+     * cell's text:p), the cell being read (1 a change's previous, 2 a deletion's cell) with its place and value,
+     * the changes a deletion names (pairs: the deletion's number, the named one's) */
+    int tc_depth, tc_cur, tc_cur_depth, tc_capture, tc_cell, tc_drop;
+    owf_buf tc_text;
+    int tc_sheet;
+    unsigned long tc_row, tc_col;
+    owf_cell tc_value;
+    int *tc_refs;
+    int ntc_refs, captc_refs, tc_made_id;
 } ods;
 
 static void rule_cell(ods *o, const char *name, unsigned long first, unsigned long last);
@@ -1553,8 +1574,31 @@ static void end_table(ods *o)
         free(o->arrays[i].text);
     o->narrays = 0;
     rule_table(o);
+    if (o->link_href && o->link_sheet && !o->failed && owf_book_link_last_sheet(o->book, o->link_href, o->link_sheet) < 0)
+        o->failed = 1;
+    free(o->link_href);
+    free(o->link_sheet);
+    o->link_href = o->link_sheet = NULL;
     o->sheet = NULL;
     o->table_depth = 0;
+}
+
+/* LibreOffice keeps another book's values as a table of its own, named "'URL'#Sheet1", holding a
+ * table:table-source in mode copy-results-only: the model keeps them with that book, not as a sheet. */
+static void table_source(ods *o, const owf_xml_event *e)
+{
+    const char *mode = ev(e, NS_TABLE, "mode"), *href = ev(e, NS_XLINK, "href");
+    const char *sheet = ev(e, NS_TABLE, "table-name");
+    if (!mode || strcmp(mode, "copy-results-only") || !href || !*href || o->link_href) {
+        owf_report_add(o->report, OWF_NOTE_LOST, "Sheets linked to other files keep their cells but not their link");
+        return;
+    }
+    if (!sheet || !*sheet) {
+        const char *hash = strrchr(o->sheet->name, '#');
+        sheet = hash && hash[1] ? hash + 1 : o->sheet->name;
+    }
+    o->link_href = copy(o, href);
+    o->link_sheet = copy(o, sheet);
 }
 
 /* ---- Named ranges and expressions ---- */
@@ -3803,8 +3847,420 @@ static void scenarios_fold(ods *o)
         owf_report_add(o->report, OWF_NOTE_LOST, "Some scenarios could not be read: their tables are left out");
 }
 
+/* ---- Tracked changes (table:tracked-changes) ----
+ * Each change into the book's list, with its author and date; a cell's old content (table:previous) as typed,
+ * its new left for the program to take from the cell. Rows, columns and sheets inserted; rows and columns
+ * deleted, each one a change (LibreOffice's), with what they held and the changes they name (table:deletions)
+ * taken into them. Changes already accepted or rejected are left out. */
+static int track_id(ods *o, const char *v)
+{
+    long n;
+    if (v && v[0] == 'c' && v[1] == 't' && (n = whole(v + 2, -1, 1, 0x7FFFFFF0L)) > 0) {
+        if (n > o->tc_made_id)
+            o->tc_made_id = (int)n;
+        return (int)n;
+    }
+    return 0;                                        /* numbered once all are read */
+}
+
+static owf_change *track_new(ods *o, const owf_xml_event *e, int kind)
+{
+    owf_book *b = o->book;
+    owf_change *c;
+    const char *state = ev(e, NS_TABLE, "acceptance-state");
+    if (b->nchanges >= 100000) {
+        owf_report_add(o->report, OWF_NOTE_LOST, "Tracked changes past the first 100000 are not read");
+        return NULL;
+    }
+    if (!(c = grow(o, b->changes, b->nchanges, &b->capchanges, sizeof *c)))
+        return NULL;
+    b->changes = c;
+    c = &b->changes[b->nchanges];
+    memset(c, 0, sizeof *c);
+    c->kind = kind;
+    c->id = track_id(o, ev(e, NS_TABLE, "id"));
+    c->sheet = (int)whole(ev(e, NS_TABLE, "table"), 0, 0, 0x7FFF);
+    o->tc_cur = b->nchanges++;
+    o->tc_cur_depth = e->depth;
+    o->tc_drop = state && strcmp(state, "pending");
+    return c;
+}
+
+static void track_ref(ods *o, const char *id)
+{
+    int n = track_id(o, id), *p;
+    if (!n || o->tc_cur < 0 || o->ntc_refs >= 200000)
+        return;
+    if (!(p = grow(o, o->tc_refs, o->ntc_refs, &o->captc_refs, 2 * sizeof *p)))
+        return;
+    o->tc_refs = p;
+    p[2 * o->ntc_refs] = o->tc_cur;
+    p[2 * o->ntc_refs + 1] = n;
+    o->ntc_refs++;
+}
+
+static void track_cell_start(ods *o, const owf_xml_event *e)
+{
+    const char *type = ev(e, NS_OFFICE, "value-type"), *f = ev(e, NS_TABLE, "formula"), *v;
+    double d;
+    free(o->tc_value.text);
+    free(o->tc_value.formula);
+    memset(&o->tc_value, 0, sizeof o->tc_value);
+    o->tc_text.length = 0;
+    if (f && !(o->tc_value.formula = owf_of_to_excel(f)))
+        owf_report_add(o->report, OWF_NOTE_LOST, "Some tracked changes' formulas could not be read");
+    if (o->tc_value.formula && o->tc_value.formula[0] == '=')
+        memmove(o->tc_value.formula, o->tc_value.formula + 1, strlen(o->tc_value.formula));
+    if (!type)
+        return;
+    if (!strcmp(type, "float") || !strcmp(type, "percentage") || !strcmp(type, "currency")) {
+        if ((v = ev(e, NS_OFFICE, "value")) && owf_number_parse(v, strlen(v), &d))
+            owf_cell_set_number(&o->tc_value, d);
+    } else if (!strcmp(type, "date")) {
+        if ((v = ev(e, NS_OFFICE, "date-value")) && owf_parse_iso_date(v, &d))
+            owf_cell_set_number(&o->tc_value, d - (o->null_date_1904 ? 1462 : 0));
+    } else if (!strcmp(type, "time")) {
+        if ((v = ev(e, NS_OFFICE, "time-value")) && owf_parse_iso_duration(v, &d))
+            owf_cell_set_number(&o->tc_value, d);
+    } else if (!strcmp(type, "boolean")) {
+        v = ev(e, NS_OFFICE, "boolean-value");
+        owf_cell_set_bool(&o->tc_value, v && (!strcmp(v, "true") || !strcmp(v, "1")));
+    } else if (!strcmp(type, "string")) {
+        if ((v = ev(e, NS_OFFICE, "string-value")) != NULL && owf_cell_set_text(&o->tc_value, v, strlen(v)) < 0)
+            o->failed = 1;
+        o->tc_value.type = OWF_VALUE_TEXT;
+    }
+}
+
+/* The cell read: its content as typed, into the change (its old) or the deletion (what it held). */
+static void track_cell_end(ods *o)
+{
+    owf_change *c = o->tc_cur >= 0 ? &o->book->changes[o->tc_cur] : NULL;
+    char *input;
+    int which = o->tc_cell;
+    o->tc_cell = 0;
+    if (!c)
+        return;
+    if (o->tc_value.type == OWF_VALUE_TEXT && !o->tc_value.text &&
+        owf_cell_set_text(&o->tc_value, o->tc_text.length ? (const char *)o->tc_text.data : "", o->tc_text.length) < 0) {
+        o->failed = 1;
+        return;
+    }
+    if (!(input = owf_scenario_input(&o->tc_value))) {
+        o->failed = 1;
+        return;
+    }
+    if (which == 1) {
+        free(c->before);
+        c->before = *input ? input : NULL;
+        if (!*input)
+            free(input);
+        return;
+    }
+    if (*input && (c->kind == OWF_CHANGE_DELETE_ROWS || c->kind == OWF_CHANGE_DELETE_COLS) && c->ncells < 1000000) {
+        owf_changecell *k = realloc(c->cells, (size_t)(c->ncells + 1) * sizeof *k);
+        int cols = c->kind == OWF_CHANGE_DELETE_COLS;
+        if (!k) {
+            o->failed = 1;
+            free(input);
+            return;
+        }
+        c->cells = k;
+        k = &c->cells[c->ncells++];
+        k->row = (unsigned)(cols ? o->tc_row : 0);   /* one row (column) each: counted from it */
+        k->col = (unsigned)(cols ? 0 : o->tc_col);
+        k->input = input;
+        return;
+    }
+    free(input);
+}
+
+static void track_start(ods *o, const owf_xml_event *e)
+{
+    const char *v = ev(e, NS_TABLE, "track-changes");
+    o->tc_depth = e->depth;
+    o->book->track_changes = !v || strcmp(v, "false");
+}
+
+static void track_child(ods *o, const owf_xml_event *e)
+{
+    owf_change *c;
+    if (o->tc_cur < 0) {                             /* a change begins */
+        if (is(e, NS_TABLE, "cell-content-change"))
+            track_new(o, e, OWF_CHANGE_CELL);
+        else if (is(e, NS_TABLE, "insertion") || is(e, NS_TABLE, "deletion")) {
+            const char *type = ev(e, NS_TABLE, "type");
+            int del = e->name[0] == 'd', kind;
+            if (type && !strcmp(type, "table"))
+                kind = del ? -1 : OWF_CHANGE_INSERT_SHEET;
+            else if (type && !strcmp(type, "column"))
+                kind = del ? OWF_CHANGE_DELETE_COLS : OWF_CHANGE_INSERT_COLS;
+            else
+                kind = del ? OWF_CHANGE_DELETE_ROWS : OWF_CHANGE_INSERT_ROWS;
+            if (kind < 0) {
+                owf_report_add(o->report, OWF_NOTE_LOST, "A sheet deleted as a tracked change is not read: it stays deleted");
+                return;
+            }
+            if (!(c = track_new(o, e, kind)))
+                return;
+            {
+                unsigned long pos = (unsigned long)whole(ev(e, NS_TABLE, "position"), 0, 0, (long)MAX_ROWS - 1);
+                if (kind == OWF_CHANGE_INSERT_SHEET) {
+                    c->sheet = (int)(pos < 0x7FFF ? pos : 0);
+                    c->count = 1;
+                } else {
+                    c->count = del ? 1 : (unsigned)whole(ev(e, NS_TABLE, "count"), 1, 1, (long)MAX_ROWS);
+                    if (kind == OWF_CHANGE_INSERT_COLS || kind == OWF_CHANGE_DELETE_COLS)
+                        c->col = (unsigned)(pos < MAX_COLS ? pos : MAX_COLS - 1);
+                    else
+                        c->row = (unsigned)pos;
+                }
+            }
+        } else if (is(e, NS_GFO, "table-rename")) {
+            const char *was = ev(e, NS_GFO, "old-name"), *now = ev(e, NS_GFO, "new-name");
+            if ((c = track_new(o, e, OWF_CHANGE_RENAME_SHEET)) != NULL) {
+                c->before = copy(o, was ? was : "");
+                c->after = copy(o, now ? now : "");
+            }
+        } else if (is(e, NS_TABLE, "movement") || is(e, NS_TABLE, "cut-offs"))
+            owf_report_add(o->report, OWF_NOTE_LOST, "Cells moved as a tracked change are not read: they stay where they are");
+        return;
+    }
+    c = &o->book->changes[o->tc_cur];
+    if (is(e, NS_TABLE, "cell-address")) {
+        o->tc_sheet = (int)whole(ev(e, NS_TABLE, "table"), 0, 0, 0x7FFF);
+        o->tc_row = (unsigned long)whole(ev(e, NS_TABLE, "row"), 0, 0, (long)MAX_ROWS - 1);
+        o->tc_col = (unsigned long)whole(ev(e, NS_TABLE, "column"), 0, 0, (long)MAX_COLS - 1);
+        if (c->kind == OWF_CHANGE_CELL && !o->tc_cell) {
+            c->sheet = o->tc_sheet;
+            c->row = (unsigned)o->tc_row;
+            c->col = (unsigned)o->tc_col;
+        }
+    } else if (is(e, NS_DC, "creator")) {
+        o->tc_capture = 1;
+        o->tc_text.length = 0;
+    } else if (is(e, NS_DC, "date")) {
+        o->tc_capture = 2;
+        o->tc_text.length = 0;
+    } else if (is(e, NS_TABLE, "change-track-table-cell")) {
+        o->tc_cell = c->kind == OWF_CHANGE_CELL ? 1 : 2;
+        track_cell_start(o, e);
+        if (e->empty)
+            track_cell_end(o);
+    } else if (o->tc_cell && (is(e, NS_TEXT, "p") || is(e, NS_TEXT, "h"))) {
+        if (o->tc_text.length)
+            owf_buf_putc(&o->tc_text, '\n');
+        o->tc_capture = 3;
+    } else if (is(e, NS_TABLE, "change-deletion") || is(e, NS_TABLE, "cell-content-deletion")) {
+        if (c->kind == OWF_CHANGE_DELETE_ROWS || c->kind == OWF_CHANGE_DELETE_COLS)
+            track_ref(o, ev(e, NS_TABLE, "id"));
+    }
+}
+
+static char *buf_text(ods *o, owf_buf *b)
+{
+    char *t = malloc(b->length + 1);
+    if (!t) {
+        o->failed = 1;
+        return NULL;
+    }
+    if (b->length)
+        memcpy(t, b->data, b->length);
+    t[b->length] = 0;
+    return t;
+}
+
+/* A change read and then left out: its strings, cells and the changes it holds. */
+static void tc_free(owf_change *c)
+{
+    int j;
+    free(c->author); free(c->date); free(c->before); free(c->after);
+    for (j = 0; j < c->ncells; j++)
+        free(c->cells[j].input);
+    free(c->cells);
+    for (j = 0; j < c->nchildren; j++)
+        tc_free(&c->children[j]);
+    free(c->children);
+}
+
+static void track_end(ods *o, const owf_xml_event *e)
+{
+    owf_change *c = o->tc_cur >= 0 ? &o->book->changes[o->tc_cur] : NULL;
+    if (e->depth == o->tc_depth) {
+        o->tc_depth = 0;
+        return;
+    }
+    if (!c)
+        return;
+    if (e->depth == o->tc_cur_depth) {               /* the change read */
+        if (o->tc_drop) {
+            int j, k;
+            tc_free(c);
+            o->book->nchanges--;
+            for (j = k = 0; j < o->ntc_refs; j++)    /* the changes it named are not its any more */
+                if (o->tc_refs[2 * j] != o->tc_cur) {
+                    o->tc_refs[2 * k] = o->tc_refs[2 * j];
+                    o->tc_refs[2 * k + 1] = o->tc_refs[2 * j + 1];
+                    k++;
+                }
+            o->ntc_refs = k;
+        }
+        o->tc_cur = -1;
+        o->tc_drop = 0;
+        return;
+    }
+    if (o->tc_capture == 1 && is(e, NS_DC, "creator")) {
+        free(c->author);
+        c->author = buf_text(o, &o->tc_text);
+        o->tc_capture = 0;
+    } else if (o->tc_capture == 2 && is(e, NS_DC, "date")) {
+        free(c->date);
+        c->date = buf_text(o, &o->tc_text);
+        o->tc_capture = 0;
+    } else if (o->tc_capture == 3 && (is(e, NS_TEXT, "p") || is(e, NS_TEXT, "h"))) {
+        o->tc_capture = 0;
+    } else if (o->tc_cell && is(e, NS_TABLE, "change-track-table-cell")) {
+        track_cell_end(o);
+    }
+}
+
+/* After the tables: a sheet inserted is named, the changes a deletion names go into it (their places counted
+ * from it), changes the file did not number are numbered, and those on sheets the file hasn't go. */
+/* A deletion of several lines is written one line at a time, each at the same place (LibreOffice's way);
+ * lines next to each other with the same author and time come back as the one deletion they were. */
+static int same_text(const char *a, const char *b)
+{
+    return (!a && !b) || (a && b && !strcmp(a, b));
+}
+
+static void track_join(ods *o)
+{
+    owf_book *b = o->book;
+    int i = 0, k;
+    while (i + 1 < b->nchanges) {
+        owf_change *a = &b->changes[i], *n = &b->changes[i + 1];
+        int cols = a->kind == OWF_CHANGE_DELETE_COLS;
+        owf_changecell *cells;
+        owf_change *kids;
+        if ((a->kind != OWF_CHANGE_DELETE_ROWS && !cols) || n->kind != a->kind || n->sheet != a->sheet ||
+            (cols ? n->col != a->col : n->row != a->row) || !same_text(a->author, n->author) ||
+            !same_text(a->date, n->date)) {
+            i++;
+            continue;
+        }
+        cells = n->ncells ? realloc(a->cells, (size_t)(a->ncells + n->ncells) * sizeof *cells) : a->cells;
+        kids = n->nchildren ? realloc(a->children, (size_t)(a->nchildren + n->nchildren) * sizeof *kids) : a->children;
+        if (cells)
+            a->cells = cells;
+        if (kids)
+            a->children = kids;
+        if ((n->ncells && !cells) || (n->nchildren && !kids)) {
+            o->failed = 1;
+            return;
+        }
+        for (k = 0; k < n->ncells; k++) {
+            owf_changecell cell = n->cells[k];
+            if (cols)
+                cell.col += a->count;
+            else
+                cell.row += a->count;
+            a->cells[a->ncells++] = cell;
+        }
+        for (k = 0; k < n->nchildren; k++) {
+            owf_change kid = n->children[k];
+            if (cols)
+                kid.col += a->count;
+            else
+                kid.row += a->count;
+            a->children[a->nchildren++] = kid;
+        }
+        a->count += n->count;
+        if (n->id > a->id)
+            a->id = n->id;
+        free(n->author); free(n->date); free(n->before); free(n->after);
+        free(n->cells);
+        free(n->children);
+        memmove(n, n + 1, (size_t)(b->nchanges - i - 2) * sizeof *n);
+        b->nchanges--;
+    }
+}
+
+static void track_finish(ods *o)
+{
+    owf_book *b = o->book;
+    int i, j, k, progress;
+    for (i = 0; i < b->nchanges; i++)
+        if (!b->changes[i].id)
+            b->changes[i].id = ++o->tc_made_id;
+    /* a deletion named inside another takes its own changes first, then goes in whole (refs done are -1) */
+    for (progress = 1; progress && !o->failed;) {
+        progress = 0;
+        for (k = 0; k < o->ntc_refs && !o->failed; k++) {
+            int d = o->tc_refs[2 * k], id = o->tc_refs[2 * k + 1], from = -1, cols, waits = 0;
+            owf_change *del, *grown;
+            unsigned p, *place;
+            if (d < 0)
+                continue;
+            if (d >= b->nchanges) {
+                o->tc_refs[2 * k] = -1;
+                continue;
+            }
+            for (j = 0; j < b->nchanges; j++)
+                if (b->changes[j].id == id && j != d)
+                    from = j;
+            if (from < 0 || (b->changes[from].kind != OWF_CHANGE_CELL && b->changes[from].kind !=
+                             b->changes[d].kind && b->changes[from].kind != b->changes[d].kind - 2)) {
+                o->tc_refs[2 * k] = -1;              /* a cell, or rows (columns) as it is */
+                continue;
+            }
+            for (j = 0; j < o->ntc_refs; j++)
+                if (o->tc_refs[2 * j] == from)
+                    waits = 1;
+            if (waits)
+                continue;                            /* it has changes of its own to take first */
+            o->tc_refs[2 * k] = -1;
+            progress = 1;
+            del = &b->changes[d];
+            cols = del->kind == OWF_CHANGE_DELETE_COLS;
+            p = cols ? del->col : del->row;
+            place = cols ? &b->changes[from].col : &b->changes[from].row;
+            if (*place < p)
+                continue;
+            if (!(grown = realloc(del->children, (size_t)(del->nchildren + 1) * sizeof *grown))) {
+                o->failed = 1;
+                return;
+            }
+            del->children = grown;
+            *place -= p;
+            del->children[del->nchildren++] = b->changes[from];
+            memmove(&b->changes[from], &b->changes[from + 1], (size_t)(b->nchanges - from - 1) * sizeof *b->changes);
+            b->nchanges--;
+            for (j = 0; j < o->ntc_refs; j++)        /* the list closed up */
+                if (o->tc_refs[2 * j] > from)
+                    o->tc_refs[2 * j]--;
+        }
+    }
+    for (i = j = 0; i < b->nchanges; i++) {
+        owf_change *c = &b->changes[i];
+        if (c->sheet < 0 || c->sheet >= b->nsheets) {
+            tc_free(c);
+            owf_report_add(o->report, OWF_NOTE_LOST, "Tracked changes on sheets the file does not have were left out");
+            continue;
+        }
+        if (c->kind == OWF_CHANGE_INSERT_SHEET && !c->after)
+            c->after = copy(o, b->sheets[c->sheet].name);
+        b->changes[j++] = *c;
+    }
+    b->nchanges = j;
+    track_join(o);
+}
+
 static void body_start(ods *o, const owf_xml_event *e)
 {
+    if (o->tc_depth) {
+        track_child(o, e);
+        return;
+    }
     if (o->in_cell) {
         text_start(o, e);
         return;
@@ -3842,6 +4298,12 @@ static void body_start(ods *o, const owf_xml_event *e)
                 const char *v = ev(e, NS_TABLE, "date-value");
                 o->null_date_1904 = v && !strncmp(v, "1904-01-01", 10);
                 o->null_date_other = v && !o->null_date_1904 && strncmp(v, "1899-12-30", 10);
+            } else if (!strcmp(n, "tracked-changes")) {
+                if (!e->empty)
+                    track_start(o, e);
+                else
+                    o->book->track_changes = !ev(e, NS_TABLE, "track-changes") ||
+                                             strcmp(ev(e, NS_TABLE, "track-changes"), "false");
             } else if (!strcmp(n, "named-range")) {
                 named(o, e, 0);
             } else if (!strcmp(n, "named-expression")) {
@@ -3853,7 +4315,9 @@ static void body_start(ods *o, const owf_xml_event *e)
             } else if (!strcmp(n, "dde-link")) {
                 owf_report_add(o->report, OWF_NOTE_LOST, "Links to other programs (DDE) keep their last values");
             } else if (!strcmp(n, "data-pilot-table") || !strcmp(n, "source-cell-range") ||
-                       !strcmp(n, "data-pilot-field") || !strcmp(n, "data-pilot-sort-info")) {
+                       !strcmp(n, "data-pilot-field") || !strcmp(n, "data-pilot-sort-info") ||
+                       !strcmp(n, "data-pilot-member") || !strcmp(n, "data-pilot-field-reference") ||
+                       !strcmp(n, "data-pilot-groups") || !strcmp(n, "data-pilot-subtotal")) {
                 pivot_start(o, e);
             }
         } else if (!strcmp(n, "scenario")) {
@@ -3870,6 +4334,8 @@ static void body_start(ods *o, const owf_xml_event *e)
             named(o, e, 0);
         } else if (!strcmp(n, "named-expression")) {
             named(o, e, 1);
+        } else if (!strcmp(n, "table-source")) {
+            table_source(o, e);
         } else if (!strcmp(n, "shapes")) {
             o->in_shapes = 1;                    /* its frames: from the sheet's corner */
         } else if (!strcmp(n, "table") && o->sheet) {
@@ -3887,6 +4353,10 @@ static void body_start(ods *o, const owf_xml_event *e)
 
 static void body_end(ods *o, const owf_xml_event *e)
 {
+    if (o->tc_depth) {
+        track_end(o, e);
+        return;
+    }
     if (o->skip_depth) {
         if (e->depth == o->skip_depth)
             o->skip_depth = 0;
@@ -3943,6 +4413,31 @@ static void body_end(ods *o, const owf_xml_event *e)
         cf_end(o, e);
 }
 
+/* office:spreadsheet's table:structure-protected: the workbook's sheets stay as they are. The password as
+   gfocalc's Excel hash, or ODF's digest (SHA-1 when it names none) kept as it was. */
+static void read_book_protection(ods *o, const owf_xml_event *e)
+{
+    const char *v = ev(e, NS_TABLE, "structure-protected");
+    const char *key = ev(e, NS_TABLE, "protection-key"), *alg = ev(e, NS_TABLE, "protection-key-digest-algorithm");
+    const char *xl = ev(e, NS_GFO, "protection-key-excel");
+    if (!v || strcmp(v, "true") || o->book->protect_structure)
+        return;
+    o->book->protect_structure = 1;
+    if (xl && strlen(xl) == 4)
+        o->book->protect_hash = copy(o, xl);
+    else if (key && *key) {
+        const char *a = alg && *alg ? alg : "http://www.w3.org/2000/09/xmldsig#sha1";
+        size_t size = strlen(a) + strlen(key) + 6;
+        char *k = malloc(size);
+        if (!k)
+            o->failed = 1;
+        else {
+            snprintf(k, size, "ods:%s %s", a, key);
+            o->book->protect_kept = k;
+        }
+    }
+}
+
 /* One part (content.xml, styles.xml, settings.xml) or the whole of a
  * flat file, as a stream. */
 static int read_part(ods *o, char *data, size_t length)
@@ -3976,6 +4471,9 @@ static int read_part(ods *o, char *data, size_t length)
                     owf_buf_put(&o->note_text, e.text, e.length);
                 else if (o->note_who && o->note_author.length + e.length <= 1024)
                     owf_buf_put(&o->note_author, e.text, e.length);
+            } else if (o->tc_depth && o->tc_capture) {
+                if (o->tc_text.length + e.length <= 65536)
+                    owf_buf_put(&o->tc_text, e.text, e.length);
             } else if (o->rule_msg && o->rule_p) {
                 if (o->rule_text.length + e.length <= 65536)
                     owf_buf_put(&o->rule_text, e.text, e.length);
@@ -4018,6 +4516,8 @@ static int read_part(ods *o, char *data, size_t length)
             } else if (is(&e, NS_STYLE, "font-face")) {
                 read_face(o, &e);
             } else if (is(&e, NS_OFFICE, "body") || is(&e, NS_OFFICE, "spreadsheet")) {
+                if (e.name[0] == 's')
+                    read_book_protection(o, &e);
                 if (!o->in_body) {       /* cells with no style have the default's */
                     owf_cellstyle base;
                     base_style(o, &base);
@@ -4107,6 +4607,58 @@ static void pivot_start(ods *o, const owf_xml_event *e)
     if (is(e, NS_TABLE, "source-cell-range")) {
         if (!pv->source)
             pv->source = copy(o, ev(e, NS_TABLE, "cell-range-address"));
+    } else if (is(e, NS_TABLE, "data-pilot-member")) {
+        const char *display = ev(e, NS_TABLE, "display");
+        if (!pv->open_field || !pv->nfields || !display || strcmp(display, "false"))
+            return;
+        if (pv->nhides == OWF_PIVOT_HIDES) {
+            owf_report_add(o->report, OWF_NOTE_LOST, "A pivot table with more than 32 hidden items shows the rest");
+            return;
+        }
+        pv->hides[pv->nhides].slot = pv->nfields - 1;
+        pv->hides[pv->nhides].kind = (int)pivot_whole(ev(e, NS_GFO, "item-kind"));
+        pv->hides[pv->nhides].name = copy(o, ev(e, NS_TABLE, "name") ? ev(e, NS_TABLE, "name") : "");
+        pv->nhides++;
+    } else if (is(e, NS_TABLE, "data-pilot-groups")) {
+        ods_pivot_field *f = pv->open_field && pv->nfields ? &pv->fields[pv->nfields - 1] : NULL;
+        const char *by = ev(e, NS_TABLE, "grouped-by"), *start = ev(e, NS_TABLE, "start");
+        const char *end = ev(e, NS_TABLE, "end"), *step = ev(e, NS_TABLE, "step");
+        owf_pivot_group g;
+        if (!f || (f->orientation != PV_ROW && f->orientation != PV_COLUMN))
+            return;
+        memset(&g, 0, sizeof g);
+        if (by) {
+            g.by = !strcmp(by, "years") ? OWF_PIVOT_GROUP_YEARS : !strcmp(by, "quarters") ? OWF_PIVOT_GROUP_QUARTERS
+                 : !strcmp(by, "months") ? OWF_PIVOT_GROUP_MONTHS : OWF_PIVOT_GROUP_NONE;
+        } else if (start && end && step && owf_number_parse(start, strlen(start), &g.start) &&
+                   owf_number_parse(end, strlen(end), &g.end) && owf_number_parse(step, strlen(step), &g.step)) {
+            g.by = OWF_PIVOT_GROUP_RANGE;
+        }
+        if (g.by == OWF_PIVOT_GROUP_NONE)
+            owf_report_add(o->report, OWF_NOTE_APPROX,
+                           "A pivot table field grouped by hand, by day or by time shows its items ungrouped");
+        else
+            f->group = g;
+    } else if (is(e, NS_TABLE, "data-pilot-field-reference")) {
+        ods_pivot_field *f = pv->open_field && pv->nfields ? &pv->fields[pv->nfields - 1] : NULL;
+        const char *type = ev(e, NS_TABLE, "type");
+        int show = owf_pivot_show_from_word(type);
+        if (!f || f->orientation != PV_DATA || !type)
+            return;
+        if (show >= 0)
+            f->show = show;
+        else
+            owf_report_add(o->report, OWF_NOTE_APPROX,
+                           "A pivot table data field shown as a difference or running total shows its values");
+    } else if (is(e, NS_TABLE, "data-pilot-subtotal")) {
+        const char *fn = ev(e, NS_TABLE, "function");
+        ods_pivot_field *f = pv->open_field && pv->nfields ? &pv->fields[pv->nfields - 1] : NULL;
+        if (!f || (f->orientation != PV_ROW && f->orientation != PV_COLUMN))
+            return;
+        if (fn && strcmp(fn, "auto") && !f->subtotal)
+            owf_report_add(o->report, OWF_NOTE_APPROX,
+                           "A pivot table subtotal with its own function uses each data field's function");
+        f->subtotal = 1;
     } else if (is(e, NS_TABLE, "data-pilot-sort-info")) {
         const char *mode = ev(e, NS_TABLE, "sort-mode"), *order = ev(e, NS_TABLE, "order");
         ods_pivot_field *f = pv->open_field && pv->nfields ? &pv->fields[pv->nfields - 1] : NULL;
@@ -4166,6 +4718,19 @@ static long pivot_field_index(const owf_book *book, const owf_pivotdef *def, con
     return -1;
 }
 
+/* An item from the file's text and libowf's own kind (-1 when the file has none). */
+static void pivot_item(owf_pivot_page *pg, const char *text, int kind)
+{
+    owf_pivot_item_from_text(pg, text);
+    if (kind == OWF_PIVOT_TEXT && pg->kind != OWF_PIVOT_TEXT) {
+        pg->kind = OWF_PIVOT_TEXT;
+        snprintf(pg->text, sizeof pg->text, "%s", text ? text : "");
+    } else if (kind == OWF_PIVOT_BOOL) {
+        pg->kind = OWF_PIVOT_BOOL;
+        pg->number = text && (!strcmp(text, "TRUE") || !strcmp(text, "1"));
+    }
+}
+
 /* Turns one data-pilot-table into a definition; 1 when it fits GFOpenCalc's. */
 static int pivot_def(ods *o, const ods_pivot *pv, int *sheet, owf_pivotdef *def)
 {
@@ -4198,14 +4763,27 @@ static int pivot_def(ods *o, const ods_pivot *pv, int *sheet, owf_pivotdef *def)
             case PV_ROW:
                 if (def->nrow < OWF_PIVOT_FIELDS) def->row[def->nrow++] = (unsigned)index; else ok = 0;
                 if (ok && f->sort) owf_pivot_set_sort(def, (unsigned)index, f->sort);
+                if (ok && f->subtotal) owf_pivot_set_subtotal(def, (unsigned)index, 1);
+                if (ok && f->group.by) {
+                    owf_pivot_group g = f->group;
+                    g.field = (unsigned)index;
+                    owf_pivot_set_group(def, &g);
+                }
                 break;
             case PV_COLUMN:
                 if (def->ncol < OWF_PIVOT_FIELDS) def->col[def->ncol++] = (unsigned)index; else ok = 0;
                 if (ok && f->sort) owf_pivot_set_sort(def, (unsigned)index, f->sort);
+                if (ok && f->subtotal) owf_pivot_set_subtotal(def, (unsigned)index, 1);
+                if (ok && f->group.by) {
+                    owf_pivot_group g = f->group;
+                    g.field = (unsigned)index;
+                    owf_pivot_set_group(def, &g);
+                }
                 break;
             case PV_DATA:
                 if (def->ndata < OWF_PIVOT_DATA) {
                     def->data[def->ndata].field = (unsigned)index;
+                    def->data[def->ndata].show = f->show;
                     def->data[def->ndata++].function = f->function;
                 } else
                     ok = 0;
@@ -4215,21 +4793,26 @@ static int pivot_def(ods *o, const ods_pivot *pv, int *sheet, owf_pivotdef *def)
                     owf_pivot_page *pg = &def->page[def->npage++];
                     pg->field = (unsigned)index;
                     pg->kind = OWF_PIVOT_ALL;
-                    if (f->has_page) {
-                        owf_pivot_item_from_text(pg, f->page);
-                        if (f->kind == OWF_PIVOT_TEXT && pg->kind != OWF_PIVOT_TEXT) {
-                            pg->kind = OWF_PIVOT_TEXT;
-                            snprintf(pg->text, sizeof pg->text, "%s", f->page ? f->page : "");
-                        } else if (f->kind == OWF_PIVOT_BOOL) {
-                            pg->kind = OWF_PIVOT_BOOL;
-                            pg->number = f->page && (!strcmp(f->page, "TRUE") || !strcmp(f->page, "1"));
-                        }
-                    }
+                    if (f->has_page)
+                        pivot_item(pg, f->page, f->kind);
                 } else
                     ok = 0;
                 break;
             }
         }
+    }
+    for (k = 0; k < pv->nhides && ok; k++) {        /* hidden items of the row and column fields */
+        const ods_pivot_field *f = &pv->fields[pv->hides[k].slot];
+        long index;
+        owf_pivot_page item;
+        if (f->orientation != PV_ROW && f->orientation != PV_COLUMN)
+            continue;
+        if ((index = pivot_field_index(o->book, def, f)) < 0)
+            continue;
+        memset(&item, 0, sizeof item);
+        pivot_item(&item, pv->hides[k].name, pv->hides[k].kind);
+        item.field = (unsigned)index;
+        owf_pivot_set_hidden(def, &item, 1);
     }
     return ok && owf_pivot_check(o->book, def);
 }
@@ -4264,6 +4847,7 @@ static void finish(ods *o)
     if (o->style_maps && !o->cf_seen)                /* ODF's own conditional styles alone: not read */
         owf_report_add(o->report, OWF_NOTE_LOST, "Conditional formatting is not read yet");
     scenarios_fold(o);
+    track_finish(o);
     made = calloc((size_t)o->book->nsheets + 1, 1);
     if (!made) {
         o->failed = 1;
@@ -4341,6 +4925,8 @@ static void free_reader(ods *o)
             free(o->pivots[i].fields[k].name);
             free(o->pivots[i].fields[k].page);
         }
+        for (k = 0; k < o->pivots[i].nhides; k++)
+            free(o->pivots[i].hides[k].name);
     }
     free(o->pivots);
     for (i = 0; i < o->nscens; i++) {
@@ -4350,6 +4936,8 @@ static void free_reader(ods *o)
     }
     free(o->scens);
     free(o->active);
+    free(o->link_href);
+    free(o->link_sheet);
     for (i = 0; i < o->nsplits; i++)
         free(o->splits[i].sheet);
     free(o->splits);
@@ -4365,6 +4953,10 @@ static void free_reader(ods *o)
     free(o->runs);
     owf_buf_free(&o->rule_text);
     owf_buf_free(&o->note_text);
+    owf_buf_free(&o->tc_text);
+    free(o->tc_refs);
+    free(o->tc_value.text);
+    free(o->tc_value.formula);
     owf_buf_free(&o->note_author);
     owf_buf_free(&o->af_xml);
     free(o->af_value);
@@ -4400,6 +4992,8 @@ static ods *new_reader(owf_book *book, owf_report *report)
     owf_buf_init(&o->af_xml);
     owf_buf_init(&o->cf_xml);
     owf_buf_init(&o->inline_xml);
+    owf_buf_init(&o->tc_text);
+    o->tc_cur = -1;
     return o;
 }
 

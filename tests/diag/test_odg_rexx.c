@@ -203,7 +203,7 @@ static void test_files(void)
     CHECK_S(rx.lasterror, "SAVEAS: a PDF doesn't open again as a diagram (EXPORT writes one; SAVEAS takes .drawio, .svg or .png)");
     CHECK_S(ok("GETFILE"), "build/host/odg-rexx.drawio");
     CHECK_N(rx_do("EXPORT build/host/x FORMAT DOC"), ODG_RX_ERROR);
-    CHECK_S(rx.lasterror, "EXPORT: FORMAT is SVG, PDF, EPS, PNG, ILBM or DRAWIO, not DOC");
+    CHECK_S(rx.lasterror, "EXPORT: FORMAT is SVG, PDF, EPS, PNG, ILBM, MERMAID, DOT, GRAPHML, EXCALIDRAW or DRAWIO, not DOC");
 
     /* EPS: the page as Encapsulated PostScript, by its name or FORMAT EPS; EXPORT only */
     CHECK_N(odg_rexx_format("x.eps"), ODG_FILE_EPS);
@@ -227,6 +227,52 @@ static void test_files(void)
     }
     CHECK_N(rx_do("SAVEAS build/host/odg-rexx-as.eps"), ODG_RX_ERROR);
     CHECK_S(rx.lasterror, "SAVEAS: an EPS doesn't open again as a diagram (EXPORT writes one; SAVEAS takes .drawio, .svg or .png)");
+    CHECK_S(ok("GETFILE"), "build/host/odg-rexx.drawio");
+
+    /* Mermaid and DOT: the page as a graph to lay out again, by name or FORMAT; EXPORT only */
+    CHECK_N(odg_rexx_format("x.mmd"), ODG_FILE_MERMAID);
+    CHECK_N(odg_rexx_format("x.Mermaid"), ODG_FILE_MERMAID);
+    CHECK_N(odg_rexx_format("x.dot"), ODG_FILE_DOT);
+    CHECK_N(odg_rexx_format("x.GV"), ODG_FILE_DOT);
+    CHECK_N(odg_rexx_format("x.GraphML"), ODG_FILE_GRAPHML);
+    CHECK_N(odg_rexx_format("x.Excalidraw"), ODG_FILE_EXCALIDRAW);
+    CHECK_N(odg_rexx_format("x.graphml.drawio"), ODG_FILE_DRAWIO);
+    ok("EXPORT build/host/odg-rexx.mmd");
+    ok("EXPORT build/host/odg-rexx-mmd.out FORMAT mermaid");
+    ok("EXPORT build/host/odg-rexx.gv");
+    ok("EXPORT build/host/odg-rexx-dot.out FORMAT DOT");
+    ok("EXPORT build/host/odg-rexx.graphml");
+    ok("EXPORT build/host/odg-rexx-graphml.out FORMAT graphml");
+    ok("EXPORT build/host/odg-rexx.excalidraw");
+    ok("EXPORT build/host/odg-rexx-excalidraw.out FORMAT Excalidraw");
+    {
+        const char *names[8] = { "build/host/odg-rexx.mmd", "build/host/odg-rexx-mmd.out", "build/host/odg-rexx.gv",
+                                 "build/host/odg-rexx-dot.out", "build/host/odg-rexx.graphml",
+                                 "build/host/odg-rexx-graphml.out", "build/host/odg-rexx.excalidraw",
+                                 "build/host/odg-rexx-excalidraw.out" };
+        const char *heads[8] = { "---\ntitle: ", "---\ntitle: ", "digraph ", "digraph ", "<?xml version=",
+                                 "<?xml version=", "{\n  \"type\": \"excalidraw\"", "{\n  \"type\": \"excalidraw\"" };
+        int k;
+        for (k = 0; k < 8; k++) {
+            FILE *f = fopen(names[k], "rb");
+            char head[32] = "";
+            size_t want = strlen(heads[k]);
+            CHECK(f != NULL);
+            if (f) {
+                CHECK_N(fread(head, 1, want, f), want);
+                fclose(f);
+            }
+            CHECK_S(head, heads[k]);
+        }
+    }
+    CHECK_N(rx_do("SAVEAS build/host/odg-rexx-as.mmd"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "SAVEAS: a Mermaid chart doesn't open again as a diagram (EXPORT writes one; SAVEAS takes .drawio, .svg or .png)");
+    CHECK_N(rx_do("SAVEAS build/host/odg-rexx-as.dot"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "SAVEAS: a DOT graph doesn't open again as a diagram (EXPORT writes one; SAVEAS takes .drawio, .svg or .png)");
+    CHECK_N(rx_do("SAVEAS build/host/odg-rexx-as.graphml"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "SAVEAS: a GraphML graph doesn't open again as a diagram (EXPORT writes one; SAVEAS takes .drawio, .svg or .png)");
+    CHECK_N(rx_do("SAVEAS build/host/odg-rexx-as.excalidraw"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "SAVEAS: an Excalidraw scene doesn't open again as a diagram (EXPORT writes one; SAVEAS takes .drawio, .svg or .png)");
     CHECK_S(ok("GETFILE"), "build/host/odg-rexx.drawio");
 
     /* OPEN won't drop unsaved changes without FORCE */
@@ -630,7 +676,7 @@ static unsigned char *fake_picture(void *user, const owf_dnum box[4], int width,
     pic_w = width;
     pic_h = height;
     if (pic_fail) return NULL;
-    rgb = (unsigned char *)malloc((size_t)width * (size_t)height * 3);
+    rgb = (unsigned char *)owf_malloc((size_t)width * (size_t)height * 3);
     if (!rgb) return NULL;
     for (y = 0; y < height; y++)
         for (x = 0; x < width; x++) {
@@ -825,6 +871,112 @@ static void test_pictures(void)
     odg_rexx_free(&rx);
 }
 
+/* The arrange and clipboard commands: COPY, CUT, PASTE, DUPLICATE, ORDER, GROUP, UNGROUP, ALIGN, DISTRIBUTE. */
+static void test_arrange(void)
+{
+    char a[24], b[24], c[24], e[24], g[24], line[320], made[200];
+    CHECK_N(odg_rexx_init(&rx), OWF_OK);
+    CHECK_N(rx_do("PASTE"), ODG_RX_NOW);                         /* nothing copied yet */
+    CHECK_S(rx.lasterror, "PASTE: nothing has been copied");
+    snprintf(a, sizeof a, "%s", ok("ADDSHAPE 10 10 40 20 TEXT A"));
+    snprintf(b, sizeof b, "%s", ok("ADDSHAPE 100 50 60 40 TEXT B"));
+    snprintf(c, sizeof c, "%s", ok("ADDSHAPE 300 0 20 80 TEXT C"));
+    snprintf(line, sizeof line, "CONNECT %s %s", a, b);
+    snprintf(e, sizeof e, "%s", ok(line));
+
+    snprintf(line, sizeof line, "COPY %s,%s", a, b);
+    CHECK_N(rx_do(line), ODG_RX_OK);
+    CHECK_S(res, "");
+    CHECK_N(rx.doc.nundo, 4);                                   /* Copy is no Undo step */
+    snprintf(made, sizeof made, "%s", ok("PASTE"));             /* the shapes and their connector, 10 on */
+    CHECK(strchr(made, ' ') && strchr(strchr(made, ' ') + 1, ' '));
+    {
+        char first[24], *sp = strchr(made, ' ');
+        snprintf(first, sizeof first, "%.*s", (int)(sp - made), made);
+        snprintf(line, sizeof line, "GETBOX %s", first);
+        CHECK_S(ok(line), "20 20 40 20");
+        snprintf(line, sizeof line, "PASTE DX 0 DY 100");
+        snprintf(made, sizeof made, "%s", ok(line));
+        sp = strchr(made, ' ');
+        snprintf(first, sizeof first, "%.*s", (int)(sp - made), made);
+        snprintf(line, sizeof line, "GETBOX %s", first);
+        CHECK_S(ok(line), "10 110 40 20");
+    }
+    CHECK_S(ok("UNDO"), "");
+    CHECK_S(ok("UNDO"), "");
+
+    snprintf(line, sizeof line, "CUT %s", c);                   /* Cut, then Paste lands where it was */
+    CHECK_N(rx_do(line), ODG_RX_OK);
+    snprintf(line, sizeof line, "GETBOX %s", c);
+    CHECK_N(rx_do(line), ODG_RX_ERROR);
+    snprintf(made, sizeof made, "%s", ok("PASTE"));
+    snprintf(line, sizeof line, "GETBOX %s", made);
+    CHECK_S(ok(line), "300 0 20 80");
+    snprintf(c, sizeof c, "%.23s", made);
+
+    snprintf(line, sizeof line, "DUPLICATE %s DX 0 DY 200", b);
+    snprintf(made, sizeof made, "%s", ok(line));
+    snprintf(line, sizeof line, "GETBOX %s", made);
+    CHECK_S(ok(line), "100 250 60 40");
+    snprintf(line, sizeof line, "DELETE %s", made);
+    CHECK_N(rx_do(line), ODG_RX_OK);
+    CHECK_N(rx_do("COPY nope"), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "COPY: no shape or connector to copy");
+
+    /* order: B to the front, then back again */
+    snprintf(line, sizeof line, "ORDER %s FRONT", b);
+    CHECK_N(rx_do(line), ODG_RX_OK);
+    CHECK_N(rx_do(line), ODG_RX_NOW);                           /* already there */
+    snprintf(line, sizeof line, "ORDER %s WAY=back", b);
+    CHECK_N(rx_do(line), ODG_RX_OK);
+    snprintf(line, sizeof line, "ORDER %s SIDEWAYS", b);
+    CHECK_N(rx_do(line), ODG_RX_ERROR);
+    CHECK_S(rx.lasterror, "ORDER: WAY is one of FRONT, BACK, FORWARD or BACKWARD");
+    {
+        const owf_dpage *p = odg_page(&rx.doc);
+        CHECK_S(p->cells[2].id, b);                             /* the bottom now */
+    }
+
+    /* group A and B, then take them apart */
+    snprintf(line, sizeof line, "GROUP %s,%s", a, b);
+    snprintf(g, sizeof g, "%s", ok(line));
+    CHECK(g[0] != 0);
+    snprintf(line, sizeof line, "GETBOX %s", g);
+    CHECK_S(ok(line), "10 10 150 80");                          /* round A and B */
+    snprintf(line, sizeof line, "GETSTYLE %s", g);
+    CHECK_S(ok(line), "group;");
+    snprintf(line, sizeof line, "UNGROUP %s", g);
+    snprintf(made, sizeof made, "%s", ok(line));
+    CHECK(strstr(made, a) && strstr(made, b));
+    snprintf(line, sizeof line, "UNGROUP %s", a);
+    CHECK_N(rx_do(line), ODG_RX_ERROR);
+
+    /* align and distribute */
+    snprintf(line, sizeof line, "ALIGN %s,%s,%s LEFT", a, b, c);
+    CHECK_N(rx_do(line), ODG_RX_OK);
+    snprintf(line, sizeof line, "GETBOX %s", c);
+    CHECK_S(ok(line), "10 0 20 80");
+    CHECK_S(ok("UNDO"), "");
+    snprintf(line, sizeof line, "ALIGN %s,%s,%s center", a, b, c);   /* either spelling */
+    CHECK_N(rx_do(line), ODG_RX_OK);
+    snprintf(line, sizeof line, "GETBOX %s", a);
+    CHECK_S(ok(line), "145 10 40 20");
+    snprintf(line, sizeof line, "ALIGN %s,%s,%s CENTRE", a, b, c);
+    CHECK_N(rx_do(line), ODG_RX_NOW);
+    snprintf(line, sizeof line, "ALIGN %s ROUND", a);
+    CHECK_N(rx_do(line), ODG_RX_ERROR);
+    CHECK_S(ok("UNDO"), "");
+    snprintf(line, sizeof line, "DISTRIBUTE %s,%s,%s DOWN", a, b, c);
+    CHECK_N(rx_do(line), ODG_RX_OK);
+    snprintf(line, sizeof line, "GETBOX %s", c);
+    CHECK_S(ok(line), "300 5 20 80");                           /* middle from 40 to 45, between 20 and 70 */
+    snprintf(line, sizeof line, "DISTRIBUTE %s,%s", a, b);
+    CHECK_N(rx_do(line), ODG_RX_NOW);
+    CHECK(strstr(ok("HELP"), " PASTE ") != NULL && strstr(res, " DISTRIBUTE") != NULL);
+    CHECK_S(ok("HELP ALIGN"), "ALIGN ID/A,WAY/A");
+    odg_rexx_free(&rx);
+}
+
 int main(void)
 {
     test_edits();
@@ -836,6 +988,7 @@ int main(void)
     test_map();
     test_map_outline();
     test_pictures();
+    test_arrange();
     printf("diagram ARexx: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

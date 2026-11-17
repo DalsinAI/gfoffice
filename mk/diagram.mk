@@ -64,25 +64,106 @@ $(OUT)/test-deps-asan: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_deps.c
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
 		-Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) tests/diagram/test_deps.c -lz -o $@
 
-diagram-test: $(OUT)/test-diagram $(OUT)/test-diagram-nozlib $(OUT)/test-dexport $(OUT)/test-doutline $(OUT)/test-dpdf $(OUT)/test-deps
+# Step D6: Mermaid and DOT.
+$(OUT)/test-dgraph: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dgraph.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		tests/diagram/test_dgraph.c -lz -o $@
+
+$(OUT)/test-dgraph-asan: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dgraph.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) tests/diagram/test_dgraph.c -lz -o $@
+
+# Step D6: Excalidraw.
+$(OUT)/test-dexcal: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dexcal.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		tests/diagram/test_dexcal.c -lz -o $@
+
+$(OUT)/test-dexcal-asan: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dexcal.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) tests/diagram/test_dexcal.c -lz -o $@
+
+diagram-test: $(OUT)/test-diagram $(OUT)/test-diagram-nozlib $(OUT)/test-dexport $(OUT)/test-doutline $(OUT)/test-dpdf $(OUT)/test-deps $(OUT)/test-dgraph $(OUT)/test-dexcal
 	$(OUT)/test-diagram
 	$(OUT)/test-diagram-nozlib
 	$(OUT)/test-dexport
 	$(OUT)/test-doutline
 	$(OUT)/test-dpdf
 	$(OUT)/test-deps
+	$(OUT)/test-dgraph
+	$(OUT)/test-dexcal
 
-diagram-check: $(OUT)/test-diagram-asan $(OUT)/test-dexport-asan $(OUT)/test-doutline-asan $(OUT)/test-dpdf-asan $(OUT)/test-deps-asan
+diagram-check: $(OUT)/test-diagram-asan $(OUT)/test-dexport-asan $(OUT)/test-doutline-asan $(OUT)/test-dpdf-asan $(OUT)/test-deps-asan $(OUT)/test-dgraph-asan $(OUT)/test-dexcal-asan
 	$(OUT)/test-diagram-asan
 	$(OUT)/test-dexport-asan
 	$(OUT)/test-doutline-asan
 	$(OUT)/test-dpdf-asan
 	$(OUT)/test-deps-asan
+	$(OUT)/test-dgraph-asan
+	$(OUT)/test-dexcal-asan
 
 test: diagram-test
 check: diagram-check
 
 .PHONY: diagram-test diagram-check
+
+# The shapes palette (src/diag/odg_stencil.c), in sets, each named back to draw.io by the shapes' outlines.
+ODG_STENCIL_DEPS = $(DIAG_DEPS) src/diag/odg_stencil.c include/opendiag_stencil.h tests/diag/test_odg_stencil.c
+
+$(OUT)/test-odg-stencil: $(ODG_STENCIL_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		src/diag/odg_stencil.c tests/diag/test_odg_stencil.c -lz -o $@
+
+$(OUT)/test-odg-stencil-asan: $(ODG_STENCIL_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) src/diag/odg_stencil.c \
+		tests/diag/test_odg_stencil.c -lz -o $@
+
+diagram-stencil-test: $(OUT)/test-odg-stencil
+	$(OUT)/test-odg-stencil
+
+diagram-stencil-check: $(OUT)/test-odg-stencil-asan
+	$(OUT)/test-odg-stencil-asan
+
+test: diagram-stencil-test
+check: diagram-stencil-check
+
+.PHONY: diagram-stencil-test diagram-stencil-check
+
+# No state kept between calls in the diagram code a library is to hold (tests/diag/check_no_state.sh).
+diagram-state-check:
+	tests/diag/check_no_state.sh $(CC)
+
+check: diagram-state-check
+
+.PHONY: diagram-state-check
+
+# The shapes' outlines (libowf/diagram/owf_dshape.c), shared by the canvas and the writers.
+$(OUT)/test-dshape: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dshape.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		tests/diagram/test_dshape.c -lz -o $@
+
+$(OUT)/test-dshape-asan: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dshape.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) tests/diagram/test_dshape.c -lz -o $@
+
+diagram-shape-test: $(OUT)/test-dshape
+	$(OUT)/test-dshape
+
+diagram-shape-check: $(OUT)/test-dshape-asan
+	$(OUT)/test-dshape-asan
+
+test: diagram-shape-test
+check: diagram-shape-check
+
+.PHONY: diagram-shape-test diagram-shape-check
 
 # Step D3: the editing core (src/diag): operations with Undo, ports and glue, orthogonal routing, snap.
 ODG_SRC = src/diag/odg_core.c
@@ -98,18 +179,21 @@ $(OUT)/test-odg-asan: $(ODG_DEPS) $(OWF_SRC)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
 		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) tests/diag/test_odg.c -lz -o $@
 
-ODG_REXX_DEPS = $(ODG_DEPS) src/diag/odg_mind.c include/opendiag_mind.h src/diag/odg_rexx.c include/opendiag_rexx.h src/deck/ow_picture.c include/ow_picture.h tests/diag/test_odg_rexx.c
+ODG_ARRANGE_SRC = src/diag/odg_clip.c src/diag/odg_order.c src/diag/odg_align.c
+ODG_ARRANGE_H = include/opendiag_clip.h include/opendiag_order.h include/opendiag_align.h
+ODG_REXX_DEPS = $(ODG_DEPS) $(ODG_ARRANGE_SRC) $(ODG_ARRANGE_H) src/diag/odg_mind.c include/opendiag_mind.h src/diag/odg_rexx.c include/opendiag_rexx.h src/deck/ow_picture.c include/ow_picture.h tests/diag/test_odg_rexx.c
 
 $(OUT)/test-odg-rexx: $(ODG_REXX_DEPS) $(OWF_SRC)
 	mkdir -p $(OUT)
 	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
-		$(ODG_SRC) src/diag/odg_mind.c src/diag/odg_rexx.c src/deck/ow_picture.c tests/diag/test_odg_rexx.c -lz -o $@
+		$(ODG_SRC) $(ODG_ARRANGE_SRC) src/diag/odg_mind.c src/diag/odg_rexx.c src/deck/ow_picture.c tests/diag/test_odg_rexx.c \
+		-lz -o $@
 
 $(OUT)/test-odg-rexx-asan: $(ODG_REXX_DEPS) $(OWF_SRC)
 	mkdir -p $(OUT)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
-		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_mind.c src/diag/odg_rexx.c src/deck/ow_picture.c \
-		tests/diag/test_odg_rexx.c -lz -o $@
+		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) $(ODG_ARRANGE_SRC) src/diag/odg_mind.c src/diag/odg_rexx.c \
+		src/deck/ow_picture.c tests/diag/test_odg_rexx.c -lz -o $@
 
 # The Style window's sums (src/diag/odg_style.c).
 ODG_STYLE_DEPS = $(ODG_DEPS) src/diag/odg_style.c include/opendiag_style.h tests/diag/test_odg_style.c
@@ -125,6 +209,31 @@ $(OUT)/test-odg-style-asan: $(ODG_STYLE_DEPS) $(OWF_SRC)
 		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_style.c \
 		tests/diag/test_odg_style.c -lz -o $@
 
+# The Arrange menu's Align and Distribute (src/diag/odg_align.c).
+ODG_ALIGN_DEPS = $(ODG_DEPS) src/diag/odg_align.c include/opendiag_align.h tests/diag/test_odg_align.c
+
+$(OUT)/test-odg-align: $(ODG_ALIGN_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		$(ODG_SRC) src/diag/odg_align.c tests/diag/test_odg_align.c -lz -o $@
+
+$(OUT)/test-odg-align-asan: $(ODG_ALIGN_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_align.c \
+		tests/diag/test_odg_align.c -lz -o $@
+
+diagram-align-test: $(OUT)/test-odg-align
+	$(OUT)/test-odg-align
+
+diagram-align-check: $(OUT)/test-odg-align-asan
+	$(OUT)/test-odg-align-asan
+
+test: diagram-align-test
+check: diagram-align-check
+
+.PHONY: diagram-align-test diagram-align-check
+
 # Step D5: the mind-map mode (src/diag/odg_mind.c).
 ODG_MIND_DEPS = $(ODG_DEPS) src/diag/odg_mind.c include/opendiag_mind.h tests/diag/test_odg_mind.c
 
@@ -139,22 +248,64 @@ $(OUT)/test-odg-mind-asan: $(ODG_MIND_DEPS) $(OWF_SRC)
 		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_mind.c \
 		tests/diag/test_odg_mind.c -lz -o $@
 
-diagram-core-test: $(OUT)/test-odg $(OUT)/test-odg-rexx $(OUT)/test-odg-style $(OUT)/test-odg-mind
+# The clipboard: Copy, Cut, Paste and Duplicate (src/diag/odg_clip.c).
+ODG_CLIP_DEPS = $(ODG_DEPS) src/diag/odg_clip.c include/opendiag_clip.h tests/diag/test_odg_clip.c
+
+$(OUT)/test-odg-clip: $(ODG_CLIP_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		$(ODG_SRC) src/diag/odg_clip.c tests/diag/test_odg_clip.c -lz -o $@
+
+$(OUT)/test-odg-clip-asan: $(ODG_CLIP_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_clip.c \
+		tests/diag/test_odg_clip.c -lz -o $@
+
+diagram-core-test: $(OUT)/test-odg $(OUT)/test-odg-rexx $(OUT)/test-odg-style $(OUT)/test-odg-mind $(OUT)/test-odg-clip
 	$(OUT)/test-odg
 	$(OUT)/test-odg-rexx
 	$(OUT)/test-odg-style
 	$(OUT)/test-odg-mind
+	$(OUT)/test-odg-clip
 
-diagram-core-check: $(OUT)/test-odg-asan $(OUT)/test-odg-rexx-asan $(OUT)/test-odg-style-asan $(OUT)/test-odg-mind-asan
+diagram-core-check: $(OUT)/test-odg-asan $(OUT)/test-odg-rexx-asan $(OUT)/test-odg-style-asan $(OUT)/test-odg-mind-asan \
+	$(OUT)/test-odg-clip-asan
 	$(OUT)/test-odg-asan
 	$(OUT)/test-odg-rexx-asan
 	$(OUT)/test-odg-style-asan
 	$(OUT)/test-odg-mind-asan
+	$(OUT)/test-odg-clip-asan
 
 test: diagram-core-test
 check: diagram-core-check
 
 .PHONY: diagram-core-test diagram-core-check
+
+# The Arrange menu's drawing order and Group and Ungroup (src/diag/odg_order.c).
+ODG_ORDER_DEPS = $(ODG_DEPS) src/diag/odg_order.c include/opendiag_order.h tests/diag/test_odg_order.c
+
+$(OUT)/test-odg-order: $(ODG_ORDER_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		$(ODG_SRC) src/diag/odg_order.c tests/diag/test_odg_order.c -lz -o $@
+
+$(OUT)/test-odg-order-asan: $(ODG_ORDER_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_order.c \
+		tests/diag/test_odg_order.c -lz -o $@
+
+diagram-order-test: $(OUT)/test-odg-order
+	$(OUT)/test-odg-order
+
+diagram-order-check: $(OUT)/test-odg-order-asan
+	$(OUT)/test-odg-order-asan
+
+test: diagram-order-test
+check: diagram-order-check
+
+.PHONY: diagram-order-test diagram-order-check
 
 # Step D4: the canvas (src/diag/odg_view.c), drawn through GFOpenLayout's drawing calls, so it is tested when
 # GFOpenLayout is there (OPENLAYOUT_SRC) with the lines, polygons and ellipses it draws with.
@@ -202,3 +353,51 @@ check: diagram-view-check
 
 .PHONY: diagram-view-test diagram-view-check
 endif
+
+# owfdiag.library (docs/suite/owf-libraries.md): OWFLibsTest's diagram checks (tests/library/owf_libs_diag.c) on
+# the PC with what the library holds linked in (scripts/owfdiag-sources.sh's files) and owf_kind.c built as the
+# library's (OWF_KIND_DIAGRAMS: owf_struct_size answers the diagram structures' sizes from src/diag/odg_sizes.c).
+OWFDIAG_HOST_SRC = $(DIAG_SRC) $(filter-out src/diag/odg_view.c src/diag/odg_edit.c,$(wildcard src/diag/*.c)) \
+	src/deck/ow_picture.c
+OWFDIAG_HOST_DEPS = $(OWFDIAG_HOST_SRC) $(OWF_SRC) $(wildcard include/opendiag_*.h) libowf/include/owf_diagram.h \
+	tests/library/owf_libs_diag.c tests/library/owf_libs_host.h
+OWFDIAG_HOST_FLAGS = -DOWF_HAVE_ZLIB -DOWF_LIBS_HOST -DOWF_KIND_DIAGRAMS -DOWF_KIND_NO_DOCUMENTS \
+	-DOWF_KIND_NO_WORKBOOKS -Iinclude -Isrc/deck -Ilibowf/include -Ilibowf/src -Itests/library
+
+$(OUT)/test-owf-libs-diag: $(OWFDIAG_HOST_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) $(OWFDIAG_HOST_FLAGS) $(OWF_SRC) $(OWFDIAG_HOST_SRC) tests/library/owf_libs_diag.c -lz -o $@
+
+$(OUT)/test-owf-libs-diag-asan: $(OWFDIAG_HOST_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		$(OWFDIAG_HOST_FLAGS) $(OWF_SRC) $(OWFDIAG_HOST_SRC) tests/library/owf_libs_diag.c -lz -o $@
+
+diagram-library-test: $(OUT)/test-owf-libs-diag
+	$(OUT)/test-owf-libs-diag $(OUT)/
+
+diagram-library-check: $(OUT)/test-owf-libs-diag-asan
+	$(OUT)/test-owf-libs-diag-asan $(OUT)/
+
+test: diagram-library-test
+check: diagram-library-check
+
+.PHONY: diagram-library-test diagram-library-check
+
+# GFOpenDiag on owfdiag.library (build.d/diag.sh, OWF=library): every call its own files make is the library's.
+diagram-app-calls-check:
+	OPENLAYOUT_SRC=$(OPENLAYOUT_SRC) tests/diag/check_app_calls.sh $(CC)
+
+test: diagram-app-calls-check
+check: diagram-app-calls-check
+
+.PHONY: diagram-app-calls-check
+
+# A file on owfdiag.library may include the diagram headers in any order (include/opendiag_proto.h).
+diagram-proto-check:
+	tests/diag/check_proto_order.sh $(CC)
+
+test: diagram-proto-check
+check: diagram-proto-check
+
+.PHONY: diagram-proto-check

@@ -341,18 +341,21 @@ static int find_line(const oc_line *l, int n, int p)
 static int dropdown_box(const oc_core *core, const oc_line *rl, int nr, const oc_line *cl, int nc, int *x, int *y, int *w,
                         int *h);
 
+static int scenario_tab_hit(const oc_core *core, oc_line *rl, int nr, oc_line *cl, int nc, int ysplit, int xsplit,
+                            int rowhdr, int x, int y, oc_hit *hit);
+
 int oc_view_hit(const oc_core *core, int x, int y, oc_hit *hit)
 {
     oc_line *rl = malloc(MAX_LINES * sizeof *rl), *cl = malloc(MAX_LINES * sizeof *cl);
-    int nr, nc, split, ri, ci, rowhdr = row_header(core);
+    int nr, nc, ysplit, xsplit, ri, ci, rowhdr = row_header(core);
     memset(hit, 0, sizeof *hit);
     if (!rl || !cl) {
         free(rl);
         free(cl);
         return OC_HIT_NONE;
     }
-    nr = lines(core, 0, rl, MAX_LINES, &split);
-    nc = lines(core, 1, cl, MAX_LINES, &split);
+    nr = lines(core, 0, rl, MAX_LINES, &ysplit);
+    nc = lines(core, 1, cl, MAX_LINES, &xsplit);
     if (x < 0 || y < 0 || x >= core->width || y >= core->height) {
         hit->kind = OC_HIT_NONE;
     } else if (x < rowhdr && y < core->colhdr) {
@@ -393,6 +396,8 @@ int oc_view_hit(const oc_core *core, int x, int y, oc_hit *hit)
                 hit->h = rl[ri - 1].size;
             }
         }
+    } else if (scenario_tab_hit(core, rl, nr, cl, nc, ysplit, xsplit, rowhdr, x, y, hit)) {
+        /* the shown scenario's tab: its list */
     } else if (dropdown_box(core, rl, nr, cl, nc, &hit->x, &hit->y, &hit->w, &hit->h) && x >= hit->x &&
                x < hit->x + hit->w && y >= hit->y && y < hit->y + hit->h) {
         const oc_sheetstate *st = oc_state_const(core);
@@ -1481,6 +1486,37 @@ static int comment_marks(drawing *d)
     return 1;
 }
 
+/* Tracked changes: a frame around each cell whose content was changed (not yet accepted or rejected), as
+ * LibreOffice shows them; a change inside rows or columns since deleted has no cell to show. */
+static int change_frames(drawing *d)
+{
+    const owf_book *b = d->core->book;
+    int k;
+    for (k = 0; k < b->nchanges; k++) {
+        const owf_change *c = &b->changes[k];
+        int x, y, w, h, i, j, qx, qy, qw, qh;
+        oc_draw_item *it;
+        if (c->kind != OWF_CHANGE_CELL || c->sheet < 0 || c->sheet >= b->nsheets || &b->sheets[c->sheet] != d->sheet ||
+            !cell_box(d, c->row, c->col, &x, &y, &w, &h))
+            continue;
+        i = line_of(d->rl, d->nr, c->row);
+        j = line_of(d->cl, d->nc, c->col);
+        if (i < 0 || j < 0)
+            continue;
+        quadrant(d, d->rl[i].pane, d->cl[j].pane, &qx, &qy, &qw, &qh);
+        if (!(it = add_box(d->list, OC_DRAW_FRAME, OC_ROLE_CHANGE, x - 1, y - 1, w + 1, h + 1)))
+            return 0;
+        it->line = 1;
+        it->row = c->row;
+        it->col = c->col;
+        it->clip_x = qx;
+        it->clip_y = qy;
+        it->clip_w = qw;
+        it->clip_h = qh;
+    }
+    return 1;
+}
+
 /* Whether the AutoFilter filters by the column at offset k of its range (a filterColumn colId="k"). */
 static int filters_by(const owf_sheet *s, unsigned k)
 {
@@ -1528,6 +1564,178 @@ static int filter_buttons(drawing *d)
         it->col = col;
     }
     return 1;
+}
+
+/* ---- The shown scenario ----
+ * A 1-pixel frame round each of its ranges in each pane they reach (a side that goes on past the pane is
+ * not drawn), and its name in a tab on the first range's top left corner, as LibreOffice shows one: above
+ * the range when the pane has room, else inside it; the book's font at 8 points, white on the frame's
+ * colour, then a button (OC_DRAW_DROPDOWN) for the list of the sheet's scenarios; a click on the tab is
+ * OC_HIT_SCENARIO. */
+#define SCENARIO_TAB_TWIPS 160
+
+typedef struct {
+    int x, y, w, h;         /* the whole tab */
+    int cx, cy, cw, ch;     /* it, cut to its pane */
+    int tx, tw;             /* its text's part: from tx, tw wide (before the button) */
+    int bx, by, bs;         /* the button for the list of scenarios: a square bs wide */
+    int pr, pc;
+} scen_tab;
+
+/* Where the tab of sc's name goes: on its first range's top left corner, in the pane that corner shows in.
+ * 0 when it doesn't show. */
+static int scenario_tab_place(const drawing *d, const owf_scenario *sc, scen_tab *t)
+{
+    const oc_core *core = d->core;
+    owf_cellstyle font;
+    int pad = 3 * core->zoom / 100 + 1, pr, pc;
+    if (!sc->nranges)
+        return 0;
+    owf_cellstyle_init(&font);
+    font.font.font = -1;
+    font.font.size = SCENARIO_TAB_TWIPS;
+    for (pr = 0; pr < 2; pr++)
+        for (pc = 0; pc < 2; pc++) {
+            int x, y, w, h, open, qx, qy, qw, qh;
+            if (!range_box(d, &sc->range[0], pr, pc, &x, &y, &w, &h, &open) || (open & 5))
+                continue;
+            quadrant(d, pr, pc, &qx, &qy, &qw, &qh);
+            t->pr = pr;
+            t->pc = pc;
+            t->h = oc_line_px(core, SCENARIO_TAB_TWIPS) + 2;
+            t->bs = t->h - 2;
+            t->tw = oc_measure(core, sc->name, strlen(sc->name), &font) + 2 * pad;
+            t->w = t->tw + t->bs + 1;
+            t->x = x - 1;
+            t->y = y - 1 - t->h >= qy ? y - 1 - t->h : y;
+            t->tx = t->x + pad;
+            t->bx = t->x + t->tw;
+            t->by = t->y + 1;
+            t->cx = t->x > qx ? t->x : qx;
+            t->cy = t->y > qy ? t->y : qy;
+            t->cw = (t->x + t->w < qx + qw ? t->x + t->w : qx + qw) - t->cx;
+            t->ch = (t->y + t->h < qy + qh ? t->y + t->h : qy + qh) - t->cy;
+            return t->cw > 0 && t->ch > 0;
+        }
+    return 0;
+}
+
+static int scenario_tab(drawing *d, const owf_scenario *sc)
+{
+    scen_tab t;
+    oc_draw_item *it;
+    unsigned row = sc->range[0].first_row, col = sc->range[0].first_col;
+    int tcw;
+    if (!scenario_tab_place(d, sc, &t))
+        return 1;
+    if (!(it = add_box(d->list, OC_DRAW_FILL, OC_ROLE_SCENARIO, t.cx, t.cy, t.cw, t.ch)))
+        return 0;
+    it->row = row;
+    it->col = col;
+    tcw = (t.x + t.tw < t.cx + t.cw ? t.x + t.tw : t.cx + t.cw) - t.cx;
+    if (tcw > 0) {
+        if (!(it = add(d->list, OC_DRAW_TEXT, OC_ROLE_TEXT)))
+            return 0;
+        it->x = t.x;
+        it->y = t.y;
+        it->w = t.tw;
+        it->h = t.h;
+        it->clip_x = t.cx;
+        it->clip_y = t.cy;
+        it->clip_w = tcw;
+        it->clip_h = t.ch;
+        it->text_x = t.tx;
+        it->align = OC_ALIGN_LEFT;
+        it->valign = OWF_VALIGN_CENTRE;
+        it->flags = 0;
+        it->font = -1;
+        it->size = SCENARIO_TAB_TWIPS;
+        it->rgb = 0xFFFFFFUL;
+        it->row = row;
+        it->col = col;
+        if (!add_text(d->list, it, sc->name, strlen(sc->name)))
+            return 0;
+    }
+    /* the list's button, when all of it shows */
+    if (t.bx >= t.cx && t.by >= t.cy && t.bx + t.bs <= t.cx + t.cw && t.by + t.bs <= t.cy + t.ch) {
+        if (!(it = add_box(d->list, OC_DRAW_DROPDOWN, OC_ROLE_SCENARIO, t.bx, t.by, t.bs, t.bs)))
+            return 0;
+        it->row = row;
+        it->col = col;
+    }
+    return 1;
+}
+
+static int scenario_frame(drawing *d)
+{
+    owf_scenario sc;
+    int index = oc_core_scenario_active(d->core), ok = 1, pr, pc;
+    unsigned k;
+    if (index < 0 || !oc_core_scenario_get(d->core, index, &sc))
+        return 1;
+    for (k = 0; k < sc.nranges && ok; k++)
+        for (pr = 0; pr < 2 && ok; pr++)
+            for (pc = 0; pc < 2 && ok; pc++) {
+                const owf_range *r = &sc.range[k];
+                int x, y, w, h, open, qx, qy, qw, qh;
+                oc_draw_item *it;
+                if (!range_box(d, r, pr, pc, &x, &y, &w, &h, &open))
+                    continue;
+                quadrant(d, pr, pc, &qx, &qy, &qw, &qh);
+                if (open & 1) { y -= 4; h += 4; }
+                if (open & 2) h += 4;
+                if (open & 4) { x -= 4; w += 4; }
+                if (open & 8) w += 4;
+                if (!(it = add_box(d->list, OC_DRAW_FRAME, OC_ROLE_SCENARIO, x - 1, y - 1, w + 1, h + 1))) {
+                    ok = 0;
+                    break;
+                }
+                it->line = 1;
+                it->row = r->first_row;
+                it->col = r->first_col;
+                it->clip_x = qx;
+                it->clip_y = qy;
+                it->clip_w = qw;
+                it->clip_h = qh;
+            }
+    if (ok)
+        ok = scenario_tab(d, &sc);
+    owf_scenario_free(&sc);
+    return ok;
+}
+
+/* The shown scenario's tab under a point (OC_HIT_SCENARIO): 1 with its box (cut to its pane). */
+static int scenario_tab_hit(const oc_core *core, oc_line *rl, int nr, oc_line *cl, int nc, int ysplit, int xsplit,
+                            int rowhdr, int x, int y, oc_hit *hit)
+{
+    drawing d;
+    owf_scenario sc;
+    scen_tab t;
+    int index = oc_core_scenario_active(core), in = 0;
+    if (index < 0 || !oc_core_scenario_get(core, index, &sc))
+        return 0;
+    memset(&d, 0, sizeof d);
+    d.core = (oc_core *)core;
+    d.sheet = oc_sheet(core);
+    d.rl = rl;
+    d.nr = nr;
+    d.cl = cl;
+    d.nc = nc;
+    d.ysplit = ysplit;
+    d.xsplit = xsplit;
+    d.rowhdr = rowhdr;
+    if (scenario_tab_place(&d, &sc, &t) && x >= t.cx && x < t.cx + t.cw && y >= t.cy && y < t.cy + t.ch) {
+        in = 1;
+        hit->kind = OC_HIT_SCENARIO;
+        hit->row = sc.range[0].first_row;
+        hit->col = sc.range[0].first_col;
+        hit->x = t.cx;
+        hit->y = t.cy;
+        hit->w = t.cw;
+        hit->h = t.ch;
+    }
+    owf_scenario_free(&sc);
+    return in;
 }
 
 /* The active cell's comment, beside it, as Excel shows one when the pointer is over its cell: a pale yellow
@@ -2238,12 +2446,17 @@ static int build(drawing *d)
         oc_draw_list_free(&texts);
     }
 
-    /* comments' marks: a small red triangle in each commented cell's top right corner (a merged range's) */
-    if (!comment_marks(d) || !filter_buttons(d))
+    /* comments' marks: a small red triangle in each commented cell's top right corner (a merged range's);
+     * tracked changes' frames */
+    if (!comment_marks(d) || !change_frames(d) || !filter_buttons(d))
         return 0;
 
     /* charts, over the cells */
     if (!charts(d))
+        return 0;
+
+    /* the shown scenario's frame and name, over the cells and charts */
+    if (!scenario_frame(d))
         return 0;
 
     /* 6. the row numbers and column letters */

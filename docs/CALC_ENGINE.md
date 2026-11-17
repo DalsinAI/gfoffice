@@ -57,17 +57,35 @@ side first, pruned by the best answer so far, up to 5000 programmes. The
 tableau is at most 512K numbers (4 MB). Values within 1e-9 of a whole number
 are written as that number.
 
+The Nonlinear engine (the model's engine `OC_SOLVER_NONLINEAR`, Excel's GRG
+Nonlinear) takes smooth models that are not linear. It is Nelder and Mead's
+simplex search, started from the variables' present values (first steps a
+tenth of each value, or 0.5 for zero), with the constraints and a value goal
+as a squared penalty whose weight starts at 10 and grows a hundredfold for up
+to 12 rounds, each round searching again from the last answer. It stops when
+the points come together, or at the trial limit (4000 points worked out by
+default; the result then says it stopped there). The answer is a local one:
+other starting values may find a better one. It takes no whole or binary
+variables (use Simplex LP for those). Answers are checked on the sheet:
+constraints broken by more than a millionth of the target give "no values
+meet every constraint"; a target past 1e30 gives "no limit".
+
 The window keeps the model on the sheet whether or not the answer is kept,
 as hidden names named as Excel names its Solver models (`solver_opt`,
 `solver_typ`, `solver_val`, `solver_adj`, `solver_num`, `solver_lhsN`,
-`solver_relN`, `solver_rhsN`, `solver_neg`, with `solver_eng` 2 for a linear
-model), so a model made in Excel opens in GFOpenCalc and the other way round.
+`solver_relN`, `solver_rhsN`, `solver_neg`, and `solver_eng`: 2 Simplex LP,
+1 GRG Nonlinear; Excel's 3, Evolutionary, opens as Nonlinear), so a model made in Excel opens in GFOpenCalc and the other way round.
 ODS keeps them as named expressions (ODF has no hidden names, which the save
 notes). Keeping the answer is one Undo step.
 
+The window's Method cycle picks Simplex LP or Nonlinear; a Nonlinear answer
+is offered as the best near the starting values.
+
 ARexx: `SOLVE [MAX|MIN cell | VALUE cell n] [BY cells] [lhs<=rhs ...]
-[INT cells] [BIN cells] [ANY] [KEEP]` gives "target cell=value ..."; with no
-model words it solves the sheet's own model. RC 5 when the model has no
+[INT cells] [BIN cells] [ANY] [SIMPLEX|NONLINEAR] [KEEP]` gives "target
+cell=value ..."; with no model words it solves the sheet's own model
+(SIMPLEX or NONLINEAR alone changes only its engine; a new model is Simplex
+LP unless NONLINEAR is given). RC 5 when the model has no
 answer (no values meet it, no limit, or not linear), 10 when it does not
 make sense; LASTERROR says why. Test script: tests/arexx/calc-solver.rexx.
 
@@ -233,6 +251,44 @@ showValue="0". `oc_condfmt_spec` takes `OC_CF_DATA_BAR` and `OC_CF_ICON_SET`
 (`opencalc_core.h` 0.34.0) and writes the cfRule; ARexx `CONDFMT range rule`
 takes the window's words ("bar blue only", "icons 3Arrows reverse") and
 `CONDFMT range CLEAR`.
+## Links to other workbooks
+
+A formula on another book (`'[Rates.xlsx]Q1'!A1`) works from the values
+that book last had, which the book keeps (`owf_book.extbooks`, from XLSX's
+externalLink parts and ODS's value tables), so a book whose links' files
+are not there still shows its values. The core's Edit Links
+(`oc_links.c`) lists the links (`oc_core_link_count`, `oc_core_link`: the
+name formulas give, the target as the file wrote it, the sheets kept),
+turns a target into a file (`oc_link_path`: `file:///C:/x.xlsx`,
+`file:///home/x.ods`, a name beside the book, "%20" decoded; not `http:`)
+and updates a link from its file (`oc_core_update_link`): each sheet kept
+takes the values the file's sheet has now, as an Undo step, and the
+formulas are worked out again. A file that cannot be read changes
+nothing; a sheet the file no longer has keeps its last values.
+
+GFOpenCalc shows them in Data > Edit Links... (each link's name, target
+and sheets kept; Update All or Update One...), a target beside the book
+being looked for in the book's own folder. ARexx `LINKS` gives
+`name=target` for each, by commas, and `UPDATELINK n` or
+`UPDATELINK ALL` updates them (RC 10 when a file cannot be read, 5 for a
+link that is not there); tests/arexx/calc-links.rexx runs them.
+
+## Tracked changes: the window and ARexx
+
+Edit > Track Changes > Record Changes turns recording on and off (its tick
+follows the book). Turning it off with changes not yet accepted or rejected
+asks first: they are dropped and the sheet stays as it is. Manage Changes...
+lists each change as `oc_core_change_line` gives it ("Cell Sheet1.A1 changed
+from 5 to 7 (Dale, 2026-11-16 07:00)"); picking one shows its place
+(`oc_core_change_go`: its sheet active, its cell selected), and Accept,
+Reject, Accept All and Reject All are each one Undo step. Changes are made
+under ENV USER (or USERNAME) until Changes Author... names someone.
+
+ARexx: `TRACKCHANGES [ON|OFF [FORCE]]` ("1" or "0"; OFF with changes is
+RC 5 unless FORCE), `CHANGES` (how many), `CHANGE n` (its line),
+`SHOWCHANGE n`, `ACCEPTCHANGE n|ALL` and `REJECTCHANGE n|ALL` (how many are
+left), `CHANGEAUTHOR [name]`. Test script: tests/arexx/calc-track.rexx.
+
 ## Sheet and cell protection
 
 owf.library 2.6 gives `owf_sheet` its protection (`protect`, the
@@ -254,6 +310,21 @@ unprotecting are not Undo steps; a wrong password is
 `OC_WRONG_PASSWORD`. ARexx: `PROTECT [PASSWORD p] [ALLOW FORMATCELLS ...]`,
 `UNPROTECT [p]`, `CELLPROTECT range LOCKED|UNLOCKED [HIDDEN]`, `ISPROTECTED`
 (on, the allow bits, whether it has a password).
+
+The workbook's structure (`oc_core_protect_book`): while it is protected
+no sheet is added, duplicated, deleted, renamed, moved, hidden or shown,
+and no pivot table is made on a new sheet; protecting clears Undo. Sheet >
+Protect Workbook and Unprotect Workbook; ARexx `PROTECTBOOK [p]`,
+`UNPROTECTBOOK [p]`, `ISBOOKPROTECTED` (on, whether it has a password).
+XLSX `workbookProtection lockStructure`, ODS `table:structure-protected`.
+
+A pivot table's choices (`oc_core_pivot_command`, `oc_pivotset.c`): ARexx
+`PIVOTSET SORT field ASCENDING|DESCENDING|SOURCE`, `HIDE field items`,
+`SHOW field items|ALL`, `GROUP field YEARS|QUARTERS|MONTHS|NONE|start end
+step`, `NAME field group items`, `UNNAME field items`, `SHOWAS data
+NORMAL|ROW|COLUMN|TOTAL|INDEX`, each one Undo step. The layout window
+offers the same for the selected field: Sort items, Show data as, Group and
+Hidden items (`oc_core_pivot_field_choices`).
 
 GFOpenCalc 0.1.77 (`opencalc_core.h` 0.35.1), from the Workbench build plan
 test of 13 Nov:
@@ -381,10 +452,10 @@ has both (an older GFOpenCalc's names and a newer table) takes the table.
   cells is found like a loop of two.
 - **Files.** `owf_calc_new` parses a book and calculates nothing: the
   cells show the results the file saved. A formula the engine cannot work
-  out (a function it does not have, a reference to another book) keeps the
-  file's value (`OWF_CALC_KEPT`), and what reads it uses that value, until
-  the user types the cell again; then it is `#NAME?` (another book's
-  reference: `#REF!`).
+  out (a function it does not have, a reference to another book it has no
+  values for) keeps the file's value (`OWF_CALC_KEPT`), and what reads it
+  uses that value, until the user types the cell again; then it is
+  `#NAME?` (another book's reference: `#REF!`).
 
 ## Formulas
 
@@ -394,8 +465,23 @@ has both (an older GFOpenCalc's names and a newer table) takes the table.
 - Cells and ranges, relative or absolute: `A1`, `$A$1`, `A$1`, `A1:B2`,
   whole columns `A:C`, whole rows `2:5`, up to `XFD1048576`.
 - Other sheets: `Sheet2!A1`, `'Q1 sales'!A1:B2`, 3-D `Sheet1:Sheet3!A1`
-  (and `'Sheet1:My sheet'!A1`); another book's (`[Book.xls]Sheet1!A1`)
-  is not read (`#REF!`, or the file's value).
+  (and `'Sheet1:My sheet'!A1`); another book's (`[Book.xls]Sheet1!A1`,
+  `SUM([Book.xls]Sheet1!A:A)`) gives the values that book last had, as
+  the file kept them (`OP_XREF`: a cell, or an array cut at the last row
+  and column the values reach, one row or column at least; an area too
+  big to hold as values is `#NUM!`), so a formula on a book that is not there
+  still shows its value, not an error. A book or sheet the file kept no
+  values for, and another book's defined name, are `#REF!` (or, loaded,
+  the file's value). The book keeps each other
+  book a formula links (`owf_book.extbooks`: its name as the formulas give
+  it, its target as the file wrote it, its sheets and the values their
+  cells last had): XLSX reads and writes them from an externalLink part's
+  `sheetNames` and `sheetDataSet` and its full `Target` ("%20" and the
+  like decoded in the name only); ODS as LibreOffice does, a table of
+  each sheet's values named `'URL'#Sheet` holding a `table:table-source`
+  in mode `copy-results-only` (not a sheet of the book), and formulas that
+  name the book by its URL (`['file:///…/Rates.ods'#$Sheet1.A1]`). A
+  sheet linked with its formulas (`copy-all`) stays a sheet, noted.
 - Defined names, the book's and a sheet's own (`Sheet2!Total`).
 - Operators, tightest first: `:` (range), space (intersection), `,`
   (union, inside brackets), unary `-` and `+`, `%`, `^`, `*` `/`, `+` `-`,

@@ -1,5 +1,5 @@
 /*
- * libowf: Microsoft Publisher files (.pub), GFOpenPublisher's phase 0 reader.
+ * libowf: Microsoft Publisher files (.pub), GFOpenPressmaster's phase 0 reader.
  *
  * .pub has no published specification. What this file knows was worked out
  * from sample files' bytes alone (a clean room): docs/gfoffice/PUB-FORMAT.md
@@ -233,6 +233,8 @@ typedef struct {
     int nblips;
     int *font_map;               /* the text storage's font n as res->fonts index; -1 */
     int nfont_map;
+    unsigned long *text_colours; /* PL's colours as character colours (see text_colour); AUTO: none */
+    int ntext_colours;
     trun *cruns;                 /* the character runs (FDPC), in the text's order */
     int ncruns, capcruns;
     trun *pruns;                 /* the paragraph runs (FDPP) */
@@ -322,6 +324,7 @@ static owf_pub_page *add_page(reader *r, int master)
     p = &(*arr)[(*n)++];
     memset(p, 0, sizeof *p);
     p->master = -1;
+    p->pair = -1;
     return p;
 }
 
@@ -416,6 +419,13 @@ typedef struct {
     span fdpp[QUILL_MAX_FDPC];   /* the paragraph runs' */
     int nfdpp;
     span stsh1;                  /* the style sheet's styles (STSH number 1) */
+    span pl;                     /* the text's colours (PL number 0, PUB-FORMAT.md 6.9) */
+    span tokn[QUILL_MAX_FDPC];   /* the hyperlinks: TOKN n is story n's (PUB-FORMAT.md 6.7) */
+    unsigned tokn_story[QUILL_MAX_FDPC];
+    int ntokn;
+    span tcd[QUILL_MAX_FDPC];    /* a table's cells: TCD n is story n's (PUB-FORMAT.md 6.8) */
+    unsigned tcd_story[QUILL_MAX_FDPC];
+    int ntcd;
 } quill;
 
 static int read_quill_dir(span q, quill *out, owf_report *report)
@@ -445,6 +455,16 @@ static int read_quill_dir(span q, quill *out, owf_report *report)
                 out->fdpp[out->nfdpp++] = c;
             else if (!memcmp(q.p + e + 2, "STSH", 4) && rd16(q, e + 6) == 1)
                 out->stsh1 = c;
+            else if (!memcmp(q.p + e + 2, "TCD ", 4) && out->ntcd < QUILL_MAX_FDPC) {
+                out->tcd_story[out->ntcd] = rd16(q, e + 6);
+                out->tcd[out->ntcd++] = c;
+            }
+            else if (!memcmp(q.p + e + 2, "TOKN", 4) && out->ntokn < QUILL_MAX_FDPC) {
+                out->tokn_story[out->ntokn] = rd16(q, e + 6);
+                out->tokn[out->ntokn++] = c;
+            }
+            else if (!memcmp(q.p + e + 2, "PL  ", 4) && !rd16(q, e + 6))
+                out->pl = c;
             else if (!memcmp(q.p + e + 2, "STRS", 4))
                 out->strs = c;
             else if (!memcmp(q.p + e + 2, "SYID", 4))
@@ -527,6 +547,23 @@ static void char_props(const reader *r, span props, owf_charfmt *fmt)
             if (f.type == 0x20 && f.value > 0 && f.value < 635UL * 20000)
                 fmt->size = emu_twips((long)f.value);
             break;
+        case 0x21E:                              /* underline: its low byte, 1 single; 0 none */
+            if (f.type == 0x10 || f.type == 0x18 || f.type == 0x20) {
+                if (f.value & 0xFF) fmt->flags |= OWF_UNDERLINE; else fmt->flags &= ~(unsigned)OWF_UNDERLINE;
+            }
+            break;
+        case 0x244:                              /* the colour: a block whose 0x200 is a place in PL */
+            if (f.type == 0x88) {
+                field g;
+                size_t in = 0;
+                while (next_qfield(f.body, &in, &g) > 0)
+                    if (g.id == 0x200 && g.type == 0x20) {
+                        if (g.value < (unsigned long)r->ntext_colours && r->text_colours[g.value] != OWF_COLOUR_AUTO)
+                            fmt->colour = r->text_colours[g.value];
+                        break;
+                    }
+            }
+            break;
         case 0x224:                              /* the typeface: FONT's numbers */
             if (f.type == 0x88 || f.type == 0x90 || f.type == 0x98 || f.type == 0xA0)
                 fmt->font = text_font(r, f.body);
@@ -535,6 +572,21 @@ static void char_props(const reader *r, span props, owf_charfmt *fmt)
             break;
         }
     }
+}
+
+/* A run's field (PUB-FORMAT.md 6.4): 0x200's low byte, 0 for none. 5 is a
+ * page number, whose character ("#", as Publisher shows the field on a
+ * master) stands for the field. */
+#define PUB_FIELD_PAGE 5
+
+static int run_field(span props)
+{
+    size_t at = 0;
+    field f;
+    while (next_qfield(props, &at, &f) > 0)
+        if (f.id == 0x200 && (f.type == 0x10 || f.type == 0x18 || f.type == 0x20))
+            return (int)(f.value & 0xFF);
+    return 0;
 }
 
 /* Paragraph properties (FDPP's, or a style's): the style (0x219) and the
@@ -683,14 +735,177 @@ static int same_fmt(const owf_charfmt *a, const owf_charfmt *b)
     return a->flags == b->flags && a->font == b->font && a->size == b->size && a->colour == b->colour;
 }
 
-/* Characters [from, to) of TEXT as a story's paragraphs, with their character runs. */
-static void make_story(reader *r, owf_story *story, span text, size_t from, size_t to)
+/* ---- Hyperlinks: TOKN (PUB-FORMAT.md, section 6.7) ----
+ * u32 n, u32 12, u32, then n + 1 u32 places in the story (the last its
+ * length); then n blocks of each link's properties, each holding only what
+ * changed from the link before (0x201 the link text's length, 0x202 its
+ * kind: 1 a web address, 3 a place in the publication, 4 an e-mail); then
+ * n blocks, each 0x200 the link's target in the table; then the table: u32
+ * the size of what follows its 12-byte head, u32 count, 12 bytes, count u32
+ * offsets from the offsets' start, and at each a u16 length and UTF-16. */
+
+typedef struct {
+    unsigned long from, to;      /* characters in the story */
+    char *href;                  /* UTF-8 */
+} tlink;
+
+#define MAX_LINKS 4096
+
+static char *link_target(span table, unsigned long count, unsigned long k)
 {
+    unsigned long off, len;
+    size_t at, end;
+    owf_buf b;
+    char *out;
+    if (k >= count || !has(table, 20 + 4 * k, 4))
+        return NULL;
+    off = rd32(table, 20 + 4 * k);
+    len = rd16(table, 20 + off);
+    if (!len || off > table.n || !has(table, 20 + off + 2, 2 * (size_t)len))
+        return NULL;
+    owf_buf_init(&b);
+    at = 20 + off + 2;
+    end = at + 2 * (size_t)len;
+    while (at < end)
+        put_utf16_char(&b, table, &at);
+    owf_buf_putc(&b, 0);
+    out = b.failed ? NULL : dup_text((const char *)b.data, b.length - 1);
+    owf_buf_free(&b);
+    return out;
+}
+
+/* A story's links, in order; 0 when there are none or they don't read. */
+static int read_links(reader *r, span t, unsigned long length, tlink **out)
+{
+    unsigned long n = rd32(t, 0), k, len = 0, kind = 0, count;
+    size_t at;
+    long *target;
+    tlink *links;
+    span table;
+    int made = 0;
+    *out = NULL;
+    if (!n || n > MAX_LINKS || !has(t, 12, 4 * (n + 1)))
+        return 0;
+    if (!(target = owf_malloc(n * sizeof *target)) || !(links = owf_calloc(n, sizeof *links))) {
+        owf_free(target);
+        r->failed = 1;
+        return 0;
+    }
+    at = 12 + 4 * (n + 1);
+    for (k = 0; k < 2 * n; k++) {            /* n property blocks, then n target blocks */
+        unsigned long bl = rd32(t, at);
+        span body;
+        size_t in = 0;
+        field f;
+        if (!has(t, at, 4) || bl < 4 || !has(t, at, bl))
+            goto done;
+        body = sub(t, at + 4, bl - 4);
+        if (k >= n)
+            target[k - n] = -1;
+        while (next_qfield(body, &in, &f) > 0) {
+            if (k < n && f.id == 0x201)
+                len = f.value;
+            else if (k < n && f.id == 0x202)
+                kind = f.value;
+            else if (k >= n && f.id == 0x200)
+                target[k - n] = (long)f.value;
+        }
+        if (k < n) {
+            links[k].from = rd32(t, 12 + 4 * k);
+            links[k].to = links[k].from + len;
+            if (links[k].to > rd32(t, 12 + 4 * (k + 1)) || links[k].to > length)
+                links[k].to = rd32(t, 12 + 4 * (k + 1)) < length ? rd32(t, 12 + 4 * (k + 1)) : length;
+            if (kind == 3)                   /* a place in the publication: kept as text for now */
+                links[k].to = links[k].from;
+        }
+        at += bl;
+    }
+    table = sub(t, at, t.n - at);
+    count = rd32(table, 4);
+    if (!has(table, 0, 20) || count > MAX_LINKS)
+        goto done;
+    for (k = 0; k < n && !r->failed; k++) {
+        if (k && links[k].from < links[k - 1].to)
+            break;                           /* places only go forward */
+        if (links[k].to <= links[k].from || target[k] < 0)
+            continue;
+        links[made] = links[k];
+        if (!(links[made].href = link_target(table, count, (unsigned long)target[k])))
+            continue;
+        made++;
+    }
+done:
+    owf_free(target);
+    if (!made) {
+        owf_free(links);
+        return 0;
+    }
+    *out = links;
+    return made;
+}
+
+static void free_links(tlink *links, int n)
+{
+    int i;
+    for (i = 0; i < n; i++)
+        owf_free(links[i].href);
+    owf_free(links);
+}
+
+/* The run's text, as a link when href is set. */
+static void put_run(owf_builder *b, owf_buf *run, const char *href)
+{
+    if (!run->length)
+        return;
+    if (href)
+        owf_builder_link_text(b, (const char *)run->data, run->length, href);
+    else
+        owf_builder_text(b, (const char *)run->data, run->length);
+    run->length = 0;
+}
+
+/* ---- Table cells: TCD (PUB-FORMAT.md, section 6.8) ----
+ * u32 n, u32 0, u32 0xFF00, then n + 1 u32: each cell's last character
+ * in the story (its last paragraph's mark; the last cell's is the story's
+ * length). A table's story gives each paragraph its cell; the frame, which
+ * knows the columns, makes the cell a row and a column (place_shapes).
+ * Until then a cell's paragraph has table_col PENDING_CELL and the cell's
+ * number in table_row. */
+
+#define PENDING_CELL (-2)
+
+static void mark_cells(owf_story *story, span tcd, const unsigned long *starts, int nstarts)
+{
+    unsigned long n = rd32(tcd, 0), k;
+    int i;
+    if (!n || n > 65536 || !has(tcd, 12, 4 * (n + 1)) || nstarts != story->nparas)
+        return;
+    for (i = 0; i < story->nparas; i++) {
+        unsigned long cell = 0;
+        for (k = 0; k <= n; k++)
+            if (rd32(tcd, 12 + 4 * k) < starts[i])
+                cell++;
+        story->paras[i].table_id = 0;
+        story->paras[i].table_row = (int)cell;
+        story->paras[i].table_col = PENDING_CELL;
+    }
+}
+
+/* Characters [from, to) of TEXT as a story's paragraphs, with their character runs and links;
+ * a table's when tcd is not empty. */
+static void make_story(reader *r, owf_story *story, span text, size_t from, size_t to,
+                       const tlink *links, int nlinks, span tcd)
+{
+    unsigned long *starts = NULL;            /* each paragraph's first character in the story */
+    int nstarts = 0, capstarts = 0;
     owf_builder b;
     owf_buf run;
     size_t at = from * 2, end = to * 2;
-    int open = 0, chint = -1, phint = -1, style = 0, made_style = -1;
+    int open = 0, chint = -1, phint = -1, style = 0, made_style = -1, lk = 0;
+    const char *href = NULL;
     const trun *made_run = NULL;             /* want below is made for this run and style */
+    const trun *field_run = NULL;            /* the page number run whose field is made */
+    int page_run = 0;                        /* made_run is a page number's */
     owf_charfmt want;
     owf_builder_init(&b, r->pub->res, story);
     owf_buf_init(&run);
@@ -701,6 +916,13 @@ static void make_story(reader *r, owf_story *story, span text, size_t from, size
         const trun *cr;
         if (!open) {                         /* a paragraph starts: its style and alignment */
             style = para_at(r, at / 2, &phint, &b.parafmt.align);
+            if (tcd.n && nstarts >= capstarts) {
+                unsigned long *more = grow(r, starts, &capstarts, nstarts, sizeof *starts);
+                if (more)
+                    starts = more;
+            }
+            if (tcd.n && nstarts < capstarts)
+                starts[nstarts++] = (unsigned long)(at / 2 - from);
         }
         cr = run_at(r->cruns, r->ncruns, at / 2, &chint);
         if (made_style < 0 || cr != made_run || style != made_style) {
@@ -710,27 +932,45 @@ static void make_story(reader *r, owf_story *story, span text, size_t from, size
                 owf_charfmt_init(&want);
             if (cr)
                 char_props(r, cr->props, &want);
+            page_run = cr && run_field(cr->props) == PUB_FIELD_PAGE;
             made_run = cr;
             made_style = style;
         }
-        if (!same_fmt(&want, &b.charfmt)) {
-            if (run.length) {
-                owf_builder_text(&b, (const char *)run.data, run.length);
-                run.length = 0;
+        {
+            const char *link = NULL;
+            unsigned long n = (unsigned long)(at / 2 - from);
+            while (lk < nlinks && links[lk].to <= n)
+                lk++;
+            if (lk < nlinks && links[lk].from <= n)
+                link = links[lk].href;
+            if (link != href) {
+                put_run(&b, &run, href);
+                href = link;
             }
+        }
+        if (!same_fmt(&want, &b.charfmt)) {
+            put_run(&b, &run, href);
             owf_builder_flush(&b);
             b.charfmt = want;
+        }
+        if (c >= 0x20 && page_run) {         /* a page number: one field for the run's characters */
+            if (cr != field_run) {
+                put_run(&b, &run, href);
+                owf_builder_special(&b, OWF_RUN_FIELD, OWF_FIELD_PAGE);
+                field_run = cr;
+            }
+            at += 2;
+            open = 1;
+            continue;
         }
         if (c >= 0x20) {
             put_utf16_char(&run, text, &at);
             open = 1;
             continue;
         }
-        if (run.length) {
-            owf_builder_text(&b, (const char *)run.data, run.length);
-            run.length = 0;
-        }
+        put_run(&b, &run, href);
         at += 2;
+        field_run = NULL;                    /* a page number run's "#" after this is a field again */
         if (c == 0x0D) {                     /* a paragraph's end */
             owf_builder_end_para(&b);
             open = 0;
@@ -744,8 +984,7 @@ static void make_story(reader *r, owf_story *story, span text, size_t from, size
         else
             owf_report_add(r->report, OWF_NOTE_APPROX, "Text control character U+%04X left out", c);
     }
-    if (run.length)
-        owf_builder_text(&b, (const char *)run.data, run.length);
+    put_run(&b, &run, href);
     if (run.failed)
         r->failed = 1;
     owf_buf_free(&run);
@@ -753,6 +992,54 @@ static void make_story(reader *r, owf_story *story, span text, size_t from, size
         owf_builder_end_para(&b);
     if (owf_builder_done(&b) != OWF_OK)
         r->failed = 1;
+    else if (tcd.n && starts)
+        mark_cells(story, tcd, starts, nstarts);
+    owf_free(starts);
+}
+
+/* PL: u32 n, u32, u32, then n blocks one after another; block k's field
+ * 0x201 is colour k, which a character run's 0x244 names (PUB-FORMAT.md
+ * 6.9): 0x00BBGGRR, or 0x08 in the top byte and a place in the colour
+ * scheme. The scheme is read after the text, so a scheme place is kept as
+ * SCHEME_COLOUR | place until text_colours_resolve. */
+#define SCHEME_COLOUR 0x08000000UL
+
+static unsigned long text_colour(unsigned long v)
+{
+    if ((v >> 24) == 0x08)
+        return (v & 0xFFFFFFUL) < 16 ? SCHEME_COLOUR | (v & 0xFFFFFFUL) : OWF_COLOUR_AUTO;
+    if (v >> 24)
+        return OWF_COLOUR_AUTO;              /* 0xFFFFFFFE and the like: not known yet */
+    return ((v & 0xFF) << 16) | (v & 0xFF00) | ((v >> 16) & 0xFF);
+}
+
+static void read_text_colours(reader *r, span pl)
+{
+    unsigned long n = rd32(pl, 0), k, at = 12;
+    if (!pl.n || !n || n > 4096 || r->failed)
+        return;
+    if (!(r->text_colours = owf_malloc(n * sizeof *r->text_colours))) {
+        r->failed = 1;
+        return;
+    }
+    r->ntext_colours = (int)n;
+    for (k = 0; k < n; k++) {
+        unsigned long len = rd32(pl, at);
+        r->text_colours[k] = OWF_COLOUR_AUTO;
+        if (!has(pl, at, 4) || len < 4 || !has(pl, at, len))
+            continue;                        /* the rest stay unknown */
+        {
+            span b = sub(pl, at + 4, len - 4);
+            size_t in = 0;
+            field f;
+            while (next_qfield(b, &in, &f) > 0)
+                if (f.id == 0x201 && f.type == 0x20) {
+                    r->text_colours[k] = text_colour(f.value);
+                    break;
+                }
+        }
+        at += len;
+    }
 }
 
 static void read_text(reader *r)
@@ -804,6 +1091,7 @@ static void read_text(reader *r)
             r->failed = 1;
         owf_buf_free(&name);
     }
+    read_text_colours(r, qd.pl);
     read_styles(r, qd.stsh1);
     read_runs(r, &qd, qd.fdpc, qd.nfdpc, &r->cruns, &r->ncruns, &r->capcruns);
     read_runs(r, &qd, qd.fdpp, qd.nfdpp, &r->pruns, &r->npruns, &r->cappruns);
@@ -833,7 +1121,24 @@ static void read_text(reader *r)
             owf_report_add(r->report, OWF_NOTE_APPROX, "A story runs past the end of the text; it is cut short");
             len = chars - pos;
         }
-        make_story(r, &r->pub->stories[r->pub->nstories++], qd.text, pos, pos + len);
+        {
+            tlink *links = NULL;
+            int nlinks = 0, k;
+            span tcd = { NULL, 0 };
+            /* a story's first TOKN and first TCD; any later copy is ignored */
+            for (k = 0; k < qd.ntokn; k++)
+                if (qd.tokn_story[k] == i) {
+                    nlinks = read_links(r, qd.tokn[k], (unsigned long)len, &links);
+                    break;
+                }
+            for (k = 0; k < qd.ntcd; k++)
+                if (qd.tcd_story[k] == i) {
+                    tcd = qd.tcd[k];
+                    break;
+                }
+            make_story(r, &r->pub->stories[r->pub->nstories++], qd.text, pos, pos + len, links, nlinks, tcd);
+            free_links(links, nlinks);
+        }
         pos += len;
     }
 
@@ -1057,7 +1362,10 @@ static int wordart_story(reader *r, span text)
     memset(st, 0, sizeof *st);
     while (len && !rd16(text, 2 * (len - 1)))
         len--;
-    make_story(r, st, text, 0, len);
+    {
+        span none = { NULL, 0 };
+        make_story(r, st, text, 0, len, NULL, 0, none);
+    }
     return r->pub->nstories++;
 }
 
@@ -1386,7 +1694,17 @@ static long chain_place(reader *r, const owf_pub_frame *f)
  * itself: a group's members keep theirs. */
 static void order_chains(reader *r, owf_pub_page *page, int first)
 {
-    int i, j;
+    int i, j, n = page->nframes - first;
+    long *place, tp;
+    if (n < 2)
+        return;
+    place = owf_malloc((size_t)n * sizeof *place);
+    if (!place) {
+        r->failed = 1;
+        return;
+    }
+    for (i = 0; i < n; i++)            /* each chunk's 0x28 read once */
+        place[i] = chain_place(r, &page->frames[first + i]);
     for (i = first; i < page->nframes; i++) {
         owf_pub_frame *a = &page->frames[i];
         if (a->story < 0 || a->wordart || a->parent >= 0 || a->kind == OWF_PUB_GROUP)
@@ -1395,13 +1713,62 @@ static void order_chains(reader *r, owf_pub_page *page, int first)
             owf_pub_frame *b = &page->frames[j], t;
             if (b->story != a->story || b->wordart || b->parent >= 0 || b->kind == OWF_PUB_GROUP)
                 continue;
-            if (chain_place(r, b) < chain_place(r, a)) {
+            if (place[j - first] < place[i - first]) {
                 t = *a;
                 *a = *b;
                 *b = t;
+                tp = place[i - first];
+                place[i - first] = place[j - first];
+                place[j - first] = tp;
             }
         }
     }
+    owf_free(place);
+}
+
+/* A table frame's story: each cell's paragraphs into their row and column. */
+static void table_cells(owf_pub *pub, const owf_pub_frame *f)
+{
+    owf_story *st;
+    int i;
+    if (f->story < 0 || f->story >= pub->nstories || f->cols < 1 || f->cols > 64)
+        return;
+    st = &pub->stories[f->story];
+    for (i = 0; i < st->nparas; i++) {
+        owf_para *p = &st->paras[i];
+        if (p->table_col != PENDING_CELL)
+            continue;
+        p->table_col = p->table_row % f->cols;
+        p->table_row /= f->cols;
+        p->table_cols = f->cols;
+    }
+}
+
+/* Text colours that name a place in the colour scheme, now it is read. */
+static void text_colours_resolve(owf_pub *pub)
+{
+    int i, j, k;
+    for (i = 0; i < pub->nstories; i++)
+        for (j = 0; j < pub->stories[i].nparas; j++)
+            for (k = 0; k < pub->stories[i].paras[j].nruns; k++) {
+                unsigned long *c = &pub->stories[i].paras[j].runs[k].fmt.colour;
+                if (*c != OWF_COLOUR_AUTO && (*c & SCHEME_COLOUR))
+                    *c = (int)(*c & 0xFF) < pub->nscheme ? pub->scheme[*c & 0xFF] : OWF_COLOUR_AUTO;
+            }
+}
+
+/* Cells no table frame took: plain paragraphs again. */
+static void loose_cells(owf_pub *pub)
+{
+    int i, j;
+    for (i = 0; i < pub->nstories; i++)
+        for (j = 0; j < pub->stories[i].nparas; j++) {
+            owf_para *p = &pub->stories[i].paras[j];
+            if (p->table_col == PENDING_CELL) {
+                p->table_id = -1;
+                p->table_row = p->table_col = 0;
+            }
+        }
 }
 
 static void place_shapes(reader *r, long pc, owf_pub_page *page)
@@ -1450,6 +1817,7 @@ static void place_shapes(reader *r, long pc, owf_pub_page *page)
             span t = chunk_body(r, s->chunk);
             f->rows = (int)field_value(t, 0x66, 0);
             f->cols = (int)field_value(t, 0x67, 0);
+            table_cells(r->pub, f);
         }
     }
     owf_free(at);
@@ -1491,11 +1859,122 @@ static void read_scheme(reader *r)
     }
 }
 
+/* Each chunk a page of the list names as its master (field 0x0D): one pass,
+   a byte a chunk (named[nchunks]), so the reading stays linear however long
+   the list. */
+static void mark_named_masters(reader *r, span list, unsigned char *named)
+{
+    size_t at = 0;
+    field item;
+    while (next_field(list, &at, &item) > 0) {
+        long pc = (long)item.value, m;
+        if (pc < 0 || pc >= r->nchunks || r->chunks[pc].kind != 0x43)
+            continue;
+        m = field_value(chunk_body(r, pc), 0x0D, -1);
+        if (m >= 0 && m < r->nchunks && m != pc)
+            named[m] = 1;
+    }
+}
+
+/* A two-page master's left and right pages: one of each with the same
+ * name (PUB-FORMAT.md 5.4). In the masters' order, the k-th left of a
+ * name pairs with the k-th right of it. A half left without its other page
+ * is a one-page master. One pass through a table of the names, so the
+ * reading stays linear however many masters a file has. */
+typedef struct {
+    const char *name;            /* NULL: the masters without a name */
+    int used;
+    int left, right;             /* the first unpaired half of each side; -1: none */
+    int left_last, right_last;
+} name_slot;
+
+static unsigned long name_hash(const char *s)
+{
+    unsigned long h = 2166136261UL;
+    if (!s)
+        return 0;
+    while (*s)
+        h = ((h ^ (unsigned char)*s++) * 16777619UL) & 0xFFFFFFFFUL;
+    return h;
+}
+
+static int same_name(const char *a, const char *b)
+{
+    return (!a && !b) || (a && b && !strcmp(a, b));
+}
+
+static void pair_masters(owf_pub *pub)
+{
+    int i, nhalves = 0;
+    size_t size = 1, mask;
+    name_slot *slots = NULL;
+    int *next = NULL;
+    for (i = 0; i < pub->nmasters; i++)
+        if (pub->masters[i].side != OWF_PUB_ONE_PAGE)
+            nhalves++;
+    while (nhalves && size < 2 * (size_t)nhalves)
+        size <<= 1;
+    if (nhalves && (!(slots = owf_calloc(size, sizeof *slots)) ||
+                    !(next = owf_calloc((size_t)pub->nmasters, sizeof *next))))
+        nhalves = 0;                 /* no room: every master one page, as an unpaired half is */
+    mask = size - 1;
+    for (i = 0; nhalves && i < pub->nmasters; i++) {
+        owf_pub_page *m = &pub->masters[i];
+        name_slot *t;
+        size_t at;
+        int *mine_first, *mine_last, *other_first, *other_last;
+        if (m->side == OWF_PUB_ONE_PAGE)
+            continue;
+        for (at = name_hash(m->name) & mask; slots[at].used && !same_name(slots[at].name, m->name); at = (at + 1) & mask)
+            ;
+        t = &slots[at];
+        if (!t->used) {
+            t->used = 1;
+            t->name = m->name;
+            t->left = t->right = t->left_last = t->right_last = -1;
+        }
+        mine_first = m->side == OWF_PUB_LEFT ? &t->left : &t->right;
+        mine_last = m->side == OWF_PUB_LEFT ? &t->left_last : &t->right_last;
+        other_first = m->side == OWF_PUB_LEFT ? &t->right : &t->left;
+        other_last = m->side == OWF_PUB_LEFT ? &t->right_last : &t->left_last;
+        if (*other_first >= 0) {     /* the oldest waiting half of the other side */
+            int k = *other_first;
+            *other_first = next[k];
+            if (*other_first < 0)
+                *other_last = -1;
+            m->pair = k;
+            pub->masters[k].pair = i;
+            pub->facing = 1;
+        } else {                     /* waits, after the others of its side */
+            next[i] = -1;
+            if (*mine_last >= 0)
+                next[*mine_last] = i;
+            else
+                *mine_first = i;
+            *mine_last = i;
+        }
+    }
+    owf_free(slots);
+    owf_free(next);
+    for (i = 0; i < pub->nmasters; i++)
+        if (pub->masters[i].pair < 0)
+            pub->masters[i].side = OWF_PUB_ONE_PAGE;
+}
+
+/* Whether page chunk pc is a master: field 0x10 is 3 (the first samples), or
+   another page names it in 0x0D (the masters whose 0x10 is 1 or 0,
+   PUB-FORMAT.md 5.4). */
+static int is_master_page(reader *r, const unsigned char *named, long pc)
+{
+    return named[pc] || field_value(chunk_body(r, pc), 0x10, 0) == 3;
+}
+
 static void read_modern(reader *r)
 {
     owf_pub *pub = r->pub;
     long root = -1, i, master_y = 0;
     long *masters = NULL;
+    unsigned char *named = NULL;
     int nmasters = 0;
     span body;
     field f;
@@ -1531,11 +2010,17 @@ static void read_modern(reader *r)
     if (!find_field(body, 0x02, &f))         /* the pages: masters, then pages, then the program's own */
         return;
     masters = owf_malloc(sizeof *masters * (size_t)(r->nchunks + 1));
-    if (!masters) {
+    named = owf_malloc((size_t)r->nchunks + 1);
+    if (!masters || !named) {
+        owf_free(masters);
+        owf_free(named);
         r->failed = 1;
         return;
     }
-    /* masters first (field 0x10 is 3) */
+    memset(named, 0, (size_t)r->nchunks + 1);
+    mark_named_masters(r, f.body, named);
+    /* masters first: field 0x10 is 3, or another page names it as its master
+       (field 0x0D): some files' masters have 0x10 1 or 0 (PUB-FORMAT.md 5.4) */
     {
         size_t at = 0;
         field item;
@@ -1544,9 +2029,10 @@ static void read_modern(reader *r)
             span pb = chunk_body(r, pc);
             field name, pos;
             owf_pub_page *page;
-            if (pc < 0 || pc >= r->nchunks || r->chunks[pc].kind != 0x43 ||
-                field_value(pb, 0x10, 0) != 3)
+            if (pc < 0 || pc >= r->nchunks || r->chunks[pc].kind != 0x43 || !is_master_page(r, named, pc) ||
+                named[pc] == 2)          /* a master the list names twice is one master */
                 continue;
+            named[pc] = 2;
             if (!(page = add_page(r, 1)))
                 break;
             masters[nmasters++] = pc;
@@ -1562,9 +2048,14 @@ static void read_modern(reader *r)
             }
             if (nmasters == 1 && find_field(pb, 0x05, &pos))
                 master_y = field_value(pos.body, 0x02, 0);
+            {                            /* 0x10: 1 a two-page master's right page, 0 its left (PUB-FORMAT.md 5.4) */
+                long kind = field_value(pb, 0x10, 3);
+                page->side = kind == 1 ? OWF_PUB_RIGHT : kind == 0 ? OWF_PUB_LEFT : OWF_PUB_ONE_PAGE;
+            }
             place_shapes(r, pc, page);
         }
     }
+    pair_masters(pub);
     /* then the document's pages: not masters, field 0x06 set, at the
        masters' height on the workspace (the scratch area sits half a page
        up: PUB-FORMAT.md 5.4, a hypothesis on the corpus) */
@@ -1577,7 +2068,7 @@ static void read_modern(reader *r)
             field f6, pos;
             owf_pub_page *page;
             int k;
-            if (pc < 0 || pc >= r->nchunks || r->chunks[pc].kind != 0x43 || field_value(pb, 0x10, 0) == 3)
+            if (pc < 0 || pc >= r->nchunks || r->chunks[pc].kind != 0x43 || is_master_page(r, named, pc))
                 continue;
             if (!find_field(pb, 0x06, &f6) || !f6.value ||
                 (nmasters && find_field(pb, 0x05, &pos) && field_value(pos.body, 0x02, 0) != master_y)) {
@@ -1598,6 +2089,7 @@ static void read_modern(reader *r)
         }
     }
     owf_free(masters);
+    owf_free(named);
     if (pub->scratch_frames)
         owf_report_add(r->report, OWF_NOTE_INFO, "%d frames on the scratch area, off the pages, are not shown", pub->scratch_frames);
 }
@@ -1684,6 +2176,8 @@ static void read_old(reader *r)
                 if (f->story < 0)
                     owf_report_add(r->report, OWF_NOTE_LOST, "A frame's text is not in the file's text; it is left out");
             }
+            if (f->kind == OWF_PUB_TABLE)
+                table_cells(pub, f);
         }
     }
     if (!any)
@@ -1753,6 +2247,8 @@ int owf_pub_read(const unsigned char *data, size_t length, owf_pub **out, owf_re
     } else {
         owf_report_add(report, OWF_NOTE_LOST, "This form of Publisher file is not known yet");
     }
+    loose_cells(r.pub);
+    text_colours_resolve(r.pub);
     r.pub->width = emu_twips(r.pub->width_emu);
     r.pub->height = emu_twips(r.pub->height_emu);
     owf_free(r.chunks);
@@ -1760,6 +2256,7 @@ int owf_pub_read(const unsigned char *data, size_t length, owf_pub **out, owf_re
     owf_free(r.story_ids);
     owf_free(r.blip_image);
     owf_free(r.font_map);
+    owf_free(r.text_colours);
     owf_free(r.cruns);
     owf_free(r.pruns);
     owf_free(r.styles);
