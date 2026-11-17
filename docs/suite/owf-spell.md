@@ -57,7 +57,9 @@ The host tests link `owf_spell.c` directly. No Amiga program links a copy:
 | GFOpenPresentation | Spelling, as you type, ARexx SPELL | yes |
 | GFOpenPressmaster | the same, through Presentation's core | yes |
 | GFOpenCalc | Edit > Spelling..., ARexx SPELL (`src/calc/oc_spell.c`) | yes |
-| GFOpenDiag, GFOpenBase, GFOpenProject, GFOpenDraw | none yet | next, one PR each |
+| GFOpenDiag | Edit > Spelling..., ARexx SPELL: shapes' and connectors' labels (`src/diag/odg_spell.c`, the program's, not owfdiag.library's) | yes |
+| GFOpenBase, GFOpenProject | none yet | next, one PR each |
+| GFOpenDraw | none: a paint program, with no text of its own | - |
 
 ## Tests
 
@@ -70,6 +72,9 @@ The host tests link `owf_spell.c` directly. No Amiga program links a copy:
 - `make calc-spell-test` and `make calc-spell-check` (ASan) run
   `tests/calc_core/test_calc_spell.c`: Calc's walk over typed text only,
   wrapping round, Change with Undo, and ARexx SPELL.
+- `make diag-spell-test` and `make diag-spell-check` run
+  `tests/diag/test_odg_spell.c`: labels in drawing order, layers' names
+  left alone, HTML labels changed between their tags, Undo, ARexx SPELL.
 - `make sfd-check` checks owfspell_lib.sfd against owf_spell.h, the
   generated glue and the SDK's offsets.
 - `OWFSpellTest`, built by `build-library.sh` into `tests/`, opens the
