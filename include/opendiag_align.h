@@ -32,6 +32,7 @@ int odg_align(odg_doc *doc, const char *const *ids, int n, odg_align_how how);
 int odg_distribute(odg_doc *doc, const char *const *ids, int n, int across);
 
 /* On owfdiag.library (OWF_USE_DIAG_LIBRARY): its calls, once every header that declares them is complete. */
+#define OPENDIAG_ALIGN_H_DONE
 #if defined(OWF_USE_DIAG_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
 #include "opendiag_proto.h"
 #endif

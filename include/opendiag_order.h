@@ -44,6 +44,7 @@ int odg_ungroup(odg_doc *doc, const char *const *ids, int n, odg_order_id *made,
 int odg_is_group(const owf_dcell *c);
 
 /* On owfdiag.library (OWF_USE_DIAG_LIBRARY): its calls, once every header that declares them is complete. */
+#define OPENDIAG_ORDER_H_DONE
 #if defined(OWF_USE_DIAG_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
 #include "opendiag_proto.h"
 #endif

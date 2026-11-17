@@ -152,6 +152,7 @@ unsigned long odg_struct_size(int which); /* owf_struct_size's, inside the libra
     { OWF_DSTRUCT_STENCIL, sizeof(odg_stencil) }, { OWF_DSTRUCT_REXX, sizeof(odg_rexx) }
 
 /* On owfdiag.library (OWF_USE_DIAG_LIBRARY): its calls, once every header that declares them is complete. */
+#define OPENDIAG_CORE_H_DONE
 #if defined(OWF_USE_DIAG_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
 #include "opendiag_proto.h"
 #endif

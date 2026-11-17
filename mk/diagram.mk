@@ -383,3 +383,12 @@ test: diagram-library-test
 check: diagram-library-check
 
 .PHONY: diagram-library-test diagram-library-check
+
+# A file on owfdiag.library may include the diagram headers in any order (include/opendiag_proto.h).
+diagram-proto-check:
+	tests/diag/check_proto_order.sh $(CC)
+
+test: diagram-proto-check
+check: diagram-proto-check
+
+.PHONY: diagram-proto-check
