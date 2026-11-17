@@ -239,10 +239,10 @@ static int odt_header_format_changes(const owf_doc *doc)
     for (k = 0; k < 4; ++k)
         for (i = 0; i < st[k]->nparas; ++i) {
             const owf_para *p = &st[k]->paras[i];
-            if (OWF_DOC_PARA_FORMAT_CHANGE(doc, p->para_format_change))
+            if (p->para_format_change > 0 && p->para_format_change <= doc->npara_format_changes)
                 return 1;
             for (j = 0; j < p->nruns; ++j)
-                if (OWF_DOC_FORMAT_CHANGE(doc, p->runs[j].format_change))
+                if (p->runs[j].format_change > 0 && p->runs[j].format_change <= doc->nformat_changes)
                     return 1;
         }
     return 0;

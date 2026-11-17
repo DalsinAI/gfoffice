@@ -960,7 +960,7 @@ static void put_para_part(owf_buf *out, const owf_doc *doc, const owf_para *para
         if(heading)owf_buf_printf(out,"<text:h text:style-name=\"P%d\" text:outline-level=\"%d\">",pstyle,para->fmt.heading);
         else owf_buf_printf(out,"<text:p text:style-name=\"P%d\">",pstyle);
     }
-    if (tk && open && OWF_DOC_PARA_FORMAT_CHANGE(doc, para->para_format_change)) {
+    if (tk && open && para->para_format_change > 0 && para->para_format_change <= doc->npara_format_changes) {
         /* 1.22.1: a tracked paragraph format change: a region round the paragraph's text, the format before a
          * paragraph style (P) */
         const owf_para_format_change *c = OWF_DOC_PARA_FORMAT_CHANGE(doc, para->para_format_change);
