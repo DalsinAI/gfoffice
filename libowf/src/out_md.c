@@ -274,7 +274,7 @@ static void put_runs(mw *w, const owf_para *p, int from, int depth)
             w->line_start = 1;
             break;
         case OWF_RUN_FIELD:
-            put_field_run(w, r, flags);
+            if (r->field != OWF_FIELD_HIDE_PARA) put_field_run(w, r, flags);   /* (1.20: it shows nothing) */
             break;
         case OWF_RUN_IMAGE:
             if (!w->said_pictures++)
@@ -507,6 +507,7 @@ static void put_story(mw *w, const owf_story *st)
             i = put_table(w, st, i);
             continue;
         }
+        if (owf_para_hidden(p)) { i++; continue; }   /* 1.20: a hidden paragraph is left out */
         if (is_code(w, p)) {
             i = put_code(w, st, i);
             w->nlevels = 0;

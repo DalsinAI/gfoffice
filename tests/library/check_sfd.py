@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """GFOffice's libraries' SFDs against the C they stand for, on the PC
-(make sfd-check): owf.library 2 (owf_lib.sfd) and the four of
+(make sfd-check): owf.library 2 (owf_lib.sfd) and the five of
 docs/suite/owf-libraries.md (owfwrite_lib.sfd, owfcalc_lib.sfd,
-owfpub_lib.sfd, owfpresent_lib.sfd), and owfspell.library, GFOffice's
-one spell checker (owfspell_lib.sfd, owf_spell.h; docs/suite/owf-spell.md).
+owfpub_lib.sfd, owfpresent_lib.sfd, owfdiag_lib.sfd), and owfspell.library,
+GFOffice's one spell checker (owfspell_lib.sfd, owf_spell.h; docs/suite/owf-spell.md).
 
     check_sfd.py [REPO]
 
 For every call in each SFD:
   - the public headers (owf.h, owf_calc.h, owf_pub.h, owf_zip.h,
-    owf_deck.h, owf_pdf.h) declare it with the same return type, the same
+    owf_deck.h, owf_pdf.h, owf_diagram.h and the diagram editing core's
+    include/opendiag_*.h) declare it with the same return type, the same
     number of arguments and the same types;
   - the library's glue (owf_library.c; for the four, their <name>_calls.h)
     has its L_ function: the same return type, the SFD's registers in the
@@ -22,9 +23,10 @@ For every call in each SFD:
   - the committed LVO file (sdk/Include_I/lvo/<name>_lib.i) has the SFD's
     offsets, so a stale SDK shows here without a gfopensdk checkout
     (build-library.sh checks the whole SDK with ndkgen when it has one).
-And for the four: each <name>_calls.h is what scripts/gen-lib-calls.py
+An array argument (const owf_dnum box[4]) is its pointer, as C passes it.
+And for the five: each <name>_calls.h is what scripts/gen-lib-calls.py
 makes from its SFD now, and their first 17 calls (the shared ones) are the
-same calls in the same registers in all four.
+same calls in the same registers in all five.
 Prints what differs; exit status 1 when anything does.
 MIT, Copyright (c) 2026 AmiCradle Team.
 """
@@ -35,8 +37,10 @@ import sys
 REPO = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 LIB = os.path.join(REPO, "libowf", "library")
 HEADERS = [os.path.join(REPO, "libowf", "include", h)
-           for h in ("owf.h", "owf_calc.h", "owf_pub.h", "owf_zip.h", "owf_deck.h", "owf_pdf.h", "owf_spell.h")]
-FOUR = ("owfwrite", "owfcalc", "owfpub", "owfpresent")
+           for h in ("owf.h", "owf_calc.h", "owf_pub.h", "owf_zip.h", "owf_deck.h", "owf_pdf.h", "owf_diagram.h", "owf_spell.h")]
+HEADERS += [os.path.join(REPO, "include", "opendiag_%s.h" % h)
+            for h in ("core", "clip", "order", "align", "mind", "style", "stencil", "rexx")]
+FOUR = ("owfwrite", "owfcalc", "owfpub", "owfpresent", "owfdiag")   # the split's libraries (five, with owfdiag)
 SHARED = 17
 REGS = ["d%d" % i for i in range(8)] + ["a%d" % i for i in range(8)]
 
@@ -76,7 +80,7 @@ def split_args(text):
 def arg_type(decl):
     """'const char *name' -> ('const char *', 'name'); a function pointer
     keeps its whole text as the type."""
-    decl = decl.strip()
+    decl = re.sub(r"(\w+)\s*\[[^\]]*\]\s*$", r"*\1", decl.strip())   # an array argument is its pointer
     m = re.match(r"(.*\(\s*\*\s*)(\w+)(\s*\).*)$", decl)
     if m:
         return norm_type(m.group(1) + m.group(3)), m.group(2)
@@ -319,7 +323,7 @@ def main():
           "owf_library.c's registers and vectors, and the SDK's offsets"
           % (len(calls), len(v2), v2[0]["bias"] if v2 else 0, v2[-1]["bias"] if v2 else 0))
     print("check_sfd.py: %s: %s calls agree with the headers, their generated glue and the SDK's offsets; the "
-          "first %d are the same in all four" % (", ".join("%s.library" % s for s in FOUR),
+          "first %d are the same in all five" % (", ".join("%s.library" % s for s in FOUR),
                                                  ", ".join(str(len(four[s])) for s in FOUR), SHARED))
     print("check_sfd.py: owfspell.library: %d calls agree with owf_spell.h, its generated glue and the SDK's offsets"
           % len(spell))

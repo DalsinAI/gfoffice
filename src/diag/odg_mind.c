@@ -14,14 +14,22 @@
 #define ROOT_W OWF_DNUM(120)
 #define ROOT_H OWF_DNUM(60)
 
-/* One walk of a tree, breadth first, so a node's children sit together in their order and come after it. Static:
- * the walk is large for an Amiga task's stack, and the core is used by one task. */
-static struct {
+/* One walk of a tree, breadth first, so a node's children sit together in their order and come after it. Taken
+ * from memory by each call that walks (too large for an Amiga task's stack) and never kept between calls, so two
+ * tasks can use the core at once, as a library's callers do. */
+typedef struct {
     int cell[ODG_MIND_MAX];              /* index in the page */
     int first[ODG_MIND_MAX], nkids[ODG_MIND_MAX];
     owf_dnum span[ODG_MIND_MAX];         /* the height the node's shown branch takes */
     int n, cut;                          /* cut: more nodes than ODG_MIND_MAX */
-} walk;
+    unsigned char hidden[ODG_MIND_MAX], under[ODG_MIND_MAX];   /* show_folds's */
+    signed char side[ODG_MIND_MAX];      /* lay_out's */
+} tree_walk;
+
+static tree_walk *walk_new(void)
+{
+    return (tree_walk *)owf_malloc(sizeof(tree_walk));
+}
 
 static int is_on(const char *style, const char *key)
 {
@@ -132,26 +140,26 @@ int odg_mind_both(const odg_doc *doc, const char *id)
     return 0;
 }
 
-static int listed(int cell)
+static int listed(const tree_walk *w, int cell)
 {
     int i;
-    for (i = 0; i < walk.n; i++)
-        if (walk.cell[i] == cell)
+    for (i = 0; i < w->n; i++)
+        if (w->cell[i] == cell)
             return 1;
     return 0;
 }
 
 /* The tree from the node at index top into walk; folded branches too when all is 1. */
-static void walk_from(const owf_dpage *p, int top, int all)
+static void walk_from(tree_walk *w, const owf_dpage *p, int top, int all)
 {
     int i, k;
-    walk.n = 1;
-    walk.cut = 0;
-    walk.cell[0] = top;
-    for (i = 0; i < walk.n; i++) {
-        const owf_dcell *c = &p->cells[walk.cell[i]];
-        walk.first[i] = walk.n;
-        walk.nkids[i] = 0;
+    w->n = 1;
+    w->cut = 0;
+    w->cell[0] = top;
+    for (i = 0; i < w->n; i++) {
+        const owf_dcell *c = &p->cells[w->cell[i]];
+        w->first[i] = w->n;
+        w->nkids[i] = 0;
         if (!all && odg_mind_folded(c))
             continue;
         for (k = 0; k < p->ncells; k++) {
@@ -161,14 +169,14 @@ static void walk_from(const owf_dpage *p, int top, int all)
                 edge_in(p, e->target) != k)
                 continue;
             t = owf_dpage_index(p, e->target);
-            if (t < 0 || listed(t))
+            if (t < 0 || listed(w, t))
                 continue;                /* a loop back up the tree */
-            if (walk.n == ODG_MIND_MAX) {
-                walk.cut = 1;
+            if (w->n == ODG_MIND_MAX) {
+                w->cut = 1;
                 break;
             }
-            walk.cell[walk.n++] = t;
-            walk.nkids[i]++;
+            w->cell[w->n++] = t;
+            w->nkids[i]++;
         }
     }
 }
@@ -176,21 +184,20 @@ static void walk_from(const owf_dpage *p, int top, int all)
 /* Folding shown: a node under a folded one is hidden, and so is its branch connector. Only the branch of open
  * (the index of a node just unfolded, else -1) is shown again, so a node or connector hidden by hand elsewhere
  * stays hidden through the map's edits. */
-static int show_folds(owf_dpage *p, int top, int open)
+static int show_folds(tree_walk *w, owf_dpage *p, int top, int open)
 {
-    static unsigned char hidden[ODG_MIND_MAX], under[ODG_MIND_MAX];
     int i, k;
-    walk_from(p, top, 1);
-    hidden[0] = 0;
-    under[0] = walk.cell[0] == open;
-    for (i = 0; i < walk.n; i++) {
-        int fold = hidden[i] || odg_mind_folded(&p->cells[walk.cell[i]]);
-        for (k = walk.first[i]; k < walk.first[i] + walk.nkids[i]; k++) {
-            owf_dcell *c = &p->cells[walk.cell[k]];
+    walk_from(w, p, top, 1);
+    w->hidden[0] = 0;
+    w->under[0] = w->cell[0] == open;
+    for (i = 0; i < w->n; i++) {
+        int fold = w->hidden[i] || odg_mind_folded(&p->cells[w->cell[i]]);
+        for (k = w->first[i]; k < w->first[i] + w->nkids[i]; k++) {
+            owf_dcell *c = &p->cells[w->cell[k]];
             int e = edge_in(p, c->id);
-            hidden[k] = (unsigned char)fold;
-            under[k] = (unsigned char)(under[i] || walk.cell[k] == open);
-            if (!fold && !under[i])
+            w->hidden[k] = (unsigned char)fold;
+            w->under[k] = (unsigned char)(w->under[i] || w->cell[k] == open);
+            if (!fold && !w->under[i])
                 continue;                /* shown already, or hidden by hand: left as it is */
             if (owf_dattrs_set(&c->extra, "visible", fold ? "0" : NULL) != OWF_OK ||
                 (e >= 0 && owf_dattrs_set(&p->cells[e].extra, "visible", fold ? "0" : NULL) != OWF_OK))
@@ -203,56 +210,56 @@ static int show_folds(owf_dpage *p, int top, int open)
 /* The children from walk position from, count of them, put beside the node at position at on side (1 right, -1
  * left), centred on it, one under the other. A locked node (or one on a locked layer) keeps its place, as the mouse
  * leaves it alone; its branch is still laid out from where it is. */
-static void place(const odg_doc *doc, owf_dpage *p, int at, int from, int count, int side)
+static void place(const tree_walk *w, const odg_doc *doc, owf_dpage *p, int at, int from, int count,
+                  int side)
 {
-    const owf_dcell *c = &p->cells[walk.cell[at]];
+    const owf_dcell *c = &p->cells[w->cell[at]];
     owf_dnum total = 0, y;
     int k;
     for (k = from; k < from + count; k++)
-        total += walk.span[k] + (k > from ? ODG_MIND_VGAP : 0);
+        total += w->span[k] + (k > from ? ODG_MIND_VGAP : 0);
     y = c->geo.y + c->geo.height / 2 - total / 2;
     for (k = from; k < from + count; k++) {
-        owf_dcell *kid = &p->cells[walk.cell[k]];
-        c = &p->cells[walk.cell[at]];
+        owf_dcell *kid = &p->cells[w->cell[k]];
+        c = &p->cells[w->cell[at]];
         if (odg_cell_locked(doc, kid)) {
-            y += walk.span[k] + ODG_MIND_VGAP;
+            y += w->span[k] + ODG_MIND_VGAP;
             continue;
         }
-        kid->geo.y = y + (walk.span[k] - kid->geo.height) / 2;
+        kid->geo.y = y + (w->span[k] - kid->geo.height) / 2;
         kid->geo.x = side > 0 ? c->geo.x + c->geo.width + ODG_MIND_HGAP : c->geo.x - ODG_MIND_HGAP - kid->geo.width;
-        y += walk.span[k] + ODG_MIND_VGAP;
+        y += w->span[k] + ODG_MIND_VGAP;
     }
 }
 
 /* The tree from the root at index top laid out: the root stays where it is; its children go to its right (both:
  * the first half right, the rest left), each branch on the side its first node is on. */
-static void lay_out(const odg_doc *doc, owf_dpage *p, int top, int both)
+static void lay_out(tree_walk *w, const odg_doc *doc, owf_dpage *p, int top, int both)
 {
-    static signed char side[ODG_MIND_MAX];
     int i, k;
-    walk_from(p, top, 0);
-    for (i = walk.n - 1; i >= 0; i--) {
-        owf_dnum h = p->cells[walk.cell[i]].geo.height, sum = 0;
-        for (k = walk.first[i]; k < walk.first[i] + walk.nkids[i]; k++)
-            sum += walk.span[k] + (k > walk.first[i] ? ODG_MIND_VGAP : 0);
-        walk.span[i] = sum > h ? sum : h;
+    walk_from(w, p, top, 0);
+    for (i = w->n - 1; i >= 0; i--) {
+        owf_dnum h = p->cells[w->cell[i]].geo.height, sum = 0;
+        for (k = w->first[i]; k < w->first[i] + w->nkids[i]; k++)
+            sum += w->span[k] + (k > w->first[i] ? ODG_MIND_VGAP : 0);
+        w->span[i] = sum > h ? sum : h;
     }
-    side[0] = 1;
-    for (i = 0; i < walk.n; i++) {
-        int f = walk.first[i], n = walk.nkids[i], right = n;
+    w->side[0] = 1;
+    for (i = 0; i < w->n; i++) {
+        int f = w->first[i], n = w->nkids[i], right = n;
         if (!n)
             continue;
         if (i == 0 && both)
             right = (n + 1) / 2;
         for (k = f; k < f + n; k++)
-            side[k] = (signed char)(k - f < right ? side[i] : -side[i]);
-        place(doc, p, i, f, right, side[i]);
+            w->side[k] = (signed char)(k - f < right ? w->side[i] : -w->side[i]);
+        place(w, doc, p, i, f, right, w->side[i]);
         if (right < n)
-            place(doc, p, i, f + right, n - right, -side[i]);
+            place(w, doc, p, i, f + right, n - right, -w->side[i]);
     }
-    for (i = 1; i < walk.n; i++) {       /* the branches drawn from box to box again */
-        int e = edge_in(p, p->cells[walk.cell[i]].id);
-        if (e >= 0 && !odg_cell_locked(doc, &p->cells[e]) && !odg_cell_locked(doc, &p->cells[walk.cell[i]]))
+    for (i = 1; i < w->n; i++) {       /* the branches drawn from box to box again */
+        int e = edge_in(p, p->cells[w->cell[i]].id);
+        if (e >= 0 && !odg_cell_locked(doc, &p->cells[e]) && !odg_cell_locked(doc, &p->cells[w->cell[i]]))
             p->cells[e].geo.npoints = 0;
     }
 }
@@ -263,12 +270,15 @@ static int finish(odg_doc *doc, const char *rootid, int both, const char *openid
 {
     owf_dpage *p = odg_page(doc);
     int top = rootid ? owf_dpage_index(p, rootid) : -1, r;
+    tree_walk *w;
     if (top < 0)
         return OWF_OK;                   /* the whole map went */
-    if ((r = show_folds(p, top, openid ? owf_dpage_index(p, openid) : -1)) != OWF_OK)
-        return r;
-    lay_out(doc, p, top, both);
-    return OWF_OK;
+    if (!(w = walk_new()))
+        return OWF_ERR_MEMORY;
+    if ((r = show_folds(w, p, top, openid ? owf_dpage_index(p, openid) : -1)) == OWF_OK)
+        lay_out(w, doc, p, top, both);
+    owf_free(w);
+    return r;
 }
 
 static char *dup(const char *s)
@@ -425,26 +435,32 @@ int odg_mind_delete(odg_doc *doc, const char *node, int both)
     const owf_dcell *c = open_node(doc, node), *root;
     char **ids, *rootid;
     int i, n, r = OWF_OK;
+    tree_walk *w;
     if (!c || !(root = odg_mind_root(doc, node)))
         return OWF_ERR_FORMAT;
-    walk_from(p, owf_dpage_index(p, c->id), 1);
-    if (walk.cut)
-        return OWF_ERR_FORMAT;           /* a branch bigger than a walk: not cut in two */
-    n = walk.n;
-    for (i = 0; i < n; i++)
-        if (odg_cell_locked(doc, &p->cells[walk.cell[i]]))
-            return OWF_ERR_FORMAT;       /* a locked node in the branch: the branch stays */
+    if (!(w = walk_new()))
+        return OWF_ERR_MEMORY;
+    walk_from(w, p, owf_dpage_index(p, c->id), 1);
+    n = w->n;
+    for (i = 0; i < n && !w->cut; i++)
+        if (odg_cell_locked(doc, &p->cells[w->cell[i]]))
+            break;
+    if (w->cut || i < n) {               /* a branch bigger than a walk (not cut in two), or a locked node in it */
+        owf_free(w);
+        return OWF_ERR_FORMAT;
+    }
     ids = (char **)owf_malloc((size_t)n * sizeof *ids);
     rootid = root == c ? NULL : dup(root->id);
     if (!ids || (root != c && !rootid)) {
-        owf_free(ids); owf_free(rootid);
+        owf_free(ids); owf_free(rootid); owf_free(w);
         return OWF_ERR_MEMORY;
     }
     for (i = 0; i < n; i++)
         ids[i] = NULL;
     for (i = 0; i < n && r == OWF_OK; i++)
-        if (!(ids[i] = dup(p->cells[walk.cell[i]].id)))
+        if (!(ids[i] = dup(p->cells[w->cell[i]].id)))
             r = OWF_ERR_MEMORY;
+    owf_free(w);
     if (r == OWF_OK && odg_begin(doc) != OWF_OK)
         r = OWF_ERR_MEMORY;
     else if (r == OWF_OK) {
@@ -667,10 +683,14 @@ int odg_mind_whole(const odg_doc *doc, const char *id)
 {
     const owf_dpage *p = odg_page(doc);
     const owf_dcell *root = odg_mind_root(doc, id);
-    if (!root)
+    tree_walk *w;
+    int whole;
+    if (!root || !(w = walk_new()))
         return 0;
-    walk_from(p, owf_dpage_index(p, root->id), 1);
-    return !walk.cut;
+    walk_from(w, p, owf_dpage_index(p, root->id), 1);
+    whole = !w->cut;
+    owf_free(w);
+    return whole;
 }
 
 /* ---- Outlines ---- */
@@ -775,7 +795,7 @@ static char *as_label(const char *s)
 
 int odg_mind_import(odg_doc *doc, owf_dnum x, owf_dnum y, const owf_ditem *items, int n, int both, char *id)
 {
-    static char ids[ODG_MIND_DEPTH][ODG_MIND_ID]; /* the open node at each depth (one task uses the core) */
+    char (*ids)[ODG_MIND_ID];            /* the open node at each depth: 4 KB from memory, the call's own */
     int i = odg_layer_current(doc), k, r = OWF_OK;
     char *in, *label = NULL;
     owf_dpage *p;
@@ -787,10 +807,14 @@ int odg_mind_import(odg_doc *doc, owf_dnum x, owf_dnum y, const owf_ditem *items
     for (k = 1; k < n; k++)
         if (items[k].depth < 1 || items[k].depth >= ODG_MIND_DEPTH || items[k].depth > items[k - 1].depth + 1)
             return OWF_ERR_FORMAT;
-    if (!(in = dup(odg_layer_at(doc, i)->id)))
+    ids = (char (*)[ODG_MIND_ID])owf_calloc(ODG_MIND_DEPTH, ODG_MIND_ID);
+    if (!ids || !(in = dup(odg_layer_at(doc, i)->id))) {
+        owf_free(ids);
         return OWF_ERR_MEMORY;
+    }
     if (odg_begin(doc) != OWF_OK) {
         owf_free(in);
+        owf_free(ids);
         return OWF_ERR_MEMORY;
     }
     p = odg_page(doc);
@@ -817,5 +841,6 @@ int odg_mind_import(odg_doc *doc, owf_dnum x, owf_dnum y, const owf_ditem *items
         r = finish(doc, ids[0], both, NULL);
     }
     owf_free(in);
+    owf_free(ids);
     return odg_end(doc, r);
 }
