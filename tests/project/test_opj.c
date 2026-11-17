@@ -2343,7 +2343,10 @@ static void test_pdf_views(void)
     CHECK_N(opj_viewprint_kind("Resource Usage"), OPJ_PRINT_USAGE);
     CHECK_N(opj_viewprint_kind("task_usage"), OPJ_PRINT_TASK_USAGE);
     CHECK_N(opj_viewprint_kind("NETWORK"), OPJ_PRINT_NETWORK);
-    CHECK_N(opj_viewprint_kind("graph"), -1);
+    CHECK_N(opj_viewprint_kind("graph"), OPJ_PRINT_GRAPH);
+    CHECK_N(opj_viewprint_kind("Resource Graph"), OPJ_PRINT_GRAPH);
+    CHECK_S(opj_viewprint_name(OPJ_PRINT_GRAPH), "Resource Graph");
+    CHECK_N(opj_viewprint_kind("sheet"), -1);
     CHECK_N(opj_viewprint_kind(""), -1);
     CHECK_N(opj_viewprint_kind(NULL), -1);
     CHECK_N(opj_viewprint_kind("networkdiagramsandmore"), -1);
@@ -2351,6 +2354,7 @@ static void test_pdf_views(void)
     data = (unsigned char *)"x";
     CHECK_N(opj_pdf_write_view(doc, &proto, OPJ_PRINT_USAGE, &data, &n, &pages), OWF_ERR_FORMAT);
     CHECK(data == NULL && n == 0 && pages == 0);
+    CHECK_N(opj_pdf_write_view(doc, &proto, OPJ_PRINT_GRAPH, &data, &n, &pages), OWF_ERR_FORMAT);
     CHECK_N(opj_pdf_write_view(doc, &proto, -1, &data, &n, &pages), OWF_ERR_FORMAT);
     CHECK_N(opj_pdf_write_view(doc, &proto, OPJ_NPRINTVIEWS, &data, &n, &pages), OWF_ERR_FORMAT);
     CHECK_N(opj_add_resource(doc, "Dale", NULL), OWF_OK);
@@ -2375,6 +2379,13 @@ static void test_pdf_views(void)
     CHECK_N(pages, 1);                                                     /* three boxes in a chain */
     CHECK(has_bytes(data, n, "(Network Diagram) Tj") && has_bytes(data, n, "(Page 1 of 1) Tj"));
     CHECK(has_bytes(data, n, "(Plan) Tj") && has_bytes(data, n, "(Build) Tj") && has_bytes(data, n, "(Ship) Tj"));
+    owf_free(data);
+    /* The Resource Graph: a resource a page down, with its name, peak and max units beside its graph. */
+    CHECK_N(opj_pdf_write_view(doc, &proto, OPJ_PRINT_GRAPH, &data, &n, &pages), OWF_OK);
+    CHECK_N(pages, 2);
+    CHECK(has_bytes(data, n, "(Resource Graph) Tj") && has_bytes(data, n, "(Page 2 of 2) Tj") && has_bytes(data, n, "/Count 2"));
+    CHECK(has_bytes(data, n, "(Dale) Tj") && has_bytes(data, n, "(Bob) Tj"));
+    CHECK(has_bytes(data, n, "(Peak: 100%) Tj") && has_bytes(data, n, "(Peak: 50%) Tj") && has_bytes(data, n, "(Max Units: 100%) Tj"));
     owf_free(data);
     /* The Gantt view by this call is opj_pdf_write's. */
     CHECK_N(opj_pdf_write_view(doc, &proto, OPJ_PRINT_GANTT, &data, &n, &pages), OWF_OK);
@@ -2405,6 +2416,16 @@ static void test_pdf_views(void)
     sprintf(text, "/Count %d", pages);
     CHECK(has_bytes(data, n, text));
     owf_free(data);
+    /* The Resource Graph goes across the same way, a resource down: page 1 (the second) is Bob's first. */
+    {
+        opj_viewprint g;
+        CHECK_N(opj_viewprint_layout(&g, OPJ_PRINT_GRAPH, &paper, doc, NULL, w, h), 2 * vp.across);
+        CHECK(g.down == 2 && g.across == vp.across && g.rows_per_page == 1);
+        CHECK(opj_viewprint_page_view(&g, 1, &v) && v.first_row == 1 && v.origin == paper.origin &&
+              v.height == h - OPJ_PDF_ROW);
+        CHECK(opj_viewprint_page_view(&g, 2, &v) && v.first_row == 0 && v.origin > paper.origin);
+        CHECK_N(opj_viewprint_layout(&g, OPJ_PRINT_GRAPH, &paper, doc, NULL, w, 8 * OPJ_PDF_ROW), 0);   /* no room for a graph */
+    }
     CHECK_N(opj_set_cell(doc, 1, OPJ_COL_DURATION, "3d"), OWF_OK);
     /* Sixty more tasks, none linked: Task Usage goes down by rows_per_page rows, and the Network Diagram's one
      * column down by whole lines of boxes. */
