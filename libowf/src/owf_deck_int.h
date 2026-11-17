@@ -23,6 +23,8 @@ int owf_export_odp(const owf_deck *deck, unsigned char **data, size_t *length, o
 int owf_export_fodp(const owf_deck *deck, unsigned char **data, size_t *length, owf_report *report);
 /* PPTX, read only for now (in_pptx.c). */
 extern const owf_deck_format owf_deck_format_pptx;
+/* PowerPoint 97-2003, read only (in_ppt.c). */
+extern const owf_deck_format owf_deck_format_ppt;
 
 /* A story's paragraphs and runs freed (the story is empty after). */
 void owf_deck_free_story(owf_story *story);

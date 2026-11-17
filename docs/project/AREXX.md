@@ -53,7 +53,7 @@ Amiga (start GFOpenProject, then `rx project.rexx RAM:`).
 | UNDO, REDO | | |
 | BASELINE | `ROW/N,COUNT/N,CLEAR/S,NUMBER/K/N` | sets (or with CLEAR clears) the baseline; no ROW: the whole plan. NUMBER=1 to 10: Baseline 1 to 10 (0, the default, is Baseline) |
 | BASELINES | | the baselines some task has saved, as `0 3 10`, or `none` |
-| REPLACE | `ROW/A/N,FROM/A,TO/A,UNITS/K` | Assign Resources' Replace: the row's assignment of FROM goes to TO, keeping its units unless UNITS gives them ("50%", "2.5", "120.00") |
+| REPLACE | `ROW/A/N,FROM/A,TO/A,UNITS/K` | Assign Resources' Replace: the row's assignment of FROM goes to TO, keeping its units unless UNITS gives them ("50%", "2.5", "120.00"); to another kind of resource, one unit of it |
 | LEVEL | `WITHINSLACK/S` | Level Resources: delays tasks until no work resource is over-allocated where a move can mend it; how many tasks were delayed. WITHINSLACK: only within each task's slack |
 | CLEARLEVELING | | every task's Leveling Delay back to 0 |
 | SORT | `BY/A,DESC/S,THEN/K,THENDESC/S,LAST/K,LASTDESC/S` | Project > Sort, renumbering the tasks and keeping the outline: by up to three columns, each ascending unless its DESC is given |
@@ -84,10 +84,17 @@ Amiga (start GFOpenProject, then `rx project.rexx RAM:`).
 Columns are named by their titles, with case, spaces and punctuation ignored. For example `Name`,
 `"Task Name"`, `Duration`, `Start`, `Finish`, `Predecessors`, `"% Complete"` or `percent`, `WBS`,
 `"Resource Names"` or `resources`, `"Baseline Start"`, `"Baseline Finish"`, `"Start Var."`,
-`"Finish Var."`, and the worked-out `Work`, `"Actual Work"`, `"Remaining Work"`, `Cost` and `"Actual Cost"`.
+`"Finish Var."`, `Type` (`"Fixed Units"`, `"Fixed Duration"` or `"Fixed Work"`, or `units`, `duration`,
+`work`), `"Effort Driven"` (`Yes` or `No`; Fixed Work is always `Yes`), `Work` (typed: Fixed Units and
+Fixed Work change the duration, Fixed Duration the units), and the worked-out `"Actual Work"`,
+`"Remaining Work"`, `Cost` and `"Actual Cost"`. Edits keep what the task's type fixes, as MS Project does:
+on Fixed Units, changing a resource's units changes the duration, and on Fixed Work a longer duration
+lowers the units. With Effort Driven, adding or removing a resource keeps the work.
 
 On the resource sheet: `Name`, `Type`, `Initials`, `Group`, `"Max. Units"` or `max`,
-`"Std. Rate"` or `rate`, `Work` and `Cost`.
+`"Std. Rate"` or `rate`, `Work`, `Cost` and `"Base Calendar"` or `calendar` (a calendar's name or number,
+`""` or `-` for the plan's). A task with no calendar of its own is scheduled on the calendar of its first
+work resource that has one.
 
 ```rexx
 /* A small plan */

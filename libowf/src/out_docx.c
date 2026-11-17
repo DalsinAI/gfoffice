@@ -690,7 +690,7 @@ static void build_comments_extended(owf_buf *out, const owf_doc *doc)
 static void field_instr(const owf_run *run, char *out, size_t size)
 {
     static const char *const word[] = { "PAGE", "NUMPAGES", "DATE", "TIME", "TITLE", "AUTHOR", "SUBJECT", "FILENAME",
-                                         "NUMWORDS", "STYLEREF", "DOCVARIABLE", "REF", "PAGEREF", "MERGEFIELD", "XE", "SEQ", "IF" };
+                                         "NUMWORDS", "STYLEREF", "DOCVARIABLE", "REF", "PAGEREF", "MERGEFIELD", "XE", "SEQ", "IF", "FILLIN", "IF" };
     const char *arg = run->href ? run->href : "";
     int f = (int)run->field >= 0 && (int)run->field <= OWF_FIELD_LAST ? (int)run->field : 0;
     if (f == OWF_FIELD_CHAPTER) snprintf(out, size, " STYLEREF 1 ");
@@ -700,6 +700,16 @@ static void field_instr(const owf_run *run, char *out, size_t size)
     else if (f == OWF_FIELD_MERGE) snprintf(out, size, " MERGEFIELD %s ", arg);
     else if (f == OWF_FIELD_INDEX) snprintf(out, size, " XE \"%s\" ", arg);      /* 1.10 */
     else if (f == OWF_FIELD_SEQ && strchr(arg, ' ')) snprintf(out, size, " SEQ \"%s\" \\* ARABIC ", arg);   /* 1.12.6 */
+    else if (f == OWF_FIELD_FILLIN) {                /* 1.19: its prompt quoted, a quote in it as Word's \" */
+        size_t n = 0;
+        const char *c;
+        n += (size_t)snprintf(out, size, " FILLIN \"");
+        for (c = arg; *c && n + 3 < size; ++c) {
+            if (*c == '"' || *c == '\\') out[n++] = '\\';
+            out[n++] = *c;
+        }
+        snprintf(out + n, size > n ? size - n : 0, "\" ");
+    }
     else if (f == OWF_FIELD_SEQ) snprintf(out, size, " SEQ %s \\* ARABIC ", arg);
     else if (f == OWF_FIELD_IF) snprintf(out, size, " IF %s ", arg);   /* 1.16: its fields in braces (put_if_code) */
     else snprintf(out, size, " %s ", word[f]);
@@ -751,7 +761,7 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
     const char *pstyle = NULL;
     docx_marks mk;
     size_t at = 0;
-    int j;
+    int j, hidden_para = para->table_id < 0 && owf_para_hidden(para);   /* 1.20 (a table's cell is never hidden) */
     if (para->fmt.heading >= 1 && para->fmt.heading <= 6) {
         snprintf(style, sizeof style, "Heading%d", para->fmt.heading); pstyle = style;
     } else if (own_style(para->style)) {
@@ -769,7 +779,16 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
     }
     for (j = 0; j < para->nruns; ++j) {
         const owf_run *run=&para->runs[j];
-        int link = run->kind == OWF_RUN_TEXT && run->href && story == &doc->body;
+        owf_run vanished;
+        int link;
+        if (run->kind == OWF_RUN_FIELD && run->field == OWF_FIELD_HIDE_PARA) {
+            /* 1.20: Word has no hidden paragraph: its condition goes (noted), its text is written w:vanish while
+             * it holds */
+            owf_report_add(report, OWF_NOTE_APPROX, "A hidden paragraph is saved as hidden text, without its condition");
+            continue;
+        }
+        if (hidden_para) { vanished = *run; vanished.fmt.flags |= OWF_HIDDEN; run = &vanished; }
+        link = run->kind == OWF_RUN_TEXT && run->href && story == &doc->body;
         if (run->comment) {                          /* 1.6 */
             put_comment_mark(out, doc, run->comment);
             continue;

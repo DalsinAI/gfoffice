@@ -24,7 +24,23 @@ typedef struct {
     owf_eps *eps;                        /* the EPS */
     owf_dnum ox, oy;                     /* the page's top left, in the diagram */
     int bad;                             /* memory ran out */
+    owf_dshape *sh;                      /* a shape's outline and a path's points on the page: 2 KB off the */
+    int *xy;                             /* Amiga's small stack, the writer's own (a library keeps no state) */
 } pen;
+
+/* The pen's scratch, before drawing; and freed after. 0 when memory ran out. */
+static int pen_scratch(pen *p)
+{
+    p->sh = (owf_dshape *)owf_malloc(sizeof *p->sh);
+    p->xy = (int *)owf_malloc(2 * OWF_DSHAPE_POINTS * sizeof *p->xy);
+    return p->sh && p->xy;
+}
+
+static void pen_free(pen *p)
+{
+    owf_free(p->sh);
+    owf_free(p->xy);
+}
 
 /* the drawing calls, to whichever the pen has */
 static int d_text(pen *p, int x, int baseline, int width, const char *utf8, size_t length, owf_font_kind kind,
@@ -144,8 +160,7 @@ static void note(pen *p, int r)
 /* A closed or open path in diagram units. */
 static void path(pen *p, const owf_dpoint *pts, int n, int closed, unsigned long fill, unsigned long line, int width)
 {
-    static int xy[2 * OWF_DSHAPE_POINTS];   /* off the Amiga's small stack; one writer runs at a time */
-    int i;
+    int *xy = p->xy, i;
     if (n > OWF_DSHAPE_POINTS)
         n = OWF_DSHAPE_POINTS;
     for (i = 0; i < n; i++) {
@@ -254,7 +269,7 @@ static owf_dnum style_num(const char *style, const char *key, owf_dnum def)
 
 static void vertex(pen *p, const owf_dpage *page, const owf_dcell *c)
 {
-    static owf_dshape sh;                /* 1.5 KB: off the Amiga's small stack */
+    owf_dshape *sh = p->sh;
     owf_dnum box[4], header = 0;
     const char *style = c->style;
     unsigned long fill = shade(style, "fillColor", 0xffffff), line = shade(style, "strokeColor", 0x000000);
@@ -266,11 +281,11 @@ static void vertex(pen *p, const owf_dpage *page, const owf_dcell *c)
     d_dash(p, dashed);
     if (owf_dstyle_is(style, "text") || owf_dstyle_is(style, "edgeLabel"))
         ;
-    else if (owf_dshape_outline(style, box, &sh)) {
+    else if (owf_dshape_outline(style, box, sh)) {
         int k;
-        for (k = 0; k < sh.nparts; k++) {
-            const owf_dshape_part *pt = &sh.parts[k];
-            path(p, sh.points + pt->first, pt->n, (pt->flags & OWF_DSHAPE_CLOSED) != 0,
+        for (k = 0; k < sh->nparts; k++) {
+            const owf_dshape_part *pt = &sh->parts[k];
+            path(p, sh->points + pt->first, pt->n, (pt->flags & OWF_DSHAPE_CLOSED) != 0,
                  (pt->flags & OWF_DSHAPE_FILL) ? fill : 0, (pt->flags & OWF_DSHAPE_LINE) ? line : 0, w);
         }
     } else if (owf_dstyle_is(style, "ellipse"))
@@ -443,8 +458,10 @@ int owf_dpdf_write(const owf_diagram *d, int page, unsigned char **data, size_t 
     if (d->npages < 1 || page >= d->npages)
         return OWF_ERR_FORMAT;
     memset(&p, 0, sizeof p);
-    if (!(p.pdf = owf_pdf_new()))
+    if (!pen_scratch(&p) || !(p.pdf = owf_pdf_new())) {
+        pen_free(&p);
         return OWF_ERR_MEMORY;
+    }
     for (i = first; i <= last && !p.bad; i++) {
         const owf_dpage *pg = &d->pages[i];
         owf_dnum box[4];
@@ -460,6 +477,7 @@ int owf_dpdf_write(const owf_diagram *d, int page, unsigned char **data, size_t 
         }
         draw_page(&p, pg);
     }
+    pen_free(&p);
     if (p.bad) {
         owf_pdf_free(p.pdf);
         return OWF_ERR_MEMORY;
@@ -486,9 +504,12 @@ int owf_deps_write(const owf_diagram *d, int page, unsigned char **data, size_t 
     memset(&p, 0, sizeof p);
     p.ox = box[0] - MARGIN;
     p.oy = box[1] - MARGIN;
-    if (!(p.eps = owf_eps_new(tw(box[2] + 2 * MARGIN), tw(box[3] + 2 * MARGIN))))
+    if (!pen_scratch(&p) || !(p.eps = owf_eps_new(tw(box[2] + 2 * MARGIN), tw(box[3] + 2 * MARGIN)))) {
+        pen_free(&p);
         return OWF_ERR_MEMORY;
+    }
     draw_page(&p, &d->pages[page]);
+    pen_free(&p);
     r = p.bad ? OWF_ERR_MEMORY : owf_eps_finish(p.eps, d->pages[page].name, data, length);
     owf_eps_free(p.eps);
     return r;

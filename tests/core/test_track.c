@@ -1078,7 +1078,7 @@ static void test_format_nav(void)
     owf_doc_free(doc);
 }
 
-/* 2.0.49: document compare: the revised text as tracked changes by an author; one undo; the same: nothing */
+/* 2.0.52: document compare: the revised text as tracked changes by an author; one undo; the same: nothing */
 static const char *plain(const owf_doc *doc)
 {
     static char buf[8192];

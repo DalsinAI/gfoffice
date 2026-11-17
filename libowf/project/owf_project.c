@@ -152,11 +152,27 @@ typedef struct {
     owf_ptime *alap_start;
 } sched;
 
-static const owf_pcal *cal_of(const owf_project *p, const owf_ptask *t)
+const owf_pcal *owf_ptask_calendar(const owf_project *p, int task)
 {
+    const owf_ptask *t;
+    int i;
+    if (!p || task < 0 || task >= p->ntasks || !p->ncalendars) return NULL;
+    t = &p->tasks[task];
     if (t->elapsed) return NULL;
     if (t->calendar >= 0 && t->calendar < p->ncalendars) return &p->calendars[t->calendar];
+    for (i = 0; i < p->nassigns; i++) {          /* the first work resource with a calendar of its own */
+        const owf_passign *a = &p->assigns[i];
+        const owf_presource *r;
+        if (a->task != task || a->resource < 0 || a->resource >= p->nresources) continue;
+        r = &p->resources[a->resource];
+        if (r->type == OWF_RES_WORK && r->calendar >= 0 && r->calendar < p->ncalendars) return &p->calendars[r->calendar];
+    }
     return &p->calendars[p->calendar];
+}
+
+static const owf_pcal *cal_of(const owf_project *p, const owf_ptask *t)
+{
+    return owf_ptask_calendar(p, (int)(t - p->tasks));
 }
 
 static const owf_pcal *project_cal(const owf_project *p)

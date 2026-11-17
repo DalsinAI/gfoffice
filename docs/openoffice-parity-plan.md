@@ -57,7 +57,7 @@ Status: **Done** = edits, saves, reloads and undoes; **Part** = some of it
 | Form controls in documents | Gap | 3 | |
 | Master documents | Gap | 3 | |
 | Embedded Calc sheets/charts (OLE-style objects) | Gap | 3 | Needs Calc chart renderer as a library call |
-| Document compare | Done (2.0.49) | 3 | Reuses track changes |
+| Document compare | Done (2.0.52) | 3 | Reuses track changes |
 
 ### Calc (GFOpenCalc)
 

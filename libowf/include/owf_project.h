@@ -124,7 +124,12 @@ typedef struct {
      * "edays"). Not for a task that must start or finish on a date, or an ALAP one. */
     long level_delay;
     int level_delay_elapsed;
+    /* what an edit keeps fixed (owf_project_keep_types): MSPDI's Type and EffortDriven */
+    int type;                            /* OWF_TT_; 0, Fixed Units, as MS Project's new tasks */
+    int effort_driven;                   /* adding or removing a resource keeps the work (Fixed Work always) */
 } owf_ptask;
+
+enum { OWF_TT_FIXED_UNITS, OWF_TT_FIXED_DURATION, OWF_TT_FIXED_WORK };
 
 /* ---- Resources and assignments (owf_presource.c) ---- */
 
@@ -136,8 +141,8 @@ typedef struct {
     int type;                            /* OWF_RES_ */
     long max_units;                      /* percent: 100 is one full time (work resources) */
     long rate;                           /* hundredths of the currency an hour of work, or a unit of material */
-    int calendar;                        /* index into the project's calendars, -1: the project's; kept in files
-                                          * and used for usage, not yet for scheduling */
+    int calendar;                        /* index into the project's calendars, -1: the project's; tasks it
+                                          * works on are scheduled on it (owf_ptask_calendar) */
     /* worked out by owf_project_schedule */
     long work;                           /* minutes, over all its assignments (work resources) */
     long cost;                           /* hundredths of the currency */
@@ -179,6 +184,11 @@ typedef struct {
 /* A new project starting at start, with the Standard calendar as its calendar. NULL: memory. */
 owf_project *owf_project_new(owf_ptime start);
 void owf_project_free(owf_project *p);
+/* The calendar task is scheduled on: none (NULL) for an elapsed task (every minute counts); its own
+ * calendar; else the calendar of its first work resource that has one (MS Project schedules on resource
+ * calendars; with several resources on different calendars it spans them all, here the first wins); else
+ * the project's. NULL for a task out of range or a project with no calendars. */
+const owf_pcal *owf_ptask_calendar(const owf_project *p, int task);
 /* Adds a task at the end (level 1, one working day, ASAP); its index, or -1 for memory. */
 int owf_project_add_task(owf_project *p, const char *name, long duration);
 /* Adds a calendar (a copy of Standard named name); its index, or -1 for memory. */
@@ -218,6 +228,23 @@ long owf_passign_work(const owf_project *p, int assign, owf_ptime a, owf_ptime b
  * task's (summaries adding up their subtasks'), each resource's totals, peak and whether it is
  * over-allocated. */
 void owf_project_resources_update(owf_project *p);
+
+/* ---- Task types (owf_presource.c): work = duration x units, and which of them an edit keeps ---- */
+
+/* The units of task's work-resource assignments added up (percent: 200 is two full time). */
+long owf_ptask_units(const owf_project *p, int task);
+/* After an edit made after (a copy of before) from before, puts back what each changed task's type keeps,
+ * as MS Project does. A task is compared only when both plans have it at the same row (same uid), is not a
+ * summary, and has work resources before and after. Duration changed, units not: Fixed Work scales the
+ * units to keep the work. Units changed on the same resources: Fixed Units and Fixed Work change the
+ * duration to keep the work (Fixed Duration: the work changes). A resource added or removed with Effort
+ * Driven (Fixed Work always): Fixed Units and Fixed Work change the duration, Fixed Duration scales every
+ * assignment's units, to keep the work; without it the work changes. Integer arithmetic, rounded down. */
+void owf_project_keep_types(const owf_project *before, owf_project *after);
+/* Sets task's work (minutes) as its type takes it: Fixed Duration scales its work assignments' units,
+ * the others change its duration. OWF_OK; OWF_ERR_FORMAT for a summary, a task with no work resource,
+ * work below 0 or out of range (a 0 work on Fixed Duration, which would take every unit away). */
+int owf_project_set_work(owf_project *p, int task, long work);
 
 /* ---- The baseline (owf_presource.c) ---- */
 
