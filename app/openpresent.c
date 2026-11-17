@@ -147,13 +147,14 @@ enum {
     M_ALIGN_LEFT, M_ALIGN_CENTRE, M_ALIGN_RIGHT,
     M_ALIGN_TOP, M_ALIGN_MIDDLE, M_ALIGN_BOTTOM,
     M_DISTRIBUTE_ACROSS, M_DISTRIBUTE_DOWN, M_GROUP, M_UNGROUP,
-    M_POSITION_SIZE, M_APPEARANCE, M_PICTURE_CROP, M_CHART_DATA,
+    M_POSITION_SIZE, M_APPEARANCE, M_AREA, M_PICTURE_CROP, M_CHART_DATA,
     M_TABLE_INSERT_ROW, M_TABLE_DELETE_ROW, M_TABLE_INSERT_COLUMN, M_TABLE_DELETE_COLUMN,
     M_TABLE_STYLE,
     M_DUPLICATE_OBJECT, M_DELETE_OBJECT,
     M_WRAP_NONE, M_WRAP_SQUARE, M_WRAP_TIGHT, M_WRAP_TOP_BOTTOM, M_WRAP_DISTANCE,
     M_LINK_TEXT_NEXT, M_UNLINK_TEXT,
     M_NEW_SLIDE, M_DUPLICATE_SLIDE, M_RENAME_SLIDE, M_DELETE_SLIDE, M_HIDE_SLIDE, M_SHOW_SLIDE, M_TRANSITION,
+    M_BACKGROUND,
     M_CUSTOM_ANIMATION,
     M_MOVE_SLIDE_UP, M_MOVE_SLIDE_DOWN,
     M_FIRST, M_PREV, M_NEXT, M_LAST, M_SHOW_GRID, M_SNAP_GRID, M_SHOW_GUIDES, M_SNAP_GUIDES,
@@ -268,6 +269,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Position and Size...", NULL, 0, 0, (APTR)M_POSITION_SIZE },
     { NM_ITEM, "Appearance...", NULL, 0, 0, (APTR)M_APPEARANCE },
+    { NM_ITEM, "Area...", NULL, 0, 0, (APTR)M_AREA },
     { NM_ITEM, "Picture Crop...", NULL, 0, 0, (APTR)M_PICTURE_CROP },
 #ifdef OPR_CHART_EDITOR
     { NM_ITEM, "Chart Data...", NULL, 0, 0, (APTR)M_CHART_DATA },
@@ -301,6 +303,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Hide " UNIT, NULL, 0, 0, (APTR)M_HIDE_SLIDE },
     { NM_ITEM, "Show " UNIT, NULL, 0, 0, (APTR)M_SHOW_SLIDE },
     { NM_ITEM, UNIT " Transition...", NULL, 0, 0, (APTR)M_TRANSITION },
+    { NM_ITEM, UNIT " Background...", NULL, 0, 0, (APTR)M_BACKGROUND },
 #ifndef OPENPRESSMASTER
     { NM_ITEM, "Custom Animation...", NULL, 0, 0, (APTR)M_CUSTOM_ANIMATION },
 #endif
@@ -1346,6 +1349,149 @@ out:
     if (list) FreeGadgets(list);
     if (invalid)
         tell("Object Appearance", "Colours must be six hexadecimal digits (RRGGBB). Line width must be 0 to 10000 twips.");
+    return ok;
+}
+
+/* Area: transparency and hatching (left), and a shadow or, for a background, its colour (right), through
+ * opr_area_get/opr_area_put. background: the slide's own colour, or the master's, instead of a shadow. */
+static int area_requester(owf_look *look, int background)
+{
+    static STRPTR hatch_labels[] = {
+        (STRPTR)"None", (STRPTR)"Lines", (STRPTR)"Crossed", (STRPTR)"Triple", NULL
+    };
+    struct Gadget *list = NULL, *last, *g[12];
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    opr_area area;
+    char hatch_text[7], right_text[7];
+    STRPTR value = NULL;
+    LONG v;
+    unsigned long shade;
+    int done = 0, ok = 0, invalid = 0, ww = 600, wh = 184, i, n = background ? 7 : 10;
+    if (!look || !scr || !vi) return 0;
+    opr_area_get(look, &area);
+    snprintf(hatch_text, sizeof hatch_text, "%06lx", area.hatch_colour);
+    if (background) shade_text(look->fill, right_text);
+    else snprintf(right_text, sizeof right_text, "%06lx", area.shadow_colour);
+    memset(g, 0, sizeof g);
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr;
+    ng.ng_VisualInfo = vi;
+    last = CreateContext(&list);
+
+    ng.ng_Flags = PLACETEXT_LEFT; ng.ng_LeftEdge = 190; ng.ng_Width = 90; ng.ng_Height = 18;
+    ng.ng_TopEdge = 14; ng.ng_GadgetText = (STRPTR)"Transparency (%)"; ng.ng_GadgetID = 0;
+    last = g[0] = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)area.transparency,
+                               GTIN_MaxChars, 3, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge = 40; ng.ng_Width = 120; ng.ng_GadgetText = (STRPTR)"Hatching"; ng.ng_GadgetID = 1;
+    last = g[1] = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)hatch_labels,
+                               GTCY_Active, (ULONG)(area.hatch & 3), TAG_DONE);
+    ng.ng_TopEdge = 66; ng.ng_Width = 90; ng.ng_GadgetText = (STRPTR)"Hatch colour (RRGGBB)"; ng.ng_GadgetID = 2;
+    last = g[2] = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)hatch_text,
+                               GTST_MaxChars, 6, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge = 92; ng.ng_GadgetText = (STRPTR)"Hatch angle (degrees)"; ng.ng_GadgetID = 3;
+    last = g[3] = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)area.hatch_degrees,
+                               GTIN_MaxChars, 3, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge = 118; ng.ng_GadgetText = (STRPTR)"Hatch spacing (twips)"; ng.ng_GadgetID = 4;
+    last = g[4] = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)area.hatch_spacing,
+                               GTIN_MaxChars, 5, GA_TabCycle, TRUE, TAG_DONE);
+
+    ng.ng_LeftEdge = 500;
+    if (background) {
+        ng.ng_TopEdge = 14; ng.ng_GadgetText = (STRPTR)"Colour (RRGGBB)"; ng.ng_GadgetID = 5;
+        last = g[5] = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)right_text,
+                                   GTST_MaxChars, 6, GA_TabCycle, TRUE, TAG_DONE);
+        ng.ng_TopEdge = 42; ng.ng_Width = 22; ng.ng_Height = 14; ng.ng_GadgetText = (STRPTR)"The master's colour";
+        ng.ng_GadgetID = 6;
+        last = g[6] = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, !OWF_SHADE_SET(look->fill), TAG_DONE);
+    } else {
+        ng.ng_TopEdge = 16; ng.ng_Width = 22; ng.ng_Height = 14; ng.ng_GadgetText = (STRPTR)"Shadow";
+        ng.ng_GadgetID = 5;
+        last = g[5] = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, area.shadow, TAG_DONE);
+        ng.ng_Width = 90; ng.ng_Height = 18;
+        ng.ng_TopEdge = 40; ng.ng_GadgetText = (STRPTR)"Colour (RRGGBB)"; ng.ng_GadgetID = 6;
+        last = g[6] = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)right_text,
+                                   GTST_MaxChars, 6, GA_TabCycle, TRUE, TAG_DONE);
+        ng.ng_TopEdge = 66; ng.ng_GadgetText = (STRPTR)"Right (twips)"; ng.ng_GadgetID = 7;
+        last = g[7] = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)area.shadow_dx,
+                                   GTIN_MaxChars, 6, GA_TabCycle, TRUE, TAG_DONE);
+        ng.ng_TopEdge = 92; ng.ng_GadgetText = (STRPTR)"Down (twips)"; ng.ng_GadgetID = 8;
+        last = g[8] = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)area.shadow_dy,
+                                   GTIN_MaxChars, 6, GA_TabCycle, TRUE, TAG_DONE);
+        ng.ng_TopEdge = 118; ng.ng_GadgetText = (STRPTR)"Transparency (%)"; ng.ng_GadgetID = 9;
+        last = g[9] = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)area.shadow_transparency,
+                                   GTIN_MaxChars, 3, GA_TabCycle, TRUE, TAG_DONE);
+    }
+    ng.ng_Flags = 0; ng.ng_TopEdge = 152; ng.ng_Height = 20; ng.ng_Width = 78; ng.ng_LeftEdge = ww - 172;
+    ng.ng_GadgetText = (STRPTR)"Apply"; ng.ng_GadgetID = 10;
+    last = g[10] = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = ww - 88; ng.ng_GadgetText = (STRPTR)"Cancel"; ng.ng_GadgetID = 11;
+    g[11] = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    for (i = 0; i < 12; ++i)
+        if ((i < n || i >= 10) && !g[i]) goto out;
+    rw = OpenWindowTags(NULL, WA_Title, (ULONG)(background ? UNIT " Background" : "Object Area"),
+        WA_PubScreen, (ULONG)scr, WA_InnerWidth, ww, WA_InnerHeight, wh,
+        WA_Left, scr->Width > ww ? (scr->Width - ww) / 2 : 0, WA_Top, scr->Height > wh ? (scr->Height - wh) / 2 : 0,
+        WA_Gadgets, (ULONG)list, WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE,
+        WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | BUTTONIDCMP | STRINGIDCMP |
+                  INTEGERIDCMP | CYCLEIDCMP | CHECKBOXIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((m = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = m->Class;
+            UWORD id = m->IAddress ? ((struct Gadget *)m->IAddress)->GadgetID : 0;
+            GT_ReplyIMsg(m);
+            if (cls == IDCMP_CLOSEWINDOW) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); }
+            else if (cls == IDCMP_GADGETUP) {
+                if (id == 10) { ok = 1; done = 1; }
+                else if (id == 11) done = 1;
+            }
+        }
+    }
+    if (ok) {
+        owf_look edited = *look;
+        GT_GetGadgetAttrs(g[0], rw, NULL, GTIN_Number, (ULONG)&v, TAG_DONE); area.transparency = (int)v;
+        GT_GetGadgetAttrs(g[1], rw, NULL, GTCY_Active, (ULONG)&v, TAG_DONE); area.hatch = (int)(v & 3);
+        GT_GetGadgetAttrs(g[2], rw, NULL, GTST_String, (ULONG)&value, TAG_DONE);
+        if (shade_from_text((char *)value, &shade)) area.hatch_colour = OWF_SHADE_RGB(shade);
+        else if (area.hatch) invalid = 1;
+        GT_GetGadgetAttrs(g[3], rw, NULL, GTIN_Number, (ULONG)&v, TAG_DONE); area.hatch_degrees = (int)v;
+        GT_GetGadgetAttrs(g[4], rw, NULL, GTIN_Number, (ULONG)&v, TAG_DONE); area.hatch_spacing = (int)v;
+        if (background) {
+            area.shadow = 0;
+            GT_GetGadgetAttrs(g[6], rw, NULL, GTCB_Checked, (ULONG)&v, TAG_DONE);
+            if (v) edited.fill = 0;
+            else {
+                GT_GetGadgetAttrs(g[5], rw, NULL, GTST_String, (ULONG)&value, TAG_DONE);
+                if (shade_from_text((char *)value, &shade)) edited.fill = shade;
+                else invalid = 1;
+            }
+        } else {
+            GT_GetGadgetAttrs(g[5], rw, NULL, GTCB_Checked, (ULONG)&v, TAG_DONE); area.shadow = v != 0;
+            GT_GetGadgetAttrs(g[6], rw, NULL, GTST_String, (ULONG)&value, TAG_DONE);
+            if (shade_from_text((char *)value, &shade)) area.shadow_colour = OWF_SHADE_RGB(shade);
+            else if (area.shadow) invalid = 1;
+            GT_GetGadgetAttrs(g[7], rw, NULL, GTIN_Number, (ULONG)&v, TAG_DONE); area.shadow_dx = (int)v;
+            GT_GetGadgetAttrs(g[8], rw, NULL, GTIN_Number, (ULONG)&v, TAG_DONE); area.shadow_dy = (int)v;
+            GT_GetGadgetAttrs(g[9], rw, NULL, GTIN_Number, (ULONG)&v, TAG_DONE); area.shadow_transparency = (int)v;
+        }
+        if (!invalid && opr_area_put(&edited, &area) < 0) invalid = 1;
+        if (invalid) ok = 0;
+        else *look = edited;
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (list) FreeGadgets(list);
+    if (invalid)
+        tell(background ? UNIT " Background" : "Object Area",
+             "Colours are six hexadecimal digits (RRGGBB). Transparency is 0 to 100 percent, the hatch angle "
+             "0 to 359 degrees, its spacing 10 to 10000 twips, and a shadow at most 10000 twips away.");
     return ok;
 }
 
@@ -7236,6 +7382,79 @@ static void edit_selected_appearance(void)
     draw_status();
 }
 
+static void edit_selected_area(void)
+{
+    owf_look before, edited;
+    owf_obj *o;
+    int rc;
+    if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
+        set_status("Select a text box or shape to give it hatching, transparency or a shadow.");
+        draw_status();
+        return;
+    }
+    o = &deck->slides[current].objs[selected_obj];
+    if (o->parent >= 0 || (o->kind != OWF_OBJ_TEXT && o->kind != OWF_OBJ_SHAPE)) {
+        set_status("Area editing currently supports top-level text boxes and shapes.");
+        draw_status();
+        return;
+    }
+    before = edited = o->look;
+    if (!area_requester(&edited, 0)) return;
+    rc = opr_obj_set_look(undo, deck, current, selected_obj, &edited);
+    if (rc < 0) {
+        set_status(rc == -2 ? "That area is not valid for this object." : "The object's area could not be changed.");
+        draw_status();
+        return;
+    }
+    if (!memcmp(&before, &edited, sizeof before)) {
+        set_status("The object's area is unchanged.");
+        draw_status();
+        return;
+    }
+    stop_typing();
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status("Object area changed.");
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+
+static void edit_current_background(void)
+{
+    owf_look before, edited;
+    owf_slide *sl;
+    int rc;
+    if (!deck || current < 0 || current >= deck->nslides) return;
+    sl = &deck->slides[current];
+    OWF_BACKGROUND_LOOK(sl, &before);
+    edited = before;
+    if (!area_requester(&edited, 1)) return;
+    rc = opr_slide_set_background(undo, deck, current, &edited);
+    if (rc < 0) {
+        set_status(rc == -2 ? "That background is not valid." : "The background could not be changed.");
+        draw_status();
+        return;
+    }
+    if (!memcmp(&before, &edited, sizeof before)) {
+        set_status("The background is unchanged.");
+        draw_status();
+        return;
+    }
+    stop_typing();
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status(sl->background_image >= 0 ? UNIT " background changed; its picture still covers it."
+                                          : UNIT " background changed.");
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    draw_status();
+}
+
 #ifdef OPR_CHART_EDITOR
 static LONG chart_pen(unsigned long rgb)
 {
@@ -8528,6 +8747,7 @@ static void menu_action(ULONG id)
     case M_UNGROUP: ungroup_selected(); break;
     case M_POSITION_SIZE: edit_selected_geometry(); break;
     case M_APPEARANCE: edit_selected_appearance(); break;
+    case M_AREA: edit_selected_area(); break;
     case M_PICTURE_CROP: edit_selected_picture_crop(); break;
 #ifdef OPR_CHART_EDITOR
     case M_CHART_DATA: edit_selected_chart(); break;
@@ -8559,6 +8779,7 @@ static void menu_action(ULONG id)
     case M_HIDE_SLIDE: set_current_hidden(1); break;
     case M_SHOW_SLIDE: set_current_hidden(0); break;
     case M_TRANSITION: edit_current_transition(); break;
+    case M_BACKGROUND: edit_current_background(); break;
 #ifndef OPENPRESSMASTER
     case M_CUSTOM_ANIMATION: custom_animation_window(); break;
 #endif

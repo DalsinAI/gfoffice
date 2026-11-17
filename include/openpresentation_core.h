@@ -447,6 +447,31 @@ int opr_obj_align(opr_undo *u, owf_deck *deck, int slide, int obj,
  * one undo step. -2 means an unsupported object or invalid look. */
 int opr_obj_set_look(opr_undo *u, owf_deck *deck, int slide, int obj,
                      const owf_look *look);
+/* The Area window's values, in the units it shows: percents, whole degrees and
+ * twips. opr_area_get fills one from a look (spacing, shadow colour and offsets
+ * show their defaults when unset); opr_area_put sets the look's transparency,
+ * hatching and shadow from one and leaves the rest. A value the look already
+ * means is kept as it is stored, so get then put changes nothing. opr_area_put
+ * returns 0, or -2 when a value is out of range (the look is then unchanged). */
+typedef struct {
+    int transparency;            /* 0..100 percent see-through */
+    int hatch;                   /* 0: none, or OPR_HATCH_SINGLE/_DOUBLE/_TRIPLE */
+    unsigned long hatch_colour;  /* 0xRRGGBB */
+    int hatch_degrees;           /* 0..359, anticlockwise */
+    int hatch_spacing;           /* twips between lines, 10..10000 */
+    int shadow;                  /* 0 or 1 */
+    unsigned long shadow_colour; /* 0xRRGGBB */
+    int shadow_dx, shadow_dy;    /* twips right of and below the object, -10000..10000 */
+    int shadow_transparency;     /* 0..100 */
+} opr_area;
+#define OPR_AREA_SHADOW_OFFSET 113   /* 0.2 cm, as ODF's default */
+void opr_area_get(const owf_look *look, opr_area *area);
+int opr_area_put(owf_look *look, const opr_area *area);
+/* Replace one slide's background colour, gradient, transparency and hatching
+ * (OWF_BACKGROUND_LOOK's fields; a picture background stays) as one undo step.
+ * A fill of 0 means the master's background. -2: an invalid look. */
+int opr_slide_set_background(opr_undo *u, owf_deck *deck, int slide,
+                             const owf_look *background);
 /* Set equal columns inside one top-level text frame or text-bearing shape.
  * columns is 1..16 and gap is twips. One column stores the canonical zero
  * values. The change is one undo step. */
