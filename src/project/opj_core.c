@@ -846,7 +846,7 @@ void opj_cell_text(const opj_doc *doc, int row, int column, char *out, size_t si
     t = &doc->plan->tasks[row];
     text[0] = 0;
     switch (column) {
-    case OPJ_COL_ID: sprintf(text, owf_ptask_overallocated(doc->plan, row) ? "%d!" : "%d", row + 1); break;
+    case OPJ_COL_ID: sprintf(text, "%d", row + 1); break;
     case OPJ_COL_NAME: s = t->name ? t->name : ""; break;
     case OPJ_COL_DURATION: {
         int estimated = t->estimated, i;

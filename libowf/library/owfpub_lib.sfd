@@ -62,7 +62,7 @@ int owf_pub_detect(const unsigned char *data, size_t length) (a0,d0)
 int owf_pub_read(const unsigned char *data, size_t length, owf_pub **pub, owf_report *report) (a0,d0,a1,a2)
 int owf_pub_read_file(const char *path, owf_pub **pub, owf_report *report) (a0,a1,a2)
 void owf_pub_free(owf_pub *pub) (a0)
-* 3.7: GFOpenPressmaster's publications on the page model (libowf/pub): the
+* 3.8: GFOpenPressmaster's publications on the page model (libowf/pub): the
 * suite's merge table, mail merge and catalog merge, and the built-in
 * templates, with owf_deck_free for the publications they make
 ow_merge_table *ow_merge_table_parse(const char *s, size_t n, int *memory) (a0,d0,a1)

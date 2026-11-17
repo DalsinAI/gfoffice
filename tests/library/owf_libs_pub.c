@@ -2,7 +2,7 @@
  * OWFLibsTest: owfpub.library (built with OWF_USE_PUB_LIBRARY): the shared
  * calls, Publisher's detector, then owf_lib_checks.c's .pub check
  * (owf_lib_pub_checks: that file built with OWF_LIB_CHECKS_PART 3 for this
- * library): Sample.pub read, its pages and version. Then the 3.7 calls:
+ * library): Sample.pub read, its pages and version. Then the 3.8 calls:
  * the templates, a merge table from text, a merge field and Mail Merge.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
@@ -15,7 +15,7 @@
 #include "openpressmaster_merge.h"
 #include "openpressmaster_template.h"
 
-/* owfpub.library 3.7: the templates and Mail Merge on a Flyer (its frame,
+/* owfpub.library 3.8: the templates and Mail Merge on a Flyer (its frame,
    object 1, takes a Name field; two records make two pages). */
 static void merge_checks(const owf_libs_env *e)
 {

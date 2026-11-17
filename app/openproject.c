@@ -48,7 +48,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenProject 0.1.22 (16.11.2026)"
+#define VERSION_TEXT "GFOpenProject 0.1.23 (17.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenProject, the project planner of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -164,6 +164,8 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Actual Cost", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_ACTUAL_COST) },
     { NM_SUB, "Type", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_TYPE) },
     { NM_SUB, "Effort Driven", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_EFFORT_DRIVEN) },
+    { NM_SUB, "Priority", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_PRIORITY) },
+    { NM_SUB, "Overallocated", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_OVERALLOCATED) },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Sort", NULL, 0, 0, NULL },
     { NM_SUB, "by Start Date", NULL, 0, 0, (APTR)M_SORT_START },
@@ -618,15 +620,16 @@ static int edit_allowed(int edit)
 /* ---- Task Information (Edit > Task Information..., or a double-click on a bar) ---- */
 
 enum { TI_NAME, TI_DURATION, TI_PERCENT, TI_PREDECESSORS, TI_RESOURCES, TI_CONSTRAINT, TI_DATE, TI_NOTES, TI_TYPE,
-       TI_EFFORT, TI_N };
+       TI_EFFORT, TI_PRIORITY, TI_N };
 
 static void task_info(void)
 {
     static const int cols[TI_N] = { OPJ_COL_NAME, OPJ_COL_DURATION, OPJ_COL_PERCENT, OPJ_COL_PREDECESSORS,
                                     OPJ_COL_RESOURCES, OPJ_COL_CONSTRAINT_TYPE, OPJ_COL_CONSTRAINT_DATE, OPJ_COL_NOTES,
-                                    OPJ_COL_TYPE, OPJ_COL_EFFORT_DRIVEN };
+                                    OPJ_COL_TYPE, OPJ_COL_EFFORT_DRIVEN, OPJ_COL_PRIORITY };
     static const char *const labels[TI_N] = { "Name", "Duration", "% Complete", "Predecessors", "Resources",
-                                              "Constraint", "Date", "Notes", "Task Type", "Effort Driven" };
+                                              "Constraint", "Date", "Notes", "Task Type", "Effort Driven",
+                                              "Priority" };
     static STRPTR kinds[9];
     static STRPTR types[] = { (STRPTR)"Fixed Units", (STRPTR)"Fixed Duration", (STRPTR)"Fixed Work", NULL };
     static char was[TI_N][400], now[TI_N][400];
@@ -672,6 +675,9 @@ static void task_info(void)
                                       GA_Disabled, (ULONG)summary, TAG_DONE);
         else if (i == TI_EFFORT)
             g = gad[i] = CreateGadget(CHECKBOX_KIND, g, &ng, GTCB_Checked, (ULONG)!strcmp(was[i], "Yes"),
+                                      GA_Disabled, (ULONG)summary, TAG_DONE);
+        else if (i == TI_PRIORITY)                   /* 0..1000, 1000 Do Not Level; a summary has none */
+            g = gad[i] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)was[i], GTST_MaxChars, 4,
                                       GA_Disabled, (ULONG)summary, TAG_DONE);
         else
             g = gad[i] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)was[i], GTST_MaxChars, 399, TAG_DONE);
@@ -731,6 +737,7 @@ static void task_info(void)
                     put_text(now[i], sizeof now[i], on ? "Yes" : "No");
                     if (!strcmp(now[i], was[i])) continue;
                 } else {
+                    if (i == TI_PRIORITY && summary) continue;
                     GT_GetGadgetAttrs(gad[i], aw, NULL, GTST_String, (ULONG)&str, TAG_DONE);
                     put_text(now[i], sizeof now[i], str ? (const char *)str : "");
                     if (!strcmp(now[i], was[i])) continue;
@@ -1177,6 +1184,12 @@ static void as_build(int task)
     }
 }
 
+/* Resource r's name for the Assign window's info line; "" for none or out of range. */
+static const char *res_name(int r)
+{
+    return r >= 0 && r < DOC->plan->nresources && DOC->plan->resources[r].name ? DOC->plan->resources[r].name : "";
+}
+
 static void assign_window(void)
 {
     enum { A_LIST = 1, A_UNITS, A_ASSIGN, A_REMOVE, A_REPLACE, A_ADD, A_CLOSE };
@@ -1272,14 +1285,14 @@ static void assign_window(void)
             case A_ASSIGN:
                 if (sel < 0) break;
                 rc = opj_assign_resource(DOC, task, sel, units ? (const char *)units : "");
-                if (rc == OWF_OK) snprintf(info, sizeof info, "%.40s assigned", DOC->plan->resources[sel].name);
+                if (rc == OWF_OK) snprintf(info, sizeof info, "%.40s assigned", res_name(sel));
                 changed = 1;
                 break;
             case A_REMOVE:
                 if (sel < 0) break;
                 what = "Remove";
                 rc = opj_remove_resource(DOC, task, sel);
-                if (rc == OWF_OK) snprintf(info, sizeof info, "%.40s removed", DOC->plan->resources[sel].name);
+                if (rc == OWF_OK) snprintf(info, sizeof info, "%.40s removed", res_name(sel));
                 changed = 1;
                 break;
             case A_REPLACE: {
@@ -1297,7 +1310,7 @@ static void assign_window(void)
                 rc = opj_replace_resource(DOC, task, sel, to, units ? (const char *)units : "");
                 if (rc == OWF_OK) {
                     snprintf(info, sizeof info, kind && !(units && *units) ? "%.30s replaced: one unit, as it is another kind"
-                                                                           : "%.30s replaced", DOC->plan->resources[sel].name);
+                                                                           : "%.30s replaced", res_name(sel));
                     sel = to;
                 }
                 changed = 1;
@@ -1316,6 +1329,7 @@ static void assign_window(void)
             }
             if (rc != OWF_OK) {
                 struct Window *keep = win;
+                info[0] = 0;                          /* not the last success under the error */
                 win = aw;
                 edit_failed(rc, what);
                 win = keep;
@@ -1340,18 +1354,111 @@ static void assign_window(void)
 
 /* ---- Tools > Level Resources... ---- */
 
-/* Levels the plan, the whole of it or only within slack, with the busy pointer while it works (each move
- * schedules the plan again, which takes a while on a large one). */
+/* The Level Resources requester, as ProjectLibre's and MS Project's Resource Leveling dialog: the leveling
+ * order, "Level only within available slack", then Level Now, Clear Leveling or Cancel. The choices stay
+ * for the next time. 1 Level Now, 2 Clear Leveling, 0 Cancel. */
+static int level_order = OWF_LEVEL_STANDARD, level_within;
+
+static int level_dialog(void)
+{
+    static STRPTR orders[OWF_LEVEL_NORDERS + 1];
+    struct Window *aw;
+    struct Gadget *eg = NULL, *g, *slack_g;
+    struct NewGadget ng;
+    int i, done = 0, answer = 0, order = level_order, lw = fw * 15 + 12, w = fw * 56, h = (fh + 8) * 4 + 16;
+    for (i = 0; i < OWF_LEVEL_NORDERS; i++) orders[i] = (STRPTR)opj_level_order_name(i);
+    orders[OWF_LEVEL_NORDERS] = NULL;
+    aw = OpenWindowTags(NULL, WA_Title, (ULONG)"Level Resources", WA_PubScreen, (ULONG)scr,
+        WA_Left, win->LeftEdge + 40, WA_Top, win->TopEdge + 30, WA_InnerWidth, w, WA_InnerHeight, h,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SmartRefresh, TRUE,
+        WA_AutoAdjust, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | BUTTONIDCMP |
+                  CYCLEIDCMP | CHECKBOXIDCMP,
+        TAG_DONE);
+    if (!aw) return 0;
+    if (!(g = CreateContext(&eg))) { CloseWindow(aw); return 0; }
+    memset(&ng, 0, sizeof ng);
+    ng.ng_VisualInfo = vi;
+    ng.ng_TextAttr = &font_attr;
+    ng.ng_Height = fh + 6;
+    ng.ng_Flags = PLACETEXT_LEFT;
+    ng.ng_LeftEdge = aw->BorderLeft + 8 + lw;
+    ng.ng_TopEdge = aw->BorderTop + 8;
+    ng.ng_Width = w - 16 - lw;
+    ng.ng_GadgetText = (UBYTE *)"Leveling order";
+    ng.ng_GadgetID = 10;
+    g = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)orders, GTCY_Active, (ULONG)order, TAG_DONE);
+    ng.ng_TopEdge += fh + 8;
+    ng.ng_Flags = PLACETEXT_RIGHT;
+    ng.ng_LeftEdge = aw->BorderLeft + 8;
+    ng.ng_Width = 26;
+    ng.ng_GadgetText = (UBYTE *)"Level only within available slack";
+    ng.ng_GadgetID = 11;
+    g = slack_g = CreateGadget(CHECKBOX_KIND, g, &ng, GTCB_Checked, (ULONG)level_within, TAG_DONE);
+    ng.ng_Flags = PLACETEXT_IN;
+    ng.ng_TopEdge = aw->Height - aw->BorderBottom - 6 - (fh + 6);
+    ng.ng_Width = (w - 32) / 3;
+    ng.ng_GadgetText = (UBYTE *)"Level Now";
+    ng.ng_GadgetID = 1;
+    g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+    ng.ng_LeftEdge += ng.ng_Width + 8;
+    ng.ng_GadgetText = (UBYTE *)"Clear Leveling";
+    ng.ng_GadgetID = 2;
+    g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+    ng.ng_LeftEdge += ng.ng_Width + 8;
+    ng.ng_GadgetText = (UBYTE *)"Cancel";
+    ng.ng_GadgetID = 3;
+    g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+    if (!g) { FreeGadgets(eg); CloseWindow(aw); return 0; }
+    AddGList(aw, eg, ~0, -1, NULL);
+    RefreshGList(eg, aw, NULL, -1);
+    GT_RefreshWindow(aw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        WaitPort(aw->UserPort);
+        while ((m = GT_GetIMsg(aw->UserPort)) != NULL) {
+            ULONG class = m->Class;
+            UWORD code = m->Code;
+            struct Gadget *gg = (struct Gadget *)m->IAddress;
+            GT_ReplyIMsg(m);
+            if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) done = 1;
+            else if (class == IDCMP_VANILLAKEY && code == 13) answer = 1, done = 1;
+            else if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(aw); GT_EndRefresh(aw, TRUE); }
+            else if (class == IDCMP_GADGETUP && gg->GadgetID == 10) order = code;
+            else if (class == IDCMP_GADGETUP && gg->GadgetID >= 1 && gg->GadgetID <= 3)
+                answer = gg->GadgetID == 3 ? 0 : gg->GadgetID, done = 1;
+        }
+    }
+    if (answer) {
+        ULONG on = 0;
+        GT_GetGadgetAttrs(slack_g, aw, NULL, GTCB_Checked, (ULONG)&on, TAG_DONE);
+        level_within = on != 0;
+        level_order = order >= 0 && order < OWF_LEVEL_NORDERS ? order : OWF_LEVEL_STANDARD;
+    }
+    RemoveGList(aw, eg, -1);
+    FreeGadgets(eg);
+    CloseWindow(aw);
+    return answer;
+}
+
+/* Levels the plan in the requester's order, the whole of it or only within slack, with the busy pointer
+ * while it works (each move schedules the plan again, which takes a while on a large one). */
 static void level_resources(void)
 {
     char msg[96];
     int how, delayed = 0, rc, over = 0, i;
     if (rexx_busy) return;
-    how = ask("Level Resources: delay tasks until no resource is over-allocated",
-              "Level|Within slack only|Cancel");
+    how = level_dialog();
+    redraw();
     if (!how) return;
+    if (how == 2) {
+        rc = opj_clear_leveling(DOC);
+        if (rc == OWF_OK) set_status("Leveling cleared");
+        else edit_failed(rc, "Clear Leveling");
+        return;
+    }
     SetWindowPointer(win, WA_BusyPointer, TRUE, TAG_DONE);
-    rc = opj_level(DOC, how == 2, &delayed);
+    rc = opj_level_by(DOC, level_within, level_order, &delayed);
     SetWindowPointer(win, TAG_DONE);
     if (rc != OWF_OK) { edit_failed(rc, "Level Resources"); return; }
     for (i = 0; i < DOC->plan->nresources; i++) over += DOC->plan->resources[i].overallocated != 0;

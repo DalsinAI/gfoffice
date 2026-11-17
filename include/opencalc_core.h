@@ -370,6 +370,116 @@ int oc_link_path(const char *target, const char *base, char *out, size_t size);
  * nothing, so the formulas keep showing the last values. Memory running out part-way returns OWF_ERR_MEMORY
  * with the sheets before it updated (as *sheets says), as one Undo step. */
 int oc_core_update_link(oc_core *core, int index, const char *path, owf_report *report, int *sheets);
+
+/* ---- External data (Data > External Data) ----
+ * A range of a sheet filled from a web page's table or from a database's table, view or query, kept with
+ * where it came from so it can be refreshed: by hand, as the book opens, or every so many seconds (the
+ * program keeps the clock). Each is kept on its sheet in hidden names: _GF_EXTDATA_n, the range as a
+ * reference (it follows rows and columns put in or taken out, as any name does), and _GF_EXTDATA_n_D1..,
+ * its settings, so XLSX and ODS keep them as they keep names. The core reads nothing itself: an
+ * oc_extdata_io gives it a page's bytes or a database's rows (oc_extdata_fetch_file reads files; the window
+ * adds the web, opencalc_extdb.h the databases). */
+enum { OC_EXTDATA_WEB, OC_EXTDATA_DATABASE };
+#define OC_EXTDATA_MAX 64            /* in one book */
+#define OC_EXTDATA_SOURCE 512        /* a source's text, with its 0 */
+#define OC_EXTDATA_ITEM 2048         /* an item's */
+#define OC_EXTDATA_REF 160
+/* Cells beside the range that are not empty would be written over (the range grows onto them): nothing
+ * changed; OC_EXTDATA_OVERWRITE writes over them. */
+#define OC_EXTDATA_BLOCKED 180
+enum {
+    OC_EXTDATA_OVERWRITE = 1,        /* write over cells that are not empty where the range grows */
+    OC_EXTDATA_QUIET = 2             /* not an Undo step: a refresh on opening or on the clock */
+};
+typedef struct {
+    int kind;                        /* OC_EXTDATA_WEB, OC_EXTDATA_DATABASE */
+    /* WEB: the page, "http://...", "https://...", "file:///...", or a file ("Work:Data/Rates.html", a name
+       beside the book); DATABASE: the database's file ("Work:Shop.oadb", any SQLite file) */
+    char source[OC_EXTDATA_SOURCE];
+    /* WEB: which table, "HTML_2" or "2" (the page's second), or a table's id or caption; DATABASE: a table's,
+       view's or saved query's name, or a query typed in ("SELECT name, price FROM Products") */
+    char item[OC_EXTDATA_ITEM];
+    char dest[OC_EXTDATA_REF];       /* the range's top left cell: "B2" on the active sheet, "'Sheet 2'!B2" */
+    int headers;                     /* DATABASE: the field names as the first row */
+    int refresh_on_open;
+    unsigned refresh_seconds;        /* every so many seconds while the book is open; 0: by hand */
+} oc_extdata_spec;
+/* A web source, "HTML_1", the active cell, headers, no refreshing on its own. */
+void oc_extdata_init(oc_extdata_spec *spec);
+
+/* The values a source gave: rows x cols, row by row. A value is empty, text (kept as text), a number, or
+ * input (put in as if typed: "12.5", "25/10/2026" and "50%" become numbers, "=..." and "'..." stay text).
+ * Its text is owf_malloc'd. */
+enum { OC_EXTV_EMPTY, OC_EXTV_TEXT, OC_EXTV_NUMBER, OC_EXTV_INPUT };
+typedef struct {
+    int kind;
+    double number;
+    char *text;
+} oc_extvalue;
+typedef struct {
+    unsigned rows, cols;
+    oc_extvalue *cells;
+} oc_exttable;
+/* An empty table of rows x cols (none: 0 x 0); OWF_ERR_UNSUPPORTED past OC_MAX_RANGE_CELLS, OWF_ERR_MEMORY. */
+int oc_exttable_alloc(oc_exttable *t, unsigned rows, unsigned cols);
+/* A value (text copied, length bytes); OWF_ERR_UNSUPPORTED outside the table. */
+int oc_exttable_set(oc_exttable *t, unsigned row, unsigned col, int kind, double number, const char *text,
+                    size_t length);
+void oc_exttable_free(oc_exttable *t);
+
+/* What reads the sources for the core. fetch gives a page's bytes (owf_malloc'd into *data) from a URL or a
+ * file's path (a file source comes as the path it names: "file:///..." decoded, a name beside the book made
+ * whole from base); query gives a database item's values (the field names first when headers). Each returns
+ * OWF_OK or an OWF_ERR_..., with words in err ("Could not reach example.org") when it can. NULL: that kind of
+ * source cannot be read (OWF_ERR_UNSUPPORTED). */
+typedef struct {
+    int (*fetch)(void *user, const char *source, char **data, size_t *length, char *err, size_t errsize);
+    int (*query)(void *user, const char *database, const char *item, int headers, oc_exttable *out, char *err,
+                 size_t errsize);
+    void *user;
+    const char *base;                /* the book's folder, for a source named beside it (NULL: none) */
+} oc_extdata_io;
+/* A fetch of files only (OWF_ERR_UNSUPPORTED for "http://" and the like): oc_extdata_io.fetch's. */
+int oc_extdata_fetch_file(void *user, const char *source, char **data, size_t *length, char *err, size_t errsize);
+
+/* A web page's tables, in the order they open (a table in a cell is one too): its number (1..), how deep it
+ * sits (0: not in another), its id and caption, its rows and columns. info may be NULL; returns how many the
+ * page has (more than max: the first max described), -1 when memory ran out. */
+typedef struct {
+    int number, depth;
+    char id[64];
+    char caption[80];
+    unsigned rows, cols;
+} oc_webtable_info;
+int oc_web_tables(const char *page, size_t length, oc_webtable_info *info, int max);
+/* The table which names ("HTML_2", "2", an id, a caption; case aside): its number, 0 when there is none, -1
+ * when memory ran out. Its cells as input values (OWF_ERR_FORMAT: no such table). */
+int oc_web_table_number(const char *page, size_t length, const char *which);
+int oc_web_table(const char *page, size_t length, const char *which, oc_exttable *out);
+
+/* The book's external data ranges, sheet by sheet; one's settings (dest where its range is now), its sheet
+ * and its range now (one cell when its source gave nothing). OWF_ERR_UNSUPPORTED: no such one. */
+int oc_core_extdata_count(const oc_core *core);
+int oc_core_extdata(const oc_core *core, int index, oc_extdata_spec *spec, int *sheet, owf_range *range);
+/* The one whose range holds the cell, or -1. */
+int oc_core_extdata_at(const oc_core *core, int sheet, unsigned row, unsigned col);
+/* A new range from spec: its source read, its values put at dest, the settings kept, one Undo step; *index
+ * the new one's. Its values replace what was there (styles stay). OWF_ERR_FORMAT: a bad dest or item, or no
+ * such table; OC_EXTDATA_BLOCKED (cells beside it); OC_PROTECTED; the source's error (nothing changed). */
+int oc_core_extdata_add(oc_core *core, const oc_extdata_spec *spec, const oc_extdata_io *io, int flags, int *index,
+                        char *err, size_t errsize);
+/* One's settings changed and its source read again (at the new dest; the old range emptied), as add. */
+int oc_core_extdata_change(oc_core *core, int index, const oc_extdata_spec *spec, const oc_extdata_io *io,
+                           int flags, char *err, size_t errsize);
+/* One's source read again (index -1: every one, each its own step, the first error returned and the rest
+ * still refreshed): its range takes the new values, growing or shrinking from its top left cell (what it no
+ * longer covers emptied). A source that cannot be read changes nothing: the last values stay. */
+int oc_core_extdata_refresh(oc_core *core, int index, const oc_extdata_io *io, int flags, char *err,
+                            size_t errsize);
+/* Each that refreshes on opening, quietly (no Undo step; what blocks one leaves it as it was): how many were. */
+int oc_core_extdata_refresh_on_open(oc_core *core, const oc_extdata_io *io);
+/* One forgotten (its values stay, or are emptied with clear), one Undo step. */
+int oc_core_extdata_remove(oc_core *core, int index, int clear);
 /* Excel's 16-bit hash of a password (0 for none). */
 unsigned oc_password_hash(const char *password);
 

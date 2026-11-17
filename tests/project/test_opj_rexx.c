@@ -7,6 +7,7 @@
  */
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include "openproject_core.h"
@@ -533,7 +534,7 @@ static void test_level(void)
     ok("UNDO");
     CHECK_S(ok("GETCELL 2 Start"), "Mon 16/11/26");
     /* ORDER, Priority and Overallocated */
-    CHECK_S(ok("GETCELL 1 ID"), "1!");
+    CHECK_S(ok("GETCELL 1 ID"), "1");                                     /* "!" is drawn only */
     CHECK_S(ok("GETCELL 2 Overallocated"), "Yes");
     CHECK_S(ok("LEVEL ORDER ID"), "1");                                   /* Dig is first: Fill waits */
     CHECK_S(ok("GETCELL 2 Start"), "Wed 18/11/26");
@@ -686,6 +687,57 @@ static void test_update_task(void)
     rx.view = NULL;
 }
 
+static char *read_all(const char *name, long *len)
+{
+    FILE *f = fopen(name, "rb");
+    char *data = NULL;
+    long n;
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (n >= 0 && (data = malloc((size_t)n + 1)) != NULL) {
+        if (fread(data, 1, (size_t)n, f) != (size_t)n) n = 0;
+        data[n] = 0;
+    }
+    fclose(f);
+    *len = n;
+    return data;
+}
+
+/* REPORT: a report saved through libowf's writers, by the name's extension or FORMAT. */
+static void test_report(void)
+{
+    char *data;
+    long len = 0;
+    opj_doc_free(rx.doc);
+    rx.doc = opj_doc_new(NULL, AT(16, 8, 0));
+    CHECK(rx.doc != NULL);
+    if (!rx.doc) return;
+    ok("ADDTASK Dig DURATION 2d");
+    ok("ADDTASK Plant DURATION 1d");
+    ok("LINK 1 COUNT 2");
+    ok("ADDRESOURCE Dale");
+    ok("ASSIGN 1 Dale");
+    CHECK_S(ok("REPORT summary build/host/summary.pdf"), "");
+    data = read_all("build/host/summary.pdf", &len);
+    CHECK(data && len > 200 && !memcmp(data, "%PDF-", 5));
+    free(data);
+    ok("REPORT \"Who Does What\" build/host/who.out FORMAT Text");
+    data = read_all("build/host/who.out", &len);
+    CHECK(data && !strcmp(data, "Who Does What\nDale\nID\tTask Name\tUnits\tWork\tStart\tFinish\n"
+                                "1\tDig\t100%\t16h\tMon 16/11/26\tTue 17/11/26\n"));
+    free(data);
+    CHECK_N(rx_do("REPORT budget build/host/b.pdf"), OPJ_RX_ERROR);
+    CHECK_S(ok("LASTERROR"), "REPORT: NAME is Summary, Critical, Milestones, WhoDoesWhat, Overallocated or CashFlow, not budget");
+    CHECK_N(rx_do("REPORT critical build/host/c.zzz"), OPJ_RX_ERROR);
+    CHECK_S(ok("LASTERROR"), "REPORT: can't save a report as build/host/c.zzz");
+    CHECK_N(rx_do("REPORT critical build/host/c.pdf FORMAT frob"), OPJ_RX_ERROR);
+    CHECK(strstr(ok("HELP REPORT"), "NAME/A,FILE/A,FORMAT/K") != NULL);
+    remove("build/host/summary.pdf");
+    remove("build/host/who.out");
+}
+
 int main(void)
 {
     if (!own_folder()) {
@@ -709,6 +761,7 @@ int main(void)
     test_sort_find();
     test_filter_group();
     test_update_task();
+    test_report();
     if (!rx.doc) return 1;
     CHECK_N(opj_rexx_format("A.XML"), OWF_PFILE_MSPDI);
     CHECK_N(opj_rexx_format("plan.Csv"), OWF_PFILE_CSV);

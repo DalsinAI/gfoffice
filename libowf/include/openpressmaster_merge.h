@@ -5,7 +5,7 @@
  * OWF_FIELD_MERGE) in a frame's text: its href is the column, its text the
  * value shown.
  *
- * On owfpub.library (3.7) these calls grow and free a deck's runs, objects and
+ * On owfpub.library (3.8) these calls grow and free a deck's runs, objects and
  * pages from that library's own memory, so give them only decks the same
  * library made (opp_template_new), never one from owfpresent.library or a
  * program's own libowf. Free those decks with the library's owf_deck_free.
