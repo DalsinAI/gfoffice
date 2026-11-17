@@ -1358,11 +1358,15 @@ static ow_position word_left_pos(ow_editor *editor, ow_position pos)
     return pos;
 }
 
-/* 2.0.38: in the final view a deleted table row is not shown: whether paragraph i is one of its cells */
+/* 2.0.38: in the final view a deleted table row is not shown: whether paragraph i is one of its cells (2.0.51:
+ * or a hidden paragraph whose condition holds, where hidden text isn't shown) */
 static int hidden_para(ow_editor *editor, int i)
 {
     const owf_story *story = ed_story(editor);
     const owf_revision *r;
+    if (!editor->show_hidden && i >= 0 && i < story->nparas && story->paras[i].table_id < 0 &&
+        owf_para_hidden(&story->paras[i]))
+        return 1;
     if (!editor->final_view || i < 0 || i >= story->nparas || story->paras[i].table_id < 0) return 0;
     r = OWF_DOC_REVISION(editor->doc, story->paras[i].row_revision);
     return r && r->kind == OWF_REV_DELETE;
@@ -1379,8 +1383,8 @@ static int hidden_run(ow_editor *editor, ow_position pos)
     run = &p->runs[pos.run];
     if (!editor->show_hidden && (run->fmt.flags & OWF_HIDDEN) && !run->comment && run->note <= 0)
         return 1;                                    /* 2.0.46: hidden text, not shown (as the layout leaves it out) */
+    if (hidden_para(editor, pos.paragraph)) return 1;   /* (2.0.51: a hidden paragraph's, too) */
     if (!editor->final_view) return 0;
-    if (hidden_para(editor, pos.paragraph)) return 1;
     r = OWF_DOC_REVISION(editor->doc, run->revision);
     return r && r->kind == OWF_REV_DELETE;
 }
@@ -1396,7 +1400,8 @@ static int hiding(ow_editor *editor)
     story = ed_story(editor);
     for (i = 0; i < story->nparas; ++i)
         for (j = 0; j < story->paras[i].nruns; ++j)
-            if (story->paras[i].runs[j].fmt.flags & OWF_HIDDEN) return 1;
+            if ((story->paras[i].runs[j].fmt.flags & OWF_HIDDEN) || (story->paras[i].runs[j].kind == OWF_RUN_FIELD &&
+                story->paras[i].runs[j].field == OWF_FIELD_HIDE_PARA)) return 1;   /* (2.0.51) */
     return 0;
 }
 
@@ -5752,7 +5757,8 @@ int ow_editor_insert_link(ow_editor *editor, const char *text, const char *url)
 static int field_wants_arg(owf_field f)
 {
     return f == OWF_FIELD_USER || f == OWF_FIELD_REF || f == OWF_FIELD_REF_PAGE || f == OWF_FIELD_MERGE ||
-           f == OWF_FIELD_INDEX || f == OWF_FIELD_SEQ || f == OWF_FIELD_IF || f == OWF_FIELD_FILLIN;
+           f == OWF_FIELD_INDEX || f == OWF_FIELD_SEQ || f == OWF_FIELD_IF || f == OWF_FIELD_FILLIN ||
+           f == OWF_FIELD_HIDE_PARA;
 }
 
 static void merge_field_value(const ow_editor *editor, const char *column, char *out, size_t size);   /* 2.5.0 */
@@ -5994,7 +6000,8 @@ static void field_value(ow_editor *editor, const owf_story *story, int para, con
         k = seq_count(doc, story, run, run->href);
         snprintf(out, size, "%d", k);
         break;
-    case OWF_FIELD_IF: {                             /* libowf 1.16: the text for whether it holds */
+    case OWF_FIELD_IF:                               /* libowf 1.16: the text for whether it holds */
+    case OWF_FIELD_HIDE_PARA: {                      /* (libowf 1.20: "1" while it hides its paragraph) */
         owf_if_form f;
         char a[256], b[256];
         if (!owf_if_parse(run->href, &f)) break;
@@ -6028,6 +6035,16 @@ static int update_story_fields(ow_editor *editor, owf_story *story)
     return changed;
 }
 
+/* 2.0.51: the caret out of a paragraph a hidden-paragraph field has just hidden (inserted, or a user field
+ * changed), to the next one shown (else the one before), so what is typed is never typed unseen */
+static void caret_out_of_hidden_para(ow_editor *editor)
+{
+    if (!hidden_para(editor, editor->selection.focus.paragraph)) return;
+    editor->selection.focus = out_of_hidden(editor, editor->selection.focus, 1);
+    editor->selection.anchor = editor->selection.focus;
+    sync_typing_fmt(editor);
+}
+
 static int update_fields(ow_editor *editor)
 {
     owf_doc *doc = editor->doc;
@@ -6041,6 +6058,7 @@ static int update_fields(ow_editor *editor)
         changed += n;
     }
     if (changed) ++editor->changes;
+    caret_out_of_hidden_para(editor);
     return changed;
 }
 
@@ -6339,11 +6357,21 @@ int ow_editor_insert_field_arg(ow_editor *editor, owf_field field, const char *a
     char *right;
     size_t right_len;
     int old_n, move;
-    char *arg_copy = NULL;
+    char *arg_copy = NULL, hide_form[400];
     if (!editor || field < OWF_FIELD_PAGE || field > OWF_FIELD_LAST) return OWF_ERR_FORMAT;
+    if (field == OWF_FIELD_HIDE_PARA && arg && *arg) {   /* libowf 1.20: the condition, as an IF giving "1" or "" */
+        owf_if_form whole;
+        if (owf_if_parse(arg, &whole)) {             /* (a whole form already: as it is) */
+            if (strcmp(whole.yes, "1") || whole.no[0]) return OWF_ERR_FORMAT;
+        } else if (strlen(arg) + 8 >= sizeof hide_form) return OWF_ERR_FORMAT;
+        else {
+            snprintf(hide_form, sizeof hide_form, "%s \"1\" \"\"", arg);
+            arg = hide_form;
+        }
+    }
     if (field_wants_arg(field) != (arg && *arg)) return OWF_ERR_FORMAT;   /* 2.3.0: a name, for those that take one */
     if (field == OWF_FIELD_SEQ && !seq_name_ok(arg)) return OWF_ERR_FORMAT;   /* libowf 1.12.6: Word's rule */
-    if (field == OWF_FIELD_IF) {                     /* libowf 1.16: a form that reads (owf_ifform.h) */
+    if (field == OWF_FIELD_IF || field == OWF_FIELD_HIDE_PARA) {   /* libowf 1.16: a form that reads (owf_ifform.h) */
         owf_if_form f;
         if (!owf_if_parse(arg, &f)) return OWF_ERR_FORMAT;
     }

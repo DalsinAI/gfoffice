@@ -23,8 +23,8 @@
 
 /* The page drawn as a picture, for EXPORT (and SAVE/SAVEAS) to PNG and IFF ILBM: the app paints box (x, y, w, h,
  * hundredths of a page pixel: what the page holds with ODG_PICTURE_MARGIN round it) at 100% into width by height
- * pixels, with no grid and no selection, and returns the rows as R, G, B bytes, width * 3 apart, malloc'd (the
- * caller frees them); NULL when it can't (out of memory, or no screen to draw with). */
+ * pixels, with no grid and no selection, and returns the rows as R, G, B bytes, width * 3 apart, owf_malloc'd (the
+ * caller frees them with owf_free, which on owfdiag.library is the library's); NULL when it can't (out of memory, or no screen to draw with). */
 typedef unsigned char *(*odg_picture_fn)(void *user, const owf_dnum box[4], int width, int height);
 #define ODG_PICTURE_MARGIN 10            /* page pixels round what the page holds, as the PDF writer's */
 #define ODG_PICTURE_MAX 4096             /* a picture's width or height at most, in pixels */
@@ -55,5 +55,11 @@ int odg_rexx_command(odg_rexx *rx, const char *command, char *result, size_t siz
 enum { ODG_FILE_DRAWIO, ODG_FILE_SVG, ODG_FILE_PNG, ODG_FILE_PDF, ODG_FILE_ILBM, ODG_FILE_EPS, ODG_FILE_MERMAID,
        ODG_FILE_DOT, ODG_FILE_GRAPHML, ODG_FILE_EXCALIDRAW };
 int odg_rexx_format(const char *file);
+
+/* On owfdiag.library (OWF_USE_DIAG_LIBRARY): its calls, once every header that declares them is complete. */
+#define OPENDIAG_REXX_H_DONE
+#if defined(OWF_USE_DIAG_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
+#include "opendiag_proto.h"
+#endif
 
 #endif

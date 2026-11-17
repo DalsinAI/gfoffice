@@ -350,6 +350,11 @@ owf_dpoint odg_port_point(const owf_dnum box[4], odg_port port)
     return at;
 }
 
+void odg_port_xy(const owf_dnum box[4], odg_port port, owf_dpoint *at)
+{
+    *at = odg_port_point(box, port);
+}
+
 static const char *const port_x[4] = { "0.5", "1", "0.5", "0" };
 static const char *const port_y[4] = { "0", "0.5", "1", "0.5" };
 

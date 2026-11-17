@@ -66,13 +66,17 @@
  * 3.22: libowf 1.19 (was 3.20 and libowf 1.15 before #376 and the presentation work merged first), input
  * fields (OWF_FIELD_FILLIN): DOCX FILLIN and ODT text:text-input in and out. No new calls and no structure
  * grew, so owfpub and owfpresent stay.
+ * 3.23: libowf 1.20 (3.22, libowf 1.19, is the input fields'), hidden paragraphs (OWF_FIELD_HIDE_PARA,
+ * owf_para_hidden) and hidden text: ODT text:hidden-paragraph and text:hidden-text in and out; a hidden
+ * paragraph is left out of Markdown, HTML and PDF and is DOCX w:vanish while it holds. No new calls and no
+ * structure grew, so owfpub and owfpresent stay.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 22
-#define OWF_LIB_VERS "3.22"
-#define OWF_LIB_DATE "16.11.2026"
+#define OWF_LIB_REVISION 23
+#define OWF_LIB_VERS "3.23"
+#define OWF_LIB_DATE "17.11.2026"
 #define OWF_LIB_CALLS_H "owfwrite_calls.h"
 #include "owf_libbase.h"

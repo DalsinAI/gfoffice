@@ -80,7 +80,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenWrite 2.0.50 (16.11.2026)"
+#define VERSION_TEXT "GFOpenWrite 2.0.51 (17.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -120,6 +120,7 @@ enum {
     M_CROSS_REF, M_DOC_INFO, M_USER_FIELDS, M_UPDATE_FIELDS, M_FIELD_SEQ,
     M_FIELD_IF,                                      /* 2.0.48 */
     M_FIELD_FILLIN, M_FILL_IN,                       /* 2.0.50 */
+    M_FIELD_HIDE_PARA,                               /* 2.0.51 */
     M_FOOTNOTE, M_ENDNOTE, M_NOTE_NEXT, M_NOTE_PREV, M_NOTE_EDIT, M_NOTE_CONVERT, M_NOTE_DELETE, M_NOTE_NUMBERING,
     M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_DOC, M_MERGE_FILES,
     M_INDEX_ENTRY, M_INDEX,
@@ -217,6 +218,7 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Conditional Text...", NULL, 0, 0, (APTR)M_FIELD_IF }, /* 2.0.48: Word's IF */
     { NM_SUB, "Input Field...", NULL, 0, 0, (APTR)M_FIELD_FILLIN },  /* 2.0.50: Word's FILLIN */
     { NM_SUB, "Fill In Fields...", NULL, 0, 0, (APTR)M_FILL_IN },
+    { NM_SUB, "Hidden Paragraph...", NULL, 0, 0, (APTR)M_FIELD_HIDE_PARA },   /* 2.0.51: ODF's text:hidden-paragraph */
     { NM_ITEM, "Cross-reference...", NULL, 0, 0, (APTR)M_CROSS_REF },
 
     { NM_TITLE, "Format", NULL, 0, 0, NULL },
@@ -4718,18 +4720,21 @@ static void do_fill_in(void)
 
 /* 2.0.48 (libowf 1.16): Insert > Field > Conditional Text...: an IF field on a user field (or a mail merge
  * column, "MERGEFIELD name"): its value compared with a text, one text shown when it holds, another when not */
-static void do_conditional_text(void)
+static void do_conditional_text(int hide)
 {
     static char field[64] = "", op[4] = "=", value[64] = "", yes[96] = "", no[96] = "";
+    const char *title = hide ? "Hidden Paragraph" : "Conditional Text";
     char form[400], code[80];
     owf_if_form f;
     char *u;
     if (!editor) return;
-    if (!text_requester("Conditional Text", "If user field (or MERGEFIELD column):", field, field, sizeof field) ||
-        !field[0] || !text_requester("Conditional Text", "is (= <> < > <= >=):", op, op, sizeof op) ||
-        !text_requester("Conditional Text", "this value:", value, value, sizeof value) ||
-        !text_requester("Conditional Text", "show:", yes, yes, sizeof yes) ||
-        !text_requester("Conditional Text", "otherwise show:", no, no, sizeof no))
+    /* 2.0.51: Hidden Paragraph...: the caret's paragraph hidden while the comparison holds (no texts asked) */
+    if (!text_requester(title, hide ? "Hide if user field (or MERGEFIELD column):" : "If user field (or MERGEFIELD column):",
+                        field, field, sizeof field) ||
+        !field[0] || !text_requester(title, "is (= <> < > <= >=):", op, op, sizeof op) ||
+        !text_requester(title, "this value:", value, value, sizeof value) ||
+        (!hide && (!text_requester(title, "show:", yes, yes, sizeof yes) ||
+                   !text_requester(title, "otherwise show:", no, no, sizeof no))))
         return;
     memset(&f, 0, sizeof f);
     if (!strncasecmp(field, "MERGEFIELD ", 11)) snprintf(code, sizeof code, "MERGEFIELD %s", field + 11);
@@ -4739,13 +4744,15 @@ static void do_conditional_text(void)
     f.op[0] = op[0];                                 /* (two characters at most: <> <= >=) */
     f.op[1] = op[0] ? op[1] : 0;
     snprintf(f.b, sizeof f.b, "%s", value);
-    snprintf(f.yes, sizeof f.yes, "%s", yes);
-    snprintf(f.no, sizeof f.no, "%s", no);
+    snprintf(f.yes, sizeof f.yes, "%s", hide ? "1" : yes);
+    snprintf(f.no, sizeof f.no, "%s", hide ? "" : no);
     owf_if_format(&f, form, sizeof form);
     if (!(u = comment_utf8(form))) { DisplayBeep(scr); return; }
-    if (editor_result(ow_editor_insert_field_arg(editor, OWF_FIELD_IF, u),
-                      "Conditional text inserted.")) fields_update();
-    else editor_repaint("Conditional text: the operator is one of = <> < > <= >=.");
+    if (editor_result(ow_editor_insert_field_arg(editor, hide ? OWF_FIELD_HIDE_PARA : OWF_FIELD_IF, u),
+                      hide ? "Hidden paragraph field inserted; View > Hidden Text shows the paragraph."
+                           : "Conditional text inserted.")) fields_update();
+    else editor_repaint(hide ? "Hidden Paragraph: the operator is one of = <> < > <= >=."
+                             : "Conditional text: the operator is one of = <> < > <= >=.");
     free(u);
 }
 
@@ -5588,7 +5595,8 @@ static void menu_action(ULONG id)
     case M_USER_FIELDS: do_user_field(0); break;
     case M_CROSS_REF: do_cross_reference(); break;
     case M_FIELD_SEQ: do_number_range(); break;
-    case M_FIELD_IF: do_conditional_text(); break;   /* 2.0.48 */
+    case M_FIELD_IF: do_conditional_text(0); break;  /* 2.0.48 */
+    case M_FIELD_HIDE_PARA: do_conditional_text(1); break;   /* 2.0.51 */
     case M_FIELD_FILLIN: do_input_field(); break;    /* 2.0.50 */
     case M_FILL_IN: do_fill_in(); break;
     case M_DOC_INFO: do_doc_info(); break;
@@ -6047,7 +6055,8 @@ static int rexx_do_command(const char *command, char **result_out)
         if(k==13&&!strcmp(kind,"SEQ"))k=OWF_FIELD_SEQ;   /* 2.0.43: INSERTFIELD SEQ name, a number range */
         if(k==13&&!strcmp(kind,"FILLIN"))k=OWF_FIELD_FILLIN;   /* 2.0.50: INSERTFIELD FILLIN prompt (FILLIN n answer gives it one) */
         if(k==13&&!strcmp(kind,"IF"))k=OWF_FIELD_IF;     /* 2.0.48: INSERTFIELD IF form, Word's ({DOCVARIABLE x} = "1" "yes" "no") */
-        if(!editor||k==13){ok=0;snprintf(result,sizeof result,"INSERTFIELD takes PAGE PAGES DATE TIME TITLE AUTHOR SUBJECT FILENAME WORDS CHAPTER, or USER, REF, REFPAGE, SEQ or FILLIN and a name, or IF and its form");}
+        if(k==13&&!strcmp(kind,"HIDEPARA"))k=OWF_FIELD_HIDE_PARA;   /* 2.0.51: INSERTFIELD HIDEPARA condition ({DOCVARIABLE Draft} = "yes") */
+        if(!editor||k==13){ok=0;snprintf(result,sizeof result,"INSERTFIELD takes PAGE PAGES DATE TIME TITLE AUTHOR SUBJECT FILENAME WORDS CHAPTER, or USER, REF, REFPAGE, SEQ or FILLIN and a name, IF and its form, or HIDEPARA and a condition");}
         else{if(*rest)u=comment_utf8(rest);rc=ow_editor_insert_field_arg(editor,(owf_field)k,u&&*u?u:NULL);free(u);if(rc==OWF_ERR_FORMAT){ok=0;snprintf(result,sizeof result,"%s",k==OWF_FIELD_SEQ&&*rest?"A number range's name is a letter, then letters, digits and _, 40 at most":k>=10?"That field needs a name":"That field takes no name");}else{ok=editor_result(rc,"Field inserted.");if(ok)fields_update();snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}}
     /* 2.0.50: FILLIN: how many input fields; FILLIN n: its answer; FILLIN n answer: gives it that answer */
     else if(starts_word_ci(command,"FILLIN",&arg)){const char *rest=arg,*prompt,*answer;char *end;long k;

@@ -772,6 +772,17 @@ static void test_assign_dialog(void)
     CHECK_N(opj_remove_resource(doc, 1, 3), OWF_OK);
     CHECK_N(opj_remove_resource(doc, 1, 3), OWF_ERR_FORMAT);
     CHECK_N(opj_remove_resource(doc, 1, 9), OWF_ERR_FORMAT);
+    CHECK_N(opj_remove_resource(doc, 1, -1), OWF_ERR_FORMAT);
+    /* the name Replace... asks for */
+    CHECK_N(opj_find_resource(doc, "dale"), 0);
+    CHECK_N(opj_find_resource(doc, "  STEEL "), 2);
+    CHECK_N(opj_find_resource(doc, "4"), 3);
+    CHECK_N(opj_find_resource(doc, "5"), -1);
+    CHECK_N(opj_find_resource(doc, "0"), -1);
+    CHECK_N(opj_find_resource(doc, "Dal"), -1);
+    CHECK_N(opj_find_resource(doc, ""), -1);
+    CHECK_N(opj_find_resource(doc, NULL), -1);
+    CHECK_N(opj_find_resource(doc, "99999999"), -1);
     CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Dale[75%]");
     CHECK_N(opj_undo(doc), OWF_OK);
     CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Dale[75%],Travel[120.00]");
@@ -802,6 +813,12 @@ static void test_level_cells(void)
     CHECK_N(opj_redo(doc), OWF_OK);
     CHECK_N(opj_clear_leveling(doc), OWF_OK);
     CHECK_S(cell_of(doc, 3, OPJ_COL_START), "Mon 16/11/26");
+    doc->dirty = 0;
+    CHECK_N(opj_clear_leveling(doc), OWF_OK);                              /* nothing to clear: no edit */
+    CHECK_N(doc->dirty, 0);
+    CHECK_N(opj_undo(doc), OWF_OK);                                        /* the Undo is the first Clear's */
+    CHECK_S(cell_of(doc, 3, OPJ_COL_LEVELING_DELAY), "2d");
+    CHECK_N(opj_clear_leveling(doc), OWF_OK);
     /* typed */
     CHECK_N(opj_set_cell(doc, 3, OPJ_COL_LEVELING_DELAY, "1d"), OWF_OK);
     CHECK_S(cell_of(doc, 3, OPJ_COL_START), "Tue 17/11/26");

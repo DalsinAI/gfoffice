@@ -53,7 +53,7 @@ Amiga (start GFOpenProject, then `rx project.rexx RAM:`).
 | UNDO, REDO | | |
 | BASELINE | `ROW/N,COUNT/N,CLEAR/S,NUMBER/K/N` | sets (or with CLEAR clears) the baseline; no ROW: the whole plan. NUMBER=1 to 10: Baseline 1 to 10 (0, the default, is Baseline) |
 | BASELINES | | the baselines some task has saved, as `0 3 10`, or `none` |
-| REPLACE | `ROW/A/N,FROM/A,TO/A,UNITS/K` | Assign Resources' Replace: the row's assignment of FROM goes to TO, keeping its units unless UNITS gives them ("50%", "2.5", "120.00") |
+| REPLACE | `ROW/A/N,FROM/A,TO/A,UNITS/K` | Assign Resources' Replace: the row's assignment of FROM goes to TO, keeping its units unless UNITS gives them ("50%", "2.5", "120.00"); to another kind of resource, one unit of it |
 | LEVEL | `WITHINSLACK/S,ORDER/K` | Level Resources: delays tasks until no work resource is over-allocated where a move can mend it; how many tasks were delayed. WITHINSLACK: only within each task's slack. ORDER: `Standard` (the default: earlier start, less slack, then ID), `ID` (ID Only) or `Priority` (Priority, Standard). Tasks of Priority 1000 are never moved |
 | CLEARLEVELING | | every task's Leveling Delay back to 0 |
 | SORT | `BY/A,DESC/S,THEN/K,THENDESC/S,LAST/K,LASTDESC/S` | Project > Sort, renumbering the tasks and keeping the outline: by up to three columns, each ascending unless its DESC is given |
