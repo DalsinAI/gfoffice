@@ -95,14 +95,14 @@ static void trim(opj_doc *doc)
 }
 
 /* The edited copy becomes the plan: OWF_OK, or OWF_ERR_FORMAT (it would make a loop) with work freed. */
-static int typed_work;                  /* the edit typed a task's Work: it is what the type keeps */
-
-static int commit(opj_doc *doc, owf_project *work)
+/* typed_work: the edit typed a task's Work, which is then what its type keeps; otherwise each changed task
+ * keeps what its type fixes (Fixed Units, Duration or Work, as MS Project). The flag is the edit's own,
+ * never kept between edits, so a copy dropped on a refusal leaves nothing behind. */
+static int commit_typed(opj_doc *doc, owf_project *work, int typed_work)
 {
     opj_state *s;
     int rc;
-    if (!typed_work) owf_project_keep_types(doc->plan, work);   /* Fixed Units, Duration or Work, as MS Project */
-    typed_work = 0;
+    if (!typed_work) owf_project_keep_types(doc->plan, work);
     rc = owf_project_schedule(work);
     if (rc == OWF_ERR_FORMAT && doc->schedule_error != OWF_ERR_FORMAT) {
         owf_project_free(work);
@@ -174,9 +174,13 @@ static owf_project *begin(opj_doc *doc, int row, int *rc)
     return work;
 }
 
+static int commit(opj_doc *doc, owf_project *work)
+{
+    return commit_typed(doc, work, 0);
+}
+
 static int fail(owf_project *work, int rc)
 {
-    typed_work = 0;
     owf_project_free(work);
     return rc;
 }
@@ -927,7 +931,7 @@ static int day_edge(const owf_project *p, int end)
 }
 
 /* One typed cell on the working copy: OWF_OK, or the code that refuses it (work is left to the caller). */
-static int set_field(owf_project *work, int row, int column, const char *text)
+static int set_field(owf_project *work, int row, int column, const char *text, int *typed_work)
 {
     owf_ptask *t = &work->tasks[row];
     owf_ptime when;
@@ -1027,7 +1031,7 @@ static int set_field(owf_project *work, int row, int column, const char *text)
         return replace_text(&t->notes, text);
     case OPJ_COL_WORK:
         if (owf_pduration_parse(work, text, &v, &el, &es) != OWF_OK || el) return OWF_ERR_FORMAT;
-        if ((rc = owf_project_set_work(work, row, v)) == OWF_OK) typed_work = 1;   /* as its type takes it */
+        if ((rc = owf_project_set_work(work, row, v)) == OWF_OK && typed_work) *typed_work = 1;   /* as its type takes it */
         return rc;
     case OPJ_COL_TYPE: {
         char word[24];
@@ -1081,13 +1085,13 @@ int opj_set_cell(opj_doc *doc, int row, int column, const char *text)
 int opj_set_cells(opj_doc *doc, int row, const int *columns, const char *const *texts, int n, int *bad)
 {
     owf_project *work;
-    int rc, i, undated = 0;
+    int rc, i, undated = 0, typed = 0;
     if (bad) *bad = -1;
     if (!columns || !texts || n < 1) return OWF_ERR_FORMAT;
     if (!(work = begin(doc, row, &rc))) return rc;
     for (i = 0; i < n; i++) {
         if (undated && columns[i] == OPJ_COL_CONSTRAINT_DATE) continue;   /* ASAP or ALAP chosen: no date */
-        if ((rc = set_field(work, row, columns[i], texts[i])) != OWF_OK) {
+        if ((rc = set_field(work, row, columns[i], texts[i], &typed)) != OWF_OK) {
             if (bad) *bad = i;
             return fail(work, rc);
         }
@@ -1096,7 +1100,7 @@ int opj_set_cells(opj_doc *doc, int row, const int *columns, const char *const *
             undated = k == OWF_CON_ASAP || k == OWF_CON_ALAP;
         }
     }
-    return commit(doc, work);
+    return commit_typed(doc, work, typed);
 }
 
 int opj_set_baseline_n(opj_doc *doc, int n, int first, int count)
@@ -1226,7 +1230,7 @@ int opj_update_task(opj_doc *doc, int row, const char *percent, const char *actu
     t = &work->tasks[row];
     if (t->summary && (given(actual) || given(remaining) || given(actual_start) || given(actual_finish)))
         return fail(work, OWF_ERR_FORMAT);       /* a summary's come from its subtasks */
-    if (given(actual_start) && (rc = set_field(work, row, OPJ_COL_ACTUAL_START, actual_start)) != OWF_OK)
+    if (given(actual_start) && (rc = set_field(work, row, OPJ_COL_ACTUAL_START, actual_start, NULL)) != OWF_OK)
         return fail(work, rc);
     if (given(actual) || given(remaining)) {
         long a = 0, r = 0, d;
@@ -1250,10 +1254,10 @@ int opj_update_task(opj_doc *doc, int row, const char *percent, const char *actu
         else if (a >= d) pc = 100;
         else if ((pc = (int)((a * 100 + d / 2) / d)) > 99) pc = 99;      /* not all done: never 100% */
         snprintf(pct, sizeof pct, "%d", pc);
-        if ((rc = set_field(work, row, OPJ_COL_PERCENT, pct)) != OWF_OK) return fail(work, rc);
+        if ((rc = set_field(work, row, OPJ_COL_PERCENT, pct, NULL)) != OWF_OK) return fail(work, rc);
     }
-    if (given(percent) && (rc = set_field(work, row, OPJ_COL_PERCENT, percent)) != OWF_OK) return fail(work, rc);
-    if (given(actual_finish) && (rc = set_field(work, row, OPJ_COL_ACTUAL_FINISH, actual_finish)) != OWF_OK)
+    if (given(percent) && (rc = set_field(work, row, OPJ_COL_PERCENT, percent, NULL)) != OWF_OK) return fail(work, rc);
+    if (given(actual_finish) && (rc = set_field(work, row, OPJ_COL_ACTUAL_FINISH, actual_finish, NULL)) != OWF_OK)
         return fail(work, rc);
     return commit(doc, work);
 }
@@ -1523,7 +1527,7 @@ int opj_replace_text(opj_doc *doc, int column, const char *find, const char *wit
                      int *changed, int *refused)
 {
     owf_project *work;
-    int i, done = 0, bad = 0;
+    int i, done = 0, bad = 0, typed = 0;
     if (changed) *changed = 0;
     if (refused) *refused = 0;
     if (!doc || !find || !*find || !opj_column_typed(column)) return OWF_ERR_FORMAT;
@@ -1557,7 +1561,7 @@ int opj_replace_text(opj_doc *doc, int column, const char *find, const char *wit
             k += lead + wl;
         }
         strcpy(now + k, s);
-        rc = set_field(work, i, column, now);
+        rc = set_field(work, i, column, now, &typed);
         owf_free(now);
         owf_free(cell);
         if (rc == OWF_ERR_MEMORY) {
@@ -1577,7 +1581,7 @@ int opj_replace_text(opj_doc *doc, int column, const char *find, const char *wit
         owf_project_free(work);
         return OWF_OK;
     }
-    return commit(doc, work);
+    return commit_typed(doc, work, typed);
 }
 
 /* ---- The resource sheet ---- */
