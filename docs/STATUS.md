@@ -9,7 +9,7 @@ free office suites and their companion tools. The full scorecards are in
 | GFOpenWrite | 2.0.53 | 85% |
 | GFOpenCalc | 0.1.78 | 80% |
 | GFOpenPresentation | 0.6.36 | 89% |
-| GFOpenPressmaster | 0.3.36 | 71% |
+| GFOpenPressmaster | 0.3.37 | 71% |
 | GFOpenBase | 0.15.0 | 64% |
 | GFOpenProject | 0.1.27 | 64% |
 | GFOpenDiag | 0.1.0 | 66% to 72% |
