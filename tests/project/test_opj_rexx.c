@@ -654,6 +654,10 @@ static void test_update_task(void)
     CHECK_N(rx_do("UPDATETASK 1 ACTUAL soon"), OPJ_RX_ERROR);
     CHECK_N(rx_do("UPDATETASK 2 PERCENT 5"), OPJ_RX_ERROR);
     CHECK_S(ok("GETCELL 1 Work"), "0h");
+    CHECK_S(ok("GETCELL 1 Type"), "Fixed Units");                             /* task types by column */
+    ok("SETCELL 1 Type \"Fixed Work\"");
+    CHECK_S(ok("GETCELL 1 EffortDriven"), "Yes");
+    CHECK_N(rx_do("SETCELL 1 EffortDriven No"), OPJ_RX_ERROR);
     CHECK_N(rx_do("PROGRESSLINES ON"), OPJ_RX_NOW);                         /* no window */
     opj_view_init(&v, rx.doc, 800, 200, 16, OPJ_ZOOM_DAYS);
     rx.view = &v;

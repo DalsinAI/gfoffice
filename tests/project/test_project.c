@@ -736,6 +736,145 @@ static void test_summary_back_to_task(void)
     owf_project_free(p);
 }
 
+/* Task types: what an edit keeps (owf_project_keep_types) and Work typed in (owf_project_set_work). */
+static owf_project *typed(int type, int effort_driven, long units)
+{
+    owf_project *p = plan();
+    int a = owf_project_add_task(p, "A", 4 * D);
+    owf_project_add_resource(p, "Dale");
+    owf_project_add_resource(p, "Ann");
+    owf_project_add_resource(p, "Steel");
+    p->resources[2].type = OWF_RES_MATERIAL;
+    TASK(p, a)->type = type;
+    TASK(p, a)->effort_driven = effort_driven;
+    owf_project_assign(p, a, 0, units);
+    return p;
+}
+
+static long units_of(const owf_project *p, int resource)
+{
+    int i;
+    for (i = 0; i < p->nassigns; i++)
+        if (p->assigns[i].task == 0 && p->assigns[i].resource == resource) return p->assigns[i].units;
+    return -1;
+}
+
+static void test_task_types(void)
+{
+    owf_project *p, *q;
+    /* Fixed Units: half the units, twice the duration (the work stays 32h) */
+    p = typed(OWF_TT_FIXED_UNITS, 0, 100);
+    q = owf_project_copy(p);
+    owf_project_assign(q, 0, 0, 50);
+    owf_project_keep_types(p, q);
+    CHECK_N(TASK(q, 0)->duration, 8 * D);
+    CHECK_N(owf_ptask_units(q, 0), 50);
+    owf_project_free(q);
+    /* Fixed Units: a longer duration is more work, the units stay */
+    q = owf_project_copy(p);
+    TASK(q, 0)->duration = 6 * D;
+    owf_project_keep_types(p, q);
+    CHECK_N(TASK(q, 0)->duration, 6 * D);
+    CHECK_N(units_of(q, 0), 100);
+    owf_project_free(q);
+    /* not effort driven: Ann added, the duration stays (more work) */
+    q = owf_project_copy(p);
+    owf_project_assign(q, 0, 1, 100);
+    owf_project_keep_types(p, q);
+    CHECK_N(TASK(q, 0)->duration, 4 * D);
+    owf_project_free(q);
+    /* effort driven: Ann added, the 32h shared, half the duration; a material resource isn't work */
+    TASK(p, 0)->effort_driven = 1;
+    q = owf_project_copy(p);
+    owf_project_assign(q, 0, 1, 100);
+    owf_project_assign(q, 0, 2, 300);
+    owf_project_keep_types(p, q);
+    CHECK_N(TASK(q, 0)->duration, 2 * D);
+    CHECK_N(owf_ptask_units(q, 0), 200);
+    {                                             /* and back: Ann taken off, twice as long again */
+        owf_project *r = owf_project_copy(q);
+        owf_project_unassign(r, 0, 1);
+        owf_project_keep_types(q, r);
+        CHECK_N(TASK(r, 0)->duration, 4 * D);
+        owf_project_free(r);
+    }
+    owf_project_free(q);
+    owf_project_free(p);
+
+    /* Fixed Duration: units change the work, never the duration; effort driven shares the units */
+    p = typed(OWF_TT_FIXED_DURATION, 1, 100);
+    q = owf_project_copy(p);
+    owf_project_assign(q, 0, 0, 50);
+    owf_project_keep_types(p, q);
+    CHECK_N(TASK(q, 0)->duration, 4 * D);
+    CHECK_N(units_of(q, 0), 50);
+    owf_project_free(q);
+    q = owf_project_copy(p);
+    owf_project_assign(q, 0, 1, 100);
+    owf_project_keep_types(p, q);
+    CHECK_N(TASK(q, 0)->duration, 4 * D);
+    CHECK_N(units_of(q, 0), 50);
+    CHECK_N(units_of(q, 1), 50);
+    owf_project_free(q);
+    owf_project_free(p);
+
+    /* Fixed Work: a longer duration lowers the units, more units shorten it */
+    p = typed(OWF_TT_FIXED_WORK, 1, 100);
+    q = owf_project_copy(p);
+    TASK(q, 0)->duration = 8 * D;
+    owf_project_keep_types(p, q);
+    CHECK_N(units_of(q, 0), 50);
+    owf_project_free(q);
+    q = owf_project_copy(p);
+    owf_project_assign(q, 0, 0, 200);
+    owf_project_keep_types(p, q);
+    CHECK_N(TASK(q, 0)->duration, 2 * D);
+    owf_project_free(q);
+    TASK(p, 0)->effort_driven = 0;                /* Fixed Work is effort driven whatever the flag */
+    q = owf_project_copy(p);
+    owf_project_assign(q, 0, 1, 100);
+    owf_project_keep_types(p, q);
+    CHECK_N(TASK(q, 0)->duration, 2 * D);
+    owf_project_free(q);
+
+    /* left alone: a task added or moved (another uid there), and the first resource on a task */
+    q = owf_project_copy(p);
+    TASK(q, 0)->uid = 999;
+    TASK(q, 0)->duration = 8 * D;
+    owf_project_keep_types(p, q);
+    CHECK_N(units_of(q, 0), 100);
+    owf_project_free(q);
+    owf_project_free(p);
+    p = typed(OWF_TT_FIXED_WORK, 1, 100);
+    owf_project_unassign(p, 0, 0);
+    q = owf_project_copy(p);
+    owf_project_assign(q, 0, 1, 100);
+    owf_project_keep_types(p, q);
+    CHECK_N(TASK(q, 0)->duration, 4 * D);
+    owf_project_free(q);
+    owf_project_keep_types(NULL, p);
+    owf_project_free(p);
+
+    /* Work typed: Fixed Units and Fixed Work change the duration, Fixed Duration the units */
+    p = typed(OWF_TT_FIXED_UNITS, 0, 200);
+    CHECK_N(owf_project_set_work(p, 0, 16 * D), OWF_OK);
+    CHECK_N(TASK(p, 0)->duration, 8 * D);
+    TASK(p, 0)->type = OWF_TT_FIXED_DURATION;
+    CHECK_N(owf_project_set_work(p, 0, 8 * D), OWF_OK);
+    CHECK_N(TASK(p, 0)->duration, 8 * D);
+    CHECK_N(units_of(p, 0), 100);
+    CHECK_N(owf_project_set_work(p, 0, 0), OWF_ERR_FORMAT);       /* would take every unit away */
+    CHECK_N(owf_project_set_work(p, 0, -1), OWF_ERR_FORMAT);
+    CHECK_N(owf_project_set_work(p, 3, D), OWF_ERR_FORMAT);
+    owf_project_unassign(p, 0, 0);
+    CHECK_N(owf_project_set_work(p, 0, D), OWF_ERR_FORMAT);       /* no work resource */
+    owf_project_add_task(p, "B", D);
+    TASK(p, 1)->level = 2;                                        /* A is a summary now */
+    owf_project_assign(p, 0, 1, 100);
+    CHECK_N(owf_project_set_work(p, 0, D), OWF_ERR_FORMAT);
+    owf_project_free(p);
+}
+
 /* Resource calendars: a task with no calendar of its own works on its first work resource's. */
 static void test_resource_calendar(void)
 {
@@ -790,6 +929,7 @@ int main(void)
     test_leveling();
     test_leveling_elapsed();
     test_summary_back_to_task();
+    test_task_types();
     test_resource_calendar();
     test_peak_cap();
     if (fails) {

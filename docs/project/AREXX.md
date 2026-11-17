@@ -84,7 +84,12 @@ Amiga (start GFOpenProject, then `rx project.rexx RAM:`).
 Columns are named by their titles, with case, spaces and punctuation ignored. For example `Name`,
 `"Task Name"`, `Duration`, `Start`, `Finish`, `Predecessors`, `"% Complete"` or `percent`, `WBS`,
 `"Resource Names"` or `resources`, `"Baseline Start"`, `"Baseline Finish"`, `"Start Var."`,
-`"Finish Var."`, and the worked-out `Work`, `"Actual Work"`, `"Remaining Work"`, `Cost` and `"Actual Cost"`.
+`"Finish Var."`, `Type` (`"Fixed Units"`, `"Fixed Duration"` or `"Fixed Work"`, or `units`, `duration`,
+`work`), `"Effort Driven"` (`Yes` or `No`; Fixed Work is always `Yes`), `Work` (typed: Fixed Units and
+Fixed Work change the duration, Fixed Duration the units), and the worked-out `"Actual Work"`,
+`"Remaining Work"`, `Cost` and `"Actual Cost"`. Edits keep what the task's type fixes, as MS Project does:
+on Fixed Units, changing a resource's units changes the duration, and on Fixed Work a longer duration
+lowers the units. With Effort Driven, adding or removing a resource keeps the work.
 
 On the resource sheet: `Name`, `Type`, `Initials`, `Group`, `"Max. Units"` or `max`,
 `"Std. Rate"` or `rate`, `Work`, `Cost` and `"Base Calendar"` or `calendar` (a calendar's name or number,
