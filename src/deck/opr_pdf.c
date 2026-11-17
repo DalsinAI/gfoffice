@@ -60,8 +60,80 @@ static int dashed(const ol_shape_style *s)
     return s->stroke_style != OL_STROKE_SOLID;
 }
 
+/* percent opaque from an ARGB colour's alpha */
+static int opaque_of(uint32_t argb)
+{
+    return (int)(((argb >> 24) * 100 + 127) / 255);
+}
+
+/* a length in units (OpenLayout's) on the page, keeping its sign */
+static int page_len(const ol_scale *scale, ol_unit v)
+{
+    return (int)(ol_scale_x(scale, v) - ol_scale_x(scale, 0));
+}
+
+/* GFOpenLayout 0.22's shadow, see-through fill and hatching (Presentation gap 1): the shadow (the outline
+ * moved, filled and lined with its colour) behind, then the fill (see-through as its alpha says) and the
+ * hatch lines inside the outline; the caller draws the outline itself after. 1 when it drew the fill, so
+ * the caller leaves it out, 0 when there was nothing of these to draw, -1 when memory ran out. */
+static int draw_area_more(owf_pdf *pdf, const ol_device_op *dop, const ol_scale *scale, const int *xy, int count,
+                          int closed)
+{
+    const ol_shape_style *s = &dop->op->graphic->shape;
+    int x = dop->box.x, y = dop->box.y, w = dop->box.width, h = dop->box.height, k, filled;
+    int see = (s->fill_argb >> 24) && (s->fill_argb >> 24) < 255;
+    unsigned long fill = shade_of(s->fill_argb), line = shade_of(s->stroke_argb);
+    if (!OL_SHAPE_STYLE_HAS_HATCH(s) || count < 2 || !scale)
+        return 0;
+    if (!(s->shadow_argb >> 24) && !see && s->hatch == OL_HATCH_NONE)
+        return 0;
+    filled = closed && count >= 3 && ((s->fill_argb >> 24) || s->hatch != OL_HATCH_NONE);
+    if (s->shadow_argb >> 24) {
+        int moved[OL_MAX_SHAPE_POINTS * 2], dx = page_len(scale, s->shadow_dx), dy = page_len(scale, s->shadow_dy);
+        unsigned long shadow = OWF_SHADE(s->shadow_argb & 0xFFFFFFu);
+        for (k = 0; k < count; k++) {
+            moved[k * 2] = xy[k * 2] + dx;
+            moved[k * 2 + 1] = xy[k * 2 + 1] + dy;
+        }
+        owf_pdf_alpha(pdf, opaque_of(s->shadow_argb));
+        if ((filled || OWF_SHADE_SET(line)) &&
+            owf_pdf_path(pdf, moved, count, closed, filled ? shadow : 0, OWF_SHADE_SET(line) ? shadow : 0,
+                         dop->thickness) < 0)
+            return -1;
+        owf_pdf_alpha(pdf, 100);
+    }
+    if (OWF_SHADE_SET(fill) && closed && count >= 3) {
+        owf_pdf_alpha(pdf, opaque_of(s->fill_argb));
+        if (OL_SHAPE_STYLE_HAS_GRADIENT(s) && s->gradient != OL_GRADIENT_NONE && (s->fill2_argb >> 24)) {
+            if (owf_pdf_gradient(pdf, xy, count, x, y, w, h,
+                                 s->gradient == OL_GRADIENT_RADIAL ? OWF_PDF_GRADIENT_RADIAL : OWF_PDF_GRADIENT_LINEAR,
+                                 s->gradient_angle_tenths + s->rotation_tenths, fill, shade_of(s->fill2_argb)) < 0)
+                return -1;
+        } else if (owf_pdf_path(pdf, xy, count, 1, fill, 0, 0) < 0) {
+            return -1;
+        }
+        owf_pdf_alpha(pdf, 100);
+    }
+    if (s->hatch != OL_HATCH_NONE && closed && count >= 3) {
+        /* the lines through the box's top left, so they move with the shape; a hairline each */
+        static int lines[4 * 2048];
+        int distance = page_len(scale, s->hatch_distance), hair = page_len(scale, 10 * OL_UNITS_PER_TWIP), n;
+        unsigned long colour = OWF_SHADE(s->hatch_argb & 0xFFFFFFu);
+        if (distance < 1) distance = 1;
+        if (hair < 1) hair = 1;
+        n = opr_hatch_lines(xy, count, x, y, (int)s->hatch, s->hatch_angle_tenths + s->rotation_tenths, distance, lines,
+                            2048);
+        owf_pdf_alpha(pdf, opaque_of(s->hatch_argb));
+        for (k = 0; k < n; k++)
+            if (owf_pdf_path(pdf, &lines[k * 4], 2, 0, 0, colour, hair) < 0)
+                return -1;
+        owf_pdf_alpha(pdf, 100);
+    }
+    return OWF_SHADE_SET(fill) && closed && count >= 3 ? 1 : 0;
+}
+
 /* Draw the normalized OpenLayout shape into a PDF page. */
-static int draw_shape(owf_pdf *pdf, const ol_device_op *dop)
+static int draw_shape(owf_pdf *pdf, const ol_device_op *dop, const ol_scale *scale)
 {
     const ol_graphic *g = dop->op->graphic;
     const ol_shape_style *s;
@@ -75,6 +147,25 @@ static int draw_shape(owf_pdf *pdf, const ol_device_op *dop)
     s = &g->shape;
     fill = shade_of(s->fill_argb);
     line = shade_of(s->stroke_argb);
+    if (OL_SHAPE_STYLE_HAS_HATCH(s) && ((s->shadow_argb >> 24) || s->hatch != OL_HATCH_NONE ||
+                                        ((s->fill_argb >> 24) && (s->fill_argb >> 24) < 255))) {
+        int more;
+        bounds.x = x;
+        bounds.y = y;
+        bounds.width = w;
+        bounds.height = h;
+        count = ol_shape_path(g, &bounds, path, OL_MAX_SHAPE_POINTS, &closed);
+        for (k = 0; k < count; k++) {
+            xy[k * 2] = path[k].x;
+            xy[k * 2 + 1] = path[k].y;
+        }
+        owf_pdf_dash(pdf, 0);
+        more = draw_area_more(pdf, dop, scale, xy, count, closed);
+        if (more < 0)
+            return -1;
+        if (more)
+            fill = 0;                /* drawn: only the outline is left */
+    }
     owf_pdf_dash(pdf, dashed(s));
     if (OWF_SHADE_SET(fill) && OL_SHAPE_STYLE_HAS_GRADIENT(s) && s->gradient != OL_GRADIENT_NONE &&
         (s->fill2_argb >> 24)) {
@@ -146,6 +237,7 @@ typedef struct {
     owf_pdf *pdf;
     const opr_slide *slide;
     const owf_deck *deck;
+    const ol_scale *scale;       /* units to the page: shadow offsets and hatch spacing */
     int scaled;                  /* drawn smaller than its page: text at the scale's size */
     int failed;
 } drawing;
@@ -228,7 +320,7 @@ static void draw_op(void *userdata, const ol_device_op *dop)
         break;
     }
     case OL_OP_SHAPE:
-        if (draw_shape(d->pdf, dop) < 0)
+        if (draw_shape(d->pdf, dop, d->scale) < 0)
             d->failed = 1;
         break;
     default:
@@ -244,6 +336,7 @@ static int draw_laid(owf_pdf *pdf, const owf_deck *deck, const opr_slide *laid, 
     d.pdf = pdf;
     d.slide = laid;
     d.deck = deck;
+    d.scale = scale;
     d.scaled = scaled;
     ol_draw_page(laid->doc, 0, scale, NULL, draw_op, &d);
     return d.failed ? -1 : 0;

@@ -17,6 +17,7 @@
 typedef struct {
     owf_buf content;
     int width, height;           /* twips */
+    unsigned char alphas[101];   /* 1: the page uses /GA<n> (n percent opaque) */
 } pdf_page;
 
 typedef struct {
@@ -31,6 +32,13 @@ typedef struct {
     int ok, object;
 } pdf_pic;
 
+/* A see-through gradient's bands, painted opaque into a transparency group (a form) that the page then
+ * paints once at the gradient's alpha, so overlapping bands do not stack up */
+typedef struct {
+    owf_buf content;
+    int page, object;
+} pdf_form;
+
 struct owf_pdf {
     pdf_page *pages;
     int npages, cappages;
@@ -38,7 +46,10 @@ struct owf_pdf {
     int nlinks, caplinks;
     pdf_pic *pics;
     int npics, cappics;
+    pdf_form *forms;
+    int nforms, capforms;
     int dash;
+    int alpha;                   /* percent opaque, 1 to 100; 0 (as made): 100 */
     int failed;
     int mf_skipped;              /* records of WMF and EMF pictures played as nothing (owf_metafile.h) */
     int mf_box[4];               /* the picture being played: what it is drawn inside, x y w h */
@@ -63,6 +74,9 @@ void owf_pdf_free(owf_pdf *pdf)
     for (i = 0; i < pdf->npics; i++)
         owf_pdf_picture_free(&pdf->pics[i].pic);
     free(pdf->pics);
+    for (i = 0; i < pdf->nforms; i++)
+        owf_buf_free(&pdf->forms[i].content);
+    free(pdf->forms);
     free(pdf);
 }
 
@@ -88,6 +102,7 @@ int owf_pdf_page(owf_pdf *pdf, int width, int height)
     }
     p = &pdf->pages[pdf->npages++];
     owf_buf_init(&p->content);
+    memset(p->alphas, 0, sizeof p->alphas);     /* the pages come from realloc: no stray /GA entries */
     p->width = width > 20 ? width : 20;
     p->height = height > 20 ? height : 20;
     pdf->dash = 0;
@@ -130,10 +145,22 @@ static void put_colour(owf_buf *out, unsigned long rgb, int stroke)
                    b / 255, (b % 255) * 1000 / 255, stroke ? "RG" : "rg");
 }
 
+/* What is painted next lets what is behind show through (owf_pdf_alpha): the page's /GA<n> graphics
+ * state, n percent opaque, set inside the q ... Q round each drawing */
+static void see_through(owf_pdf *pdf, owf_buf *out)
+{
+    pdf_page *p = pdf->npages ? &pdf->pages[pdf->npages - 1] : NULL;
+    if (!p || !pdf->alpha || pdf->alpha >= 100)
+        return;
+    p->alphas[pdf->alpha] = 1;
+    owf_buf_printf(out, "/GA%d gs\n", pdf->alpha);
+}
+
 /* Fill and line colours, the line's width, and the operator that paints. */
 static const char *paint(owf_pdf *pdf, owf_buf *out, unsigned long fill, unsigned long line, int line_width)
 {
     int f = OWF_SHADE_SET(fill), l = OWF_SHADE_SET(line);
+    see_through(pdf, out);
     if (f)
         put_colour(out, OWF_SHADE_RGB(fill), 0);
     if (l) {
@@ -156,6 +183,12 @@ void owf_pdf_dash(owf_pdf *pdf, int dash)
 {
     if (pdf)
         pdf->dash = dash;
+}
+
+void owf_pdf_alpha(owf_pdf *pdf, int opaque)
+{
+    if (pdf)
+        pdf->alpha = opaque <= 0 ? 1 : opaque > 100 ? 100 : opaque;
 }
 
 int owf_pdf_rect(owf_pdf *pdf, int x, int y, int w, int h, unsigned long fill, unsigned long line, int line_width)
@@ -268,8 +301,8 @@ int owf_pdf_path(owf_pdf *pdf, const int *xy, int n, int closed, unsigned long f
  * screens' bands use too */
 #define GRADIENT_BANDS 48
 
-int owf_pdf_gradient(owf_pdf *pdf, const int *xy, int n, int x, int y, int w, int h, int kind, int angle,
-                     unsigned long from, unsigned long to)
+static int gradient_paint(owf_pdf *pdf, const int *xy, int n, int x, int y, int w, int h, int kind, int angle,
+                          unsigned long from, unsigned long to)
 {
     /* the box gives a radial gradient's centre and size; a linear one runs along the outline itself */
     pdf_page *p = current(pdf);
@@ -332,6 +365,54 @@ int owf_pdf_gradient(owf_pdf *pdf, const int *xy, int n, int x, int y, int w, in
     }
     owf_buf_puts(o, "Q\n");
     return o->failed ? -1 : 0;
+}
+
+int owf_pdf_gradient(owf_pdf *pdf, const int *xy, int n, int x, int y, int w, int h, int kind, int angle,
+                     unsigned long from, unsigned long to)
+{
+    pdf_page *p = current(pdf);
+    pdf_form *f;
+    owf_buf page_content;
+    int alpha, rc;
+    if (!p)
+        return -1;
+    if (!xy || n < 3 || w <= 0 || h <= 0)
+        return 0;
+    alpha = pdf->alpha;
+    if (!alpha || alpha >= 100)
+        return gradient_paint(pdf, xy, n, x, y, w, h, kind, angle, from, to);
+    /* see-through: the bands overlap (a ring over the last, strips a little over each other), and each
+     * band at the alpha would let the ones under it darken it; so the bands go opaque into a transparency
+     * group, which the page paints once at the alpha */
+    if (pdf->nforms == pdf->capforms) {
+        int want = pdf->capforms ? pdf->capforms * 2 : 8;
+        f = realloc(pdf->forms, (size_t)want * sizeof *f);
+        if (!f) {
+            pdf->failed = 1;
+            return -1;
+        }
+        pdf->forms = f;
+        pdf->capforms = want;
+    }
+    f = &pdf->forms[pdf->nforms];
+    owf_buf_init(&f->content);
+    f->page = pdf->npages - 1;
+    f->object = 0;
+    page_content = p->content;
+    p->content = f->content;
+    pdf->alpha = 100;
+    rc = gradient_paint(pdf, xy, n, x, y, w, h, kind, angle, from, to);
+    pdf->alpha = alpha;
+    f->content = p->content;
+    p->content = page_content;
+    pdf->nforms++;
+    if (rc < 0 || f->content.failed) {
+        pdf->failed = 1;
+        return -1;
+    }
+    p->alphas[alpha] = 1;
+    owf_buf_printf(&p->content, "q\n/GA%d gs\n/Fm%d Do\nQ\n", alpha, pdf->nforms);
+    return p->content.failed ? -1 : 0;
 }
 
 /* ---- Text ---- */
@@ -746,6 +827,11 @@ int owf_pdf_finish(owf_pdf *pdf, const char *title, unsigned char **data, size_t
         pdf->pics[i].object = nobj;
         nobj += pdf->pics[i].pic.mask ? 2 : 1;
     }
+    for (i = 0; i < pdf->nforms; i++) {
+        if (pdf->forms[i].content.failed)
+            return OWF_ERR_MEMORY;
+        pdf->forms[i].object = nobj++;
+    }
     if (lost)
         owf_report_add(report, OWF_NOTE_LOST, "Pictures in a format the PDF export does not draw yet (only JPEG, PNG and WMF) are left out");
     if (pdf->mf_skipped)
@@ -795,6 +881,23 @@ int owf_pdf_finish(owf_pdf *pdf, const char *title, unsigned char **data, size_t
                 any = 1;
                 owf_buf_printf(&out, " /Im%d %d 0 R", j + 1, pdf->pics[j].object);
             }
+        for (j = 0; j < pdf->nforms; j++)
+            if (pdf->forms[j].page == i) {
+                if (!any)
+                    owf_buf_puts(&out, " /XObject <<");
+                any = 1;
+                owf_buf_printf(&out, " /Fm%d %d 0 R", j + 1, pdf->forms[j].object);
+            }
+        if (any)
+            owf_buf_puts(&out, " >>");
+        any = 0;
+        for (j = 1; j < 100; j++)
+            if (p->alphas[j]) {
+                if (!any)
+                    owf_buf_puts(&out, " /ExtGState <<");
+                any = 1;
+                owf_buf_printf(&out, " /GA%d << /ca %d.%02d /CA %d.%02d >>", j, j / 100, j % 100, j / 100, j % 100);
+            }
         if (any)
             owf_buf_puts(&out, " >>");
         owf_buf_puts(&out, " >>");
@@ -831,6 +934,20 @@ int owf_pdf_finish(owf_pdf *pdf, const char *title, unsigned char **data, size_t
             owf_buf_put(&out, im->mask, im->mlen);
             owf_buf_puts(&out, "\nendstream\nendobj\n");
         }
+    }
+    for (i = 0; i < pdf->nforms; i++) {
+        /* a see-through gradient's bands, opaque, as one transparency group the size of its page */
+        const pdf_form *f = &pdf->forms[i];
+        const pdf_page *p = &pdf->pages[f->page];
+        OBJ(f->object);
+        owf_buf_puts(&out, "<< /Type /XObject /Subtype /Form /BBox [0 0 ");
+        put_num(&out, p->width);
+        owf_buf_putc(&out, ' ');
+        put_num(&out, p->height);
+        owf_buf_printf(&out, "] /Group << /Type /Group /S /Transparency >> /Resources << >> /Length %lu >>\nstream\n",
+                       (unsigned long)f->content.length);
+        owf_buf_put(&out, f->content.data, f->content.length);
+        owf_buf_puts(&out, "endstream\nendobj\n");
     }
     for (i = 0; i < pdf->nlinks; i++) {
         const pdf_link *l = &pdf->links[i];

@@ -308,6 +308,29 @@ static uint32_t argb(unsigned long shade)
     return 0xff000000u | (uint32_t)OWF_SHADE_RGB(shade);
 }
 
+/* a colour see-through by transparency percent: its alpha the opaque part */
+static uint32_t argb_see(unsigned long shade, int transparency)
+{
+    uint32_t a = transparency <= 0 ? 255u : transparency >= 100 ? 0u : (uint32_t)((100 - transparency) * 255 + 50) / 100;
+    return a << 24 | (uint32_t)OWF_SHADE_RGB(shade);
+}
+
+/* a colour seen through transparency percent over white: a page background has nothing else behind it */
+static unsigned long over_white(unsigned long shade, int transparency)
+{
+    unsigned long rgb = OWF_SHADE_RGB(shade), out = 0;
+    int shift;
+    if (transparency <= 0)
+        return shade;
+    if (transparency > 100)
+        transparency = 100;
+    for (shift = 0; shift <= 16; shift += 8) {
+        long c = (long)(rgb >> shift & 255);
+        out |= (unsigned long)(c + (255 - c) * transparency / 100) << shift;
+    }
+    return OWF_SHADE(out);
+}
+
 typedef struct {
     const owf_deck *deck;
     const owf_slide *slide;
@@ -363,11 +386,44 @@ static int has_gradient(const owf_obj *o)
            (o->look.gradient == OWF_GRADIENT_LINEAR || o->look.gradient == OWF_GRADIENT_RADIAL);
 }
 
-/* drawn as an OpenLayout shape: shapes, and text boxes with a gradient (a box's plain background
- * can't hold one), as their rectangle */
+/* hatching, a see-through fill, or a shadow of a box with a fill or an outline: what a box's plain
+ * background can't hold (a shadow of a text box with neither is its text's, not drawn) */
+static int has_area_more(const owf_obj *o)
+{
+    return o && (o->look.hatch != OWF_HATCH_NONE || (o->look.transparency > 0 && OWF_SHADE_SET(o->look.fill)) ||
+                 (o->look.shadow && (OWF_LOOK_FILLED(&o->look) || OWF_SHADE_SET(o->look.line))));
+}
+
+/* drawn as an OpenLayout shape: shapes, and text boxes with a gradient, hatching, a see-through fill or a
+ * shadow (a box's plain background can't hold them), as their rectangle */
 static int is_openlayout_shape(const owf_obj *o)
 {
-    return o && (o->kind == OWF_OBJ_SHAPE || (o->kind == OWF_OBJ_TEXT && has_gradient(o)));
+    return o && (o->kind == OWF_OBJ_SHAPE || (o->kind == OWF_OBJ_TEXT && (has_gradient(o) || has_area_more(o))));
+}
+
+/* hatching, see-through fills and a shadow onto an OpenLayout shape style (GFOpenLayout 0.22) */
+static void area_more(ol_shape_style *s, const owf_look *l)
+{
+    int t = l->transparency;
+    if (t > 0) {
+        if (s->fill_argb >> 24)
+            s->fill_argb = argb_see(l->fill, t);
+        if (s->gradient != OL_GRADIENT_NONE)
+            s->fill2_argb = argb_see(l->fill2, t);
+    }
+    if (l->hatch != OWF_HATCH_NONE) {
+        s->hatch = l->hatch == OWF_HATCH_TRIPLE ? OL_HATCH_TRIPLE : l->hatch == OWF_HATCH_DOUBLE ? OL_HATCH_DOUBLE
+                                                                                              : OL_HATCH_SINGLE;
+        s->hatch_argb = argb_see(OWF_SHADE_SET(l->hatch_colour) ? l->hatch_colour : OWF_SHADE(0), t);
+        s->hatch_angle_tenths = l->hatch_angle;
+        s->hatch_distance = TW(l->hatch_distance > 0 ? l->hatch_distance : OWF_HATCH_DISTANCE);
+    }
+    if (l->shadow) {
+        s->shadow_argb = argb_see(OWF_SHADE_SET(l->shadow_colour) ? l->shadow_colour : OWF_SHADE(OWF_SHADOW_COLOUR),
+                                  l->shadow_transparency);
+        s->shadow_dx = TW(l->shadow_dx);
+        s->shadow_dy = TW(l->shadow_dy);
+    }
 }
 
 static unsigned shape_stroke_style(unsigned char line)
@@ -415,6 +471,7 @@ static int set_shape(ol_node *node, const owf_obj *o)
         s.fill2_argb = argb(o->look.fill2);
         s.gradient_angle_tenths = o->look.gradient_angle;
     }
+    area_more(&s, &o->look);
     if (o->look.arrows & OWF_ARROW_START) s.flags |= OL_SHAPE_ARROW_START;
     if (o->look.arrows & OWF_ARROW_END) s.flags |= OL_SHAPE_ARROW_END;
     w = o->width > 0 ? o->width : 1;
@@ -1233,6 +1290,8 @@ static int build(builder *b)
     unsigned long bg = s->background, bg2 = s->background2;
     int bg_image = s->background_image, bg_angle = s->background_angle, i;
     unsigned char bg_gradient = s->background_gradient;
+    owf_look bgl;
+    OWF_BACKGROUND_LOOK(s, &bgl);
 
     b->out->nframes = 0;
     /* the background: the slide's, else its master's, else white */
@@ -1242,7 +1301,11 @@ static int build(builder *b)
         bg_gradient = m->background_gradient;
         bg_angle = m->background_angle;
         bg2 = m->background2;
+        OWF_BACKGROUND_LOOK(m, &bgl);
     }
+    /* see-through: over white, as nothing else is behind a page; the hatching too */
+    bg = over_white(bg, bgl.transparency);
+    bg2 = over_white(bg2, bgl.transparency);
     if (!OWF_SHADE_SET(bg))
         bg = OWF_SHADE(0xFFFFFF);
     f = add_frame(b, NULL, 1);
@@ -1256,18 +1319,27 @@ static int build(builder *b)
         st.background = argb(bg);
         ol_node_set_style(n, &st);
     }
-    /* a gradient background: the page's rectangle as a shape with it, over the plain colour */
-    if (bg_image < 0 && OWF_SHADE_SET(bg2) &&
-        (bg_gradient == OWF_GRADIENT_LINEAR || bg_gradient == OWF_GRADIENT_RADIAL)) {
+    /* a gradient or hatched background: the page's rectangle as a shape with it, over the plain colour */
+    if (bg_image < 0 && ((OWF_SHADE_SET(bg2) && (bg_gradient == OWF_GRADIENT_LINEAR || bg_gradient == OWF_GRADIENT_RADIAL)) ||
+                         bgl.hatch != OWF_HATCH_NONE)) {
         ol_shape_style sh;
         ol_shape_style_init(&sh);
         sh.type = OL_SHAPE_RECT;
         sh.fill_argb = argb(bg);
         sh.stroke_argb = 0;
         sh.stroke_width = 0;
-        sh.gradient = bg_gradient == OWF_GRADIENT_RADIAL ? OL_GRADIENT_RADIAL : OL_GRADIENT_LINEAR;
-        sh.fill2_argb = argb(bg2);
-        sh.gradient_angle_tenths = bg_angle;
+        if (OWF_SHADE_SET(bg2) && (bg_gradient == OWF_GRADIENT_LINEAR || bg_gradient == OWF_GRADIENT_RADIAL)) {
+            sh.gradient = bg_gradient == OWF_GRADIENT_RADIAL ? OL_GRADIENT_RADIAL : OL_GRADIENT_LINEAR;
+            sh.fill2_argb = argb(bg2);
+            sh.gradient_angle_tenths = bg_angle;
+        }
+        if (bgl.hatch != OWF_HATCH_NONE) {
+            bgl.hatch_colour = over_white(OWF_SHADE_SET(bgl.hatch_colour) ? bgl.hatch_colour : OWF_SHADE(0),
+                                          bgl.transparency);
+            bgl.transparency = 0;
+            bgl.shadow = 0;
+            area_more(&sh, &bgl);
+        }
         if (!ol_node_set_shape(n, &sh, 0, NULL))
             return 0;
     }

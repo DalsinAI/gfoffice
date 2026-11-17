@@ -1860,6 +1860,53 @@ static void arrowhead(struct RastPort *rp, LONG pen, int x1, int y1, int x2, int
     ogt_fill_poly(rp, pen, pts, 3);
 }
 
+/* A see-through colour on screen: its alpha mixed with white (the PDF and print show what is behind) */
+static uint32_t over_white_argb(uint32_t argb)
+{
+    uint32_t a = argb >> 24, out = 0xFF000000u;
+    int shift;
+    for (shift = 0; shift <= 16; shift += 8) {
+        uint32_t c = argb >> shift & 255u;
+        out |= ((c * a + 255u * (255u - a) + 127u) / 255u) << shift;
+    }
+    return out;
+}
+
+/* GFOpenLayout 0.22's shadow and hatching on screen: the shadow (the outline moved, in its colour) before
+ * the shape, the hatch lines (one pixel, cut to the outline by opr_hatch_lines) after its fill */
+static void draw_shadow(const painter *p, const ol_shape_style *s, const int *xy, int n, int closed, int width,
+                        int dx, int dy)
+{
+    int moved[2 * OL_MAX_SHAPE_POINTS], k;
+    LONG pen;
+    if (!OL_SHAPE_STYLE_HAS_HATCH(s) || !(s->shadow_argb >> 24) || n < 2) return;
+    pen = argb_pen(over_white_argb(s->shadow_argb));
+    for (k = 0; k < n; ++k) {
+        moved[k * 2] = xy[k * 2] + dx;
+        moved[k * 2 + 1] = xy[k * 2 + 1] + dy;
+    }
+    if (closed && n >= 3 && ((s->fill_argb >> 24) || s->hatch != OL_HATCH_NONE)) ogt_fill_poly(p->rp, pen, moved, n);
+    else if ((s->stroke_argb >> 24) && s->stroke_width > 0) outline(p->rp, pen, moved, n, width, closed, OL_STROKE_SOLID);
+}
+
+static void draw_hatch(const painter *p, const ol_shape_style *s, const int *xy, int n, int closed, int x, int y,
+                       int distance)
+{
+    static int lines[4 * 1024];
+    int k, m;
+    LONG pen;
+    if (!OL_SHAPE_STYLE_HAS_HATCH(s) || s->hatch == OL_HATCH_NONE || !closed || n < 3) return;
+    if (distance < 2) distance = 2;            /* closer than that is a solid colour on screen */
+    m = opr_hatch_lines(xy, n, x, y, (int)s->hatch, s->hatch_angle_tenths + s->rotation_tenths, distance, lines, 1024);
+    if (m <= 0) return;
+    pen = exact_pen(argb_pen(over_white_argb(s->hatch_argb)));
+    SetAPen(p->rp, pen);
+    for (k = 0; k < m; ++k) {
+        Move(p->rp, lines[k * 4], lines[k * 4 + 1]);
+        Draw(p->rp, lines[k * 4 + 2], lines[k * 4 + 3]);
+    }
+}
+
 /* The same normalized OpenLayout geometry that the PDF renderer consumes. */
 static void draw_shape(const painter *p, const ol_device_op *d)
 {
@@ -1873,7 +1920,7 @@ static void draw_shape(const painter *p, const ol_device_op *d)
     LONG fill, line;
     if (!g || g->shape.type == OL_SHAPE_NONE) return;
     s = &g->shape;
-    fill = (s->fill_argb >> 24) ? argb_pen(s->fill_argb) : -1;
+    fill = (s->fill_argb >> 24) ? argb_pen(over_white_argb(s->fill_argb)) : -1;
     line = (s->stroke_argb >> 24) && s->stroke_width > 0 ? argb_pen(s->stroke_argb) : -1;
     if (w < 1 && h < 1) return;
     bounds.x = x;
@@ -1887,6 +1934,13 @@ static void draw_shape(const painter *p, const ol_device_op *d)
         xy[k * 2] = path[k].x;
         xy[k * 2 + 1] = path[k].y;
     }
+    if (OL_SHAPE_STYLE_HAS_HATCH(s) && (s->shadow_argb >> 24)) {
+        /* the offset in pixels, keeping its sign */
+        int dx, dy;
+        dx = (int)ol_scale_x(&p->scale, s->shadow_dx) - (int)ol_scale_x(&p->scale, 0);
+        dy = (int)ol_scale_y(&p->scale, s->shadow_dy) - (int)ol_scale_y(&p->scale, 0);
+        draw_shadow(p, s, xy, n, closed, width, dx, dy);
+    }
     if (fill >= 0 && closed && n >= 3 && OL_SHAPE_STYLE_HAS_GRADIENT(s) && s->gradient != OL_GRADIENT_NONE &&
         (s->fill2_argb >> 24)) {
         /* a gradient as bands, each the outline cut to the band (opr_gradient_band): 16 on screen, a
@@ -1899,11 +1953,14 @@ static void draw_shape(const painter *p, const ol_device_op *d)
                                   s->gradient == OL_GRADIENT_RADIAL ? OPR_GRADIENT_RADIAL : OPR_GRADIENT_LINEAR,
                                   s->gradient_angle_tenths + s->rotation_tenths, s->fill_argb & 0xFFFFFFu,
                                   s->fill2_argb & 0xFFFFFFu, band, bands, pts, OPR_GRADIENT_MAX_POINTS, &rgb);
-            if (m >= 3) ogt_fill_poly(p->rp, argb_pen(0xFF000000u | (uint32_t)rgb), pts, m);
+            if (m >= 3) ogt_fill_poly(p->rp, argb_pen(over_white_argb((s->fill_argb & 0xFF000000u) | (uint32_t)rgb)), pts, m);
         }
     } else if (fill >= 0 && closed && n >= 3) {
         ogt_fill_poly(p->rp, fill, xy, n);
     }
+    if (OL_SHAPE_STYLE_HAS_HATCH(s) && s->hatch != OL_HATCH_NONE)
+        draw_hatch(p, s, xy, n, closed, x, y,
+                   (int)ol_scale_length(&p->scale, s->hatch_distance));
     if (line >= 0) outline(p->rp, line, xy, n, width, closed, s->stroke_style);
     if (line >= 0 && n >= 2 && (s->flags & OL_SHAPE_ARROW_END))
         arrowhead(p->rp, line, xy[(n - 2) * 2], xy[(n - 2) * 2 + 1], xy[(n - 1) * 2], xy[(n - 1) * 2 + 1],

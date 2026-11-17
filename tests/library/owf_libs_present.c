@@ -92,6 +92,9 @@ static void page_pdf(const owf_libs_env *e)
         if (owf_pdf_gradient(pdf, box, 4, 6000, 4000, 3000, 2000, OWF_PDF_GRADIENT_LINEAR, 0,
                              OWF_SHADE(0x203040), OWF_SHADE(0xDDE4F0)) != 0)
             width = 0;
+        owf_pdf_alpha(pdf, 50);              /* 3.17: a see-through rectangle */
+        owf_pdf_rect(pdf, 1000, 6500, 2000, 1000, OWF_SHADE(0x2060C0), 0, 0);
+        owf_pdf_alpha(pdf, 100);
         r = owf_pdf_finish(pdf, "OWFLibsTest", &data, &length, report);
     }
     LCHECK(e, width > 0 && r == OWF_OK && data && length > 400 && !memcmp(data, "%PDF-", 5) &&

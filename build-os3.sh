@@ -111,7 +111,7 @@ done
 # owfwrite.library, owc_book.c owfcalc, owc_pub.c owfpub, owc_deck.c and the deck's PDF owfpresent), so a
 # conversion opens only the libraries it needs.
 OWC_DECK="-DOWC_DECK_PDF -I$HERE/include -I$OPENLAYOUT_SRC/include"
-OWC_PDF="$HERE/src/deck/opr_layout.c $HERE/src/deck/opr_pdf.c $HERE/src/core/ow_layout.c $OL_C"
+OWC_PDF="$HERE/src/deck/opr_layout.c $HERE/src/deck/opr_pdf.c $HERE/src/deck/opr_gradient.c $HERE/src/core/ow_layout.c $OL_C"
 OWCFLAGS="$CFLAGS_COMMON -m68040 -specs=$SPECS -Os $OWFFLAGS -I$HERE/tools"
 if [ "$OWF" = library ]; then
     OWC_OBJ="$OUT/obj-owconvert"
@@ -122,7 +122,8 @@ if [ "$OWF" = library ]; then
         "$CC" $OWCFLAGS -DOWF_USE_WRITE_LIBRARY -c "$HERE/tools/owc_doc.c" &&
         "$CC" $OWCFLAGS -DOWF_USE_CALC_LIBRARY -c "$HERE/tools/owc_book.c" &&
         "$CC" $OWCFLAGS -DOWF_USE_PUB_LIBRARY -c "$HERE/tools/owc_pub.c" &&
-        "$CC" $OWCFLAGS -DOWF_USE_PRESENT_LIBRARY $OWC_DECK -c "$HERE/tools/owc_deck.c" $OWC_PDF)
+        "$CC" $OWCFLAGS -DOWF_USE_PRESENT_LIBRARY $OWC_DECK -c "$HERE/tools/owc_deck.c" $OWC_PDF \
+            "$HERE/libowf/src/owf_fill.c")   # opr_gradient.c's fills: the drawing programs', not a library's
     # shellcheck disable=SC2086
     "$CC" $OWCFLAGS "$HERE/tools/owconvert.c" "$OWC_OBJ"/*.o -lm -o "$OUT/OWConvert"
 else
