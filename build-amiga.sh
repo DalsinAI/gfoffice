@@ -63,4 +63,11 @@ done
 for f in pptx-talk.pptx pptx-plain.pptx pptx-text.pptx odfpy.odp libreoffice.odp; do
     [ -f "$HERE/tests/deck/fixtures/$f" ] && cp "$HERE/tests/deck/fixtures/$f" "$OUT/samples/"
 done
+# the icons (icons/, docs/ICONS.md): each program's beside it, and a drawer's beside the drawer when the job
+# makes it; the packer takes the rest from icons/drawers (Documentation, Rexx, Images, and GFOffice.info, which
+# goes beside the GFOffice drawer, not in it)
+cp "$HERE"/icons/programs/*.info "$OUT/"
+for d in samples library sdk; do
+    [ -d "$OUT/$d" ] && cp "$HERE/icons/drawers/$d.info" "$OUT/"
+done
 rm -rf "$DEPS"   # the job's out/ keeps the programs, not the sources
