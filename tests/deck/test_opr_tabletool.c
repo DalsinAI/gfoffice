@@ -137,7 +137,7 @@ static void test_tools(void)
           !strncmp(said, "Merge takes rows and columns", 28) && t->nmerges == 1, "not a span: %s", said);
     CHECK(opr_table_tool(u, d, 0, obj, 2, 0, "MERGE 1 by 2", said, sizeof said) == 0 && t->nmerges == 2 &&
           !strcmp(said, "Merged 1 row by 2 columns; Undo splits them again."), "1 by 2: %s", said);
-    CHECK(opr_undo_undo(u, d, &s, &o) > 0 && t == &d->slides[0].objs[obj] && d->slides[0].objs[obj].nmerges == 1,
+    CHECK(opr_undo_undo(u, d, &s, &o) == 0 && t == &d->slides[0].objs[obj] && d->slides[0].objs[obj].nmerges == 1,
           "one Undo takes the second merge back");
     t = &d->slides[0].objs[obj];
 
@@ -149,8 +149,8 @@ static void test_tools(void)
     CHECK(opr_table_tool(u, d, 0, obj, 1, 3, "split", said, sizeof said) == 0 &&
           !strcmp(said, "Split into 6 cells again; their text is back.") && d->slides[0].objs[obj].nmerges == 0,
           "split from a covered cell: %s", said);
-    CHECK(opr_undo_undo(u, d, &s, &o) > 0 && d->slides[0].objs[obj].nmerges == 1, "Undo merges them again");
-    CHECK(opr_undo_redo(u, d, &s, &o) > 0 && d->slides[0].objs[obj].nmerges == 0, "Redo splits them");
+    CHECK(opr_undo_undo(u, d, &s, &o) == 0 && d->slides[0].objs[obj].nmerges == 1, "Undo merges them again");
+    CHECK(opr_undo_redo(u, d, &s, &o) == 0 && d->slides[0].objs[obj].nmerges == 0, "Redo splits them");
 
     /* ROWHEIGHT */
     CHECK(opr_table_tool(u, d, 0, obj, 1, 0, "ROWHEIGHT 1.5cm", said, sizeof said) == 0 &&
@@ -164,7 +164,7 @@ static void test_tools(void)
     CHECK(opr_table_tool(u, d, 0, obj, 1, 3, "rowheight auto", said, sizeof said) == 0 &&
           !strcmp(said, "Row 2 is as high as its text needs.") &&
           opr_table_cell_info(d, 0, obj, 1, 0, &in) && in.row_height == 0, "auto: %s", said);
-    CHECK(opr_undo_undo(u, d, &s, &o) > 0 && opr_table_cell_info(d, 0, obj, 1, 0, &in) && in.row_height == 851,
+    CHECK(opr_undo_undo(u, d, &s, &o) == 0 && opr_table_cell_info(d, 0, obj, 1, 0, &in) && in.row_height == 851,
           "Undo gives the height back");
 
     /* DESIGN */
@@ -187,7 +187,7 @@ static void test_tools(void)
           !strcmp(said, "3 4 3 4 1 1 auto header total bandedrows"), "INFO: %s", said);
     CHECK(opr_table_tool(u, d, 0, obj, 0, 0, "design none", said, sizeof said) == 0 &&
           !strcmp(said, "Table design: none.") && d->slides[0].objs[obj].table_design == 0, "none: %s", said);
-    CHECK(opr_undo_undo(u, d, &s, &o) > 0 &&
+    CHECK(opr_undo_undo(u, d, &s, &o) == 0 &&
           d->slides[0].objs[obj].table_design == (OWF_TABLE_FIRST_ROW | OWF_TABLE_LAST_ROW | OWF_TABLE_BANDED_ROWS),
           "Undo gives the design back");
 
