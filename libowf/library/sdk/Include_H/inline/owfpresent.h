@@ -1565,4 +1565,22 @@ __owfpresent_owf_pdf_alpha(void *__base, owf_pdf *pdf, int opaque)
 #define owf_pdf_alpha(pdf, opaque) __owfpresent_owf_pdf_alpha((OWFPRESENT_BASE_NAME), (owf_pdf *)(pdf), (int)(opaque))
 #define __owf_pdf_alpha_base(__in_base, pdf, opaque) __owfpresent_owf_pdf_alpha((__in_base), (owf_pdf *)(pdf), (int)(opaque))
 
+static __inline__ int
+__owfpresent_owf_deck_image_size(void *__base, const owf_image *image, int *width, int *height)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(image);
+	register ULONG _a1 __asm("a1") = (ULONG)(width);
+	register ULONG _a2 __asm("a2") = (ULONG)(height);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -552(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_deck_image_size(image, width, height) __owfpresent_owf_deck_image_size((OWFPRESENT_BASE_NAME), (const owf_image *)(image), (int *)(width), (int *)(height))
+#define __owf_deck_image_size_base(__in_base, image, width, height) __owfpresent_owf_deck_image_size((__in_base), (const owf_image *)(image), (int *)(width), (int *)(height))
+
 #endif /* INLINE_OWFPRESENT_H */

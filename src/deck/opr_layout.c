@@ -1027,6 +1027,72 @@ static int add_picture(builder *b, ol_node *n, int image, const int *crop, int w
     return 1;
 }
 
+/* A text box's or a rectangle's picture fill is drawn; another shape's is its fill colour. */
+static int picture_fill_drawn(const owf_deck *d, const owf_obj *o)
+{
+    return o->look.picture != OWF_PICTURE_NONE && o->image >= 0 && o->image < d->res->nimages &&
+           (o->kind == OWF_OBJ_TEXT ||
+            (o->kind == OWF_OBJ_SHAPE && (o->shape == OWF_SHAPE_RECT || o->shape == OWF_SHAPE_ROUNDRECT)));
+}
+
+/* One piece of a picture fill: an absolute block at x, y (twips from n's corner) showing the
+ * picture w by h, less crop (right and bottom, OL_SHAPE_COORDS parts; NULL: none). */
+static int add_fill_piece(builder *b, ol_node *n, int image, int x, int y, int w, int h, const int *crop)
+{
+    ol_style s;
+    ol_box_style box;
+    ol_node *p = ol_node_append(b->out->doc, n, OL_ROLE_BLOCK, NULL);
+    if (!p)
+        return 0;
+    ol_style_init(&s);
+    s.display = OL_DISPLAY_BLOCK;
+    ol_node_set_style(p, &s);
+    ol_box_style_init(&box);
+    box.flags = OL_BOX_ABSOLUTE;
+    if (crop && (crop[2] || crop[3]))
+        box.flags |= OL_BOX_CLIP_CONTENT;
+    box.frame.x = TW(x);
+    box.frame.y = TW(y);
+    box.frame.width = TW(w > 0 ? w : 1);
+    box.frame.height = TW(h > 0 ? h : 1);
+    ol_node_set_box(p, &box);
+    return add_picture(b, p, image, crop, w, h);
+}
+
+/* A picture fill of the box w by h whose top left is x, y from n's corner: the picture
+ * stretched over it, or tiles from its top left (the picture's own size when the look gives none,
+ * larger when more than 32 a row or a column would be needed), those at the right and bottom edges
+ * cropped to the box. */
+static int add_picture_fill(builder *b, ol_node *n, int image, const owf_look *l, int x, int y, int w, int h)
+{
+    int tw = l->tile_width, th = l->tile_height;
+    long long i, j;                   /* a tile can be as large as an int: i + tw must not overflow */
+    if (l->picture != OWF_PICTURE_TILE || w <= 0 || h <= 0)
+        return add_fill_piece(b, n, image, x, y, w, h, NULL);
+    if ((tw <= 0 || th <= 0) && !owf_deck_image_size(&b->deck->res->images[image], &tw, &th))
+        return add_fill_piece(b, n, image, x, y, w, h, NULL);
+    if (tw <= 0 || th <= 0)
+        return add_fill_piece(b, n, image, x, y, w, h, NULL);
+    /* each side doubles only while it is at most half its box, then is the box (or stays larger), so
+     * a very wide and very thin tile from the file cannot overflow: the other side goes on doubling */
+    while (w / tw >= 32 || h / th >= 32) {
+        tw = tw <= w / 2 ? tw * 2 : tw > w ? tw : w;
+        th = th <= h / 2 ? th * 2 : th > h ? th : h;
+    }
+    for (j = 0; j < h; j += th)
+        for (i = 0; i < w; i += tw) {
+            int pw = w - i < tw ? (int)(w - i) : tw, ph = h - j < th ? (int)(h - j) : th, crop[4];
+            crop[0] = crop[1] = 0;
+            crop[2] = (int)((long long)(tw - pw) * OL_SHAPE_COORDS / tw);
+            crop[3] = (int)((long long)(th - ph) * OL_SHAPE_COORDS / th);
+            if (crop[2] >= OL_SHAPE_COORDS || crop[3] >= OL_SHAPE_COORDS)
+                continue;
+            if (!add_fill_piece(b, n, image, x + (int)i, y + (int)j, pw, ph, crop))
+                return 0;
+        }
+    return 1;
+}
+
 /* What an object kept but not drawn is called on its box. */
 static const char *other_label(const owf_deck *deck, const owf_obj *o)
 {
@@ -1065,25 +1131,60 @@ static int add_label(builder *b, ol_node *n, const char *text)
     return ow_layout_add_story(b->out->doc, n, b->deck->res, &s, NULL);
 }
 
+/* A picture fill's own frame, just under its object's (which then has no fill of its own): the box's
+ * fill colour, and the picture stretched or tiled over it. Not the object's frame (obj NULL), so the
+ * object's text and outline, drawn after it, lie over it. */
+static int add_fill_frame(builder *b, const owf_obj *o, const owf_obj *box, int from_master)
+{
+    opr_frame *f = add_frame(b, NULL, from_master);
+    ol_node *n;
+    if (!f)
+        return 0;
+    n = frame_node(b, f, box->x, box->y, box->width, box->height, NULL);
+    if (!n)
+        return 0;
+    if (OWF_SHADE_SET(box->look.fill)) {
+        ol_style st = *ol_node_style(n);
+        st.background = argb(box->look.fill);
+        ol_node_set_style(n, &st);
+    }
+    f->first = ol_node_id(n) + 1;
+    if (!add_picture_fill(b, n, o->image, &box->look, 0, 0, box->width, box->height))
+        return 0;
+    f->end = last_node(b);
+    return 1;
+}
+
 /* One object's frame and its content. */
 static int add_object(builder *b, const owf_obj *o, int from_master, int slide_index, int obj_index)
 {
     opr_frame *f;
     ol_node *n;
-    owf_obj box = *o;
+    owf_obj box = *o, shown;
+    const owf_obj *drawn = o;
 
     if (o->kind == OWF_OBJ_GROUP || (o->flags & OWF_OBJ_HIDDEN))
         return 1;
     if (!from_master && slide_index >= 0)
         owf_deck_resolve(b->deck, slide_index, obj_index, &box, NULL);
+    /* a picture fill: its own frame first, then the object without its fill colour over it */
+    if (picture_fill_drawn(b->deck, o)) {
+        if (!add_fill_frame(b, o, &box, from_master))
+            return 0;
+        shown = box;
+        shown.look.fill = 0;
+        shown.look.gradient = OWF_GRADIENT_NONE;
+        shown.look.picture = OWF_PICTURE_NONE;
+        drawn = &shown;
+    }
     f = add_frame(b, o, from_master);
     if (!f)
         return 0;
     f->box = box;
-    n = frame_node(b, f, box.x, box.y, box.width, box.height, o);
+    n = frame_node(b, f, box.x, box.y, box.width, box.height, drawn);
     if (!n)
         return 0;
-    if (!set_shape(n, &box))
+    if (!set_shape(n, drawn == o ? &box : &shown))
         return 0;
     f->first = ol_node_id(n) + 1;
     switch (o->kind) {
@@ -1344,9 +1445,13 @@ static int build(builder *b)
             return 0;
     }
     f->first = ol_node_id(n) + 1;
-    if (bg_image >= 0 && !add_picture(b, n, bg_image, NULL, d->width, d->height))
+    if (bg_image >= 0 && bgl.picture == OWF_PICTURE_TILE) {
+        if (!add_picture_fill(b, n, bg_image, &bgl, 0, 0, d->width, d->height))
+            return 0;
+    } else if (bg_image >= 0 && !add_picture(b, n, bg_image, NULL, d->width, d->height)) {
         return 0;
-    f->end = f->first + (bg_image >= 0 ? 1 : 0);
+    }
+    f->end = last_node(b);
 
     /* the master's art, and the footer fields the slide shows */
     for (i = 0; m && i < m->nobjs; i++) {

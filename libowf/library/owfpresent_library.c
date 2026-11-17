@@ -64,13 +64,16 @@
  * program's size check refuses 3.16 and before. No call changes.
  * 3.18: owf_pdf_alpha is a call, at the end, so the deck PDF's see-through fills and shadows (opr_pdf.c)
  * link against owfpresent.library.
+ * 3.19: picture fills: owf_look ends with picture, tile_width and tile_height (so owf_obj is larger), and
+ * owf_slide and owf_master end with background_tile and its size, so a program's size check refuses 3.18
+ * and before; owf_deck_image_size is a call, at the end.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfpresent.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 18
-#define OWF_LIB_VERS "3.18"
+#define OWF_LIB_REVISION 19
+#define OWF_LIB_VERS "3.19"
 #define OWF_LIB_DATE "17.11.2026"
 #define OWF_LIB_CALLS_H "owfpresent_calls.h"
 #include "owf_libbase.h"

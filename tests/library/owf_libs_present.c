@@ -105,6 +105,22 @@ static void page_pdf(const owf_libs_env *e)
     owf_report_free(report);
 }
 
+/* 3.18: a picture's own size, which picture fills tile at */
+static void image_size(const owf_libs_env *e)
+{
+    static const unsigned char png[33] = {
+        0x89, 'P', 'N', 'G', 13, 10, 26, 10, 0, 0, 0, 13, 'I', 'H', 'D', 'R',
+        0, 0, 0, 96, 0, 0, 0, 48, 8, 2, 0, 0, 0, 0, 0, 0, 0
+    };
+    owf_image im;
+    int w = 0, h = 0;
+    memset(&im, 0, sizeof im);
+    im.data = (unsigned char *)png;
+    im.length = sizeof png;
+    LCHECK(e, owf_deck_image_size(&im, &w, &h) && w == 1440 && h == 720,
+           "%s: a 96 by 48 pixel picture is an inch by half an inch", e->tag);
+}
+
 static void run(const owf_libs_env *e)
 {
     shared_checks(e, OWF_KIND_UNKNOWN);
@@ -114,6 +130,7 @@ static void run(const owf_libs_env *e)
     fixture_deck(e);
     new_deck(e);
     page_pdf(e);
+    image_size(e);
 }
 
 OWF_LIBS_UNIT(owf_libs_present, run);

@@ -2697,6 +2697,76 @@ static void test_worktime_days(void)
     opj_doc_free(doc);
 }
 
+/* The sheets as documents (opj_sheetdoc.c), read back through libowf's text writer. */
+static char *sheet_text(const opj_doc *doc, const opj_view *v, int sheet)
+{
+    const owf_format *f = owf_format_named("text");
+    owf_doc *d = NULL;
+    unsigned char *data = NULL;
+    size_t len = 0;
+    char *text = NULL;
+    if (opj_sheet_document(doc, v, sheet, &d) != OWF_OK || !d) return NULL;
+    if (f && f->export(d, &data, &len, NULL) == OWF_OK && data && (text = malloc(len + 1)) != NULL) {
+        memcpy(text, data, len);
+        text[len] = 0;
+    }
+    free(data);
+    owf_doc_free(d);
+    return text;
+}
+
+static void test_sheet_document(void)
+{
+    opj_doc *doc = three();
+    opj_view v;
+    opj_lines l;
+    owf_doc *d = (owf_doc *)1;
+    char *text;
+    if (!doc) return;
+    CHECK_N(opj_sheet_parse("tasks"), OPJ_SHEET_TASKS);
+    CHECK_N(opj_sheet_parse("Resource Sheet"), OPJ_SHEET_RESOURCES);
+    CHECK_N(opj_sheet_parse("gantt"), -1);
+    CHECK_S(opj_sheet_name(OPJ_SHEET_TASKS), "Task Sheet");
+    CHECK(opj_sheet_name(OPJ_NSHEETS) == NULL);
+    CHECK_N(opj_add_resource(doc, "Dale", NULL), OWF_OK);
+    CHECK_N(opj_set_assignment(doc, 0, 0, 100), OWF_OK);
+    opj_view_init(&v, doc, W, H, 16, OPJ_ZOOM_DAYS);
+    text = sheet_text(doc, &v, OPJ_SHEET_TASKS);
+    CHECK(text != NULL);
+    if (text) {
+        CHECK_S(text, "Task Sheet\n"
+                      "ID\tTask Name\tDuration\tStart\tFinish\tPredecessors\n"
+                      "1\tPlan\t2d\tMon 16/11/26\tTue 17/11/26\t\n"
+                      "2\tBuild\t3d\tWed 18/11/26\tFri 20/11/26\t1\n"
+                      "3\tShip\t0d\tFri 20/11/26\tFri 20/11/26\t2\n");
+    }
+    free(text);
+    /* the view's columns: % Complete shown, Predecessors hidden */
+    CHECK(opj_view_show_column(&v, OPJ_COL_PERCENT, 1) && opj_view_show_column(&v, OPJ_COL_PREDECESSORS, 0));
+    /* and its lines: grouped by duration, a heading per group */
+    opj_lines_init(&l);
+    l.group = OPJ_COL_DURATION;
+    CHECK_N(opj_lines_update(&l, doc), OWF_OK);
+    v.lines = &l;
+    text = sheet_text(doc, &v, OPJ_SHEET_TASKS);
+    CHECK(text && strstr(text, "ID\tTask Name\tDuration\tStart\tFinish\t% Complete\n"));
+    CHECK(text && strstr(text, "Duration: 0d\t\t\t\t\t\n3\tShip\t0d\t"));
+    free(text);
+    v.lines = NULL;
+    opj_lines_free(&l);
+    text = sheet_text(doc, NULL, OPJ_SHEET_RESOURCES);
+    CHECK(text && !strncmp(text, "Resource Sheet\nID\tResource Name\t", 32));
+    CHECK(text && strstr(text, "\n1\tDale\tWork\t"));
+    free(text);
+    CHECK_N(opj_sheet_document(doc, NULL, OPJ_SHEET_TASKS, &d), OWF_ERR_FORMAT);
+    CHECK(d == NULL);
+    CHECK_N(opj_sheet_document(doc, &v, OPJ_NSHEETS, &d), OWF_ERR_FORMAT);
+    CHECK_N(opj_sheet_document(doc, &v, OPJ_SHEET_RESOURCES, &d), OWF_OK);
+    CHECK(d && d->page.width > d->page.height && d->footer.nparas == 1);
+    if (d) owf_doc_free(d);
+    opj_doc_free(doc);
+}
+
 int main(void)
 {
     test_dates();
@@ -2736,6 +2806,7 @@ int main(void)
     test_worktime();
     test_actual_cells();
     test_worktime_days();
+    test_sheet_document();
     if (fails) {
         printf("project view tests: %d of %d checks failed\n", fails, checks);
         return 1;
