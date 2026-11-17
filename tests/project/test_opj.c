@@ -1262,6 +1262,35 @@ static void test_task_type_cells(void)
     opj_doc_free(doc);
 }
 
+/* A Work typed on a copy that is then dropped (a refused Replace, a refused cell) leaves nothing behind:
+ * the next edit still keeps its type (Agnus's #13 probe). */
+static void test_typed_work_dropped(void)
+{
+    opj_doc *doc = three();
+    int changed = 0, refused = 0;
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_RESOURCES, "Dale"), OWF_OK);       /* Build: 3d, 24h */
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_TYPE, "Fixed Work"), OWF_OK);
+    /* Replace "h" in Work: Build's "24h" is taken (Work typed), Plan's "0h" refused (no one on it): dropped */
+    CHECK_N(opj_replace_text(doc, OPJ_COL_WORK, "h", "h", 0, -1, &changed, &refused), OWF_ERR_FORMAT);
+    CHECK(refused > 0);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_WORK), "24h");
+    /* the next edit: Fixed Work keeps the 24h over 6 days, the units halve */
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_DURATION, "6d"), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_WORK), "24h");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Dale[50%]");
+    /* the same through opj_set_cells: Work taken, then a refused cell drops the copy */
+    {
+        int cols[2] = { OPJ_COL_WORK, OPJ_COL_PERCENT }, bad = -1;
+        const char *texts[2] = { "48h", "150" };
+        CHECK_N(opj_set_cells(doc, 1, cols, texts, 2, &bad), OWF_ERR_FORMAT);
+        CHECK_N(bad, 1);
+    }
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_DURATION, "3d"), OWF_OK);          /* back: the units again */
+    CHECK_S(cell_of(doc, 1, OPJ_COL_WORK), "24h");
+    CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Dale");
+    opj_doc_free(doc);
+}
+
 static void test_update_task(void)
 {
     opj_doc *doc = three();
@@ -2528,6 +2557,7 @@ int main(void)
     test_work_columns();
     test_update_task();
     test_task_type_cells();
+    test_typed_work_dropped();
     test_progress_lines();
     test_assign_dialog();
     test_print();
