@@ -25,8 +25,8 @@ if [ ! -f "$OPENLAYOUT_SRC/draw/oldraw.c" ] || [ ! -f "$OPENLAYOUT_SRC/amiga/old
 else
     # shellcheck disable=SC2086
     "$CC" $CFLAGS_COMMON -DNO_FPUAUTO -DNO_GFMALLOC -DOLDRAW_AMIGA -m68040 -specs=$SPECS -O2 -Wno-pointer-sign \
-        $OWFFLAGS $OWF_DIAG -I"$HERE/include" -I"$HERE/src/deck" -I"$OPENLAYOUT_SRC/include" -I"$OPENLAYOUT_SRC/draw" \
-        $DIAGSRC "$HERE/src/diag/odg_view.c" "$HERE/src/diag/odg_edit.c" \
+        $OWFFLAGS $OWF_DIAG $SPELL -I"$HERE/include" -I"$HERE/src/deck" -I"$OPENLAYOUT_SRC/include" -I"$OPENLAYOUT_SRC/draw" \
+        $DIAGSRC "$HERE/src/diag/odg_view.c" "$HERE/src/diag/odg_edit.c" "$HERE/src/diag/odg_spell.c" $SPELL_SRC \
         "$OPENLAYOUT_SRC/draw/oldraw.c" "$OPENLAYOUT_SRC/amiga/oldraw_amiga.c" "$HERE/app/opendiag.c" -lamiga \
         -o "$OUT/GFOpenDiag"
     echo "GFOpenDiag: $(wc -c < "$OUT/GFOpenDiag") bytes"

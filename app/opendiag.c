@@ -54,6 +54,7 @@
 #include <string.h>
 
 #include "opendiag_rexx.h"
+#include "opendiag_spell.h"
 #include "opendiag_edit.h"
 #include "opendiag_style.h"
 #include "opendiag_mind.h"
@@ -75,7 +76,7 @@ enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_SVG, M_EXPORT_PDF, M_EXPORT_PNG, M_EXPORT_ILBM, M_EXPORT_EPS, M_EXPORT_MERMAID, M_EXPORT_DOT, M_EXPORT_GRAPHML, M_EXPORT_EXCALIDRAW, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_LABEL, M_STYLE, M_DELETE, M_SELECT_ALL, M_SELECT_NONE,
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100, M_FIT, M_GRID, M_SNAP, M_PAGE_NEXT, M_PAGE_PREV, M_PAGE_ADD, M_LAYERS, M_MAP_NEW, M_MAP_IMPORT, M_MAP_EXPORT,
-    M_CUT, M_COPY, M_PASTE, M_DUPLICATE, M_GROUP, M_UNGROUP,
+    M_CUT, M_COPY, M_PASTE, M_DUPLICATE, M_GROUP, M_UNGROUP, M_SPELL,
     M_ORDER = 400,                       /* M_ORDER + odg_order */
     M_ALIGN = 410,                       /* M_ALIGN + odg_align_how */
     M_DISTRIBUTE_ACROSS = 420, M_DISTRIBUTE_DOWN,
@@ -114,6 +115,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Redo", "Y", 0, 0, (APTR)M_REDO },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Edit Label...", "E", 0, 0, (APTR)M_LABEL },
+    { NM_ITEM, "Spelling...", NULL, 0, 0, (APTR)M_SPELL },
     { NM_ITEM, "Style...", "K", 0, 0, (APTR)M_STYLE },
     { NM_ITEM, "Cut", "X", 0, 0, (APTR)M_CUT },
     { NM_ITEM, "Copy", "C", 0, 0, (APTR)M_COPY },
@@ -635,6 +637,92 @@ static void edit_label(const char *id)
     }
     if (!ask_text("Edit Label", "Label", text, sizeof text)) return;
     edit_failed(set_label(id, text), "Label");
+    redraw();
+}
+
+/* ---- Spelling: GFOffice's one spell checker, owfspell.library (libowf/include/owf_spell.h) ---- */
+
+static owf_spell *spell;
+
+/* The library and the dictionary, opened the first time they are needed. */
+static int spell_ready(void)
+{
+    char msg[160];
+    if (spell) return 1;
+    if (!owf_spell_library()) {
+        tell("owfspell.library was not found. Install it in LIBS:.");
+        return 0;
+    }
+    if ((spell = owf_spell_open_default(msg, sizeof msg)) != NULL) { set_status(msg); return 1; }
+    tell("No dictionary was found. Install Dictionaries/en_GB.words beside GFOpenDiag.");
+    return 0;
+}
+
+static void spell_finish(void)
+{
+    if (spell) owf_spell_close(spell);   /* through the library: only when one was opened */
+    spell = NULL;
+    owf_spell_library_close();
+}
+
+/* Edit > Spelling...: each misspelt word of the page's labels from the selected shape on, the shape selected, with
+ * Change... (the first suggestion offered), Skip, Ignore All, Add (to the user's words) and Stop. */
+static void spell_check(void)
+{
+    odg_spell_hit hit;
+    char at_id[64] = "", stop_id[64] = "";
+    size_t from = 0, stop_start = 0;
+    int have_stop = 0, guard = 0, rc;
+    if (rexx_busy || !spell_ready()) return;
+    follow_doc();
+    if (ed.n) put_text(at_id, sizeof at_id, ed.ids[0]);
+    while (guard++ < 10000) {
+        char sug[4][OWF_SPELL_WORD], text[400], entered[96];
+        int n, i, pick;
+        size_t used;
+        rc = odg_spell_next(DOC, spell, at_id[0] ? at_id : NULL, from, &hit);
+        if (rc < 0) { tell("Spelling: not enough memory"); break; }
+        if (rc == 0 || (have_stop && !strcmp(hit.id, stop_id) && hit.start == stop_start)) {
+            set_status(guard > 1 ? "Spelling checked." : "No misspelt words.");
+            break;
+        }
+        put_text(at_id, sizeof at_id, hit.id);
+        odg_edit_select(&ed, hit.id, 0);
+        odg_edit_show(&ed, &view);
+        redraw();
+        n = owf_spell_suggest(spell, hit.word, sug[0], 4);
+        used = (size_t)snprintf(text, sizeof text, "Not in the dictionary: %s\nSuggestions:", hit.word);
+        for (i = 0; i < n && used < sizeof text; i++)
+            used += (size_t)snprintf(text + used, sizeof text - used, " %s", sug[i]);
+        if (!n && used < sizeof text) snprintf(text + used, sizeof text - used, " none");
+        pick = ask(text, "Change...|Skip|Ignore All|Add|Stop");
+        if (pick <= 0) { set_status("Spelling stopped."); break; }
+        if (pick == 2) {                                  /* Skip: this once, so the check ends back here */
+            if (!have_stop) { put_text(stop_id, sizeof stop_id, hit.id); stop_start = hit.start; have_stop = 1; }
+            from = hit.end;
+            continue;
+        }
+        if (pick == 3 || pick == 4) {
+            if (!(pick == 3 ? owf_spell_ignore(spell, hit.word) : owf_spell_add(spell, hit.word))) {
+                tell("Spelling: not enough memory");
+                break;
+            }
+            from = hit.end;
+            continue;
+        }
+        put_text(entered, sizeof entered, n ? sug[0] : hit.word);
+        if (!ask_text("Spelling", "Change to", entered, sizeof entered)) { from = hit.end; continue; }
+        rc = odg_spell_replace(DOC, &hit, entered);
+        if (rc == OWF_ERR_UNSUPPORTED) {
+            tell("Spelling: this label's markup keeps the word from being changed here; use Edit Label...");
+            from = hit.end;
+            continue;
+        }
+        if (rc != OWF_OK) { edit_failed(rc, "Spelling"); break; }
+        from = hit.start + strlen(entered);
+        if (have_stop && !strcmp(hit.id, stop_id) && hit.start < stop_start)
+            stop_start = stop_start + from - hit.end;     /* the skipped word moved along with the change */
+    }
     redraw();
 }
 
@@ -1192,6 +1280,7 @@ static void menu_action(ULONG id, struct MenuItem *item)
     case M_UNDO: undo_redo(0); return;
     case M_REDO: undo_redo(1); return;
     case M_LABEL: if (ed.n) { edit_label(ed.ids[0]); return; } break;
+    case M_SPELL: spell_check(); return;
     case M_STYLE: if (ed.n) { style_window(); return; } set_status("Select something to style first"); break;
     case M_DELETE: if (ed.n) edit_failed(odg_edit_delete(&ed, DOC), "Delete"); break;
     case M_SELECT_ALL: odg_edit_select_all(&ed, DOC); break;
@@ -1441,6 +1530,14 @@ static int rexx_do_command(const char *command, char *result, size_t size)
             at += n;
         }
         result[at] = 0;
+    } else if (starts_word_ci(command, "SPELL", &arg)) {   /* COUNT, LIST, CHECK, SUGGEST, ADD, IGNORE (opendiag_spell.h) */
+        if (!spell_ready()) rc = app_error(ODG_RX_NOW, "SPELL: no dictionary (owfspell.library and Dictionaries/en_GB.words)");
+        else if ((rc = odg_spell_rexx(DOC, spell, arg, result, size)) != ODG_RX_OK) {
+            char why[200];
+            put_text(why, sizeof why, result);
+            result[0] = 0;
+            rc = app_error(rc, why);
+        }
     } else if (starts_word_ci(command, "LASTERROR", &arg) && app_lasterror[0]) {
         put_text(result, size, app_lasterror);
     } else {
@@ -1630,6 +1727,7 @@ out:
     rexx_close();
     if (RexxSysBase) { CloseLibrary((struct Library *)RexxSysBase); RexxSysBase = NULL; }
     close_window();
+    spell_finish();
     if (have_rx) odg_rexx_free(&rx);
     if (DiskfontBase) CloseLibrary(DiskfontBase);
     if (CyberGfxBase) { CloseLibrary(CyberGfxBase); CyberGfxBase = NULL; }

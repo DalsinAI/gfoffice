@@ -46,3 +46,28 @@ test: calc-spell-test
 check: calc-spell-check
 
 .PHONY: calc-spell-test calc-spell-check
+
+# GFOpenDiag's spelling (src/diag/odg_spell.c) through a page's labels
+DIAG_SPELL_DEPS = $(ODG_DEPS) src/diag/odg_spell.c include/opendiag_spell.h tests/diag/test_odg_spell.c
+
+$(OUT)/test-odg-spell: $(DIAG_SPELL_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) \
+		$(ODG_SRC) src/diag/odg_spell.c tests/diag/test_odg_spell.c -lz -o $@
+
+$(OUT)/test-odg-spell-asan: $(DIAG_SPELL_DEPS) $(OWF_SRC)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(DIAG_SRC) $(ODG_SRC) src/diag/odg_spell.c \
+		tests/diag/test_odg_spell.c -lz -o $@
+
+diag-spell-test: $(OUT)/test-odg-spell
+	$(OUT)/test-odg-spell
+
+diag-spell-check: $(OUT)/test-odg-spell-asan
+	$(OUT)/test-odg-spell-asan
+
+test: diag-spell-test
+check: diag-spell-check
+
+.PHONY: diag-spell-test diag-spell-check
