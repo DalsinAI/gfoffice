@@ -1,10 +1,10 @@
 /*
- * owf_shape.c: GFOffice's one copy of shape geometry (owf_shape.h, docs/suite/owf-shared-core.md). Moved from
+ * owf_geo.c: GFOffice's one copy of shape geometry (owf_geo.h). Moved from
  * owf_dshape.c, where GFOpenDiag's shapes were built with their own copy; the diagram's outlines are the same
- * points as before (tests/diagram/test_dshape.c, tests/shared/test_owf_shape.c).
+ * points as before (tests/diagram/test_dshape.c, tests/shared/test_owf_geo.c).
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
-#include "owf_shape.h"
+#include "owf_geo.h"
 
 #include <string.h>
 
@@ -14,7 +14,7 @@ typedef long long wide;
 static const int quarter[17] = { 0, 980, 1951, 2903, 3827, 4714, 5556, 6344, 7071, 7730, 8315, 8819, 9239, 9569,
                                  9808, 9952, 10000 };
 
-int owf_shape_sin64(int a)
+int owf_geo_sin64(int a)
 {
     a %= 64;
     if (a < 0)
@@ -25,12 +25,12 @@ int owf_shape_sin64(int a)
     return -quarter[64 - a];
 }
 
-int owf_shape_cos64(int a)
+int owf_geo_cos64(int a)
 {
-    return owf_shape_sin64(a + 16);
+    return owf_geo_sin64(a + 16);
 }
 
-void owf_shape_pen_init(owf_shape_pen *pen, owf_shape *s, const owf_snum box[4], int turn, int flip_h, int flip_v)
+void owf_geo_pen_init(owf_geo_pen *pen, owf_geo *s, const owf_gnum box[4], int turn, int flip_h, int flip_v)
 {
     memset(s, 0, sizeof *s);
     memset(pen, 0, sizeof *pen);
@@ -46,10 +46,10 @@ void owf_shape_pen_init(owf_shape_pen *pen, owf_shape *s, const owf_snum box[4],
     pen->h = pen->turn % 2 ? box[2] : box[3];
 }
 
-void owf_shape_start(owf_shape_pen *pen, unsigned flags)
+void owf_geo_start(owf_geo_pen *pen, unsigned flags)
 {
-    owf_shape *s = pen->s;
-    if (s->nparts == OWF_SHAPE_PARTS) {
+    owf_geo *s = pen->s;
+    if (s->nparts == OWF_GEO_PARTS) {
         pen->full = 1;
         return;
     }
@@ -59,11 +59,11 @@ void owf_shape_start(owf_shape_pen *pen, unsigned flags)
     s->nparts++;
 }
 
-void owf_shape_point(owf_shape_pen *pen, owf_snum x, owf_snum y)
+void owf_geo_point(owf_geo_pen *pen, owf_gnum x, owf_gnum y)
 {
-    owf_shape *s = pen->s;
-    owf_snum px, py;
-    if (pen->full || !s->nparts || s->npoints == OWF_SHAPE_POINTS) {
+    owf_geo *s = pen->s;
+    owf_gnum px, py;
+    if (pen->full || !s->nparts || s->npoints == OWF_GEO_POINTS) {
         pen->full = 1;
         return;
     }
@@ -81,12 +81,12 @@ void owf_shape_point(owf_shape_pen *pen, owf_snum x, owf_snum y)
     s->parts[s->nparts - 1].n++;
 }
 
-void owf_shape_arc(owf_shape_pen *pen, owf_snum cx, owf_snum cy, owf_snum rx, owf_snum ry, int a0, int a1, int step)
+void owf_geo_arc(owf_geo_pen *pen, owf_gnum cx, owf_gnum cy, owf_gnum rx, owf_gnum ry, int a0, int a1, int step)
 {
     int a = a0, dir = a1 >= a0 ? step : -step;
     for (;;) {
-        owf_shape_point(pen, cx + (owf_snum)((wide)rx * owf_shape_cos64(a) / 10000),
-                        cy + (owf_snum)((wide)ry * owf_shape_sin64(a) / 10000));
+        owf_geo_point(pen, cx + (owf_gnum)((wide)rx * owf_geo_cos64(a) / 10000),
+                        cy + (owf_gnum)((wide)ry * owf_geo_sin64(a) / 10000));
         if (a == a1)
             break;
         a += dir;
@@ -95,38 +95,38 @@ void owf_shape_arc(owf_shape_pen *pen, owf_snum cx, owf_snum cy, owf_snum rx, ow
     }
 }
 
-void owf_shape_rect(owf_shape_pen *pen, unsigned flags, owf_snum x0, owf_snum y0, owf_snum x1, owf_snum y1)
+void owf_geo_rect(owf_geo_pen *pen, unsigned flags, owf_gnum x0, owf_gnum y0, owf_gnum x1, owf_gnum y1)
 {
-    owf_shape_start(pen, flags);
-    owf_shape_point(pen, x0, y0);
-    owf_shape_point(pen, x1, y0);
-    owf_shape_point(pen, x1, y1);
-    owf_shape_point(pen, x0, y1);
+    owf_geo_start(pen, flags);
+    owf_geo_point(pen, x0, y0);
+    owf_geo_point(pen, x1, y0);
+    owf_geo_point(pen, x1, y1);
+    owf_geo_point(pen, x0, y1);
 }
 
-void owf_shape_line(owf_shape_pen *pen, unsigned flags, owf_snum x0, owf_snum y0, owf_snum x1, owf_snum y1)
+void owf_geo_line(owf_geo_pen *pen, unsigned flags, owf_gnum x0, owf_gnum y0, owf_gnum x1, owf_gnum y1)
 {
-    owf_shape_start(pen, OWF_SHAPE_LINE | flags);
-    owf_shape_point(pen, x0, y0);
-    owf_shape_point(pen, x1, y1);
+    owf_geo_start(pen, OWF_GEO_LINE | flags);
+    owf_geo_point(pen, x0, y0);
+    owf_geo_point(pen, x1, y1);
 }
 
-void owf_shape_oval(owf_shape_pen *pen, unsigned flags, owf_snum cx, owf_snum cy, owf_snum rx, owf_snum ry, int step)
+void owf_geo_oval(owf_geo_pen *pen, unsigned flags, owf_gnum cx, owf_gnum cy, owf_gnum rx, owf_gnum ry, int step)
 {
-    owf_shape_start(pen, flags);
-    owf_shape_arc(pen, cx, cy, rx, ry, 0, 64 - step, step);
+    owf_geo_start(pen, flags);
+    owf_geo_arc(pen, cx, cy, rx, ry, 0, 64 - step, step);
 }
 
-int owf_shape_xy(const owf_shape *s, int part, long mul, long div, long ox, long oy, int *xy, int max)
+int owf_geo_xy(const owf_geo *s, int part, long mul, long div, long ox, long oy, int *xy, int max)
 {
-    const owf_shape_part *p;
+    const owf_geo_part *p;
     int i, n;
     if (!s || part < 0 || part >= s->nparts || div == 0 || !xy || max <= 0)
         return 0;
     p = &s->parts[part];
     n = p->n < max ? p->n : max;
     for (i = 0; i < n; i++) {
-        const owf_spoint *q = &s->points[p->first + i];
+        const owf_gpoint *q = &s->points[p->first + i];
         xy[2 * i] = (int)(ox + (wide)q->x * mul / div);
         xy[2 * i + 1] = (int)(oy + (wide)q->y * mul / div);
     }
