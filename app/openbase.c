@@ -59,7 +59,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenBase 0.15.0 (16.11.2026)"
+#define VERSION_TEXT "GFOpenBase 0.16.0 (17.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenBase, the database of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -2802,7 +2802,37 @@ static int ask_text(const char *title, const char *prompt, char *buf, size_t siz
     return okd;
 }
 
-/* qy's rows into the datasheet, asking its questions first; 0 when it can't run. */
+/* qy changes rows (an Update, Append or Delete query): says how many, asks,
+ * and runs it all or none; the datasheet shows the table's rows again.
+ * 0 when it didn't run. */
+static int run_action(void)
+{
+    char said[2 * OB_NAME_MAX + 96], msg[sizeof status];
+    ob_int n;
+    int undoable = 0;
+    if (q_on) {                         /* another query's rows were shown: back to the table's */
+        q_on = 0;
+        top_row = 0;
+        sel_row = -1;
+        left_col = 0;
+        load_page();
+    }
+    n = ob_query_ask(proj, &qy, q_pv, said, sizeof said);
+    if (n < 0) { tell(ob_error(proj)); return 0; }
+    if (n == 0) { tell(said); return 0; }
+    if (!ask(said, "Run|Cancel")) { set_status("The query was not run"); return 0; }
+    n = ob_query_run(proj, &qy, q_pv, &undoable);
+    if (n < 0) { tell(ob_error(proj)); load_page(); return 0; }
+    if (undoable) snprintf(msg, sizeof msg, "%.180s. Edit > Undo takes it back", ob_undo_name(proj));
+    else snprintf(msg, sizeof msg, "%s query %.63s: %lld row%s. It can't be undone", ob_qkind_name(qy.kind),
+                  qy.name[0] ? qy.name : "(not saved)", (long long)n, n == 1 ? "" : "s");
+    load_page();
+    set_status(msg);
+    return 1;
+}
+
+/* qy's rows into the datasheet, asking its questions first; 0 when it can't
+ * run. A query that changes rows is counted, asked about and run instead. */
 static int run_query(int ask_again)
 {
     char names[OB_QUERY_PARAMS][OB_VALUE_MAX], msg[OB_ERR_MAX + 80];
@@ -2816,6 +2846,7 @@ static int run_query(int ask_again)
         }
         q_pv[i] = q_answers[i];
     }
+    if (qy.kind == OB_QK_UPDATE || qy.kind == OB_QK_APPEND || qy.kind == OB_QK_DELETE) return run_action();
     q_ncols = ob_query_columns(proj, &qy, q_cols, OB_QUERY_OUT);
     if (q_ncols < 0) { tell(ob_error(proj)); q_ncols = 0; return 0; }
     if (q_ncols > OB_QUERY_OUT) q_ncols = OB_QUERY_OUT;
@@ -2837,7 +2868,8 @@ static int run_query(int ask_again)
  * SQL, with Run, Save and Close. */
 enum {
     Q_NAME = 1, Q_SQLONLY, Q_SQL, Q_TABLES, Q_ADDTABLE, Q_REMTABLE, Q_JOINS, Q_COLS, Q_ADDFIELD, Q_ADDEXPR, Q_REMCOL,
-    Q_EXPR, Q_HEAD, Q_SORT, Q_TOTAL, Q_SHOW, Q_CRIT0, Q_CRIT1, Q_CRIT2, Q_SQLTEXT, Q_RUN, Q_SAVE, Q_CLOSE, Q_COUNT
+    Q_EXPR, Q_HEAD, Q_SORT, Q_TOTAL, Q_SHOW, Q_CRIT0, Q_CRIT1, Q_CRIT2, Q_SQLTEXT, Q_RUN, Q_SAVE, Q_CLOSE,
+    Q_KIND, Q_TARGET, Q_UALL, Q_TO, Q_COUNT
 };
 
 #define QF_MAX 240                 /* fields offered to add */
@@ -2853,10 +2885,14 @@ static STRPTR q_sort_labels[] = { (STRPTR)"No sort", (STRPTR)"A to Z", (STRPTR)"
 static STRPTR q_total_labels[OB_TOTALS + 1];
 static char q_sqltext[OB_SQL_MAX];
 static int q_nf;
+static STRPTR q_kind_labels[OB_QKINDS + 1];
+static STRPTR q_target_labels[OB_MAX_FIELDS + 2];   /* the tables an Update, Append or Delete can change */
+static int q_ntargets, q_target_sel;
+static ob_query q_part;            /* a saved query, looked at as a union's part */
 
 static void q_lists(void)
 {
-    int i, j, n = 0;
+    int i, j, n = 0, nt;
     NewList(&q_tl);
     for (i = 0; i < q_ed.ntables; i++) {
         q_tnodes[i].ln_Name = q_ed.tables[i];
@@ -2883,6 +2919,10 @@ static void q_lists(void)
             size_t len = strlen(q_ctext[i]);
             snprintf(q_ctext[i] + len, sizeof q_ctext[i] - len, ")");
         }
+        if (c->to[0] && (q_ed.kind == OB_QK_UPDATE || q_ed.kind == OB_QK_APPEND)) {
+            size_t len = strlen(q_ctext[i]);
+            snprintf(q_ctext[i] + len, sizeof q_ctext[i] - len, " -> %.30s", c->to);
+        }
         q_cnodes[i].ln_Name = q_ctext[i];
         AddTail(&q_cl, &q_cnodes[i]);
     }
@@ -2902,14 +2942,39 @@ static void q_lists(void)
     }
     q_flabels[q_nf + 1] = NULL;
     /* the tables that can be added */
-    q_tlabels[0] = (STRPTR)"Add a table...";
+    q_tlabels[0] = (STRPTR)(q_ed.kind == OB_QK_UNION ? "Add a table or query..." : "Add a table...");
     n = ob_table_count(proj);
     if (n > OB_MAX_FIELDS) n = OB_MAX_FIELDS;
     for (i = 0; i < n; i++) {
         put_text(q_tname_text[i], sizeof q_tname_text[i], ob_table_name(proj, i));
         q_tlabels[i + 1] = (STRPTR)q_tname_text[i];
     }
+    nt = n;
+    if (q_ed.kind == OB_QK_UNION) {            /* a union's parts: saved Select queries too */
+        int nq = ob_query_count(proj);
+        for (i = 0; i < nq && n < OB_MAX_FIELDS; i++) {
+            put_text(q_tname_text[n], sizeof q_tname_text[n], ob_query_name(proj, i));
+            if (same_name(q_tname_text[n], q_ed.name) || !ob_query_get(proj, q_tname_text[n], &q_part)
+                || q_part.kind != OB_QK_SELECT) continue;
+            q_tlabels[n + 1] = (STRPTR)q_tname_text[n];
+            n++;
+        }
+    }
     q_tlabels[n + 1] = NULL;
+    /* the kinds, and the table a query that changes rows changes */
+    for (i = 0; i < OB_QKINDS; i++) q_kind_labels[i] = (STRPTR)ob_qkind_name((ob_qkind)i);
+    q_kind_labels[OB_QKINDS] = NULL;
+    q_ntargets = 0;
+    q_target_sel = 0;
+    if (q_ed.kind == OB_QK_APPEND) {
+        for (i = 0; i < nt; i++) q_target_labels[q_ntargets++] = q_tlabels[i + 1];
+    } else if (q_ed.kind == OB_QK_UPDATE || q_ed.kind == OB_QK_DELETE) {
+        for (i = 0; i < q_ed.ntables; i++) q_target_labels[q_ntargets++] = (STRPTR)q_ed.tables[i];
+    }
+    q_target_labels[q_ntargets] = NULL;
+    for (i = 0; i < q_ntargets && !same_name((const char *)q_target_labels[i], q_ed.target); i++) ;
+    if (i < q_ntargets) q_target_sel = i;
+    else if (q_ntargets && !q_ed.sql_only) put_text(q_ed.target, sizeof q_ed.target, (const char *)q_target_labels[0]);
     for (i = 0; i < OB_TOTALS; i++) q_total_labels[i] = (STRPTR)(i ? ob_total_name((ob_total)i) : "No total");
     q_total_labels[OB_TOTALS] = NULL;
     /* the SQL it makes, or why it can't run yet */
@@ -2933,6 +2998,7 @@ static void q_read_strings(struct Window *qw, struct Gadget **gad, int csel)
     if (c && !q_ed.sql_only) {
         if (!c->table[0]) QSTR(Q_EXPR, c->expr);
         QSTR(Q_HEAD, c->heading);
+        QSTR(Q_TO, c->to);
         QSTR(Q_CRIT0, c->criteria[0]);
         QSTR(Q_CRIT1, c->criteria[1]);
         QSTR(Q_CRIT2, c->criteria[2]);
@@ -3246,7 +3312,7 @@ static void design_query(int fresh)
         q_ed = qy;
     }
     w = fw * 72;
-    h = rowh * 21 + 16;
+    h = rowh * 23 + 16;
     if (w > scr->Width - 20) w = scr->Width - 20;
     if (h > scr->Height - 40) h = scr->Height - 40;
     qw = OpenWindowTags(NULL,
@@ -3290,7 +3356,32 @@ static void design_query(int fresh)
             ng.ng_GadgetID = Q_SQLONLY;
             g = gad[Q_SQLONLY] = CreateGadget(CHECKBOX_KIND, g, &ng, GTCB_Checked, q_ed.sql_only, GTCB_Scaled, TRUE, TAG_DONE);
             ng.ng_Flags = PLACETEXT_LEFT;
+            half = (iw - lw) / 2 - 4;
+            /* what the query does: reads, changes rows, or joins results end to end */
+            ng.ng_LeftEdge = l + lw + half + 8 + fw * 6;
+            ng.ng_Width = half - fw * 6;
+            ng.ng_GadgetText = (UBYTE *)"Kind";
+            ng.ng_GadgetID = Q_KIND;
+            g = gad[Q_KIND] = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)q_kind_labels,
+                                           GTCY_Active, (ULONG)q_ed.kind, TAG_DONE);
+            ng.ng_LeftEdge = l + lw;
             ng.ng_TopEdge = y += rowh;
+            if (!q_ed.sql_only && q_ntargets) {
+                ng.ng_Width = half;
+                ng.ng_GadgetText = (UBYTE *)(q_ed.kind == OB_QK_APPEND ? "Add to" : q_ed.kind == OB_QK_DELETE ? "From" : "Change");
+                ng.ng_GadgetID = Q_TARGET;
+                g = gad[Q_TARGET] = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)q_target_labels,
+                                                 GTCY_Active, (ULONG)q_target_sel, TAG_DONE);
+                ng.ng_TopEdge = y += rowh;
+            } else if (!q_ed.sql_only && q_ed.kind == OB_QK_UNION) {
+                ng.ng_Width = fh + 6;
+                ng.ng_Flags = PLACETEXT_RIGHT;
+                ng.ng_GadgetText = (UBYTE *)"Keep rows that are the same";
+                ng.ng_GadgetID = Q_UALL;
+                g = gad[Q_UALL] = CreateGadget(CHECKBOX_KIND, g, &ng, GTCB_Checked, q_ed.union_all, GTCB_Scaled, TRUE, TAG_DONE);
+                ng.ng_Flags = PLACETEXT_LEFT;
+                ng.ng_TopEdge = y += rowh;
+            }
             if (q_ed.sql_only) {
                 ng.ng_Width = iw - lw;
                 ng.ng_GadgetText = (UBYTE *)"SQL";
@@ -3302,7 +3393,7 @@ static void design_query(int fresh)
                 /* the tables, and adding or taking one away */
                 ng.ng_Width = half;
                 ng.ng_Height = rowh * 3;
-                ng.ng_GadgetText = (UBYTE *)"Tables";
+                ng.ng_GadgetText = (UBYTE *)(q_ed.kind == OB_QK_UNION ? "Parts" : "Tables");
                 ng.ng_GadgetID = Q_TABLES;
                 g = gad[Q_TABLES] = CreateGadget(LISTVIEW_KIND, g, &ng, GTLV_Labels, (ULONG)&q_tl, GTLV_ShowSelected, 0,
                                                  GTLV_Selected, tsel >= 0 ? (ULONG)tsel : ~0UL, TAG_DONE);
@@ -3319,7 +3410,7 @@ static void design_query(int fresh)
                 ng.ng_TopEdge = y + rowh * 2;
                 ng.ng_GadgetText = (UBYTE *)(q_ed.njoins ? "Joins (drawn)..." : "Joins...");
                 ng.ng_GadgetID = Q_JOINS;
-                g = gad[Q_JOINS] = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, q_ed.ntables < 2, TAG_DONE);
+                g = gad[Q_JOINS] = CreateGadget(BUTTON_KIND, g, &ng, GA_Disabled, q_ed.ntables < 2 || q_ed.kind == OB_QK_UNION, TAG_DONE);
                 ng.ng_Flags = PLACETEXT_LEFT;
                 ng.ng_LeftEdge = l + lw;
                 ng.ng_TopEdge = y += rowh * 3 + 4;
@@ -3359,6 +3450,14 @@ static void design_query(int fresh)
                 ng.ng_GadgetID = Q_HEAD;
                 g = gad[Q_HEAD] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)(c ? c->heading : ""),
                                                GTST_MaxChars, OB_NAME_MAX - 1, GA_Disabled, nc, TAG_DONE);
+                if (q_ed.kind == OB_QK_UPDATE || q_ed.kind == OB_QK_APPEND) {
+                    /* the value an update sets the field to, or the field an append's column goes to */
+                    ng.ng_TopEdge = y += rowh;
+                    ng.ng_GadgetText = (UBYTE *)(q_ed.kind == OB_QK_UPDATE ? "Update To" : "Append To");
+                    ng.ng_GadgetID = Q_TO;
+                    g = gad[Q_TO] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)(c ? c->to : ""),
+                                                 GTST_MaxChars, OB_EXPR_MAX - 1, GA_Disabled, nc, TAG_DONE);
+                }
                 ng.ng_TopEdge = y += rowh;
                 ng.ng_Width = half;
                 ng.ng_GadgetText = (UBYTE *)"Sort";
@@ -3434,7 +3533,17 @@ static void design_query(int fresh)
                 q_read_strings(qw, gad, csel);
                 switch (gg->GadgetID) {
                 case Q_NAME: case Q_SQL: break;
-                case Q_EXPR: case Q_HEAD: case Q_CRIT0: case Q_CRIT1: case Q_CRIT2: rebuild = 1; break;
+                case Q_EXPR: case Q_HEAD: case Q_TO: case Q_CRIT0: case Q_CRIT1: case Q_CRIT2: rebuild = 1; break;
+                case Q_KIND:
+                    if (code < OB_QKINDS) { ob_query_set_kind(&q_ed, (ob_qkind)code); rebuild = 1; }
+                    break;
+                case Q_TARGET:
+                    if (code < q_ntargets) {
+                        put_text(q_ed.target, sizeof q_ed.target, (const char *)q_target_labels[code]);
+                        rebuild = 1;
+                    }
+                    break;
+                case Q_UALL: q_ed.union_all = (gg->Flags & GFLG_SELECTED) != 0; rebuild = 1; break;
                 case Q_SQLONLY:
                     q_ed.sql_only = (gg->Flags & GFLG_SELECTED) != 0;
                     /* typing SQL starts from what the grid makes */
@@ -3485,6 +3594,16 @@ static void design_query(int fresh)
                     if (!ob_query_check(proj, &q_ed)) {
                         struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"GFOpenBase", (UBYTE *)"%s", (UBYTE *)"OK" };
                         EasyRequest(qw, &es, NULL, (ULONG)ob_error(proj));
+                    } else if (q_ed.kind == OB_QK_UPDATE || q_ed.kind == OB_QK_APPEND || q_ed.kind == OB_QK_DELETE) {
+                        /* it changes rows: the count, Run or Cancel, and the designer stays */
+                        int k;
+                        qy = q_ed;
+                        for (k = 0; k < OB_QUERY_PARAMS; k++) q_answers[k][0] = 0;
+                        if (run_query(1)) {
+                            draw_datasheet();
+                            SetWindowTitles(qw, (UBYTE *)"Query (run)", (UBYTE *)~0);
+                        }
+                        rebuild = 1;
                     } else {
                         run_it = done = 1;
                     }
