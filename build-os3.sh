@@ -7,8 +7,8 @@
 #
 #   build-os3.sh [OUT_DIR]              (default build/os3)
 #   OWF=library build-os3.sh [OUT_DIR]  each on its library (build-library.sh, docs/suite/owf-libraries.md):
-#                                       GFOpenWrite on owfwrite.library, GFOpenCalc on owfcalc.library, OWConvert
-#                                       on all four
+#                                       GFOpenWrite on owfwrite.library, GFOpenCalc on owfcalc.library, GFOpenDiag
+#                                       on owfdiag.library, OWConvert on the first four
 #
 # Both are 68040 code, as every build. The GFOpenWrite UI uses GFOpenGadTools.
 # No FPU is required.

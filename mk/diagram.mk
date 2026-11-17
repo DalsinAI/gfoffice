@@ -383,3 +383,12 @@ test: diagram-library-test
 check: diagram-library-check
 
 .PHONY: diagram-library-test diagram-library-check
+
+# GFOpenDiag on owfdiag.library (build.d/diag.sh, OWF=library): every call its own files make is the library's.
+diagram-app-calls-check:
+	OPENLAYOUT_SRC=$(OPENLAYOUT_SRC) tests/diag/check_app_calls.sh $(CC)
+
+test: diagram-app-calls-check
+check: diagram-app-calls-check
+
+.PHONY: diagram-app-calls-check
