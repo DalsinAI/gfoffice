@@ -553,6 +553,8 @@ static void draw_sheet_row(oldraw *d, const opj_view *v, const opj_doc *doc, int
         if (v->columns[c] <= 0) continue;
         if (c == OPJ_COL_NAME) indent = (t->level - 1) * (v->row_height * 3 / 4);
         opj_cell_text(doc, row, c, text, sizeof text);
+        if (c == OPJ_COL_ID && owf_ptask_overallocated(doc->plan, row) && strlen(text) + 1 < sizeof text)
+            strcat(text, "!");                              /* drawn only: the cell's text stays the number */
         r.x = x + 3 + indent;
         r.y = y;
         r.w = v->columns[c] - 6 - indent;

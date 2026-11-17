@@ -41,5 +41,23 @@ _LVOowf_pub_detect	EQU	-228
 _LVOowf_pub_read	EQU	-234
 _LVOowf_pub_read_file	EQU	-240
 _LVOowf_pub_free	EQU	-246
+_LVOow_merge_table_parse	EQU	-252
+_LVOow_merge_table_from_text	EQU	-258
+_LVOow_merge_table_free	EQU	-264
+_LVOow_merge_column	EQU	-270
+_LVOow_merge_value	EQU	-276
+_LVOopp_merge_insert_field	EQU	-282
+_LVOopp_merge_insert_field_at	EQU	-288
+_LVOopp_insert_page_field_at	EQU	-294
+_LVOopp_merge_load_file	EQU	-300
+_LVOopp_merge_fields	EQU	-306
+_LVOopp_merge_show	EQU	-312
+_LVOopp_merge_pages	EQU	-318
+_LVOopp_merge_catalog	EQU	-324
+_LVOopp_template_count	EQU	-330
+_LVOopp_template_info_at	EQU	-336
+_LVOopp_template_find	EQU	-342
+_LVOopp_template_new	EQU	-348
+_LVOowf_deck_free	EQU	-354
 
 	ENDC	; LVO_OWFPUB_LIB_I

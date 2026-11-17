@@ -1,7 +1,7 @@
 #!/bin/sh
 # The SDK headers (FD, clib/, inline/, pragmas/, proto/ and the LVO
 # equates) for GFOffice's libraries (libowf/library/sdk: owfwrite.library,
-# owfcalc.library, owfpub.library, owfpresent.library and owfdiag.library from their
+# owfcalc.library, owfpub.library, owfpresent.library, owfdiag.library and owfspell.library from their
 # <name>_lib.sfd, and owf.library 2 from owf_lib.sfd) and for the z.library
 # calls libowf makes (libowf/amiga/sdk, from z_lib.sfd), with GFOpenSDK's
 # generator (DalsinAI/gfopensdk OpenNDK/tools/ndkgen.py), as GFOpenNDK
@@ -17,8 +17,8 @@ HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 SDK=${OPENSDK_SRC:-"$HERE/../gfopensdk"}
 LIB="$HERE/libowf/library"
 python3 "$SDK/OpenNDK/tools/ndkgen.py" --out "$LIB/sdk" "$LIB/owf_lib.sfd" "$LIB/owfwrite_lib.sfd" \
-    "$LIB/owfcalc_lib.sfd" "$LIB/owfpub_lib.sfd" "$LIB/owfpresent_lib.sfd" "$LIB/owfdiag_lib.sfd"
+    "$LIB/owfcalc_lib.sfd" "$LIB/owfpub_lib.sfd" "$LIB/owfpresent_lib.sfd" "$LIB/owfdiag_lib.sfd" "$LIB/owfspell_lib.sfd"
 python3 "$SDK/OpenNDK/tools/ndkgen.py" --out "$HERE/libowf/amiga/sdk" "$HERE/libowf/amiga/z_lib.sfd"
-for name in owfwrite owfcalc owfpub owfpresent owfdiag; do
+for name in owfwrite owfcalc owfpub owfpresent owfdiag owfspell; do
     python3 "$HERE/scripts/gen-lib-calls.py" "$LIB/${name}_lib.sfd"
 done

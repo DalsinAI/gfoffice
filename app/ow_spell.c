@@ -1,20 +1,20 @@
 /*
  * GFOpenWrite's spelling: the next misspelt word of a document, selected.
- * The dictionary and the word rules are src/core/ow_spell_dict.c.
+ * The dictionary and the word rules are libowf/src/owf_spell.c (owfspell.library).
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "ow_spell.h"
 
 #include <string.h>
 
-static int scan_run(ow_spell *s, ow_editor *editor, int pi, int ri,
+static int scan_run(owf_spell *s, ow_editor *editor, int pi, int ri,
                     size_t from, size_t to, char *word, size_t word_size)
 {
     const owf_doc *doc = ow_editor_document_const(editor);
     const char *text = doc->body.paras[pi].runs[ri].text;
     size_t n = text ? strlen(text) : 0, a, b;
     if (to > n) to = n;
-    if (!ow_spell_scan(s, text, from, to, &a, &b)) return 0;
+    if (!owf_spell_scan(s, text, from, to, &a, &b)) return 0;
     {
         ow_selection sel;
         sel.anchor.paragraph = sel.focus.paragraph = pi;
@@ -29,7 +29,7 @@ static int scan_run(ow_spell *s, ow_editor *editor, int pi, int ri,
     return 1;
 }
 
-int ow_spell_next(ow_spell *s, ow_editor *editor, char *word,
+int ow_spell_next(owf_spell *s, ow_editor *editor, char *word,
                   size_t word_size, int wrap)
 {
     const owf_doc *doc;

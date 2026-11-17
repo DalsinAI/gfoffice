@@ -317,6 +317,27 @@ int owf_project_update(owf_project *p, owf_ptime status, int whole);
 long owf_ptask_actual_duration(const owf_ptask *t);
 long owf_ptask_remaining_duration(const owf_ptask *t);
 
+/* ---- Reports (owf_preport.c): MS Project's Reports dialog ----
+ * Each report is an owf_doc (a heading, tables, the plan's title in the page header, "Page n of m" in the
+ * footer), so libowf's writers print and save it (owf_export_file: PDF, ODT, DOCX, RTF, HTML...).
+ * OWF_PREPORT_SUMMARY: dates, duration, work and cost, task and resource status.
+ * OWF_PREPORT_CRITICAL: critical tasks (not summaries) with duration, dates and resources.
+ * OWF_PREPORT_MILESTONES: milestones with their date, criticality and % complete.
+ * OWF_PREPORT_WHO_DOES_WHAT: each resource's assignments with units, work and dates.
+ * OWF_PREPORT_OVERALLOCATED: overallocated resources (max units, peak, work), then their assignments.
+ * OWF_PREPORT_CASH_FLOW: cost by week from the Monday on or before the start, each task's cost spread
+ *   over its working time (a milestone's at its date), with the running total. */
+enum { OWF_PREPORT_SUMMARY, OWF_PREPORT_CRITICAL, OWF_PREPORT_MILESTONES, OWF_PREPORT_WHO_DOES_WHAT,
+       OWF_PREPORT_OVERALLOCATED, OWF_PREPORT_CASH_FLOW, OWF_PREPORT_N };
+/* "Project Summary", "Critical Tasks"...; NULL out of range. */
+const char *owf_preport_name(int kind);
+/* A report's name (any case, spaces optional) or its short name ("summary", "critical", "milestones",
+ * "whodoeswhat", "overallocated", "cashflow"); -1 when it is none. */
+int owf_preport_parse(const char *name);
+/* Builds report kind of p (schedule first) into a new owf_doc (owf_doc_free it). OWF_OK, OWF_ERR_FORMAT
+ * (kind out of range) or OWF_ERR_MEMORY. */
+int owf_project_report(const owf_project *p, int kind, owf_doc **out);
+
 /* A deep copy (for Undo); NULL for memory. */
 owf_project *owf_project_copy(const owf_project *p);
 /* About how many bytes p holds, for an Undo budget. */

@@ -92,8 +92,8 @@ on Fixed Units, changing a resource's units changes the duration, and on Fixed W
 lowers the units. With Effort Driven, adding or removing a resource keeps the work.
 `Priority` takes 0 to 1000 (500 for a new task; 1000 is Do Not Level, which LEVEL never moves).
 `Overallocated` (or `over`) is worked out: `Yes` when one of the task's work resources has more
-assigned at some time within the task than its max units. Such a task's `ID` reads with a `!` after it,
-as an over-allocated resource's does.
+assigned at some time within the task than its max units. The Gantt sheet draws such a task's ID with a
+red `!` after it; `GETCELL` and filters on `ID` still see the number.
 
 On the resource sheet: `Name`, `Type`, `Initials`, `Group`, `"Max. Units"` or `max`,
 `"Std. Rate"` or `rate`, `Work`, `Cost` and `"Base Calendar"` or `calendar` (a calendar's name or number,

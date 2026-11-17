@@ -25,13 +25,23 @@
  * program's size check refuses 3.4. No call changes.
  * 3.6: owf_para.row_revision (owfwrite.library 3.16, libowf 1.12.5; 3.5 is #288's), so owf_para is larger
  * and a program's size check refuses 3.5 and before. No call changes.
+ * 3.7: owf_para.para_format_change and owf_doc.para_format_changes (owfwrite.library 3.24, libowf 1.21), so
+ * owf_para and owf_doc are larger and a program's size check refuses 3.6 and before. No call changes.
+ * 3.8: GFOpenPressmaster's publications on the page model (libowf/pub), 18 new calls at the end: the
+ * suite's merge table (src/core/ow_merge.c), mail merge and catalog merge (opp_merge.c), the built-in
+ * templates (opp_template.c) and owf_deck_free. The library now holds the page model (owf_deck.c) these
+ * work on. The 37 calls before are as they were.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfpub.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 6
-#define OWF_LIB_VERS "3.6"
-#define OWF_LIB_DATE "16.11.2026"
+#define OWF_LIB_REVISION 8
+#define OWF_LIB_VERS "3.8"
+#define OWF_LIB_DATE "17.11.2026"
 #define OWF_LIB_CALLS_H "owfpub_calls.h"
+#include "owf_deck.h"
+#include "ow_merge.h"
+#include "openpressmaster_merge.h"
+#include "openpressmaster_template.h"
 #include "owf_libbase.h"
