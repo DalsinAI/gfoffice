@@ -18,6 +18,10 @@
 #include <stdio.h>
 #include <string.h>
 
+/* 1.23.1: GFOffice's own attributes (ODF lets a file carry foreign ones; other programs leave them be): the
+ * format before a tracked format change, which ODF's text:format-change doesn't hold */
+#define NS_GFO "urn:org:amigachrome:names:experimental:gfoffice:xmlns:text:1.0"
+
 #define NS "xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" " \
            "xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" " \
            "xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" " \
@@ -28,6 +32,7 @@
            "xmlns:xlink=\"http://www.w3.org/1999/xlink\" " \
            "xmlns:dc=\"http://purl.org/dc/elements/1.1/\" " \
            "xmlns:meta=\"urn:oasis:names:tc:opendocument:xmlns:meta:1.0\" " \
+           "xmlns:gfo=\"" NS_GFO "\" " \
            "office:version=\"1.3\""
 
 /* 1.5: the body's tracked changes as they are written: each changed region (ct1, ct2...) and the one an
@@ -35,6 +40,10 @@
 typedef struct {
     int rev;                     /* the document's change number */
     owf_buf content;             /* a deletion's paragraphs */
+    /* 1.23.1: a format change's region (text:format-change): the run format change it is (owf_run.format_change)
+     * or the paragraph format change (owf_para.para_format_change), and the style the format before is (T or P;
+     * 0: a run's plain text). rev is 0. */
+    int fc, pfc, before;
 } odt_region;
 
 typedef struct {
@@ -42,6 +51,7 @@ typedef struct {
     odt_region *regions;
     int nregions, capregions;
     int ins, del;                /* the region open: insertion's or deletion's, 1 + its index; 0: none */
+    int fmt;                     /* 1.23.1: the run format change's region open, 1 + its index; 0: none */
     int del_space;               /* the deletion's text ended with a space (put_text) */
     int failed;
 } odt_track;
@@ -528,9 +538,37 @@ static int new_region(odt_track *tk, int rev)
         tk->regions = grown;
         tk->capregions = want;
     }
+    memset(&tk->regions[tk->nregions], 0, sizeof tk->regions[tk->nregions]);
     tk->regions[tk->nregions].rev = rev;
     owf_buf_init(&tk->regions[tk->nregions].content);
     return ++tk->nregions;
+}
+
+/* 1.23.1: ends the run format change's region being written, if one is */
+static void end_format(owf_buf *out, odt_track *tk)
+{
+    if (tk && tk->fmt) {
+        owf_buf_printf(out, "<text:change-end text:change-id=\"ct%d\"/>", tk->fmt);
+        tk->fmt = 0;
+    }
+}
+
+/* 1.23.1: what is written next has run format change fc (0: none): its region begun, the one before ended.
+ * The format before is a text style (T), registered now, before the styles are written. */
+static void format_to(owf_buf *out, styles *s, int fc)
+{
+    odt_track *tk = s->track;
+    const owf_format_change *c;
+    if (!tk)
+        return;
+    c = OWF_DOC_FORMAT_CHANGE(tk->doc, fc);
+    if (tk->fmt && (!c || tk->regions[tk->fmt - 1].fc != fc))
+        end_format(out, tk);
+    if (c && !tk->fmt && (tk->fmt = new_region(tk, 0))) {
+        tk->regions[tk->fmt - 1].fc = fc;
+        tk->regions[tk->fmt - 1].before = char_style(s, &c->before);
+        owf_buf_printf(out, "<text:change-start text:change-id=\"ct%d\"/>", tk->fmt);
+    }
 }
 
 /* Ends the insertion or deletion being written, if one is. */
@@ -917,9 +955,20 @@ static void put_para_part(owf_buf *out, const owf_doc *doc, const owf_para *para
     odt_track *tk = s->track;
     odt_marks mk;
     size_t at = 0;
+    int pregion = 0;                                 /* 1.23.1: the paragraph format change's region */
     if(open){
         if(heading)owf_buf_printf(out,"<text:h text:style-name=\"P%d\" text:outline-level=\"%d\">",pstyle,para->fmt.heading);
         else owf_buf_printf(out,"<text:p text:style-name=\"P%d\">",pstyle);
+    }
+    if (tk && open && para->para_format_change > 0 && para->para_format_change <= doc->npara_format_changes) {
+        /* 1.23.1: a tracked paragraph format change: a region round the paragraph's text, the format before a
+         * paragraph style (P) */
+        const owf_para_format_change *c = OWF_DOC_PARA_FORMAT_CHANGE(doc, para->para_format_change);
+        if ((pregion = new_region(tk, 0))) {
+            tk->regions[pregion - 1].pfc = para->para_format_change;
+            tk->regions[pregion - 1].before = para_style(s, &c->before);
+            owf_buf_printf(out, "<text:change-start text:change-id=\"ct%d\"/>", pregion);
+        }
     }
     /* 1.4: its bookmarks, where links into the document go; 2.0.21: each where it is in the text */
     mk.n = para->bookmarks ? owf_marks_parse(para->bookmarks, mk.m, 16) : 0;
@@ -946,6 +995,7 @@ static void put_para_part(owf_buf *out, const owf_doc *doc, const owf_para *para
             /* 1.5: deleted text: in the deletion's region (written accepted when there is none: left out) */
             if (tk) {
                 owf_buf *dc;
+                end_format(out, tk);                 /* 1.23.1: deleted text's format change goes with it */
                 change_to(out, tk, run->revision, pstyle);
                 if (tk->del) {
                     dc = &tk->regions[tk->del - 1].content;
@@ -959,6 +1009,7 @@ static void put_para_part(owf_buf *out, const owf_doc *doc, const owf_para *para
             continue;
         }
         change_to(out, tk, kind ? run->revision : 0, pstyle);
+        format_to(out, s, run->kind != OWF_RUN_FRAME && run->kind != OWF_RUN_IMAGE ? run->format_change : 0);
         put_marks_odt(out, &mk, at, run->kind == OWF_RUN_TEXT);
         if(run->kind==OWF_RUN_TEXT&&run->href){owf_buf_puts(out,"<text:a xlink:href=\"");owf_buf_puts_xml(out,run->href);owf_buf_puts(out,"\">");}
         if(t)owf_buf_printf(out,"<text:span text:style-name=\"T%d\">",t);
@@ -993,6 +1044,9 @@ static void put_para_part(owf_buf *out, const owf_doc *doc, const owf_para *para
     }
     put_marks_odt(out, &mk, at, 1);                  /* what is left: at the paragraph's end */
     put_marks_odt(out, &mk, (size_t)-1, 0);
+    end_format(out, tk);                             /* 1.23.1: a format change's region ends with its paragraph */
+    if (pregion)
+        owf_buf_printf(out, "<text:change-end text:change-id=\"ct%d\"/>", pregion);
     if (tk) {
         /* 1.5: its end: a deletion's when next is joined to it, an insertion's (begun here, ended in the
          * next paragraph) */
@@ -1189,6 +1243,42 @@ static int build_styles_xml(const owf_doc *doc, owf_buf *out)
     return s.failed ? OWF_ERR_MEMORY : OWF_OK;
 }
 
+/* 1.23.1: a format change's region: who and when (ODF's text:format-change), and the format before as GFOffice's
+ * gfo:before-style (a run's: a text style, "" for plain text) or gfo:before-paragraph-style (a paragraph's, with
+ * gfo:before-style-name for the style its file named) */
+static void put_format_region(owf_buf *out, const owf_doc *doc, const odt_region *r, int id)
+{
+    const owf_format_change *fc = r->fc ? OWF_DOC_FORMAT_CHANGE(doc, r->fc) : NULL;
+    const owf_para_format_change *pc = r->pfc ? OWF_DOC_PARA_FORMAT_CHANGE(doc, r->pfc) : NULL;
+    const char *author = fc ? fc->author : pc ? pc->author : NULL;
+    const char *date = fc ? fc->date : pc ? pc->date : NULL;
+    owf_buf_printf(out, "<text:changed-region xml:id=\"ct%d\" text:id=\"ct%d\"><text:format-change", id, id);
+    if (pc) {
+        owf_buf_printf(out, " gfo:before-paragraph-style=\"P%d\"", r->before);
+        if (pc->style) {
+            owf_buf_puts(out, " gfo:before-style-name=\"");
+            owf_buf_puts_xml(out, pc->style);
+            owf_buf_puts(out, "\"");
+        }
+    } else if (r->before) {
+        owf_buf_printf(out, " gfo:before-style=\"T%d\"", r->before);
+    } else {
+        owf_buf_puts(out, " gfo:before-style=\"\"");
+    }
+    owf_buf_puts(out, "><office:change-info>");     /* who and when only where known (both optional) */
+    if (author) {
+        owf_buf_puts(out, "<dc:creator>");
+        owf_buf_puts_xml(out, author);
+        owf_buf_puts(out, "</dc:creator>");
+    }
+    if (date) {
+        owf_buf_puts(out, "<dc:date>");
+        owf_buf_puts_xml(out, date);
+        owf_buf_puts(out, "</dc:date>");
+    }
+    owf_buf_puts(out, "</office:change-info></text:format-change></text:changed-region>");
+}
+
 /* 1.5: the body's changed regions, first in office:text */
 static void put_tracked_changes(owf_buf *out, const owf_doc *doc, const odt_track *tk)
 {
@@ -1200,6 +1290,10 @@ static void put_tracked_changes(owf_buf *out, const owf_doc *doc, const odt_trac
         const odt_region *r = &tk->regions[i];
         const owf_revision *rv = OWF_DOC_REVISION(doc, r->rev);
         int del = rv && rv->kind == OWF_REV_DELETE;
+        if (r->fc || r->pfc) {
+            put_format_region(out, doc, r, i + 1);
+            continue;
+        }
         owf_buf_printf(out, "<text:changed-region xml:id=\"ct%d\" text:id=\"ct%d\"><text:%s><office:change-info>",
                        i + 1, i + 1, del ? "deletion" : "insertion");
         owf_buf_puts(out, "<dc:creator>");
