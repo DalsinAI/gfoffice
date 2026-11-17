@@ -410,6 +410,75 @@ static void test_odf_form(void)
     owf_doc_free(doc);
 }
 
+/* 1.22.1: another program's tracked format change (LibreOffice's: ODF's text:format-change, who and when only,
+ * across a paragraph end): the text keeps its format, the change names it with the format before the text's own,
+ * the report says so once; a region's text:change point and a change-end with no start are nothing */
+static void test_odf_format_change(void)
+{
+    static const char *const names[] = { "mimetype", "content.xml", "META-INF/manifest.xml" };
+    static const char *const parts[] = {
+        "application/vnd.oasis.opendocument.text",
+        "<?xml version=\"1.0\"?><office:document-content xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+        "xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" "
+        "xmlns:fo=\"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0\" "
+        "xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" office:version=\"1.3\">"
+        "<office:automatic-styles><style:style style:name=\"T1\" style:family=\"text\">"
+        "<style:text-properties fo:font-weight=\"bold\"/></style:style></office:automatic-styles>"
+        "<office:body><office:text>"
+        "<text:tracked-changes text:track-changes=\"true\">"
+        "<text:changed-region xml:id=\"ct9\" text:id=\"ct9\"><text:format-change><office:change-info><dc:creator>Ida</dc:creator>"
+        "<dc:date>2026-11-17T09:00:00</dc:date></office:change-info></text:format-change></text:changed-region>"
+        "<text:changed-region text:id=\"ct10\"><text:format-change><office:change-info><dc:creator>Ida</dc:creator>"
+        "</office:change-info></text:format-change></text:changed-region>"
+        "</text:tracked-changes>"
+        "<text:p>Keep <text:change-start text:change-id=\"ct9\"/><text:span text:style-name=\"T1\">bold</text:span></text:p>"
+        "<text:p>and on<text:change-end text:change-id=\"ct9\"/> plain<text:change text:change-id=\"ct10\"/>"
+        "<text:change-end text:change-id=\"ct10\"/></text:p>"
+        "</office:text></office:body></office:document-content>",
+        "<?xml version=\"1.0\"?><manifest:manifest xmlns:manifest=\"urn:oasis:names:tc:opendocument:xmlns:manifest:1.0\">"
+        "<manifest:file-entry manifest:full-path=\"/\" manifest:media-type=\"application/vnd.oasis.opendocument.text\"/>"
+        "<manifest:file-entry manifest:full-path=\"content.xml\" manifest:media-type=\"text/xml\"/></manifest:manifest>" };
+    owf_doc *doc = NULL;
+    int i, j, notes = 0, named = 0, plain = 0, bold_was_bold = 0, on_was_plain = 0;
+    owf_report *rp = owf_report_new();
+    owf_buf out;
+    owf_zip *zip;
+    owf_buf_init(&out);
+    zip = owf_zip_new(&out);
+    CHECK(rp && zip, "zip");
+    if (!rp || !zip) { owf_report_free(rp); owf_buf_free(&out); return; }
+    for (i = 0; i < 3; ++i) owf_zip_add(zip, names[i], parts[i], strlen(parts[i]), names[i][0] != 'm');
+    owf_zip_finish(zip);
+    CHECK(owf_import_memory(out.data, out.length, NULL, &doc, rp, NULL) == OWF_OK && doc, "LibreOffice's format change");
+    owf_buf_free(&out);
+    if (!doc) { owf_report_free(rp); return; }
+    CHECK(doc->nformat_changes == 1 && !doc->nrevisions && !doc->npara_format_changes, "one format change, nothing else");
+    for (i = 0; i < doc->body.nparas; ++i)
+        for (j = 0; j < doc->body.paras[i].nruns; ++j) {
+            const owf_run *r = &doc->body.paras[i].runs[j];
+            const owf_format_change *fc = OWF_DOC_FORMAT_CHANGE(doc, r->format_change);
+            if (r->kind != OWF_RUN_TEXT || !r->text) continue;
+            if (fc) named++;
+            if (!strcmp(r->text, "bold") && fc && (r->fmt.flags & OWF_BOLD) && (fc->before.flags & OWF_BOLD)) bold_was_bold = 1;
+            if (!strcmp(r->text, "and on") && fc && !(fc->before.flags & OWF_BOLD)) on_was_plain = 1;
+            if (strstr(r->text, "plain") && !fc) plain = 1;
+            if (fc && (!fc->author || strcmp(fc->author, "Ida") || !fc->date || strcmp(fc->date, "2026-11-17T09:00:00")))
+                named = -100;
+        }
+    CHECK(named == 2, "the change names the runs from its start to its end, across the paragraph end, Ida's");
+    CHECK(bold_was_bold, "the format before is the changed text's own (bold)");
+    CHECK(!on_was_plain, "one format before for the whole change: the first run's");
+    CHECK(plain, "a text:change point and an end without a start name nothing");
+    for (i = 0; i < owf_report_count(rp); ++i) {
+        owf_note_level level;
+        const char *note = owf_report_note(rp, i, &level, NULL);
+        if (note && strstr(note, "doesn't hold the format before")) notes++;
+    }
+    CHECK(notes == 1, "the report says once that ODT holds no format before");
+    owf_doc_free(doc);
+    owf_report_free(rp);
+}
+
 /* 1.11: Word's tracked format changes (w:rPrChange, ECMA-376 part 1, 17.13.5.31): the run's format now, the
  * format before in the change's own w:rPr; a change on its own, one inside an insertion, and one whose text
  * has the same format now as the plain text round it (it must not join it) */
@@ -495,18 +564,40 @@ static void test_format_changes(void)
     }
     CHECK(!kept, "the runs' format changes are kept, not reported");
 
-    /* ODT keeps none yet, and says so */
+    /* 1.22.1: ODT keeps them too (text:format-change, the format before in gfo:before-style), with nothing to
+     * report, and the same again from its own file */
     {
-        owf_report *op = owf_report_new();
+        owf_report *op = owf_report_new(), *ip = owf_report_new();
         int said = 0;
-        CHECK(op && owf_export_file(doc, "/tmp/openwrite-fmtchange.odt", "odt", op) == OWF_OK, "odt");
+        CHECK(op && ip && owf_export_file(doc, "/tmp/openwrite-fmtchange.odt", "odt", op) == OWF_OK, "odt");
         for (i = 0; op && i < owf_report_count(op); ++i) {
             owf_note_level level;
             const char *note = owf_report_note(op, i, &level, NULL);
-            if (note && strstr(note, "Tracked format changes were saved accepted")) said = 1;
+            if (note && strstr(note, "format changes")) said = 1;
         }
-        CHECK(said, "the ODT report says the format changes were saved accepted");
+        CHECK(!said, "the ODT report has nothing to say about the format changes");
+        CHECK(owf_import_file("/tmp/openwrite-fmtchange.odt", NULL, &back, ip, NULL) == OWF_OK && back, "odt back");
+        if (back) {
+            CHECK(!strcmp(format_changes_dump(back), want), format_changes_dump(back));
+            CHECK(back->nformat_changes == 3 && back->format_changes[0].before.font == back->body.paras[0].runs[0].fmt.font &&
+                  back->format_changes[0].before.size == back->body.paras[0].runs[0].fmt.size,
+                  "from ODT the format before is kept as the runs' are");
+            CHECK(owf_export_file(back, "/tmp/openwrite-fmtchange.odt", "odt", NULL) == OWF_OK, "odt again");
+            owf_doc_free(back);
+            back = NULL;
+            CHECK(owf_import_file("/tmp/openwrite-fmtchange.odt", NULL, &back, NULL, NULL) == OWF_OK && back &&
+                  !strcmp(format_changes_dump(back), want), back ? format_changes_dump(back) : "second odt read");
+            owf_doc_free(back);
+            back = NULL;
+        }
+        for (i = 0; ip && i < owf_report_count(ip); ++i) {
+            owf_note_level level;
+            const char *note = owf_report_note(ip, i, &level, NULL);
+            if (note && strstr(note, "format changes")) said = 1;
+        }
+        CHECK(!said, "reading our own ODT has nothing to say about the format changes");
         owf_report_free(op);
+        owf_report_free(ip);
     }
     /* an edit and its undo leave the changes the document's (the editor keeps the list through undo) */
     {
@@ -1266,7 +1357,8 @@ static void test_para_format_changes(void)
     }
     CHECK(!kept, "the paragraphs' format changes are kept, not reported");
 
-    /* ODT keeps none yet, and says so */
+    /* 1.22.1: ODT keeps them too (text:format-change round the paragraph's text, the format before in
+     * gfo:before-paragraph-style), and the same again from its own file */
     {
         owf_report *op = owf_report_new();
         int said = 0;
@@ -1274,10 +1366,23 @@ static void test_para_format_changes(void)
         for (i = 0; op && i < owf_report_count(op); ++i) {
             owf_note_level level;
             const char *note = owf_report_note(op, i, &level, NULL);
-            if (note && strstr(note, "Tracked format changes were saved accepted")) said = 1;
+            if (note && strstr(note, "format changes")) said = 1;
         }
-        CHECK(said, "the ODT report says the paragraph format changes were saved accepted");
+        CHECK(!said, "the ODT report has nothing to say about the paragraph format changes");
         owf_report_free(op);
+        CHECK(owf_import_file("/tmp/openwrite-parachange.odt", NULL, &back, NULL, NULL) == OWF_OK && back, "odt back");
+        if (back) {
+            CHECK(!strcmp(para_format_changes_dump(back), want), para_format_changes_dump(back));
+            CHECK(back->npara_format_changes == 2 && !back->nformat_changes && !back->nrevisions,
+                  "from ODT: two paragraph format changes and no other change");
+            CHECK(owf_export_file(back, "/tmp/openwrite-parachange.odt", "odt", NULL) == OWF_OK, "odt again");
+            owf_doc_free(back);
+            back = NULL;
+            CHECK(owf_import_file("/tmp/openwrite-parachange.odt", NULL, &back, NULL, NULL) == OWF_OK && back &&
+                  !strcmp(para_format_changes_dump(back), want), back ? para_format_changes_dump(back) : "second odt read");
+            owf_doc_free(back);
+            back = NULL;
+        }
     }
     /* an edit and its undo leave the changes the document's (the editor keeps the list through undo) */
     {
@@ -1506,6 +1611,7 @@ int main(void)
     test_accepted_formats();
     test_word_form();
     test_odf_form();
+    test_odf_format_change();
     test_format_changes();
     test_para_format_changes();
     test_para_format_editor();

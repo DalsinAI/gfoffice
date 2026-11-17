@@ -230,6 +230,24 @@ int owf_import_file(const char *path, const char *format, owf_doc **doc,
     return result;
 }
 
+/* 1.22.1: whether a header's or footer's run or paragraph has a tracked format change (ODT keeps the body's only:
+ * styles.xml is written with every change accepted) */
+static int odt_header_format_changes(const owf_doc *doc)
+{
+    const owf_story *const st[4] = { &doc->header, &doc->footer, &doc->header_left, &doc->footer_left };
+    int k, i, j;
+    for (k = 0; k < 4; ++k)
+        for (i = 0; i < st[k]->nparas; ++i) {
+            const owf_para *p = &st[k]->paras[i];
+            if (OWF_DOC_PARA_FORMAT_CHANGE(doc, p->para_format_change))
+                return 1;
+            for (j = 0; j < p->nruns; ++j)
+                if (OWF_DOC_FORMAT_CHANGE(doc, p->runs[j].format_change))
+                    return 1;
+        }
+    return 0;
+}
+
 int owf_export_file(const owf_doc *doc, const char *path, const char *format, owf_report *report)
 {
     const owf_format *f = format ? owf_format_named(format) : owf_format_for_filename(path);
@@ -256,8 +274,9 @@ int owf_export_file(const owf_doc *doc, const char *path, const char *format, ow
         result = f->export(view, &data, &length, report);
         owf_doc_accepted_free(view);
     } else {
-        if (f == &owf_format_odt && owf_doc_has_format_changes(doc))   /* 1.11: DOCX keeps them; ODT not yet */
-            owf_report_add(report, OWF_NOTE_APPROX, "Tracked format changes were saved accepted (as the format is now) in %s",
+        if (f == &owf_format_odt && odt_header_format_changes(doc))    /* 1.22.1: ODT keeps the body's */
+            owf_report_add(report, OWF_NOTE_APPROX,
+                           "Tracked format changes in headers and footers were saved accepted (as the format is now) in %s",
                            f->description);
         if (f == &owf_format_odt && owf_doc_has_row_changes(doc))      /* 1.12: DOCX keeps them; ODT not yet */
             owf_report_add(report, OWF_NOTE_APPROX, "Tracked table row and cell changes were saved accepted in %s",

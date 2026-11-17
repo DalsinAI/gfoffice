@@ -34,6 +34,8 @@
 #define NS_DRAW "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
 #define NS_DC "http://purl.org/dc/elements/1.1/"
 #define NS_META "urn:oasis:names:tc:opendocument:xmlns:meta:1.0"
+/* 1.22.1: GFOffice's own attributes: the format before a tracked format change (out_odt.c) */
+#define NS_GFO "urn:org:amigachrome:names:experimental:gfoffice:xmlns:text:1.0"
 
 #define MAX_FACES 128
 #define MAX_LISTS 64
@@ -76,6 +78,16 @@ typedef struct {
     int rev, in_deletion;
     struct { int para, run, rev; } *splits;
     int nsplits, capsplits;
+    /* 1.22.1: tracked format changes (text:format-change): the run format change open (from its change-start to
+     * its change-end: its region's id, change and the text format where it began), and the paragraph format
+     * change the paragraph being read gets */
+    owf_format_span fspan;
+    int fc_open;
+    const char *fc_id;
+    const owf_xml_node *fc_chg;
+    owf_charfmt fc_fmt;
+    int para_fc;
+    int fc_unknown;                  /* a format change without the format before: reported once */
     /* 1.6: comments with a range: their names (office:name) and indexes, for their office:annotation-end */
     struct { const char *name; int index; } *annots;
     int nannots, capannots;
@@ -930,11 +942,8 @@ static int region_change(odt *o, const owf_xml_node *region, const owf_xml_node 
     owf_buf author, date;
     int rev;
     *what = w;
-    if (!w) {
-        if (owf_xml_child(region, NS_TEXT, "format-change"))
-            owf_report_add(o->report, OWF_NOTE_APPROX, "Tracked format changes are kept as the format is now");
-        return 0;
-    }
+    if (!w)
+        return 0;                                    /* 1.22.1: a format change is odt_format_change's */
     info = owf_xml_child(w, NS_OFFICE, "change-info");
     owf_buf_init(&author);
     owf_buf_init(&date);
@@ -945,6 +954,90 @@ static int region_change(odt *o, const owf_xml_node *region, const owf_xml_node 
     if (!rev)
         o->failed = 1;
     return rev;
+}
+
+/* 1.22.1: a tracked format change's start or end (text:format-change in its region). A paragraph's
+ * (gfo:before-paragraph-style) goes to the paragraph its start is in; a run's names the runs from its start to
+ * its end, one at a time (a format change inside another is the outer one's). ODF keeps no format before: a
+ * file from elsewhere gives the changed text's own (rejecting it keeps the format), and the report says so. */
+static void odt_format_change(odt *o, const owf_xml_node *c, const owf_xml_node *chg, const owf_charfmt *fmt)
+{
+    const owf_xml_node *info = owf_xml_child(chg, NS_OFFICE, "change-info");
+    const char *id = owf_xml_attr(c, NS_TEXT, "change-id");
+    const char *pstyle = owf_xml_attr(chg, NS_GFO, "before-paragraph-style");
+    const char *tstyle = owf_xml_attr(chg, NS_GFO, "before-style");
+    int start = owf_xml_is(c, NS_TEXT, "change-start");
+    owf_buf author, date;
+    if (!start && !owf_xml_is(c, NS_TEXT, "change-end"))
+        return;                                      /* text:change marks a point: a format change has a region */
+    if (pstyle && !start)
+        return;
+    if (!pstyle && start) {
+        if (o->fc_open)
+            return;
+        owf_format_begin(&o->fspan, o->b);
+        o->fc_open = 1;
+        o->fc_id = id;
+        o->fc_chg = chg;
+        o->fc_fmt = *fmt;
+        return;
+    }
+    if (!pstyle && (!o->fc_open || !id || !o->fc_id || strcmp(id, o->fc_id)))
+        return;
+    owf_buf_init(&author);
+    owf_buf_init(&date);
+    if (pstyle) {
+        owf_parafmt before = o->base_para;
+        owf_charfmt bc = o->base_char;
+        int number;
+        owf_styles_resolve(o->tables, 2, pstyle, OWF_FAMILY_PARAGRAPH, &before, &bc);
+        number = owf_track_para_format_add(o->doc, child_text(o, info, NS_DC, "creator", &author),
+                                           child_text(o, info, NS_DC, "date", &date),
+                                           owf_xml_attr(chg, NS_GFO, "before-style-name"), &before);
+        if (!number) o->failed = 1;
+        else o->para_fc = number;
+    } else {
+        owf_charfmt before = o->fc_fmt;
+        int number;
+        const char *a = child_text(o, info, NS_DC, "creator", &author);
+        const char *d;
+        if (tstyle && *tstyle)
+            owf_styles_resolve(o->tables, 2, tstyle, OWF_FAMILY_TEXT, NULL, &before);
+        before = relative(o, before);
+        d = child_text(o, info, NS_DC, "date", &date);
+        number = owf_format_end(&o->fspan, o->b, a, d, &before);
+        o->fc_open = 0;
+        o->fc_id = NULL;
+        if (number < 0) {
+            o->failed = 1;
+        } else if (number > 0 && !tstyle) {
+            /* another program's: the format before is the changed text's own */
+            owf_story *st = o->fspan.story;
+            int i, j, found = 0;
+            for (i = o->fspan.para; st && i < st->nparas && !found; ++i)
+                for (j = 0; j < st->paras[i].nruns && !found; ++j)
+                    if (st->paras[i].runs[j].format_change == number) {
+                        o->doc->format_changes[number - 1].before = st->paras[i].runs[j].fmt;
+                        found = 1;
+                    }
+            if (!o->fc_unknown)
+                owf_report_add(o->report, OWF_NOTE_APPROX,
+                               "Tracked format changes keep who and when; ODT doesn't hold the format before, so "
+                               "rejecting one keeps the format as it is");
+            o->fc_unknown = 1;
+        }
+    }
+    owf_buf_free(&author);
+    owf_buf_free(&date);
+}
+
+/* 1.22.1: the paragraph just made gets the paragraph format change begun in it */
+static void odt_para_format_done(odt *o)
+{
+    owf_story *st = o->b->story;
+    if (o->para_fc && st && st->nparas)
+        st->paras[st->nparas - 1].para_format_change = o->para_fc;
+    o->para_fc = 0;
 }
 
 /* The change the builder's text is in becomes rev. */
@@ -1181,8 +1274,12 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
                owf_xml_is(c, NS_TEXT, "change")) {
         /* 1.5: a tracked change: an insertion from its start to its end, a deletion's text here */
         const owf_xml_node *what = NULL, *region = changed_region(o, owf_xml_attr(c, NS_TEXT, "change-id"));
-        int rev = region && !o->in_deletion ? region_change(o, region, &what) : 0;
-        if (!rev || !what) {
+        const owf_xml_node *chg = region ? owf_xml_child(region, NS_TEXT, "format-change") : NULL;
+        int rev = region && !chg && !o->in_deletion ? region_change(o, region, &what) : 0;
+        if (chg) {
+            if (!o->in_deletion)
+                odt_format_change(o, c, chg, fmt);  /* 1.22.1 */
+        } else if (!rev || !what) {
             /* a format change, or a change we don't know: nothing */
         } else if (owf_xml_is(c, NS_TEXT, "change-start") && owf_xml_is(what, NS_TEXT, "insertion")) {
             o->rev = rev;
@@ -1306,9 +1403,11 @@ static void paragraph(odt *o, const owf_xml_node *p, const char *prefix, int lis
         owf_builder_text(o->b, prefix, strlen(prefix));
         owf_builder_special(o->b, OWF_RUN_TAB, OWF_FIELD_PAGE);
     }
+    o->para_fc = 0;                                  /* 1.22.1 */
     inline_children(o, p, &cf);
     owf_builder_end_para(o->b);
     odt_para_bookmarks(o);                           /* 1.4 */
+    odt_para_format_done(o);                         /* 1.22.1 */
 }
 
 static void blocks(odt *o, const owf_xml_node *n, int list_level, const char *list_name);
@@ -1428,7 +1527,7 @@ static void table_rows_id(odt *o, const owf_xml_node *n, int table_id, int *row_
             for(c=r->first;c;c=c->next){int first=1,before;owf_para *p;if(!owf_xml_is(c,NS_TABLE,"table-cell"))continue;
                 if(o->b->para||o->b->text.length)owf_builder_end_para(o->b);
                 o->nmarks=0;                         /* 2.0.21: the cell's own bookmarks */
-                o->b->parafmt=o->base_para;before=o->b->story->nparas;cell_text(o,c,&first);owf_builder_end_para(o->b);odt_para_bookmarks(o);
+                o->b->parafmt=o->base_para;before=o->b->story->nparas;o->para_fc=0;cell_text(o,c,&first);owf_builder_end_para(o->b);odt_para_bookmarks(o);odt_para_format_done(o);
                 if(o->b->story->nparas>before){p=&o->b->story->paras[o->b->story->nparas-1];p->table_id=table_id;p->table_row=*row_index;p->table_col=col;p->table_cols=cols;{const char *sn=owf_xml_attr(c,NS_TABLE,"style-name");int k;for(k=0;sn&&k<o->ncells;k++)if(!strcmp(o->cells[k].name,sn)){p->cell_shading=o->cells[k].colour;break;}}}++col;
             }++*row_index;
         }else if(owf_xml_is(r,NS_TABLE,"table-header-rows")||owf_xml_is(r,NS_TABLE,"table-rows")||owf_xml_is(r,NS_TABLE,"table-row-group"))table_rows_id(o,r,table_id,row_index);

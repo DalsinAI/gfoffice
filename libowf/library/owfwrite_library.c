@@ -78,13 +78,16 @@
  * 3.25: libowf 1.22 (3.24, libowf 1.21, is #2's: tracked paragraph formats), tracked table cells (owf_para.cell_revision): a column
  * put in or deleted while recording is a change cell by cell, DOCX w:tcPr/w:cellIns and w:cellDel in and
  * out, ODT saves them accepted. No new calls; owf_para grew, so owfpub (3.9) and owfpresent (3.20) go too.
+ * 3.26: libowf 1.22.1, tracked format changes of text and paragraphs in ODT (text:format-change in and out, the
+ * format before as GFOffice's gfo: attributes; from another program, the format as it is). No new calls and no
+ * structure grew, so owfpub and owfpresent stay.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 25
-#define OWF_LIB_VERS "3.25"
+#define OWF_LIB_REVISION 26
+#define OWF_LIB_VERS "3.26"
 #define OWF_LIB_DATE "17.11.2026"
 #define OWF_LIB_CALLS_H "owfwrite_calls.h"
 #include "owf_libbase.h"
