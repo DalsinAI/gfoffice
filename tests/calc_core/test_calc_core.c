@@ -9311,6 +9311,16 @@ static void test_extdata(void)
 
 int main(void)
 {
+    /* The tests write their files into build/host (from the repository's top), whatever OUT the binary went
+       to; without it every save fails and later checks would reach books that never opened. */
+    FILE *probe = fopen("build/host/calc-core-probe.tmp", "wb");
+    if (!probe) {
+        fprintf(stderr, "opencalc core tests: cannot write build/host/ (run from the repository's top; "
+                        "make opencalc-test makes it)\n");
+        return 1;
+    }
+    fclose(probe);
+    remove("build/host/calc-core-probe.tmp");
     test_more();
     test_latin1();
     test_names();

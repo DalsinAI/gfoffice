@@ -364,10 +364,13 @@ $(OUT)/test-opencalc-core-asan: $(OPENCALC_DEPS)
 		-Iinclude -Ilibowf/include -Ilibowf/src -Ilibowf/calc -Isrc/calc \
 		$(OWF_SRC) $(CALC_SRC) $(OPENCALC_SRC) tests/calc_core/test_calc_core.c -lz -lm -o $@
 
+# The tests write into build/host whatever OUT is, so it is made here too.
 opencalc-test: $(OUT)/test-opencalc-core
+	mkdir -p build/host
 	$(OUT)/test-opencalc-core
 
 opencalc-check: $(OUT)/test-opencalc-core-asan
+	mkdir -p build/host
 	$(OUT)/test-opencalc-core-asan
 
 test: opencalc-test
