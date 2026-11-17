@@ -690,7 +690,7 @@ static void build_comments_extended(owf_buf *out, const owf_doc *doc)
 static void field_instr(const owf_run *run, char *out, size_t size)
 {
     static const char *const word[] = { "PAGE", "NUMPAGES", "DATE", "TIME", "TITLE", "AUTHOR", "SUBJECT", "FILENAME",
-                                         "NUMWORDS", "STYLEREF", "DOCVARIABLE", "REF", "PAGEREF", "MERGEFIELD", "XE", "SEQ", "IF" };
+                                         "NUMWORDS", "STYLEREF", "DOCVARIABLE", "REF", "PAGEREF", "MERGEFIELD", "XE", "SEQ", "IF", "FILLIN" };
     const char *arg = run->href ? run->href : "";
     int f = (int)run->field >= 0 && (int)run->field <= OWF_FIELD_LAST ? (int)run->field : 0;
     if (f == OWF_FIELD_CHAPTER) snprintf(out, size, " STYLEREF 1 ");
@@ -700,6 +700,16 @@ static void field_instr(const owf_run *run, char *out, size_t size)
     else if (f == OWF_FIELD_MERGE) snprintf(out, size, " MERGEFIELD %s ", arg);
     else if (f == OWF_FIELD_INDEX) snprintf(out, size, " XE \"%s\" ", arg);      /* 1.10 */
     else if (f == OWF_FIELD_SEQ && strchr(arg, ' ')) snprintf(out, size, " SEQ \"%s\" \\* ARABIC ", arg);   /* 1.12.6 */
+    else if (f == OWF_FIELD_FILLIN) {                /* 1.19: its prompt quoted, a quote in it as Word's \" */
+        size_t n = 0;
+        const char *c;
+        n += (size_t)snprintf(out, size, " FILLIN \"");
+        for (c = arg; *c && n + 3 < size; ++c) {
+            if (*c == '"' || *c == '\\') out[n++] = '\\';
+            out[n++] = *c;
+        }
+        snprintf(out + n, size > n ? size - n : 0, "\" ");
+    }
     else if (f == OWF_FIELD_SEQ) snprintf(out, size, " SEQ %s \\* ARABIC ", arg);
     else if (f == OWF_FIELD_IF) snprintf(out, size, " IF %s ", arg);   /* 1.16: its fields in braces (put_if_code) */
     else snprintf(out, size, " %s ", word[f]);
