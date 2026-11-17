@@ -49,6 +49,8 @@
 #include <string.h>
 
 #include "openbase_core.h"
+#include "owf.h"
+#include "owf_open.h"   /* OWF=library: reports write through owfwrite.library */
 #include "openbase_sheet.h"
 #include "ob_reportwin.h"
 #include "ow_stack.h"
@@ -5790,6 +5792,13 @@ static int window_main(int argc, char **argv)
         rc = 20;
         goto out;
     }
+    /* reports write their documents through libowf: on the libraries, owfwrite.library
+     * (with libowf linked in there is nothing to open) */
+    if (!owf_open()) {
+        if (argc) PutStr((STRPTR)"GFOpenBase needs " OWF_LIBRARY_NAME " in LIBS: (part of the GFOffice Suite)\n");
+        rc = 20;
+        goto out;
+    }
     if (argc > 1) {
         int i;
         for (i = 1; i < argc; i++) {
@@ -5832,6 +5841,7 @@ out:
     if (RexxSysBase) { CloseLibrary((struct Library *)RexxSysBase); RexxSysBase = NULL; }
     close_project();
     close_window();
+    owf_close();            /* after the project: its documents may use it */
     if (AslBase) CloseLibrary(AslBase);
     if (GadToolsBase) CloseLibrary(GadToolsBase);
     return rc;

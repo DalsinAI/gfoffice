@@ -736,6 +736,39 @@ static void test_summary_back_to_task(void)
     owf_project_free(p);
 }
 
+/* Resource calendars: a task with no calendar of its own works on its first work resource's. */
+static void test_resource_calendar(void)
+{
+    owf_project *p = plan();
+    int a = owf_project_add_task(p, "A", 5 * D), b = owf_project_add_task(p, "B", 5 * D);
+    int four = owf_project_add_calendar(p, "Four days");
+    int dale = owf_project_add_resource(p, "Dale"), ann = owf_project_add_resource(p, "Ann");
+    int steel = owf_project_add_resource(p, "Steel");
+    p->calendars[four].week[5].nspans = 0;                      /* Fridays off */
+    p->resources[dale].calendar = four;
+    p->resources[steel].calendar = four;
+    p->resources[steel].type = OWF_RES_MATERIAL;
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_T(TASK(p, a)->early_finish, AT(20, 17, 0));           /* the project's week: Mon to Fri */
+    owf_project_assign(p, a, ann, 100);                         /* Ann works the project's calendar */
+    owf_project_assign(p, a, dale, 100);                        /* Dale's: the first with one of its own */
+    owf_project_assign(p, b, steel, 100);                       /* a material resource's doesn't count */
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK(owf_ptask_calendar(p, a) == &p->calendars[four]);
+    CHECK_T(TASK(p, a)->early_finish, AT(23, 17, 0));           /* Friday skipped */
+    CHECK_T(TASK(p, b)->early_finish, AT(20, 17, 0));
+    CHECK_N(p->assigns[1].work, 5 * D);                         /* the same work, on Dale's days */
+    CHECK_N(owf_presource_work(p, dale, AT(20, 0, 0), AT(21, 0, 0)), 0);    /* no work on his Friday */
+    TASK(p, a)->calendar = p->calendar;                         /* a task calendar of its own wins */
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_T(TASK(p, a)->early_finish, AT(20, 17, 0));
+    TASK(p, a)->calendar = -1;
+    TASK(p, a)->elapsed = 1;                                    /* elapsed: every minute */
+    CHECK(owf_ptask_calendar(p, a) == NULL);
+    CHECK(owf_ptask_calendar(p, 99) == NULL && owf_ptask_calendar(NULL, 0) == NULL);
+    owf_project_free(p);
+}
+
 int main(void)
 {
     test_dates();
@@ -757,6 +790,7 @@ int main(void)
     test_leveling();
     test_leveling_elapsed();
     test_summary_back_to_task();
+    test_resource_calendar();
     test_peak_cap();
     if (fails) {
         printf("project tests: %d of %d checks failed\n", fails, checks);
