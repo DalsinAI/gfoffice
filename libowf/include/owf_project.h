@@ -187,7 +187,9 @@ void owf_project_free(owf_project *p);
 /* The calendar task is scheduled on: none (NULL) for an elapsed task (every minute counts); its own
  * calendar; else the calendar of its first work resource that has one (MS Project schedules on resource
  * calendars; with several resources on different calendars it spans them all, here the first wins); else
- * the project's. NULL for a task out of range or a project with no calendars. */
+ * the project's. A task's own calendar wins outright here; MS Project schedules such a task only where
+ * its calendar and its resources' calendars overlap. NULL for a task out of range or a project with no
+ * calendars. Walks the task's assignments each call. */
 const owf_pcal *owf_ptask_calendar(const owf_project *p, int task);
 /* Adds a task at the end (level 1, one working day, ASAP); its index, or -1 for memory. */
 int owf_project_add_task(owf_project *p, const char *name, long duration);
