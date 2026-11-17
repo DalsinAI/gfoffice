@@ -126,10 +126,25 @@ done:
     return result;
 }
 
+/* The time now, or SOURCE_DATE_EPOCH's (seconds since 1970, UTC) when it is
+ * set: reproducible saves, and make test's save-twice checks (Makefile). */
 int owf_sys_now(owf_time *t)
 {
+    const char *epoch = getenv("SOURCE_DATE_EPOCH");
     time_t now = time(NULL);
-    struct tm *tm = localtime(&now);
+    struct tm *tm;
+    if (epoch && *epoch) {
+        char *end;
+        long long v = strtoll(epoch, &end, 10);
+        if (!*end && v >= 0) {
+            now = (time_t)v;
+            tm = gmtime(&now);
+        } else {
+            tm = localtime(&now);
+        }
+    } else {
+        tm = localtime(&now);
+    }
 
     if (!tm)
         return 0;

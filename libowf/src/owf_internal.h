@@ -120,6 +120,11 @@ owf_zip *owf_zip_new(owf_buf *out);
 int owf_zip_add(owf_zip *zip, const char *name, const void *data, size_t length, int compress);
 /* Writes the central directory and frees the writer. */
 int owf_zip_finish(owf_zip *zip);
+/* The time every zip written from now on is stamped with, instead of the
+ * clock's (NULL: the clock again). For tests that save twice and compare the
+ * bytes: two saves either side of a 2-second DOS time step differ. The host
+ * build also takes SOURCE_DATE_EPOCH (owf_sys.c), which make test sets. */
+void owf_zip_fix_time(const owf_time *t);
 unsigned long owf_crc32(unsigned long crc, const unsigned char *data, size_t length);
 
 /* ---- OLE compound files (owf_cfb.c): Excel 97-2003, Word 97-2003 ---- */

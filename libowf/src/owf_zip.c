@@ -63,11 +63,21 @@ static void put32(owf_buf *b, unsigned long v)
     put16(b, (unsigned)((v >> 16) & 0xFFFF));
 }
 
+static owf_time zip_fixed;
+static int zip_fixed_set;
+
+void owf_zip_fix_time(const owf_time *t)
+{
+    zip_fixed_set = t != NULL;
+    if (t)
+        zip_fixed = *t;
+}
+
 owf_zip *owf_zip_new(owf_buf *out)
 {
     owf_zip *zip = calloc(1, sizeof *zip);
     owf_time now;
-    const owf_time *t = owf_sys_now(&now) ? &now : NULL;
+    const owf_time *t = zip_fixed_set ? &zip_fixed : owf_sys_now(&now) ? &now : NULL;
 
     if (!zip)
         return NULL;
