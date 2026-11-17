@@ -161,7 +161,8 @@ enum {
     OPJ_COL_EFFORT_DRIVEN,               /* "Yes" or "No"; Fixed Work is always Yes; a summary's is blank */
     OPJ_COL_PRIORITY,                    /* 0..1000 (typed); 1000 is Do Not Level; a summary's is blank */
     OPJ_COL_OVERALLOCATED,               /* "Yes" or "No" (owf_ptask_overallocated), worked out; a summary's is
-                                          * blank. An over-allocated task's ID also gets a "!", drawn red */
+                                          * blank. The Gantt sheet draws an over-allocated task's ID with a
+                                          * "!", red; its ID cell's text stays the number (filters, GETCELL) */
     OPJ_NCOLS
 };
 

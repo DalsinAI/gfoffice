@@ -534,7 +534,7 @@ static void test_level(void)
     ok("UNDO");
     CHECK_S(ok("GETCELL 2 Start"), "Mon 16/11/26");
     /* ORDER, Priority and Overallocated */
-    CHECK_S(ok("GETCELL 1 ID"), "1!");
+    CHECK_S(ok("GETCELL 1 ID"), "1");                                     /* "!" is drawn only */
     CHECK_S(ok("GETCELL 2 Overallocated"), "Yes");
     CHECK_S(ok("LEVEL ORDER ID"), "1");                                   /* Dig is first: Fill waits */
     CHECK_S(ok("GETCELL 2 Start"), "Wed 18/11/26");
