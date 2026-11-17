@@ -2053,6 +2053,40 @@ static void test_hidden_text(void)
     owf_doc_free(doc);
 }
 
+/* 2.0.51 (libowf 1.20): a hidden paragraph whose condition holds takes no room unless hidden text is shown */
+static void test_hidden_paragraph(void)
+{
+    owf_doc *doc = owf_doc_new();
+    owf_para *p;
+    owf_run *r;
+    ow_layout *plain, *shown;
+    const ol_display_op *a, *b;
+    para(doc, NULL, 0, "First", 240);
+    p = para(doc, NULL, 0, "Middle", 240);
+    para(doc, NULL, 0, "Last", 240);
+    CHECK(owf_para_add_special(p, &p->runs[0].fmt, OWF_RUN_FIELD, OWF_FIELD_HIDE_PARA) == 0);
+    r = &p->runs[p->nruns - 1];
+    r->text = (char *)owf_malloc(2);
+    r->href = (char *)owf_malloc(32);
+    if (r->text) strcpy(r->text, "1");
+    if (r->href) strcpy(r->href, "1 = 1 \"1\" \"\"");
+    CHECK(owf_para_hidden(p));
+    plain = ow_layout_new(doc, measure, NULL);
+    shown = ow_layout_new_view(doc, measure, NULL, 0, OW_LAYOUT_SHOW_HIDDEN);
+    CHECK(plain && shown);
+    if (plain && shown) {
+        CHECK(!text_on(ow_layout_body(plain), 0, "Middle", NULL));
+        CHECK(text_on(ow_layout_body(shown), 0, "Middle", NULL) != NULL);
+        a = text_on(ow_layout_body(plain), 0, "Last", NULL);
+        b = text_on(ow_layout_body(shown), 0, "Last", NULL);
+        CHECK(a && b && a->u.text.bounds.y < b->u.text.bounds.y);   /* the paragraph after it moves up */
+        CHECK(!text_on(ow_layout_body(shown), 0, "1", NULL));        /* the field shows nothing */
+    }
+    ow_layout_free(plain);
+    ow_layout_free(shown);
+    owf_doc_free(doc);
+}
+
 int main(int argc, char **argv)
 {
     int i;
@@ -2062,6 +2096,7 @@ int main(int argc, char **argv)
     test_generated_toc();
     test_final_view();
     test_hidden_text();
+    test_hidden_paragraph();
     test_picture_changes();
     test_frame_changes();
     test_row_changes();
