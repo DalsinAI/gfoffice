@@ -1262,35 +1262,6 @@ static void test_task_type_cells(void)
     opj_doc_free(doc);
 }
 
-/* Base Calendar on the resource sheet: the tasks a resource works on are scheduled on its calendar. */
-static void test_resource_calendar(void)
-{
-    opj_doc *doc = three();
-    int four = -1, dale = -1;
-    char out[64];
-    CHECK_S(opj_resource_column_title(OPJ_RCOL_CALENDAR), "Base Calendar");
-    CHECK_N(opj_column_parse("calendar", 1), OPJ_RCOL_CALENDAR);
-    CHECK_N(opj_add_calendar(doc, "Four days", -1, &four), OWF_OK);
-    CHECK_N(opj_add_resource(doc, "Dale", &dale), OWF_OK);
-    if (four < 0 || dale < 0) { opj_doc_free(doc); return; }
-    opj_resource_cell_text(doc, dale, OPJ_RCOL_CALENDAR, out, sizeof out);
-    CHECK_S(out, "Standard");                                       /* none of its own: the plan's */
-    CHECK_N(opj_set_resource_cell(doc, dale, OPJ_RCOL_CALENDAR, "four DAYS"), OWF_OK);
-    opj_resource_cell_text(doc, dale, OPJ_RCOL_CALENDAR, out, sizeof out);
-    CHECK_S(out, "Four days");
-    CHECK_N(opj_set_resource_cell(doc, dale, OPJ_RCOL_CALENDAR, "Nights"), OWF_ERR_FORMAT);
-    CHECK_N(opj_set_resource_cell(doc, dale, OPJ_RCOL_CALENDAR, "9"), OWF_ERR_FORMAT);
-    /* Fridays off on Dale's calendar: Plan (Mon 16, 2 days) is the same, Build (from Wed 18, 3 days) skips Fri 20 */
-    doc->plan->calendars[four].week[5].nspans = 0;
-    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_RESOURCES, "Dale"), OWF_OK);
-    CHECK_S(cell_of(doc, 1, OPJ_COL_FINISH), "Mon 23/11/26");
-    CHECK_N(opj_set_resource_cell(doc, dale, OPJ_RCOL_CALENDAR, ""), OWF_OK);   /* back to the plan's */
-    CHECK_S(cell_of(doc, 1, OPJ_COL_FINISH), "Fri 20/11/26");
-    CHECK_N(opj_set_resource_cell(doc, dale, OPJ_RCOL_CALENDAR, "2"), OWF_OK);  /* by number */
-    CHECK_S(cell_of(doc, 1, OPJ_COL_FINISH), "Mon 23/11/26");
-    opj_doc_free(doc);
-}
-
 /* A Work typed on a copy that is then dropped (a refused Replace, a refused cell) leaves nothing behind:
  * the next edit still keeps its type (Agnus's #13 probe). */
 static void test_typed_work_dropped(void)
@@ -1317,6 +1288,35 @@ static void test_typed_work_dropped(void)
     CHECK_N(opj_set_cell(doc, 1, OPJ_COL_DURATION, "3d"), OWF_OK);          /* back: the units again */
     CHECK_S(cell_of(doc, 1, OPJ_COL_WORK), "24h");
     CHECK_S(cell_of(doc, 1, OPJ_COL_RESOURCES), "Dale");
+    opj_doc_free(doc);
+}
+
+/* Base Calendar on the resource sheet: the tasks a resource works on are scheduled on its calendar. */
+static void test_resource_calendar(void)
+{
+    opj_doc *doc = three();
+    int four = -1, dale = -1;
+    char out[64];
+    CHECK_S(opj_resource_column_title(OPJ_RCOL_CALENDAR), "Base Calendar");
+    CHECK_N(opj_column_parse("calendar", 1), OPJ_RCOL_CALENDAR);
+    CHECK_N(opj_add_calendar(doc, "Four days", -1, &four), OWF_OK);
+    CHECK_N(opj_add_resource(doc, "Dale", &dale), OWF_OK);
+    if (four < 0 || dale < 0) { opj_doc_free(doc); return; }
+    opj_resource_cell_text(doc, dale, OPJ_RCOL_CALENDAR, out, sizeof out);
+    CHECK_S(out, "Standard");                                       /* none of its own: the plan's */
+    CHECK_N(opj_set_resource_cell(doc, dale, OPJ_RCOL_CALENDAR, "four DAYS"), OWF_OK);
+    opj_resource_cell_text(doc, dale, OPJ_RCOL_CALENDAR, out, sizeof out);
+    CHECK_S(out, "Four days");
+    CHECK_N(opj_set_resource_cell(doc, dale, OPJ_RCOL_CALENDAR, "Nights"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_resource_cell(doc, dale, OPJ_RCOL_CALENDAR, "9"), OWF_ERR_FORMAT);
+    /* Fridays off on Dale's calendar: Plan (Mon 16, 2 days) is the same, Build (from Wed 18, 3 days) skips Fri 20 */
+    doc->plan->calendars[four].week[5].nspans = 0;
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_RESOURCES, "Dale"), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_FINISH), "Mon 23/11/26");
+    CHECK_N(opj_set_resource_cell(doc, dale, OPJ_RCOL_CALENDAR, ""), OWF_OK);   /* back to the plan's */
+    CHECK_S(cell_of(doc, 1, OPJ_COL_FINISH), "Fri 20/11/26");
+    CHECK_N(opj_set_resource_cell(doc, dale, OPJ_RCOL_CALENDAR, "2"), OWF_OK);  /* by number */
+    CHECK_S(cell_of(doc, 1, OPJ_COL_FINISH), "Mon 23/11/26");
     opj_doc_free(doc);
 }
 
@@ -2609,8 +2609,8 @@ int main(void)
     test_work_columns();
     test_update_task();
     test_task_type_cells();
-    test_resource_calendar();
     test_typed_work_dropped();
+    test_resource_calendar();
     test_progress_lines();
     test_assign_dialog();
     test_print();

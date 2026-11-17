@@ -753,18 +753,84 @@ static void put_gradients_of(owf_buf *out, const owf_obj *objs, int n, char (*se
     }
 }
 
-/* a page's background as a look, for its gradient */
-static owf_look background_look(unsigned long colour, unsigned char gradient, int angle, unsigned long colour2)
+/* a hatch look's draw:hatch name, "op-ha-d450-114-ff0000" (single, double or triple, our angle, the
+ * distance in twips, the colour): the same hatching, the same name */
+static void hatch_name(const owf_look *l, char *name, size_t size)
 {
-    owf_look l;
-    memset(&l, 0, sizeof l);
-    l.fill = colour;
-    l.gradient = gradient;
-    l.gradient_angle = angle;
-    l.fill2 = colour2;
-    return l;
+    static const char kinds[] = "ssdt";
+    snprintf(name, size, "op-ha-%c%d-%d-%06lx", kinds[l->hatch & 3], ((l->hatch_angle % 3600) + 3600) % 3600,
+             l->hatch_distance > 0 ? l->hatch_distance : OWF_HATCH_DISTANCE, OWF_SHADE_RGB(l->hatch_colour));
 }
 
+/* draw:hatch for each different hatching the objects use, once (seen and nseen as put_gradients_of's) */
+static void put_hatches_of(owf_buf *out, const owf_obj *objs, int n, char (*seen)[48], int *nseen, int cap)
+{
+    static const char *const styles[] = { "single", "single", "double", "triple" };
+    int i, k;
+    char name[48];
+    for (i = 0; i < n; i++) {
+        const owf_look *l = &objs[i].look;
+        if (l->hatch == OWF_HATCH_NONE)
+            continue;
+        hatch_name(l, name, sizeof name);
+        for (k = 0; k < *nseen && strcmp(seen[k], name); k++)
+            ;
+        if (k < *nseen)
+            continue;
+        if (*nseen < cap)
+            strcpy(seen[(*nseen)++], name);
+        owf_buf_printf(out, "<draw:hatch draw:name=\"%s\" draw:style=\"%s\" draw:color=\"#%06lx\"", name,
+                       styles[l->hatch & 3], OWF_SHADE_RGB(l->hatch_colour));
+        len_attr(out, "draw:distance", l->hatch_distance > 0 ? l->hatch_distance : OWF_HATCH_DISTANCE);
+        owf_buf_printf(out, " draw:rotation=\"%d\"/>", ((l->hatch_angle % 3600) + 3600) % 3600);
+    }
+}
+
+/* The fill attributes of a look (an object's graphic-properties or a page's drawing-page-properties):
+ * a hatch over its colour (fill-hatch-solid) or on its own, a gradient, a colour, or none when
+ * none_too; then how much shows through (draw:opacity). */
+static void put_fill_attrs(owf_buf *out, const owf_look *l, int none_too)
+{
+    int filled = 1;
+    if (l->hatch != OWF_HATCH_NONE) {
+        char hname[48];
+        hatch_name(l, hname, sizeof hname);
+        owf_buf_printf(out, " draw:fill=\"hatch\" draw:fill-hatch-name=\"%s\"", hname);
+        if (OWF_SHADE_SET(l->fill))
+            owf_buf_printf(out, " draw:fill-hatch-solid=\"true\" draw:fill-color=\"#%06lx\"", OWF_SHADE_RGB(l->fill));
+        else
+            owf_buf_puts(out, " draw:fill-hatch-solid=\"false\"");
+    } else if (look_has_gradient(l)) {
+        char gname[48];
+        gradient_name(l, gname, sizeof gname);
+        /* fill-color too: what a reader without gradients draws */
+        owf_buf_printf(out, " draw:fill=\"gradient\" draw:fill-gradient-name=\"%s\" draw:fill-color=\"#%06lx\"", gname,
+                       OWF_SHADE_RGB(l->fill));
+    } else if (OWF_SHADE_SET(l->fill)) {
+        owf_buf_printf(out, " draw:fill=\"solid\" draw:fill-color=\"#%06lx\"", OWF_SHADE_RGB(l->fill));
+    } else {
+        filled = 0;
+        if (none_too)
+            owf_buf_puts(out, " draw:fill=\"none\"");
+    }
+    if (filled && l->transparency > 0)
+        owf_buf_printf(out, " draw:opacity=\"%d%%\"", 100 - (l->transparency > 100 ? 100 : l->transparency));
+}
+
+/* An object's shadow: draw:shadow, its offset, colour and opacity */
+static void put_shadow_attrs(owf_buf *out, const owf_look *l)
+{
+    if (!l->shadow)
+        return;
+    owf_buf_puts(out, " draw:shadow=\"visible\"");
+    len_attr(out, "draw:shadow-offset-x", l->shadow_dx);
+    len_attr(out, "draw:shadow-offset-y", l->shadow_dy);
+    owf_buf_printf(out, " draw:shadow-color=\"#%06lx\" draw:shadow-opacity=\"%d%%\"",
+                   OWF_SHADE_SET(l->shadow_colour) ? OWF_SHADE_RGB(l->shadow_colour) : OWF_SHADOW_COLOUR,
+                   100 - (l->shadow_transparency > 100 ? 100 : l->shadow_transparency));
+}
+
+/* draw:gradient and draw:hatch for each different one the pages and objects use, once */
 static void put_gradients(owf_buf *out, const owf_deck *d)
 {
     char seen[64][48];
@@ -773,15 +839,19 @@ static void put_gradients(owf_buf *out, const owf_deck *d)
     memset(&bg, 0, sizeof bg);
     for (i = 0; i < d->nmasters; i++) {
         const owf_master *m = &d->masters[i];
-        bg.look = background_look(m->background, m->background_gradient, m->background_angle, m->background2);
+        OWF_BACKGROUND_LOOK(m, &bg.look);
         put_gradients_of(out, &bg, 1, seen, &nseen, 64);
+        put_hatches_of(out, &bg, 1, seen, &nseen, 64);
         put_gradients_of(out, m->objs, m->nobjs, seen, &nseen, 64);
+        put_hatches_of(out, m->objs, m->nobjs, seen, &nseen, 64);
     }
     for (i = 0; i < d->nslides; i++) {
         const owf_slide *s = &d->slides[i];
-        bg.look = background_look(s->background, s->background_gradient, s->background_angle, s->background2);
+        OWF_BACKGROUND_LOOK(s, &bg.look);
         put_gradients_of(out, &bg, 1, seen, &nseen, 64);
+        put_hatches_of(out, &bg, 1, seen, &nseen, 64);
         put_gradients_of(out, s->objs, s->nobjs, seen, &nseen, 64);
+        put_hatches_of(out, s->objs, s->nobjs, seen, &nseen, 64);
     }
 }
 
@@ -795,16 +865,8 @@ static void graphic_style(odpw *w, const owf_obj *o, char *name, int text_frame)
 
     owf_buf_init(&body);
     owf_buf_puts(&body, "<style:graphic-properties");
-    if (look_has_gradient(&o->look)) {
-        char gname[48];
-        gradient_name(&o->look, gname, sizeof gname);
-        /* fill-color too: what a reader without gradients draws */
-        owf_buf_printf(&body, " draw:fill=\"gradient\" draw:fill-gradient-name=\"%s\" draw:fill-color=\"#%06lx\"", gname,
-                       OWF_SHADE_RGB(o->look.fill));
-    } else if (OWF_SHADE_SET(o->look.fill))
-        owf_buf_printf(&body, " draw:fill=\"solid\" draw:fill-color=\"#%06lx\"", OWF_SHADE_RGB(o->look.fill));
-    else
-        owf_buf_puts(&body, " draw:fill=\"none\"");
+    put_fill_attrs(&body, &o->look, 1);
+    put_shadow_attrs(&body, &o->look);
     if (OWF_SHADE_SET(o->look.line)) {
         int dashed = o->look.line_style == OWF_LINE_DASHED || o->look.line_style == OWF_LINE_DOTTED ||
                      o->look.line_style == OWF_LINE_MEDIUM_DASHED || o->look.line_style == OWF_LINE_DASH_DOT;
@@ -1305,19 +1367,15 @@ static void put_objects(odpw *w, owf_buf *out, const owf_obj *objs, int n, int p
 
 /* ---- Pages ---- */
 
-static void put_background(owf_buf *out, const owf_deck *d, unsigned long colour, int image, int master,
-                           unsigned char gradient, int angle, unsigned long colour2)
+/* A page's background (bg: its look; image: its picture into res->images, or -1) */
+static void put_background(owf_buf *out, const owf_deck *d, const owf_look *bg, int image, int master)
 {
-    owf_look l = background_look(colour, gradient, angle, colour2);
-    if (image < 0 && look_has_gradient(&l)) {
-        char gname[48];
-        gradient_name(&l, gname, sizeof gname);
-        owf_buf_printf(out, " draw:fill=\"gradient\" draw:fill-gradient-name=\"%s\" draw:fill-color=\"#%06lx\"", gname,
-                       OWF_SHADE_RGB(colour));
-    } else if (image >= 0 && image < d->res->nimages)
+    if (image >= 0 && image < d->res->nimages) {
         owf_buf_printf(out, " draw:fill=\"bitmap\" draw:fill-image-name=\"op-bg%d\" style:repeat=\"stretch\"", image + 1);
-    else if (OWF_SHADE_SET(colour))
-        owf_buf_printf(out, " draw:fill=\"solid\" draw:fill-color=\"#%06lx\"", OWF_SHADE_RGB(colour));
+        if (bg->transparency > 0)
+            owf_buf_printf(out, " draw:opacity=\"%d%%\"", 100 - (bg->transparency > 100 ? 100 : bg->transparency));
+    } else if (OWF_LOOK_FILLED(bg))
+        put_fill_attrs(out, bg, 0);
     else if (master)
         owf_buf_puts(out, " draw:fill=\"none\"");
 }
@@ -1622,8 +1680,11 @@ static int build_content(odpw *w, owf_buf *out)
         /* the page's style: background, fields, transition */
         body.length = 0;
         owf_buf_puts(&body, "<style:drawing-page-properties");
-        put_background(&body, d, s->background, s->background_image, 0, s->background_gradient,
-                       s->background_angle, s->background2);
+        {
+            owf_look bg;
+            OWF_BACKGROUND_LOOK(s, &bg);
+            put_background(&body, d, &bg, s->background_image, 0);
+        }
         owf_buf_printf(&body, " presentation:display-footer=\"%s\" presentation:display-page-number=\"%s\""
                               " presentation:display-date-time=\"%s\"",
                        s->show & OWF_SHOW_FOOTER ? "true" : "false", s->show & OWF_SHOW_NUMBER ? "true" : "false",
@@ -1779,8 +1840,11 @@ static int build_styles(odpw *w, owf_buf *out)
         w->master = m;
         body.length = 0;
         owf_buf_puts(&body, "<style:drawing-page-properties draw:background-size=\"full\"");
-        put_background(&body, d, m->background, m->background_image, 1, m->background_gradient,
-                       m->background_angle, m->background2);
+        {
+            owf_look bg;
+            OWF_BACKGROUND_LOOK(m, &bg);
+            put_background(&body, d, &bg, m->background_image, 1);
+        }
         owf_buf_puts(&body, "/>");
         reg_style(w->reg, EL_STYLE, "drawing-page", "dp", NULL, &body, style);
         owf_buf_puts(&masters, "<style:master-page");

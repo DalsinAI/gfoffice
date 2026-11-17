@@ -82,7 +82,44 @@ typedef struct {
     int gradient_angle;          /* LINEAR: tenths of a degree anticlockwise from fill to fill2, 0 left
                                     to right, 900 bottom to top; the object's rotation turns it too */
     unsigned long fill2;         /* OWF_SHADE(0xRRGGBB): the gradient's other end */
+    /* Hatching, see-through fills and shadows (owfpresent.library 3.16, appended): */
+    unsigned char transparency;  /* percent of what is behind that shows through the fill, 0 to 100 */
+    unsigned char hatch;         /* OWF_HATCH_...: lines of hatch_colour over the fill, or on their own
+                                    when there is no fill */
+    int hatch_angle;             /* tenths of a degree anticlockwise; 0: lines left to right */
+    int hatch_distance;          /* twips between the lines; 0: OWF_HATCH_DISTANCE */
+    unsigned long hatch_colour;  /* OWF_SHADE(0xRRGGBB); 0: black */
+    unsigned char shadow;        /* 1: a copy of the object's outline drawn behind it */
+    unsigned char shadow_transparency; /* percent, as transparency */
+    int shadow_dx, shadow_dy;    /* twips the shadow lies right of and below the object */
+    unsigned long shadow_colour; /* OWF_SHADE(0xRRGGBB); 0: grey 808080 */
 } owf_look;
+
+/* owf_look.hatch */
+#define OWF_HATCH_NONE 0
+#define OWF_HATCH_SINGLE 1       /* lines at hatch_angle */
+#define OWF_HATCH_DOUBLE 2       /* and the same at right angles: a grid */
+#define OWF_HATCH_TRIPLE 3       /* and a third set at 45 degrees between them */
+#define OWF_HATCH_DISTANCE 114   /* twips: 2 mm, Impress's own */
+#define OWF_SHADOW_COLOUR 0x808080UL
+
+/* 1 when the look fills its outline: a colour, a gradient, or hatching on its own */
+#define OWF_LOOK_FILLED(l) (OWF_SHADE_SET((l)->fill) || (l)->hatch != OWF_HATCH_NONE)
+
+/* A slide's or a master's background fields (p: owf_slide * or owf_master *) as the owf_look *l, and
+ * back; the picture (background_image) is not in it. Needs <string.h>. */
+#define OWF_BACKGROUND_LOOK(p, l)                                                                          \
+    (memset((l), 0, sizeof *(l)), (l)->fill = (p)->background, (l)->gradient = (p)->background_gradient,   \
+     (l)->gradient_angle = (p)->background_angle, (l)->fill2 = (p)->background2,                           \
+     (l)->transparency = (p)->background_transparency, (l)->hatch = (p)->background_hatch,                 \
+     (l)->hatch_angle = (p)->background_hatch_angle, (l)->hatch_distance = (p)->background_hatch_distance, \
+     (l)->hatch_colour = (p)->background_hatch_colour)
+#define OWF_BACKGROUND_SET(p, l)                                                                           \
+    ((p)->background = (l)->fill, (p)->background_gradient = (l)->gradient,                                \
+     (p)->background_angle = (l)->gradient_angle, (p)->background2 = (l)->fill2,                           \
+     (p)->background_transparency = (l)->transparency, (p)->background_hatch = (l)->hatch,                 \
+     (p)->background_hatch_angle = (l)->hatch_angle, (p)->background_hatch_distance = (l)->hatch_distance, \
+     (p)->background_hatch_colour = (l)->hatch_colour)
 
 /* How one level of text looks: in a master, and in a frame's own list. */
 #define OWF_BULLET_NUMBER 0x80000000UL   /* | '1', 'a', 'A', 'i' or 'I': numbered */
@@ -275,6 +312,12 @@ typedef struct {
     unsigned char background_gradient;
     int background_angle;
     unsigned long background2;
+    /* Hatched and see-through backgrounds (owfpresent.library 3.16, appended), as owf_look's: a
+       see-through background shows white behind it. */
+    unsigned char background_transparency;
+    unsigned char background_hatch;
+    int background_hatch_angle, background_hatch_distance;
+    unsigned long background_hatch_colour;
 } owf_slide;
 
 typedef struct {
@@ -287,6 +330,10 @@ typedef struct {
     unsigned char background_gradient;   /* as owf_slide's (owfpresent.library 3.8, appended) */
     int background_angle;
     unsigned long background2;
+    unsigned char background_transparency;   /* as owf_slide's (owfpresent.library 3.16, appended) */
+    unsigned char background_hatch;
+    int background_hatch_angle, background_hatch_distance;
+    unsigned long background_hatch_colour;
 } owf_master;
 
 typedef struct {
