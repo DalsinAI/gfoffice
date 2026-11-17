@@ -27,4 +27,9 @@ int odg_stencil_find(const char *name);
 const char *odg_stencil_set_name(odg_stencil_set set);
 int odg_stencil_in_set(odg_stencil_set set, int nth);
 
+/* On owfdiag.library (OWF_USE_DIAG_LIBRARY): its calls, once every header that declares them is complete. */
+#if defined(OWF_USE_DIAG_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
+#include "opendiag_proto.h"
+#endif
+
 #endif

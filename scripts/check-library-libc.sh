@@ -20,9 +20,11 @@ CC=${CC:-cc}
 NM=${NM:-nm}
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
-FLAGS="-std=c99 -O1 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables -DOWF_LIBRARY_BUILD -I$OWF/include -I$OWF/src -I$LIB"
+FLAGS="-std=c99 -O1 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables -DOWF_LIBRARY_BUILD -I$OWF/include -I$OWF/src -I$LIB -I$HERE/include"
 mkdir -p "$T/src" "$T/rt"
-for f in "$OWF"/src/*.c "$OWF"/calc/*.c; do
+# owfdiag.library's too: the diagram model and formats, and GFOpenDiag's editing core (build-library.sh's DIAG list)
+. "$HERE/build.d/owfdiag-sources.sh"
+for f in "$OWF"/src/*.c "$OWF"/calc/*.c $OWFDIAG_SRC; do
     case "$f" in
     */owf_sys.c | */owf_kind.c) ;;
     *) "$CC" $FLAGS -c "$f" -o "$T/src/$(basename "$(dirname "$f")")_$(basename "$f" .c).o" 2>"$T/err" || {

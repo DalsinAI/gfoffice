@@ -81,8 +81,12 @@ int odg_set_styles(odg_doc *doc, const char *const *ids, int n, const char *cons
 
 /* ---- Ports and glue ---- */
 typedef enum { ODG_PORT_NONE = -1, ODG_PORT_N, ODG_PORT_E, ODG_PORT_S, ODG_PORT_W } odg_port;
-/* The middle of a box's side. */
+/* The middle of a box's side; odg_port_xy puts it in *at (the call owfdiag.library has: a library call returns
+ * no structure). */
+#if !defined(OWF_USE_DIAG_LIBRARY) || defined(OWF_LIBRARY_BUILD)
 owf_dpoint odg_port_point(const owf_dnum box[4], odg_port port);
+#endif
+void odg_port_xy(const owf_dnum box[4], odg_port port, owf_dpoint *at);
 /* Joins a connector's end (0 its source, 1 its target) to a shape at a port (ODG_PORT_NONE: wherever
  * the line meets it), or (shape NULL) leaves it loose at the point given. One Undo step. */
 int odg_connect(odg_doc *doc, const char *edge, int end, const char *shape, odg_port port,
@@ -121,5 +125,35 @@ int odg_hit(const odg_doc *doc, owf_dnum x, owf_dnum y, owf_dnum tol, char *id, 
 /* odg_hit for the mouse: locked cells (odg_cell_locked) are passed over, so one on top doesn't hide an open one
  * under it. */
 int odg_hit_open(const odg_doc *doc, owf_dnum x, owf_dnum y, owf_dnum tol, char *id, size_t size);
+
+/* ---- The structures' sizes (owfdiag.library) ----
+ * A program on owfdiag.library reads and writes these structures itself (a page's cells, the editing state), so
+ * each one's size is part of the library's ABI, as owf.h's OWF_STRUCT_ are for the other libraries. Their numbers
+ * start at OWF_DSTRUCT_FIRST, past every OWF_STRUCT_, and owf_struct_size answers them on owfdiag.library;
+ * odg_struct_size is its table (0 for a number it doesn't know). New structures go at the end. */
+enum {
+    OWF_DSTRUCT_FIRST = 100,
+    OWF_DSTRUCT_DATTR = OWF_DSTRUCT_FIRST, OWF_DSTRUCT_DATTRS, OWF_DSTRUCT_DPOINT, OWF_DSTRUCT_DGEOMETRY,
+    OWF_DSTRUCT_DCELL, OWF_DSTRUCT_DPAGE, OWF_DSTRUCT_DIAGRAM, OWF_DSTRUCT_DSHAPE_PART, OWF_DSTRUCT_DSHAPE,
+    OWF_DSTRUCT_DITEM, OWF_DSTRUCT_DOC, OWF_DSTRUCT_CLIP, OWF_DSTRUCT_STENCIL, OWF_DSTRUCT_REXX,
+    OWF_DSTRUCT_END
+};
+#if !defined(OWF_USE_DIAG_LIBRARY) || defined(OWF_LIBRARY_BUILD)
+unsigned long odg_struct_size(int which); /* owf_struct_size's, inside the library */
+#endif
+/* Each one's number and sizeof, where opendiag_clip.h, opendiag_stencil.h and opendiag_rexx.h are included. */
+#define ODG_STRUCT_SIZES                                                                                     \
+    { OWF_DSTRUCT_DATTR, sizeof(owf_dattr) }, { OWF_DSTRUCT_DATTRS, sizeof(owf_dattrs) },                   \
+    { OWF_DSTRUCT_DPOINT, sizeof(owf_dpoint) }, { OWF_DSTRUCT_DGEOMETRY, sizeof(owf_dgeometry) },           \
+    { OWF_DSTRUCT_DCELL, sizeof(owf_dcell) }, { OWF_DSTRUCT_DPAGE, sizeof(owf_dpage) },                     \
+    { OWF_DSTRUCT_DIAGRAM, sizeof(owf_diagram) }, { OWF_DSTRUCT_DSHAPE_PART, sizeof(owf_dshape_part) },     \
+    { OWF_DSTRUCT_DSHAPE, sizeof(owf_dshape) }, { OWF_DSTRUCT_DITEM, sizeof(owf_ditem) },                   \
+    { OWF_DSTRUCT_DOC, sizeof(odg_doc) }, { OWF_DSTRUCT_CLIP, sizeof(odg_clip) },                           \
+    { OWF_DSTRUCT_STENCIL, sizeof(odg_stencil) }, { OWF_DSTRUCT_REXX, sizeof(odg_rexx) }
+
+/* On owfdiag.library (OWF_USE_DIAG_LIBRARY): its calls, once every header that declares them is complete. */
+#if defined(OWF_USE_DIAG_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
+#include "opendiag_proto.h"
+#endif
 
 #endif

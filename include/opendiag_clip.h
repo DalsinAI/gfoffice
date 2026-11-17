@@ -13,6 +13,7 @@
 #include "opendiag_core.h"
 
 #define ODG_CLIP_ID 24                   /* bytes of an id Paste gives back */
+typedef char odg_clip_id[ODG_CLIP_ID];   /* one of them */
 #define ODG_CLIP_STEP OWF_DNUM(10)       /* how far each Paste of the same cells lands from the one before */
 
 typedef struct {
@@ -39,13 +40,17 @@ int odg_cut(odg_doc *doc, const char *const *ids, int n, odg_clip *clip);
  * ids of the top cells (in drawing order) go into made[0..max-1] when made is not NULL, and how many there are
  * into *nmade: the app selects them. One Undo step. OWF_ERR_FORMAT when the clipboard is empty or the current
  * layer is hidden or locked; OWF_ERR_MEMORY. */
-int odg_paste(odg_doc *doc, odg_clip *clip, owf_dnum dx, owf_dnum dy, char (*made)[ODG_CLIP_ID], int max,
-              int *nmade);
+int odg_paste(odg_doc *doc, odg_clip *clip, owf_dnum dx, owf_dnum dy, odg_clip_id *made, int max, int *nmade);
 /* Paste as the Edit menu does it: each Paste of the same copy lands ODG_CLIP_STEP further down and right than the
  * one before; the first is ODG_CLIP_STEP from the copied cells, or where they were after a Cut. */
-int odg_paste_next(odg_doc *doc, odg_clip *clip, char (*made)[ODG_CLIP_ID], int max, int *nmade);
+int odg_paste_next(odg_doc *doc, odg_clip *clip, odg_clip_id *made, int max, int *nmade);
 /* Copy and Paste at dx, dy as one Undo step, leaving the clipboard alone. */
-int odg_duplicate(odg_doc *doc, const char *const *ids, int n, owf_dnum dx, owf_dnum dy, char (*made)[ODG_CLIP_ID],
-                  int max, int *nmade);
+int odg_duplicate(odg_doc *doc, const char *const *ids, int n, owf_dnum dx, owf_dnum dy, odg_clip_id *made, int max,
+                  int *nmade);
+
+/* On owfdiag.library (OWF_USE_DIAG_LIBRARY): its calls, once every header that declares them is complete. */
+#if defined(OWF_USE_DIAG_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
+#include "opendiag_proto.h"
+#endif
 
 #endif

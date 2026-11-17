@@ -1,6 +1,6 @@
 /*
  * Opening a program's library (OWF_USE_WRITE_LIBRARY, OWF_USE_CALC_LIBRARY,
- * OWF_USE_PUB_LIBRARY or OWF_USE_PRESENT_LIBRARY; owf.h), or nothing at all
+ * OWF_USE_PUB_LIBRARY, OWF_USE_PRESENT_LIBRARY or OWF_USE_DIAG_LIBRARY; owf.h), or nothing at all
  * when libowf is linked in. Include it in one file per library: the one
  * that holds main(), or, in a program that uses several libraries
  * (OWConvert), each library's own file.
@@ -82,6 +82,16 @@
     { OWF_STRUCT_SLIDE_LAYOUT, sizeof(owf_slide_layout) }, { OWF_STRUCT_KEPT, sizeof(owf_kept) },         \
     { OWF_STRUCT_DECK_PART, sizeof(owf_deck_part) }, { OWF_STRUCT_DECK, sizeof(owf_deck) },               \
     { OWF_STRUCT_DECK_FORMAT, sizeof(owf_deck_format) }
+#elif defined(OWF_USE_DIAG_LIBRARY)
+#include "opendiag_core.h"
+#include "opendiag_clip.h"
+#include "opendiag_stencil.h"
+#include "opendiag_rexx.h"
+#define OWF_LIBRARY_NAME "owfdiag.library"
+#define OWF_LIBRARY_VERSION 1
+#define OWF_LIBRARY_REVISION 0
+#define OWF_LIBRARY_BASE OWFDiagBase
+#define OWF_OPEN_SIZES ODG_STRUCT_SIZES, { OWF_STRUCT_UNZIP, sizeof(owf_unzip) }
 #else
 #define OWF_LIBRARY_NAME "owf.library"
 #define OWF_LIBRARY_VERSION 2

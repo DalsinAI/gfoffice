@@ -31,4 +31,9 @@ int odg_align(odg_doc *doc, const char *const *ids, int n, odg_align_how how);
  * when fewer than three are shapes on the page, or none would move. */
 int odg_distribute(odg_doc *doc, const char *const *ids, int n, int across);
 
+/* On owfdiag.library (OWF_USE_DIAG_LIBRARY): its calls, once every header that declares them is complete. */
+#if defined(OWF_USE_DIAG_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
+#include "opendiag_proto.h"
+#endif
+
 #endif

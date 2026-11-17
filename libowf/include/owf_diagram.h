@@ -287,4 +287,10 @@ int owf_dexcal_write(const owf_diagram *d, int page, unsigned char **data, size_
 }
 #endif
 
+/* On owfdiag.library (OWF_USE_DIAG_LIBRARY): its calls, once the editing core's headers (GFOpenDiag's include/,
+ * opendiag_proto.h) have declared theirs too. */
+#if defined(OWF_USE_DIAG_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
+#include "opendiag_proto.h"
+#endif
+
 #endif

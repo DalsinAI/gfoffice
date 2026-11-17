@@ -46,4 +46,9 @@ int odg_style_apply(odg_doc *doc, const char *const *ids, int n, odg_prop p, con
  * the first that doesn't check in *bad (nothing set), or when no id is a cell on the page; OWF_ERR_MEMORY. */
 int odg_style_apply_all(odg_doc *doc, const char *const *ids, int n, const char *const *texts, int *bad);
 
+/* On owfdiag.library (OWF_USE_DIAG_LIBRARY): its calls, once every header that declares them is complete. */
+#if defined(OWF_USE_DIAG_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
+#include "opendiag_proto.h"
+#endif
+
 #endif
