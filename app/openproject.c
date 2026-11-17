@@ -44,6 +44,7 @@
 #include <string.h>
 
 #include "openproject_core.h"
+#include "openproject_spell.h"
 #include "ow_print.h"
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
@@ -61,7 +62,7 @@ enum {
     M_DAYS, M_WEEKS, M_MONTHS, M_QUARTERS, M_SHOW_BASELINE, M_RESOURCES, M_START, M_GANTT, M_USAGE, M_NETWORK, M_TASK_USAGE, M_GRAPH, M_TRACKING,
     M_SET_BASELINE, M_CLEAR_BASELINE, M_ASSIGN, M_LEVEL, M_CLEAR_LEVELING, M_UPDATE_PROJECT, M_WORKTIME, M_PLAN_CALENDAR, M_TASK_CALENDAR,
     M_INFO,
-    M_FIND, M_FIND_NEXT, M_REPLACE, M_SORT_START, M_SORT_FINISH, M_SORT_NAME, M_SORT_DURATION, M_SORT_BY,
+    M_FIND, M_FIND_NEXT, M_REPLACE, M_SPELL, M_SORT_START, M_SORT_FINISH, M_SORT_NAME, M_SORT_DURATION, M_SORT_BY,
     M_AUTOFILTER_ROW, M_AUTOFILTER, M_FILTER_SUMMARIES, M_GROUP_COLUMN, M_GROUP_DESC,
     M_UPDATE_TASKS, M_PROGRESS_LINES,
     M_COLUMN                                 /* View > Columns: M_COLUMN + the column (OPJ_COL_) */
@@ -113,6 +114,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Find...", "F", 0, 0, (APTR)M_FIND },
     { NM_ITEM, "Find Next", "X", 0, 0, (APTR)M_FIND_NEXT },
     { NM_ITEM, "Replace...", NULL, 0, 0, (APTR)M_REPLACE },
+    { NM_ITEM, "Spelling...", NULL, 0, 0, (APTR)M_SPELL },
     { NM_TITLE, "View", NULL, 0, 0, NULL },
     { NM_ITEM, "Days", "1", CHECKIT | CHECKED, 2 | 4 | 8, (APTR)M_DAYS },
     { NM_ITEM, "Weeks", "2", CHECKIT, 1 | 4 | 8, (APTR)M_WEEKS },
@@ -1906,6 +1908,91 @@ static void find_dialog(void)
     find_next();
 }
 
+/* ---- Spelling: GFOffice's one spell checker, owfspell.library (libowf/include/owf_spell.h) ---- */
+
+static owf_spell *spell;
+
+/* The library and the dictionary, opened the first time they are needed. */
+static int spell_ready(void)
+{
+    char msg[160];
+    if (spell) return 1;
+    if (!owf_spell_library()) {
+        tell("owfspell.library was not found. Install it in LIBS:.");
+        return 0;
+    }
+    if ((spell = owf_spell_open_default(msg, sizeof msg)) != NULL) { set_status(msg); return 1; }
+    tell("No dictionary was found. Install Dictionaries/en_GB.words beside GFOpenProject.");
+    return 0;
+}
+
+static void spell_finish(void)
+{
+    if (spell) owf_spell_close(spell);   /* through the library: only when one was opened */
+    spell = NULL;
+    owf_spell_library_close();
+}
+
+/* Edit > Spelling...: each misspelt word of the tasks' names and notes from the selected task on, the task
+ * selected, with Change... (the first suggestion offered), Skip, Ignore All, Add (to the user's words) and Stop. */
+static void spell_check(void)
+{
+    opj_spell_hit hit;
+    int row = view.selected, field = OPJ_SPELL_NAME, stop_row = -1, stop_field = 0, guard = 0, rc;
+    size_t from = 0, stop_start = 0;
+    if (rexx_busy || !spell_ready()) return;
+    if (usage_mode) {
+        set_status("Spelling: in the Gantt chart or the Network Diagram");
+        return;
+    }
+    while (guard++ < 10000) {
+        char sug[4][OWF_SPELL_WORD], text[400], entered[96];
+        int n, i, pick;
+        size_t used;
+        rc = opj_spell_next(DOC, spell, row, field, from, &hit);
+        if (rc < 0) { tell("Spelling: not enough memory"); break; }
+        if (rc == 0 || (stop_row >= 0 && hit.row == stop_row && hit.field == stop_field && hit.start == stop_start)) {
+            set_status(guard > 1 ? "Spelling checked." : "No misspelt words.");
+            break;
+        }
+        row = hit.row;
+        field = hit.field;
+        view.selected = row;
+        if (network_mode) opj_network_reveal(&view, &net, row);
+        else keep_selection_shown();
+        redraw();
+        n = owf_spell_suggest(spell, hit.word, sug[0], 4);
+        used = (size_t)snprintf(text, sizeof text, "Not in the dictionary: %s\n(task %d, %s)\nSuggestions:", hit.word,
+                                row + 1, field == OPJ_SPELL_NAME ? "its name" : "its notes");
+        for (i = 0; i < n && used < sizeof text; i++)
+            used += (size_t)snprintf(text + used, sizeof text - used, " %s", sug[i]);
+        if (!n && used < sizeof text) snprintf(text + used, sizeof text - used, " none");
+        pick = ask(text, "Change...|Skip|Ignore All|Add|Stop");
+        if (pick <= 0) { set_status("Spelling stopped."); break; }
+        if (pick == 2) {                                  /* Skip: this once, so the check ends back here */
+            if (stop_row < 0) { stop_row = row; stop_field = field; stop_start = hit.start; }
+            from = hit.end;
+            continue;
+        }
+        if (pick == 3 || pick == 4) {
+            if (!(pick == 3 ? owf_spell_ignore(spell, hit.word) : owf_spell_add(spell, hit.word))) {
+                tell("Spelling: not enough memory");
+                break;
+            }
+            from = hit.end;
+            continue;
+        }
+        put_text(entered, sizeof entered, n ? sug[0] : hit.word);
+        if (!ask_text("Spelling", "Change to", entered, sizeof entered)) { from = hit.end; continue; }
+        if (!edit_allowed(OPJ_EDIT_CELL)) break;
+        if ((rc = opj_spell_replace(DOC, &hit, entered)) != OWF_OK) { edit_failed(rc, "Spelling"); break; }
+        from = hit.start + strlen(entered);
+        if (stop_row == row && stop_field == field && hit.start < stop_start)
+            stop_start = stop_start + from - hit.end;     /* the skipped word moved along with the change */
+    }
+    redraw();
+}
+
 /* Replace...: in the selected column of every task (shown or not), as Replace All; one Undo step. */
 static void replace_dialog(void)
 {
@@ -2060,6 +2147,7 @@ static void menu_action(ULONG id, struct MenuItem *item)
         break;
     }
     case M_FIND: find_dialog(); break;
+    case M_SPELL: spell_check(); break;
     case M_FIND_NEXT: find_next(); break;
     case M_REPLACE: replace_dialog(); break;
     case M_SORT_START: sort_one(OPJ_COL_START); break;
@@ -2326,6 +2414,14 @@ static int rexx_do_command(const char *command, char *result, size_t size)
     else if (starts_word_ci(command, "ACTIVATE", &arg)) { if (win) { WindowToFront(win); ActivateWindow(win); } }
     else if (starts_word_ci(command, "DEACTIVATE", &arg)) {
         rc = OPJ_RX_NOW; put_text(app_lasterror, sizeof app_lasterror, "DEACTIVATE: GFOpenProject has no icon to go to");
+    } else if (starts_word_ci(command, "SPELL", &arg)) {   /* COUNT, LIST, CHECK, SUGGEST, ADD, IGNORE (openproject_spell.h) */
+        if (!spell_ready()) {
+            rc = OPJ_RX_NOW;
+            put_text(app_lasterror, sizeof app_lasterror, "SPELL: no dictionary (owfspell.library and Dictionaries/en_GB.words)");
+        } else if ((rc = opj_spell_rexx(DOC, spell, arg, result, size)) != OPJ_RX_OK) {
+            put_text(app_lasterror, sizeof app_lasterror, result);
+            result[0] = 0;
+        }
     } else if (starts_word_ci(command, "FAULT", &arg)) {
         if (!*arg) { rc = OPJ_RX_ERROR; put_text(app_lasterror, sizeof app_lasterror, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result, (LONG)size);
@@ -2537,6 +2633,7 @@ out:
     res_free();
     opj_network_free(&net);
     opj_lines_free(&lines);
+    spell_finish();
     if (rx.doc) opj_doc_free(rx.doc);
     if (AslBase) CloseLibrary(AslBase);
     if (GadToolsBase) CloseLibrary(GadToolsBase);
