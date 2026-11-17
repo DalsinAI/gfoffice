@@ -48,7 +48,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenProject 0.1.21 (16.11.2026)"
+#define VERSION_TEXT "GFOpenProject 0.1.22 (16.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenProject, the project planner of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -67,8 +67,8 @@ enum {
 };
 #define M_FILTER 200                         /* View > Filter: M_FILTER + an OPJ_FILTER_ (All .. Unstarted) */
 #define M_GROUP 220                          /* View > Group By: M_GROUP + an index into group_cols */
-#define DATA_ITEM 19                         /* View's item number of Sort; Filter and Group By follow */
-#define PROGRESS_ITEM 8                      /* Tools' item number of Progress Lines */
+#define DATA_ITEM 20                         /* View's item number of Sort; Filter and Group By follow */
+#define PROGRESS_ITEM 9                      /* Tools' item number of Progress Lines */
 #define NFILTER_ITEMS 7                      /* Filter's items 0 to 6: the filters, one ticked at a time */
 #define NGROUP_ITEMS 7                       /* Group By's items 0 to 6: No Group and six columns */
 static const int group_cols[NGROUP_ITEMS] = {
@@ -76,7 +76,8 @@ static const int group_cols[NGROUP_ITEMS] = {
 };
 /* View's items 10 to 15 are the views, one ticked at a time: the others an item excludes. */
 #define VIEWS_BUT(item) (0xFC00L & ~(1L << (item)))
-#define COLUMNS_ITEM 17                      /* View's item number of Columns */
+#define COLUMNS_ITEM 17                      /* View's item number of Columns; More Columns follows */
+#define MORE_COLUMNS OPJ_COL_WORK            /* the first column in More Columns */
 
 static struct NewMenu menus[] = {
     { NM_TITLE, "Project", NULL, 0, 0, NULL },
@@ -155,11 +156,14 @@ static struct NewMenu menus[] = {
     { NM_SUB, "SV", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_SV) },
     { NM_SUB, "CV", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_CV) },
     { NM_SUB, "Leveling Delay", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_LEVELING_DELAY) },
+    { NM_ITEM, "More Columns", NULL, 0, 0, NULL },            /* a submenu takes 32: work, cost and type here */
     { NM_SUB, "Work", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_WORK) },
     { NM_SUB, "Actual Work", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_ACTUAL_WORK) },
     { NM_SUB, "Remaining Work", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_REMAINING_WORK) },
     { NM_SUB, "Cost", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_COST) },
     { NM_SUB, "Actual Cost", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_ACTUAL_COST) },
+    { NM_SUB, "Type", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_TYPE) },
+    { NM_SUB, "Effort Driven", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_EFFORT_DRIVEN) },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Sort", NULL, 0, 0, NULL },
     { NM_SUB, "by Start Date", NULL, 0, 0, (APTR)M_SORT_START },
@@ -613,27 +617,32 @@ static int edit_allowed(int edit)
 
 /* ---- Task Information (Edit > Task Information..., or a double-click on a bar) ---- */
 
-enum { TI_NAME, TI_DURATION, TI_PERCENT, TI_PREDECESSORS, TI_RESOURCES, TI_CONSTRAINT, TI_DATE, TI_NOTES, TI_N };
+enum { TI_NAME, TI_DURATION, TI_PERCENT, TI_PREDECESSORS, TI_RESOURCES, TI_CONSTRAINT, TI_DATE, TI_NOTES, TI_TYPE,
+       TI_EFFORT, TI_N };
 
 static void task_info(void)
 {
     static const int cols[TI_N] = { OPJ_COL_NAME, OPJ_COL_DURATION, OPJ_COL_PERCENT, OPJ_COL_PREDECESSORS,
-                                    OPJ_COL_RESOURCES, OPJ_COL_CONSTRAINT_TYPE, OPJ_COL_CONSTRAINT_DATE, OPJ_COL_NOTES };
+                                    OPJ_COL_RESOURCES, OPJ_COL_CONSTRAINT_TYPE, OPJ_COL_CONSTRAINT_DATE, OPJ_COL_NOTES,
+                                    OPJ_COL_TYPE, OPJ_COL_EFFORT_DRIVEN };
     static const char *const labels[TI_N] = { "Name", "Duration", "% Complete", "Predecessors", "Resources",
-                                              "Constraint", "Date", "Notes" };
+                                              "Constraint", "Date", "Notes", "Task Type", "Effort Driven" };
     static STRPTR kinds[9];
+    static STRPTR types[] = { (STRPTR)"Fixed Units", (STRPTR)"Fixed Duration", (STRPTR)"Fixed Work", NULL };
     static char was[TI_N][400], now[TI_N][400];
     struct Window *aw;
     struct Gadget *eg = NULL, *g, *gad[TI_N];
     struct NewGadget ng;
     char title[80], why[160];
-    int i, done = 0, row = view.selected, lw = fw * 13 + 12, w = fw * 64, h, kind, kind_was;
+    int i, done = 0, row = view.selected, lw = fw * 13 + 12, w = fw * 64, h, kind, kind_was, type, type_was, summary;
     if (rexx_busy || !edit_allowed(OPJ_EDIT_INFO)) return;
     if (row < 0 || row >= DOC->plan->ntasks) { set_status("Task Information: choose a task first"); redraw(); return; }
     for (i = 0; i < 8; i++) kinds[i] = (STRPTR)opj_constraint_name(i);
     kinds[8] = NULL;
     for (i = 0; i < TI_N; i++) opj_cell_text(DOC, row, cols[i], was[i], sizeof was[i]);
     kind = kind_was = DOC->plan->tasks[row].constraint;
+    type = type_was = DOC->plan->tasks[row].type;            /* a summary's are blank: its gadgets are off */
+    summary = DOC->plan->tasks[row].summary;
     snprintf(title, sizeof title, "Task Information: %.50s", was[TI_NAME]);
     h = (fh + 8) * (TI_N + 1) + 16;
     aw = OpenWindowTags(NULL, WA_Title, (ULONG)title, WA_PubScreen, (ULONG)scr,
@@ -658,6 +667,12 @@ static void task_info(void)
         ng.ng_GadgetID = 10 + i;
         if (i == TI_CONSTRAINT)
             g = gad[i] = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)kinds, GTCY_Active, (ULONG)kind, TAG_DONE);
+        else if (i == TI_TYPE)
+            g = gad[i] = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)types, GTCY_Active, (ULONG)type,
+                                      GA_Disabled, (ULONG)summary, TAG_DONE);
+        else if (i == TI_EFFORT)
+            g = gad[i] = CreateGadget(CHECKBOX_KIND, g, &ng, GTCB_Checked, (ULONG)!strcmp(was[i], "Yes"),
+                                      GA_Disabled, (ULONG)summary, TAG_DONE);
         else
             g = gad[i] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)was[i], GTST_MaxChars, 399, TAG_DONE);
     }
@@ -689,6 +704,11 @@ static void task_info(void)
             if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) done = 1;
             else if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(aw); GT_EndRefresh(aw, TRUE); }
             else if (class == IDCMP_GADGETUP && gg->GadgetID == 10 + TI_CONSTRAINT) kind = code;
+            else if (class == IDCMP_GADGETUP && gg->GadgetID == 10 + TI_TYPE) {
+                type = code;                                 /* Fixed Work is always effort driven */
+                if (type == OWF_TT_FIXED_WORK)
+                    GT_SetGadgetAttrs(gad[TI_EFFORT], aw, NULL, GTCB_Checked, TRUE, TAG_DONE);
+            }
             else if (class == IDCMP_GADGETUP && gg->GadgetID == 2) ok = 1;
             else if (class == IDCMP_GADGETUP && gg->GadgetID == 3) done = 1;
         }
@@ -701,6 +721,15 @@ static void task_info(void)
                 if (i == TI_CONSTRAINT) {
                     if (kind == kind_was) continue;
                     put_text(now[i], sizeof now[i], opj_constraint_name(kind));
+                } else if (i == TI_TYPE) {
+                    if (summary || type == type_was) continue;
+                    put_text(now[i], sizeof now[i], (const char *)types[type]);
+                } else if (i == TI_EFFORT) {
+                    ULONG on = 0;
+                    if (summary) continue;
+                    GT_GetGadgetAttrs(gad[i], aw, NULL, GTCB_Checked, (ULONG)&on, TAG_DONE);
+                    put_text(now[i], sizeof now[i], on ? "Yes" : "No");
+                    if (!strcmp(now[i], was[i])) continue;
                 } else {
                     GT_GetGadgetAttrs(gad[i], aw, NULL, GTST_String, (ULONG)&str, TAG_DONE);
                     put_text(now[i], sizeof now[i], str ? (const char *)str : "");
@@ -720,7 +749,7 @@ static void task_info(void)
                                                                 : "Task Information: %s was not taken",
                          i < TI_N ? labels[i] : "a field");
                 SetWindowTitles(aw, (UBYTE *)why, (UBYTE *)~0);   /* stays open to put it right */
-                if (i < TI_N && i != TI_CONSTRAINT) ActivateGadget(gad[i], aw, NULL);
+                if (i < TI_N && i != TI_CONSTRAINT && i != TI_TYPE && i != TI_EFFORT) ActivateGadget(gad[i], aw, NULL);
             }
         }
     }
@@ -1857,7 +1886,8 @@ static void tick_view(void)
     (usage_mode == OPJ_VIEW_GRAPH ? h : usage_mode == OPJ_VIEW_TASK_USAGE ? k : usage_mode ? u
      : network_mode ? n : view.tracking ? tg : g)->Flags |= CHECKED;
     for (c = 0; c < OPJ_NCOLS; c++) {                       /* View > Columns follows the table */
-        struct MenuItem *it = ItemAddress(menu, FULLMENUNUM(2, COLUMNS_ITEM, c));
+        struct MenuItem *it = ItemAddress(menu, c < MORE_COLUMNS ? FULLMENUNUM(2, COLUMNS_ITEM, c)
+                                                : FULLMENUNUM(2, COLUMNS_ITEM + 1, c - MORE_COLUMNS));
         if (!it) continue;
         if (opj_view_column_shown(&view, c)) it->Flags |= CHECKED;
         else it->Flags &= ~CHECKED;
