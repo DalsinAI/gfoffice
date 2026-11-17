@@ -3260,6 +3260,303 @@ static void test_grid(void)
     ob_close(p);
 }
 
+/* Queries that change rows (core 0.15): update, append and delete made in
+ * the grid or typed, counted first, run all or none, undone as one step,
+ * saved and following renames. */
+static const char *cust_rows(ob_project *p)
+{
+    static ob_query q;
+    ob_qcolumn *c;
+    ob_query_init(&q, "");
+    ob_query_add_table(&q, "Customers");
+    c = ob_query_add_column(&q, "Customers", "Name");
+    c->sort = OB_SORT_UP;
+    ob_query_add_column(&q, "Customers", "Town");
+    ob_query_add_column(&q, "Customers", "Credit");
+    return qrows(p, &q, NULL, 0, -1);
+}
+
+static void test_action_queries(void)
+{
+    ob_project *p = fresh("action.oadb");
+    static ob_query q, back;
+    static ob_table arch;
+    ob_qcolumn *c;
+    ob_field *f;
+    char names[OB_QUERY_PARAMS][OB_VALUE_MAX];
+    char before[1024];
+    int undoable = -1;
+    if (!p) return;
+    five_customers(p);
+    shop_orders(p);
+    snprintf(before, sizeof before, "%s", cust_rows(p));
+    CHECK(!strcmp(ob_qkind_name(OB_QK_UPDATE), "Update") && !strcmp(ob_qkind_name(OB_QK_APPEND), "Append")
+          && !strcmp(ob_qkind_name(OB_QK_DELETE), "Delete") && !strcmp(ob_qkind_name(OB_QKINDS), ""), "kind names");
+
+    /* update: York's credit to 300, its town to Hull */
+    ob_query_init(&q, "Move York");
+    q.kind = OB_QK_UPDATE;
+    ob_query_add_table(&q, "Customers");
+    c = ob_query_add_column(&q, "Customers", "Town");
+    strcpy(c->criteria[0], "york");
+    strcpy(c->to, "Hull");
+    c = ob_query_add_column(&q, "Customers", "Credit");
+    strcpy(c->to, "300");
+    CHECK(!strcmp(qsql(p, &q), "UPDATE \"Customers\" SET \"Town\" = 'Hull', \"Credit\" = 30000 WHERE rowid IN"
+                               " (SELECT (\"Customers\".rowid) AS \"rowid\" FROM \"Customers\""
+                               " WHERE \"Customers\".\"Town\" = 'York' COLLATE NOCASE)"), "update SQL: %s", qsql(p, &q));
+    CHECK(ob_query_total(p, &q, NULL) < 0, "an update has no rows to show");
+    CHECK_ERR(p, "Move York is an Update query: it changes rows, so it is run, not opened");
+    CHECK(!strncmp(qrows(p, &q, NULL, 0, -1), "error: Move York is an Update query", 35), "nor rows");
+    CHECK(ob_query_preview(p, &q, NULL) == 2, "preview: two rows: %s", ob_error(p));
+    CHECK(!strcmp(cust_rows(p), before), "a preview keeps nothing: %s", cust_rows(p));
+    CHECK(ob_query_run(p, &q, NULL, &undoable) == 2 && undoable == 1, "run: %s", ob_error(p));
+    CHECK(!strcmp(cust_rows(p), "Ann|Leeds|1,500.00;bob|Hull|300.00;Cy|Hull|99.99;dan|Hull|300.00;Eve|Leeds|-5.00"),
+          "updated: %s", cust_rows(p));
+    CHECK(!strcmp(ob_undo_name(p), "Update Query Move York: 2 rows in Customers"), "undo name: %s", ob_undo_name(p));
+    CHECK(ob_undo(p), "undo the update: %s", ob_error(p));
+    CHECK(!strcmp(cust_rows(p), before), "undone: %s", cust_rows(p));
+
+    /* a value that breaks a rule: nothing changes */
+    strcpy(q.columns[0].to, "Paris");
+    CHECK(ob_query_preview(p, &q, NULL) < 0, "a town that isn't a choice");
+    CHECK_ERR(p, "Town must be one of: Leeds,York,Hull");
+    strcpy(q.columns[0].to, "='Paris'");
+    CHECK(ob_query_run(p, &q, NULL, NULL) < 0, "a rule broken while running");
+    CHECK_ERR(p, "Town must be one of its choices");
+    CHECK(!strcmp(cust_rows(p), before), "all or none: %s", cust_rows(p));
+    /* =SQL, empty and a question */
+    strcpy(q.columns[0].to, "");
+    strcpy(q.columns[1].to, "=\"Customers\".\"Credit\" * 2");
+    c = ob_query_add_column(&q, "Customers", "Email");
+    strcpy(c->to, "empty");
+    c = ob_query_add_column(&q, "Customers", "Member");
+    strcpy(c->to, "[Members now?]");
+    CHECK(ob_query_params(p, &q, names, OB_QUERY_PARAMS) == 1 && !strcmp(names[0], "Members now?"), "a question: %s", names[0]);
+    {
+        const char *yes[] = { "yes" }, *bad[] = { "maybe" };
+        CHECK(ob_query_run(p, &q, bad, NULL) < 0, "a bad answer");
+        CHECK_ERR(p, "Members now?: ");
+        CHECK(ob_query_run(p, &q, yes, &undoable) == 2 && undoable, "=SQL, empty and an answer: %s", ob_error(p));
+    }
+    CHECK(!strcmp(cust_rows(p), "Ann|Leeds|1,500.00;bob|York|;Cy|Hull|99.99;dan|York|500.00;Eve|Leeds|-5.00"),
+          "doubled: %s", cust_rows(p));
+    CHECK(ob_undo(p) && !strcmp(cust_rows(p), before), "undone again: %s", cust_rows(p));
+    /* what an update can't do */
+    ob_query_init(&q, "Bad");
+    q.kind = OB_QK_UPDATE;
+    ob_query_add_table(&q, "Customers");
+    ob_query_add_column(&q, "Customers", "Name");
+    CHECK(!ob_query_check(p, &q), "no Update To");
+    CHECK_ERR(p, "Bad: give a field of Customers a value in Update To");
+    c = ob_query_add_column(&q, "Customers", "id");
+    strcpy(c->to, "7");
+    CHECK(!ob_query_check(p, &q), "the Counter");
+    CHECK_ERR(p, "id is a Counter: its numbers can't be changed");
+    strcpy(c->field, "Name");
+    q.columns[0].total = OB_TOTAL_COUNT;
+    CHECK(!ob_query_check(p, &q), "a total");
+    CHECK_ERR(p, "Bad: an Update query has no totals");
+    q.columns[0].total = OB_TOTAL_NONE;
+    strcpy(q.columns[0].to, "x");
+    CHECK(!ob_query_check(p, &q), "twice");
+    CHECK_ERR(p, "Bad: Name is changed twice");
+    q.columns[0].to[0] = 0;
+    strcpy(q.target, "Orders");
+    CHECK(!ob_query_check(p, &q), "a target not in the query");
+    CHECK_ERR(p, "an Update query changes one of its own tables, and Orders isn't one");
+    q.target[0] = 0;
+    strcpy(c->to, "empty");
+    CHECK(!ob_query_check(p, &q), "a required field emptied");
+    CHECK_ERR(p, "Name must be filled in");
+
+    /* update through a join: orders of Leeds customers get 1.00 more */
+    ob_query_init(&q, "Leeds dearer");
+    q.kind = OB_QK_UPDATE;
+    ob_query_add_table(&q, "Customers");
+    ob_query_add_table(&q, "Orders");
+    strcpy(q.target, "orders");
+    c = ob_query_add_column(&q, "Customers", "Town");
+    strcpy(c->criteria[0], "Leeds");
+    c = ob_query_add_column(&q, "Orders", "Total");
+    strcpy(c->to, "=\"Orders\".\"Total\" + 100");
+    CHECK(ob_query_preview(p, &q, NULL) == 2, "two Leeds orders: %s", ob_error(p));
+
+    /* delete: refused by a Lookup that refuses, all or none */
+    ob_query_init(&q, "Drop York");
+    q.kind = OB_QK_DELETE;
+    ob_query_add_table(&q, "Customers");
+    c = ob_query_add_column(&q, "Customers", "Town");
+    strcpy(c->criteria[0], "York");
+    CHECK(!strcmp(qsql(p, &q), "DELETE FROM \"Customers\" WHERE rowid IN (SELECT (\"Customers\".rowid) AS \"rowid\""
+                               " FROM \"Customers\" WHERE \"Customers\".\"Town\" = 'York' COLLATE NOCASE)"), "delete SQL: %s", qsql(p, &q));
+    CHECK(ob_query_run(p, &q, NULL, NULL) < 0, "dan has orders");
+    CHECK_ERR(p, "That would leave a row looking up a row that isn't there");
+    CHECK(!strcmp(cust_rows(p), before), "nothing deleted: %s", cust_rows(p));
+    strcpy(c->to, "x");
+    CHECK(!ob_query_check(p, &q), "a delete changes no fields");
+    CHECK_ERR(p, "a Delete query changes no fields");
+    c->to[0] = 0;
+    strcpy(c->criteria[0], "Hull");
+    c = ob_query_add_column(&q, "Customers", "Name");
+    strcpy(c->criteria[0], "nobody");
+    CHECK(ob_query_preview(p, &q, NULL) == 0, "no rows picked");
+    c->criteria[0][0] = 0;
+    /* Cy (Hull) has an order too: delete Eve's order first, then Eve */
+    ob_query_init(&back, "Eve's orders");
+    back.kind = OB_QK_DELETE;
+    ob_query_add_table(&back, "Orders");
+    ob_query_add_table(&back, "Customers");
+    strcpy(back.target, "Orders");
+    c = ob_query_add_column(&back, "Customers", "Name");
+    strcpy(c->criteria[0], "Eve");
+    CHECK(ob_query_run(p, &back, NULL, &undoable) == 1 && undoable, "Eve's order: %s", ob_error(p));
+    strcpy(q.columns[0].criteria[0], "Leeds");
+    strcpy(q.columns[1].criteria[0], "Eve");
+    CHECK(ob_query_run(p, &q, NULL, &undoable) == 1 && undoable, "delete Eve: %s", ob_error(p));
+    CHECK(!strcmp(cust_rows(p), "Ann|Leeds|1,500.00;bob|York|;Cy|Hull|99.99;dan|York|250.00"), "Eve gone: %s", cust_rows(p));
+    CHECK(!strcmp(ob_undo_name(p), "Delete Query Drop York: 1 row in Customers"), "undo name: %s", ob_undo_name(p));
+    CHECK(ob_undo(p) && ob_undo(p), "undo both: %s", ob_error(p));
+    CHECK(!strcmp(cust_rows(p), before), "Eve back with her key: %s", cust_rows(p));
+    {
+        static ob_query o;
+        ob_query_init(&o, "");
+        ob_query_add_table(&o, "Orders");
+        ob_query_add_column(&o, "Orders", "Customer");
+        ob_query_add_column(&o, "Orders", "Total");
+        CHECK(!strcmp(qrows(p, &o, NULL, 0, -1), "1|10.00;1|2.50;2|100.00;3|7.25;5|1.00"), "orders back: %s", qrows(p, &o, NULL, 0, -1));
+    }
+
+    /* append: York customers into an archive table, with a total */
+    ob_table_init(&arch, "Archive");
+    f = ob_table_add_field(&arch, "Who", OB_TEXT);
+    f->required = 1;
+    f = ob_table_add_field(&arch, "Owed", OB_CURRENCY);
+    f = ob_table_add_field(&arch, "Orders", OB_INTEGER);
+    CHECK(ob_table_create(p, &arch), "Archive: %s", ob_error(p));
+    ob_query_init(&q, "Keep York");
+    q.kind = OB_QK_APPEND;
+    strcpy(q.target, "Archive");
+    ob_query_add_table(&q, "Customers");
+    c = ob_query_add_column(&q, "Customers", "Name");
+    strcpy(c->to, "Who");
+    c->sort = OB_SORT_UP;
+    c = ob_query_add_column(&q, "Customers", "Credit");
+    strcpy(c->to, " owed ");
+    c = ob_query_add_column(&q, "Customers", "Town");
+    strcpy(c->criteria[0], "York");
+    CHECK(!strcmp(qsql(p, &q), "INSERT INTO \"Archive\"(\"Who\", \"Owed\") SELECT \"Customers\".\"Name\" AS \"Name\","
+                               " \"Customers\".\"Credit\" AS \"Credit limit\" FROM \"Customers\""
+                               " WHERE \"Customers\".\"Town\" = 'York' COLLATE NOCASE ORDER BY \"Customers\".\"Name\" COLLATE NOCASE"),
+          "append SQL: %s", qsql(p, &q));
+    CHECK(ob_query_preview(p, &q, NULL) == 2 && ob_row_total(p, "Archive") == 0, "append preview: %s", ob_error(p));
+    CHECK(ob_query_run(p, &q, NULL, &undoable) == 2 && undoable && ob_row_total(p, "Archive") == 2, "append: %s", ob_error(p));
+    CHECK(!strcmp(ob_undo_name(p), "Append Query Keep York: 2 rows in Archive"), "undo name: %s", ob_undo_name(p));
+    CHECK(ob_undo(p) && ob_row_total(p, "Archive") == 0, "append undone: %s", ob_error(p));
+    /* append with totals: each customer's order count */
+    ob_query_init(&q, "Count orders");
+    q.kind = OB_QK_APPEND;
+    strcpy(q.target, "Archive");
+    ob_query_add_table(&q, "Customers");
+    ob_query_add_table(&q, "Orders");
+    c = ob_query_add_column(&q, "Customers", "Name");
+    c->total = OB_TOTAL_GROUP;
+    strcpy(c->to, "Who");
+    c = ob_query_add_column(&q, "Orders", "Total");
+    c->total = OB_TOTAL_COUNT;
+    strcpy(c->to, "Orders");
+    CHECK(ob_query_run(p, &q, NULL, NULL) == 4 && ob_row_total(p, "Archive") == 4, "grouped append: %s", ob_error(p));
+    strcpy(q.columns[1].to, "Who");
+    CHECK(!ob_query_check(p, &q), "two columns to one field");
+    CHECK_ERR(p, "Count orders: two columns go to Who");
+    strcpy(q.columns[1].to, "Postcode");
+    CHECK(!ob_query_check(p, &q), "no such field");
+    CHECK_ERR(p, "Archive has no field Postcode to append to");
+    q.columns[0].to[0] = q.columns[1].to[0] = 0;
+    CHECK(!ob_query_check(p, &q), "nothing appended");
+    CHECK_ERR(p, "give a column the field of Archive it goes to in Append To");
+    strcpy(q.columns[1].to, "Orders");
+    q.columns[0].to[0] = 0;
+    CHECK(!ob_query_check(p, &q), "a required field left out");
+    CHECK_ERR(p, "Who must be filled in: give it a column in Append To");
+
+    /* saved, read back, and following a rename of the target */
+    ob_query_init(&q, "Keep York");
+    q.kind = OB_QK_APPEND;
+    strcpy(q.target, "Archive");
+    ob_query_add_table(&q, "Customers");
+    c = ob_query_add_column(&q, "Customers", "Name");
+    strcpy(c->to, "Who");
+    CHECK(ob_query_save(p, &q), "save an append: %s", ob_error(p));
+    CHECK(ob_query_get(p, "Keep York", &back) && back.kind == OB_QK_APPEND && !strcmp(back.target, "Archive")
+          && !strcmp(back.columns[0].to, "Who"), "read back: %d %s", back.kind, back.target);
+    CHECK(ob_query_save_view(p, &back, "Kept") == 0, "an append is no view");
+    CHECK_ERR(p, "Keep York is an Append query");
+    CHECK(ob_table_rename(p, "Archive", "Old customers"), "rename: %s", ob_error(p));
+    CHECK(ob_query_get(p, "Keep York", &back) && !strcmp(back.target, "Old customers"), "target follows: %s", back.target);
+    CHECK(strstr(qsql(p, &back), "INSERT INTO \"Old customers\"(\"Who\")") != NULL, "SQL follows: %s", qsql(p, &back));
+
+    /* typed SQL */
+    ob_query_init(&q, "Typed");
+    q.kind = OB_QK_UPDATE;
+    q.sql_only = 1;
+    strcpy(q.sql, "UPDATE Customers SET Credit = Credit + :Extra WHERE Town = 'Leeds';");
+    CHECK(ob_query_params(p, &q, names, OB_QUERY_PARAMS) == 1 && !strcmp(names[0], "Extra"), "typed question: %s", names[0]);
+    {
+        const char *extra[] = { "100" };
+        CHECK(ob_query_run(p, &q, extra, &undoable) == 2 && undoable, "typed update: %s", ob_error(p));
+        CHECK(ob_undo(p) && !strcmp(cust_rows(p), before), "typed undone: %s", cust_rows(p));
+    }
+    CHECK(ob_query_save(p, &q) && ob_query_get(p, "Typed", &back) && back.sql_only && back.kind == OB_QK_UPDATE
+          && strstr(back.sql, ":Extra"), "typed saved: %d %d %s", back.sql_only, back.kind, back.sql);
+    strcpy(q.sql, "DELETE FROM Customers");
+    CHECK(!ob_query_check(p, &q), "the wrong kind");
+    CHECK_ERR(p, "Typed: an Update query's SQL is UPDATE");
+    strcpy(q.sql, "SELECT * FROM Customers");
+    CHECK(!ob_query_check(p, &q), "a typed read");
+    CHECK_ERR(p, "a query that reads is a Select query");
+    strcpy(q.sql, "UPDATE oadb_queries SET sql = ''");
+    CHECK(!ob_query_check(p, &q), "the project's own tables");
+    CHECK_ERR(p, "oadb_queries isn't one of the project's tables");
+    strcpy(q.sql, "DROP TABLE Customers");
+    CHECK(!ob_query_check(p, &q), "no DDL");
+    CHECK_ERR(p, "it may only add, change or delete rows of one table");
+    strcpy(q.sql, "UPDATE Customers SET Credit = 1; DELETE FROM Orders");
+    CHECK(!ob_query_check(p, &q), "two statements");
+    CHECK_ERR(p, "is one statement");
+    strcpy(q.sql, "UPDATE Customers SET Credit = 1 RETURNING Name");
+    CHECK(!ob_query_check(p, &q), "RETURNING");
+    CHECK_ERR(p, "has no RETURNING");
+    q.kind = OB_QK_DELETE;
+    strcpy(q.sql, "DELETE FROM Orders WHERE Customer = (SELECT id FROM Customers WHERE Name = 'Cy')");
+    CHECK(ob_query_run(p, &q, NULL, &undoable) == 1 && undoable, "typed delete: %s", ob_error(p));
+    CHECK(ob_undo(p), "typed delete undone: %s", ob_error(p));
+    q.kind = OB_QK_APPEND;
+    strcpy(q.sql, "INSERT OR REPLACE INTO \"Old customers\"(id, Who) VALUES(1, 'Dan')");
+    CHECK(ob_query_run(p, &q, NULL, &undoable) == 1 && !undoable && ob_undo_count(p) == 0, "REPLACE: no undo: %s", ob_error(p));
+
+    /* a cascade: runs, with no undo */
+    {
+        static ob_table o2;
+        orders(&o2, OB_DELETE_CASCADE);
+        strcpy(o2.name, "Lines");
+        CHECK(ob_table_create(p, &o2), "Lines: %s", ob_error(p));
+        CHECK(ob_row_add(p, "Lines", 2, (const char *[]){ "Customer", "Total" }, (const char *[]){ "4", "1" }, NULL),
+              "a line: %s", ob_error(p));
+        ob_query_init(&q, "Drop bob");
+        q.kind = OB_QK_DELETE;
+        ob_query_add_table(&q, "Customers");
+        c = ob_query_add_column(&q, "Customers", "Name");
+        strcpy(c->criteria[0], "bob");
+        CHECK(ob_query_run(p, &q, NULL, &undoable) == 1 && !undoable && ob_undo_count(p) == 0 && ob_row_total(p, "Lines") == 0,
+              "cascade: %s", ob_error(p));
+        q.sql_only = 1;
+        strcpy(q.sql, "DELETE FROM Customers WHERE Name = 'nobody'");
+        CHECK(ob_query_check(p, &q), "typed delete with a cascade is one table: %s", ob_error(p));
+    }
+    ob_close(p);
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1) {
@@ -3295,6 +3592,7 @@ int main(int argc, char **argv)
     test_undo();
     test_csv_options();
     test_grid();
+    test_action_queries();
     test_relation_draw();
     test_dbf();
     test_rexx_rows();

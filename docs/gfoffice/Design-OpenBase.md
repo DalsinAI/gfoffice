@@ -314,6 +314,51 @@ The generator is plain C and host-tested: grids in, SQL out, compared with the
 expected text; then the SQL run on the same SQLite on the PC against a small
 fixture database, and the rows compared.
 
+### 5.6 Queries that change rows (core 0.15)
+
+A query does one of four things (`ob_qkind`): Select reads, as before;
+Update, Append and Delete change rows. An action query is designed in the
+same grid, and changes the rows that grid would read:
+
+- **Update**: each column of the target table (one of the query's tables;
+  the first unless named) with something in **Update To** is set, in every
+  row the criteria pick. Update To is a value in the field's own form
+  (`Leeds`, `12.50`, `1/12/2026`, checked as a criterion's value is),
+  `empty`, a `[question]`, or `=SQL` for an expression
+  (`= "Products"."Price" * 1.1`). A Counter can't be changed; there are no
+  totals. Tables joined in only pick rows.
+- **Append**: the rows it reads (sorted, grouped and totalled as a Select
+  query's are) are added to the target, any table: each column with a
+  field's name in **Append To** fills that field; the others only pick
+  rows. A required field with no default must be given one.
+- **Delete**: the target's rows the criteria pick are deleted, as from the
+  datasheet: a Lookup elsewhere refuses, cascades or clears.
+
+The statement is the Select query's SQL wrapped: `UPDATE t SET ... WHERE
+rowid IN (SELECT t.rowid ...)`, `DELETE FROM t WHERE rowid IN (...)`,
+`INSERT INTO t(...) SELECT ...`. Typed SQL may be an action query too: one
+`UPDATE`, `INSERT` or `DELETE` of the query's kind, writing one of the
+project's tables (SQLite's authorizer, while it is prepared, refuses every
+other kind of statement, the project's own `oadb_` tables and SQLite's, a
+second table that isn't a Lookup's cascade, and `RETURNING`).
+
+Running one is two calls: `ob_query_preview` runs it inside a savepoint,
+counts the rows it adds, changes or deletes and takes it all back, so the
+window can say "This will change 12 rows" (and a rule it would break is
+said then); `ob_query_run` does it, all or none. It is one step on the
+Undo list ("Update Query Raise prices: 3 rows in Products"): a temporary
+trigger on the target keeps each row as it was (or the rowid of each row
+added) while the statement runs, and Undo puts them back. When that can't
+say what the statement did (more than `OB_UNDO_ROWS` rows, triggers of the
+project's own on the target, a cascade or clear into another table, an
+upsert or `REPLACE`) it runs without a step and the Undo list is emptied.
+
+Saved, an action query's grid is `oadb query 3` (its kind, its target and
+each column's To); typed action SQL keeps its kind there too. An older
+GFOpenBase reads the stored SQL, sees it changes rows and refuses to run
+it. A table's rename follows into the target and Update To's `"Table".`.
+Rows, totals, CSV and views refuse an action query.
+
 ## 6. Forms
 
 ### 6.1 Auto forms
