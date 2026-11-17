@@ -116,11 +116,12 @@ static unsigned long pdf_sum(void)
     return s;
 }
 
-/* the sums from main 3d40fb09, before the move (SHARED_GOLDEN_PRINT built against it) */
-#define GOLDEN_PNG 0x00000000UL
-#define GOLDEN_ILBM 0x00000000UL
-#define GOLDEN_BANDS 0x00000000UL
-#define GOLDEN_PDF 0x00000000UL
+/* the sums from main 3d40fb09, before the move (SHARED_GOLDEN_PRINT built against it on a 64-bit PC, as the
+ * host tests run: the bands' sum takes an unsigned long's bytes) */
+#define GOLDEN_PNG 0x26EC8768UL
+#define GOLDEN_ILBM 0x89B17BC4UL
+#define GOLDEN_BANDS 0x0A2DDB77UL
+#define GOLDEN_PDF 0x5C6BC65DUL
 
 #ifndef SHARED_GOLDEN_PRINT
 static void test_unchanged(void)
