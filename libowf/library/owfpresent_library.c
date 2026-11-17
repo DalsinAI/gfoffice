@@ -59,13 +59,16 @@
  * 3.16: hatching, see-through fills and shadows: owf_look ends with transparency, the hatch fields and the
  * shadow fields (so owf_obj is larger), and owf_slide and owf_master end with background_transparency and
  * the background hatch fields, so a program's size check refuses 3.15 and before. No call changes.
+ * 3.17 (3.14 is #382's, 3.15 #262's, 3.16 #412's): owf_para.para_format_change and
+ * owf_doc.para_format_changes (owfwrite.library 3.24, libowf 1.21), so owf_para and owf_doc are larger and a
+ * program's size check refuses 3.16 and before. No call changes.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfpresent.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 16
-#define OWF_LIB_VERS "3.16"
+#define OWF_LIB_REVISION 17
+#define OWF_LIB_VERS "3.17"
 #define OWF_LIB_DATE "16.11.2026"
 #define OWF_LIB_CALLS_H "owfpresent_calls.h"
 #include "owf_libbase.h"
