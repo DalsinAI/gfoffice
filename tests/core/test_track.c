@@ -1286,7 +1286,7 @@ static const char *para_format_changes_dump(const owf_doc *doc)
     return buf;
 }
 
-/* 1.22.1: a paragraph with a tracked paragraph format change that also holds a text box keeps the change
+/* 1.23.1: a paragraph with a tracked paragraph format change that also holds a text box keeps the change
  * through ODT (the box's own paragraphs must not take or clear it), and every change has a paragraph */
 static void test_para_format_box(void)
 {

@@ -769,7 +769,7 @@ static void text_box_story(odt *o, const owf_xml_node *box, owf_story *into)
     void *marks = malloc(sizeof o->marks);           /* 2.0.21: the paragraph's own bookmarks, round the box's */
     if (marks) memcpy(marks, o->marks, sizeof o->marks);
     else nmarks = 0;
-    /* 1.22.1: the outer paragraph's format changes wait too: its paragraph change's number, and a run
+    /* 1.23.1: the outer paragraph's format changes wait too: its paragraph change's number, and a run
      * change open across the box (the box's own paragraphs have their own) */
     int para_fc = o->para_fc, fc_open = o->fc_open;
     const char *fc_id = o->fc_id;
@@ -796,7 +796,7 @@ static void text_box_story(odt *o, const owf_xml_node *box, owf_story *into)
     if (marks) memcpy(o->marks, marks, sizeof o->marks);
     free(marks);
     o->nmarks = nmarks;
-    o->para_fc = para_fc;                            /* 1.22.1 */
+    o->para_fc = para_fc;                            /* 1.23.1 */
     o->fc_open = fc_open;
     o->fc_id = fc_id;
     o->fc_chg = fc_chg;
