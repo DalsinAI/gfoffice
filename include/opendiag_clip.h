@@ -49,6 +49,7 @@ int odg_duplicate(odg_doc *doc, const char *const *ids, int n, owf_dnum dx, owf_
                   int *nmade);
 
 /* On owfdiag.library (OWF_USE_DIAG_LIBRARY): its calls, once every header that declares them is complete. */
+#define OPENDIAG_CLIP_H_DONE
 #if defined(OWF_USE_DIAG_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
 #include "opendiag_proto.h"
 #endif

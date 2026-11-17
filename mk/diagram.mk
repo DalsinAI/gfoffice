@@ -392,3 +392,12 @@ test: diagram-app-calls-check
 check: diagram-app-calls-check
 
 .PHONY: diagram-app-calls-check
+
+# A file on owfdiag.library may include the diagram headers in any order (include/opendiag_proto.h).
+diagram-proto-check:
+	tests/diag/check_proto_order.sh $(CC)
+
+test: diagram-proto-check
+check: diagram-proto-check
+
+.PHONY: diagram-proto-check

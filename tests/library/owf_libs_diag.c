@@ -160,7 +160,7 @@ static void rexx(const owf_libs_env *e)
     }
     snprintf(cmd, sizeof cmd, "GETVALUE %s", id);
     LCHECK(e, r == ODG_RX_OK && odg_rexx_command(rx, cmd, result, sizeof result) == ODG_RX_OK &&
-           !strcmp(result, "Hello"), "%s: ARexx SAVEAS and OPEN through the library's files (%s)", e->tag,
+           !strcmp(result, "Hello"), "%s: ARexx SAVEAS and OPEN through the library's files (%.80s)", e->tag,
            r == ODG_RX_OK ? "read back" : rx->lasterror);
     unit_delete_file(path);
     LCHECK(e, odg_rexx_format("x.svg") == ODG_FILE_SVG && odg_rexx_format("x.drawio") == ODG_FILE_DRAWIO,

@@ -47,6 +47,7 @@ int odg_style_apply(odg_doc *doc, const char *const *ids, int n, odg_prop p, con
 int odg_style_apply_all(odg_doc *doc, const char *const *ids, int n, const char *const *texts, int *bad);
 
 /* On owfdiag.library (OWF_USE_DIAG_LIBRARY): its calls, once every header that declares them is complete. */
+#define OPENDIAG_STYLE_H_DONE
 #if defined(OWF_USE_DIAG_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
 #include "opendiag_proto.h"
 #endif

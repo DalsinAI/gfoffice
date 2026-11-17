@@ -99,6 +99,7 @@ int odg_mind_key_do(odg_doc *doc, const char *node, odg_mind_key key, char *out,
 const char *odg_mind_why(const odg_doc *doc, const char *node, odg_mind_key key);
 
 /* On owfdiag.library (OWF_USE_DIAG_LIBRARY): its calls, once every header that declares them is complete. */
+#define OPENDIAG_MIND_H_DONE
 #if defined(OWF_USE_DIAG_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
 #include "opendiag_proto.h"
 #endif

@@ -57,6 +57,7 @@ enum { ODG_FILE_DRAWIO, ODG_FILE_SVG, ODG_FILE_PNG, ODG_FILE_PDF, ODG_FILE_ILBM,
 int odg_rexx_format(const char *file);
 
 /* On owfdiag.library (OWF_USE_DIAG_LIBRARY): its calls, once every header that declares them is complete. */
+#define OPENDIAG_REXX_H_DONE
 #if defined(OWF_USE_DIAG_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
 #include "opendiag_proto.h"
 #endif

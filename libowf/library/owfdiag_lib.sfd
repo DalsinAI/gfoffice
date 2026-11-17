@@ -8,7 +8,8 @@
 * types; new calls go at the end. The first 17, libowf's shared calls
 * (memory, reports, kinds, zip), are the same calls at the same offsets in
 * all of GFOffice's libraries (docs/suite/owf-libraries.md). An array
-* argument (owf_dnum box[4]) is its pointer here. odg_port_point returns a
+* argument (owf_dnum box[4]) is written as the header has it, so the clib
+* prototype agrees; it goes in one register, as its pointer. odg_port_point returns a
 * structure, which a library call can't: odg_port_xy is the call
 * (opendiag_proto.h puts odg_port_point back on top of it).
 ==base _OWFDiagBase
@@ -70,13 +71,13 @@ owf_dnum owf_dnum_parse(const char *s) (a0)
 void owf_dnum_format(owf_dnum n, char *buf, size_t size) (d0,a0,d1)
 int owf_drawio_read(const unsigned char *data, size_t length, owf_diagram *d) (a0,d0,a1)
 int owf_drawio_write(const owf_diagram *d, int compressed, unsigned char **data, size_t *length) (a0,d0,a1,a2)
-int owf_dcell_box(const owf_dpage *p, const owf_dcell *c, owf_dnum *box) (a0,a1,a2)
+int owf_dcell_box(const owf_dpage *p, const owf_dcell *c, owf_dnum box[4]) (a0,a1,a2)
 owf_dpoint *owf_dedge_path(const owf_dpage *p, const owf_dcell *e, int *n) (a0,a1,a2)
 int owf_dcell_shown(const owf_dpage *p, const owf_dcell *c) (a0,a1)
 int owf_dstyle_is(const char *style, const char *word) (a0,a1)
 char *owf_dlabel_text(const char *value, int html, size_t *length) (a0,d0,a1)
-int owf_dpage_bounds(const owf_dpage *p, owf_dnum *box) (a0,a1)
-int owf_dshape_outline(const char *style, const owf_dnum *box, owf_dshape *s) (a0,a1,a2)
+int owf_dpage_bounds(const owf_dpage *p, owf_dnum box[4]) (a0,a1)
+int owf_dshape_outline(const char *style, const owf_dnum box[4], owf_dshape *s) (a0,a1,a2)
 const char *owf_dshape_name(const char *style) (a0)
 int owf_dsvg_write(const owf_diagram *d, int page, unsigned char **data, size_t *length) (a0,d0,a1,a2)
 int owf_dsvg_read(const unsigned char *data, size_t length, owf_diagram *d) (a0,d0,a1)
@@ -112,7 +113,7 @@ int odg_delete(odg_doc *doc, const char *const *ids, int n) (a0,a1,d0)
 int odg_set_value(odg_doc *doc, const char *id, const char *value) (a0,a1,a2)
 int odg_set_style(odg_doc *doc, const char *const *ids, int n, const char *key, const char *value) (a0,a1,d0,a2,a3)
 int odg_set_styles(odg_doc *doc, const char *const *ids, int n, const char *const *keys, const char *const *values, int nkeys) (a0,a1,d0,a2,a3,d1)
-void odg_port_xy(const owf_dnum *box, odg_port port, owf_dpoint *at) (a0,d0,a1)
+void odg_port_xy(const owf_dnum box[4], odg_port port, owf_dpoint *at) (a0,d0,a1)
 int odg_connect(odg_doc *doc, const char *edge, int end, const char *shape, odg_port port, const owf_dpoint *loose) (a0,a1,d0,a2,d1,a3)
 int odg_route(odg_doc *doc, const char *edge) (a0,a1)
 int odg_layer_count(const odg_doc *doc) (a0)
