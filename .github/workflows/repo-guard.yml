@@ -8,6 +8,7 @@
 # every three days.
 name: Repo guard
 on:
+  pull_request:
   pull_request_target:
     types: [opened, edited, reopened]
   issues:
@@ -30,7 +31,22 @@ concurrency:
   # one group per item, so a burst of comments never cancels a queued run
   group: repo-guard-${{ github.event_name }}-${{ github.event.comment.id || github.event.review.id || github.event.pull_request.number || github.event.issue.number || github.sha }}
 jobs:
+  tree:
+    # the tree itself: no assistant files, names or Co-Authored-By lines
+    # (scripts/check-attribution.sh, also `make attribution-check`).
+    # Read-only: it runs on push and pull_request, never pull_request_target.
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - run: sh tests/repo/test_attribution.sh && sh scripts/check-attribution.sh .
   guard:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -44,7 +60,8 @@ jobs:
               new RegExp(`<!--\\s*${A}-projects-attribution`, 'i'),
               new RegExp(`${A}\\.(ai|com)/`, 'i'),
               new RegExp(`generated (by|with) \\[?${A}`, 'i'),
-              new RegExp(`^\\s*co-authored-by:.*(${A}|${B})`, 'i'),
+              new RegExp(`^\\s*co-authored-by:`, 'i'),
+              new RegExp(`\\b${A}/project-thread`, 'i'),
               new RegExp(`^\\s*${A}-session:`, 'i'),
               new RegExp(`noreply@${B}\\.com`, 'i'),
             ];
@@ -126,8 +143,11 @@ jobs:
               const ours = e => /^(121399723\+SacredTrees@users\.noreply\.github\.com|noreply@github\.com)$/i.test(e || '');
               const who = (p.commits || []).filter(c => !ours(c.author && c.author.email) || !ours(c.committer && c.committer.email));
               for (const c of who) core.error(`commit ${c.id.slice(0, 8)}: author ${c.author.email}, committer ${c.committer.email}; only SacredTrees commits here`);
-              if (hits.length || who.length)
-                core.setFailed(`${hits.length} commit(s) carry tool attribution lines, ${who.length} not committed as SacredTrees; fix them before merging`);
+              // branches are team2/<topic>-<date>; a branch named after a tool fails
+              const named = new RegExp(`^refs/heads/.*\\b(${A}|${B})\\b`, 'i').test(p.ref || '');
+              if (named) core.error(`branch ${p.ref} is named after a tool; push it as team2/<topic>-<yyyymmdd>`);
+              if (hits.length || who.length || named)
+                core.setFailed(`${hits.length} commit(s) carry tool attribution lines, ${who.length} not committed as SacredTrees${named ? ', branch named after a tool' : ''}; fix them before merging`);
             } else if (ev === 'workflow_dispatch' || ev === 'schedule') {
               for await (const { data } of github.paginate.iterator(github.rest.issues.listForRepo, { owner, repo, state: 'all', per_page: 100 })) {
                 for (const it of data) {

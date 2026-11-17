@@ -6119,6 +6119,60 @@ static void test_track_changes_ods_refs(void)
     oc_core_free(core);
 }
 
+/* Tracked changes kept in XLSX (a shared workbook's revision log), each where it was when made: read back
+ * where they are now, as recorded. */
+static void test_track_changes_xlsx(void)
+{
+    static const char path[] = "build/host/calc-core-track.xlsx";
+    oc_core *core = fresh();
+    const owf_change *c;
+    if (!core) return;
+    oc_core_set_track_clock(core, track_clock, NULL);
+    CHECK(oc_core_set_track_author(core, "Lister") == OWF_OK);
+    enter_at(core, "A1", "5");
+    enter_at(core, "B2", "'0123");
+    CHECK(oc_core_set_track_changes(core, 1) == OWF_OK);
+    enter_at(core, "A1", "7");
+    enter_at(core, "B2", "=A1*2");
+    go(core, "A3");
+    CHECK(oc_core_insert(core, 0) == OWF_OK);
+    enter_at(core, "C4", "x & <y>");
+    go(core, "C4");
+    CHECK(oc_core_delete(core, 0) == OWF_OK);
+    go(core, "B1");
+    CHECK(oc_core_insert(core, 1) == OWF_OK);                    /* a column too: B2 is C2 now */
+    CHECK(oc_core_add_sheet(core, "Two") == 1 && oc_core_rename_sheet(core, 1, "Second") == OWF_OK);
+    CHECK(oc_core_change_count(core) == 7);
+    CHECK(oc_core_save(core, path, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_open(core, path, NULL, NULL, NULL) == OWF_OK);
+    CHECK(oc_core_track_changes(core) && oc_core_change_count(core) == 7 && oc_core_sheet_count(core) == 2);
+    c = oc_core_change_at(core, 0);
+    CHECK(c && c->kind == OWF_CHANGE_CELL && c->row == 0 && c->col == 0 && c->id == 1 && c->before &&
+          !strcmp(c->before, "5") && c->after && !strcmp(c->after, "7"));
+    CHECK(c && c->author && !strcmp(c->author, "Lister") && c->date && !strcmp(c->date, "2026-11-16T07:00:00"));
+    c = oc_core_change_at(core, 1);
+    CHECK(c && c->row == 1 && c->col == 2 && c->before && !strcmp(c->before, "'0123") && c->after &&
+          !strcmp(c->after, "=A1*2"));
+    c = oc_core_change_at(core, 2);
+    CHECK(c && c->kind == OWF_CHANGE_INSERT_ROWS && c->row == 2 && c->count == 1 && c->sheet == 0);
+    c = oc_core_change_at(core, 3);
+    CHECK(c && c->kind == OWF_CHANGE_DELETE_ROWS && c->row == 3 && c->count == 1 && c->ncells == 1 && c->nchildren == 1);
+    CHECK(c && c->ncells == 1 && c->cells[0].row == 0 && c->cells[0].col == 3 && !strcmp(c->cells[0].input, "x & <y>"));
+    CHECK(c && c->nchildren == 1 && c->children[0].kind == OWF_CHANGE_CELL && c->children[0].row == 0 &&
+          c->children[0].col == 3 && !c->children[0].before);
+    c = oc_core_change_at(core, 4);
+    CHECK(c && c->kind == OWF_CHANGE_INSERT_COLS && c->col == 1 && c->count == 1);
+    c = oc_core_change_at(core, 5);
+    CHECK(c && c->kind == OWF_CHANGE_INSERT_SHEET && c->sheet == 1 && c->after && !strcmp(c->after, "Two"));
+    c = oc_core_change_at(core, 6);
+    CHECK(c && c->kind == OWF_CHANGE_RENAME_SHEET && c->sheet == 1 && c->before && !strcmp(c->before, "Two") &&
+          c->after && !strcmp(c->after, "Second"));
+    CHECK(oc_core_reject_all_changes(core) == OWF_OK && oc_core_sheet_count(core) == 1);
+    CHECK(fabs(num(core, "A1") - 5) < 1e-9 && !strcmp(text(core, "B2"), "0123") && empty_at(core, "C4") &&
+          empty_at(core, "C2"));
+    oc_core_free(core);
+}
+
 static void test_track_changes_ods(void)
 {
     static const char path[] = "build/host/calc-core-track.ods";
@@ -8944,6 +8998,7 @@ int main(void)
     test_edit_links();
     test_track_changes_ods();
     test_track_changes_ods_refs();
+    test_track_changes_xlsx();
     test_pivot_summary();
     test_pivot_layout();
     test_pivot_sort();
