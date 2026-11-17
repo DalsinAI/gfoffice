@@ -50,12 +50,18 @@ CALL cell 'B3', 'A'
 CALL want 'EXTDATACHANGE 1 WEB RAM:extdata-page.html HTML_1 ONOPEN EVERY 60', 0
 CALL want 'EXTDATAINFO 1', 0
 IF res ~= 'WEB|B2:C5|RAM:extdata-page.html|HTML_1|1 1 60' THEN CALL bad 'EXTDATAINFO gave' res
+/* every 2 seconds, not on opening: a book from elsewhere like this must not read by itself either */
+CALL want 'EXTDATACHANGE 1 WEB RAM:extdata-page.html HTML_1 NOTONOPEN EVERY 2', 0
+CALL want 'EXTDATAINFO 1', 0
+IF res ~= 'WEB|B2:C5|RAM:extdata-page.html|HTML_1|1 0 2' THEN CALL bad 'EXTDATAINFO gave' res
 
-/* saved and opened again: kept; an ARexx OPEN reads nothing (the window asks first), EXTDATAREFRESH does */
+/* saved and opened again: kept; an ARexx OPEN reads nothing (the window asks first, and Not Now stops the
+   clock too), EXTDATAREFRESH does */
 CALL want 'SAVEAS RAM:extdata-book.xlsx', 0
-CALL page '<table><tr><th>Currency<th>Rate<tr><td>Kept<td>9</table>'
-ADDRESS VALUE port
 CALL want 'OPEN RAM:extdata-book.xlsx', 0
+CALL page '<table><tr><th>Currency<th>Rate<tr><td>Kept<td>9</table>'
+ADDRESS COMMAND 'Wait 4'
+ADDRESS VALUE port
 CALL want 'EXTDATA', 0
 IF res ~= '1' THEN CALL bad 'EXTDATA gave' res '(wanted 1)'
 CALL cell 'B3', 'A'

@@ -995,6 +995,7 @@ static int result(int rc, const char *done);
 #define BOOK_LOCKED_TEXT "The workbook's structure is protected: its sheets stay as they are."
 static int ask_window(const char *title, const char *text, const char *buttons);
 static void extdata_opened(void);
+static int extdata_allowed;             /* this book may read its external data by itself (see extdata_opened) */
 
 /* A typed value its cell's rule refused: the rule's alert, as Excel shows it. Stop: Retry goes on typing,
  * Cancel puts the cell back. Warning ("Continue?"): Yes puts it in, No goes on typing, Cancel puts the cell
@@ -2333,6 +2334,7 @@ static void new_book(void)
     if (!confirm_discard_changes()) return;
     if (!result(oc_core_set_book(core, NULL), "New workbook.")) return;
     sync_track_menu();
+    extdata_allowed = 0;
     current_path[0] = 0;
     current_format[0] = 0;
 }
@@ -4788,6 +4790,9 @@ static void set_utf8(char *dst, size_t size, const char *src)
 
 static char extdata_base[512];
 static long extdata_last[OC_EXTDATA_MAX];       /* when each range was last read (seconds; 0: not since opening) */
+/* The user has let this book read its sources: cleared as a book opens; set by Read Now, or by anything the user
+ * asks to read (adding, changing or refreshing a range, by the window, the menu or ARexx). Until then nothing
+ * reads on its own, not even the ranges that refresh every n seconds. (extdata_allowed, declared above.) */
 
 static const oc_extdata_io *extdata_io(void)
 {
@@ -4808,20 +4813,23 @@ static long extdata_now(void)
     return ds.ds_Days * 86400L + ds.ds_Minute * 60L + ds.ds_Tick / TICKS_PER_SECOND;
 }
 
-/* The book opened: those set to refresh on opening are read, quietly, once the user says so (a book from
- * elsewhere could read files and databases into its sheets, as LibreOffice asks before updating links); the
- * clock starts again. An ARexx OPEN reads none: EXTDATAREFRESH does. */
+/* The book opened: those set to refresh on opening or every n seconds read nothing until the user says so (a
+ * book from elsewhere could read files and databases into its sheets, as LibreOffice asks before updating
+ * links); Read Now reads the ones set to refresh on opening and lets the clock run. The clock starts again.
+ * An ARexx OPEN reads none: EXTDATAREFRESH does. */
 static void extdata_opened(void)
 {
     char text[1200], shown[200];
     size_t at;
     int i, n = oc_core_extdata_count(core), on_open = 0;
+    extdata_allowed = 0;
     for (i = 0; i < OC_EXTDATA_MAX; i++)
         extdata_last[i] = extdata_now();
-    at = (size_t)snprintf(text, sizeof text, "This workbook reads external data as it opens, from:\n");
+    at = (size_t)snprintf(text, sizeof text, "This workbook reads external data by itself, from:\n");
     for (i = 0; i < n; i++) {
         oc_extdata_spec spec;
-        if (oc_core_extdata(core, i, &spec, NULL, NULL) != OWF_OK || !spec.refresh_on_open) continue;
+        if (oc_core_extdata(core, i, &spec, NULL, NULL) != OWF_OK || (!spec.refresh_on_open && !spec.refresh_seconds))
+            continue;
         on_open++;
         to_latin1(spec.source, strlen(spec.source), shown, sizeof shown);
         if (at + 2 < sizeof text) at += (size_t)snprintf(text + at, sizeof text - at, "  %.150s\n", shown);
@@ -4833,6 +4841,7 @@ static void extdata_opened(void)
         set_status("External data not read: Data > Refresh External Data reads it.");
         return;
     }
+    extdata_allowed = 1;
     n = oc_core_extdata_refresh_on_open(core, extdata_io());
     if (n) {
         char msg[80];
@@ -4847,8 +4856,8 @@ static int extdata_tick(void)
     static long checked;
     long now;
     int i, n, done = 0;
-    if (!core || oc_core_editing(core))
-        return 0;
+    if (!core || !extdata_allowed || oc_core_editing(core))
+        return 0;                        /* not until the user lets this book read (extdata_allowed) */
     now = extdata_now();
     if (now == checked)
         return 0;                        /* once a second is enough */
@@ -4989,6 +4998,7 @@ static void extdata_add(int kind)
     oc_core_active(core, &row, &col);
     oc_cell_name(row, col, here);
     if (!extdata_ask_rest(&spec, here)) return;
+    extdata_allowed = 1;
     rc = oc_core_extdata_add(core, &spec, extdata_io(), 0, &index, err, sizeof err);
     if (rc == OC_EXTDATA_BLOCKED && extdata_overwrite_ok())
         rc = oc_core_extdata_add(core, &spec, extdata_io(), OC_EXTDATA_OVERWRITE, &index, err, sizeof err);
@@ -5000,7 +5010,9 @@ static void extdata_add(int kind)
 static void extdata_refresh(int index)
 {
     char err[300], msg[80];
-    int rc = oc_core_extdata_refresh(core, index, extdata_io(), 0, err, sizeof err);
+    int rc;
+    extdata_allowed = 1;
+    rc = oc_core_extdata_refresh(core, index, extdata_io(), 0, err, sizeof err);
     if (rc == OC_EXTDATA_BLOCKED && extdata_overwrite_ok())
         rc = oc_core_extdata_refresh(core, index, extdata_io(), OC_EXTDATA_OVERWRITE, err, sizeof err);
     if (index >= 0 && index < OC_EXTDATA_MAX) extdata_last[index] = extdata_now();
@@ -5064,6 +5076,7 @@ static void do_extdata(void)
             set_utf8(spec.item, sizeof spec.item, item);
             to_latin1(spec.dest, strlen(spec.dest), shown, sizeof shown);
             if (!extdata_ask_rest(&spec, shown)) return;
+            extdata_allowed = 1;
             rc = oc_core_extdata_change(core, i, &spec, extdata_io(), 0, err, sizeof err);
             if (rc == OC_EXTDATA_BLOCKED && extdata_overwrite_ok())
                 rc = oc_core_extdata_change(core, i, &spec, extdata_io(), OC_EXTDATA_OVERWRITE, err, sizeof err);
@@ -5134,6 +5147,7 @@ static int rexx_extdata_add(const char *arg, int change, char *out, size_t size,
         else if (!strcasecmp(word, "OVERWRITE")) flags |= OC_EXTDATA_OVERWRITE;
         else { snprintf(out, size, "Not a word EXTDATAADD knows: %.60s", word); return 0; }
     }
+    extdata_allowed = 1;
     rc = change ? oc_core_extdata_change(core, index, &spec, extdata_io(), flags, err, sizeof err)
                 : oc_core_extdata_add(core, &spec, extdata_io(), flags, &index, err, sizeof err);
     if (rc != OWF_OK) {
@@ -7685,6 +7699,7 @@ static int rexx_do_command(const char *command, char **result_out)
         rexx_word(rest, word, sizeof word);
         if (!all && (n < 1 || n > oc_core_extdata_count(core))) { ok = 0; rc_fail = RX_NOW; snprintf(result_text, sizeof result_text, "No such range"); }
         else {
+            extdata_allowed = 1;
             rc = oc_core_extdata_refresh(core, all ? -1 : n - 1, extdata_io(), !strcasecmp(word, "OVERWRITE") ? OC_EXTDATA_OVERWRITE : 0,
                                          err, sizeof err);
             ok = rc == OWF_OK;
