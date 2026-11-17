@@ -899,6 +899,11 @@ static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, 
                 }
                 owf_buf_puts(out,"<w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"auto\"/>");
                 if(OWF_SHADE_SET(p->cell_shading))owf_buf_printf(out,"<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"%06lX\"/>",OWF_SHADE_RGB(p->cell_shading));
+                if(!p->row_revision&&run_change(doc,p->cell_revision)){   /* 1.21: the cell a tracked change by itself */
+                    const owf_revision *cc=run_change(doc,p->cell_revision);
+                    owf_buf_puts(out,cc->kind==OWF_REV_DELETE?"<w:cellDel":"<w:cellIns");
+                    put_change_attrs(out,cc,4500000L+(long)i);owf_buf_puts(out,"/>");
+                }
                 owf_buf_puts(out,"</w:tcPr>");put_para(out,doc,story,p,report,0,NULL,0);owf_buf_puts(out,"</w:tc>");++i;
             }
             if(row>=0)owf_buf_puts(out,"</w:tr>");

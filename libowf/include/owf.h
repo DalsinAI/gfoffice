@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.19.0"
+#define OWF_VERSION "1.21.0"
 
 /* Any of GFOffice's libraries is a library (owf_open.h, owf_proto.h; owfdiag.library's calls come through
  * opendiag_proto.h). */
@@ -209,6 +209,11 @@ typedef struct {
      * the same on every cell of the row. Inserted: the row was put in; deleted: accepting it takes the row
      * away. 0: none. */
     int row_revision;
+    /* 1.21: a table cell by itself is a tracked change (its column put in or deleted while recording; DOCX
+     * w:tcPr/w:cellIns, w:cellDel): 1 + its index in doc->revisions. Inserted: the cell was put in; deleted:
+     * accepting it takes the cell away and the cells after it in its row move left. A row's change (above)
+     * comes first. 0: none. */
+    int cell_revision;
 } owf_para;
 
 typedef enum {
@@ -221,6 +226,22 @@ typedef struct {
     int nparas, capparas;
     owf_para *paras;
 } owf_story;
+
+/* 1.21: a table's cells numbered again after one went (a deleted cell accepted, an inserted one rejected): in
+ * each row 0, 1, 2 ... in the order they come, and every cell's table_cols the most a row has. Header-only. */
+static inline void owf_table_renumber_cells(owf_story *story, int table_id)
+{
+    int i, row = -1, col = 0, most = 0;
+    for (i = 0; story && i < story->nparas; ++i) {
+        owf_para *p = &story->paras[i];
+        if (p->table_id != table_id) continue;
+        if (p->table_row != row) { row = p->table_row; col = 0; }
+        p->table_col = col++;
+        if (col > most) most = col;
+    }
+    for (i = 0; story && i < story->nparas; ++i)
+        if (story->paras[i].table_id == table_id) story->paras[i].table_cols = most;
+}
 
 /* ---- Fonts and the page ---- */
 

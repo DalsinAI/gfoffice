@@ -323,6 +323,8 @@ static void finish_story(owf_doc *doc, owf_story *s)
             p->mark_revision = 0;
         if (p->row_revision < 0 || p->row_revision > doc->nrevisions || p->table_id < 0)
             p->row_revision = 0;                     /* 1.12 */
+        if (p->cell_revision < 0 || p->cell_revision > doc->nrevisions || p->table_id < 0)
+            p->cell_revision = 0;                    /* 1.21 */
     }
     if (s->nparas)                                   /* the story's last end is no paragraph mark */
         s->paras[s->nparas - 1].mark_revision = 0;
@@ -346,7 +348,7 @@ static int story_has_changes(const owf_story *s)
 {
     int i, j;
     for (i = 0; i < s->nparas; ++i) {
-        if (s->paras[i].mark_revision > 0 || s->paras[i].row_revision > 0)
+        if (s->paras[i].mark_revision > 0 || s->paras[i].row_revision > 0 || s->paras[i].cell_revision > 0)
             return 1;
         for (j = 0; j < s->paras[i].nruns; ++j)
             if (s->paras[i].runs[j].revision > 0 || s->paras[i].runs[j].format_change > 0)
@@ -411,9 +413,10 @@ int owf_doc_has_row_changes(const owf_doc *doc)
     if (!doc || !doc->nrevisions)
         return 0;
     for (i = 0; i < doc->body.nparas; ++i)
-        if (doc->body.paras[i].table_id >= 0 && doc->body.paras[i].row_revision > 0 &&
-            doc->body.paras[i].row_revision <= doc->nrevisions)
-            return 1;
+        if (doc->body.paras[i].table_id >= 0 && ((doc->body.paras[i].row_revision > 0 &&
+            doc->body.paras[i].row_revision <= doc->nrevisions) || (doc->body.paras[i].cell_revision > 0 &&
+            doc->body.paras[i].cell_revision <= doc->nrevisions)))
+            return 1;                                /* (1.21: a cell's too) */
     return 0;
 }
 
@@ -456,6 +459,8 @@ static int accept_story(const owf_doc *doc, const owf_story *src, owf_story *dst
                      src->paras[i - 1].table_id == sp->table_id;
         if (sp->table_id >= 0 && rev_kind(doc, sp->row_revision) == OWF_REV_DELETE)
             continue;                                /* 1.12: a deleted row's cell: gone */
+        if (sp->table_id >= 0 && !sp->row_revision && rev_kind(doc, sp->cell_revision) == OWF_REV_DELETE)
+            continue;                                /* 1.21: a deleted cell: gone (owf_cells_renumber after) */
         if (joined) {
             dp = &dst->paras[dst->nparas - 1];
         } else {
@@ -466,6 +471,7 @@ static int accept_story(const owf_doc *doc, const owf_story *src, owf_story *dst
         }
         dp->mark_revision = 0;
         dp->row_revision = 0;
+        dp->cell_revision = 0;
         if (sp->nruns) {
             owf_run *runs = realloc(dp->runs, (size_t)(dp->nruns + sp->nruns) * sizeof *runs);
             if (!runs)
@@ -481,6 +487,15 @@ static int accept_story(const owf_doc *doc, const owf_story *src, owf_story *dst
                 dp->nruns++;
             }
         }
+    }
+    {   /* 1.21: a deleted cell gone: its table's cells numbered again */
+        int k, last = -1;
+        for (k = 0; k < src->nparas; ++k)
+            if (src->paras[k].table_id >= 0 && src->paras[k].table_id != last && !src->paras[k].row_revision &&
+                rev_kind(doc, src->paras[k].cell_revision) == OWF_REV_DELETE) {
+                owf_table_renumber_cells(dst, src->paras[k].table_id);
+                last = src->paras[k].table_id;
+            }
     }
     return 1;
 }
