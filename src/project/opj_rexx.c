@@ -343,7 +343,8 @@ static int read_file(const char *name, unsigned char **data, size_t *length)
 static const char *no_print(const opj_doc *doc, int kind)
 {
     if (!doc->plan->ntasks) return "The plan has no tasks to print";
-    if (kind == OPJ_PRINT_USAGE && !doc->plan->nresources) return "The plan has no resources to print";
+    if ((kind == OPJ_PRINT_USAGE || kind == OPJ_PRINT_GRAPH) && !doc->plan->nresources)
+        return "The plan has no resources to print";
     return "The page is too small for the plan";
 }
 
@@ -690,7 +691,7 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
                 return OPJ_RX_ERROR;
             }
             if ((kind = opj_viewprint_kind(a->value[2])) < 0) {
-                snprintf(rx->lasterror, sizeof rx->lasterror, "EXPORT: VIEW is GANTT, USAGE, TASKUSAGE or NETWORK, not %s",
+                snprintf(rx->lasterror, sizeof rx->lasterror, "EXPORT: VIEW is GANTT, USAGE, TASKUSAGE, NETWORK or GRAPH, not %s",
                          a->value[2]);
                 return OPJ_RX_ERROR;
             }

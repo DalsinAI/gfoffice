@@ -194,15 +194,18 @@ static void test_files(void)
     }
     ok("EXPORT build/host/rexx-view.out FORMAT PDF VIEW=taskusage");
     ok("EXPORT build/host/rexx-view.pdf VIEW GANTT");
-    CHECK_N(rx_do("EXPORT build/host/rexx-view.pdf VIEW GRAPH"), OPJ_RX_ERROR);
-    CHECK_S(rx.lasterror, "EXPORT: VIEW is GANTT, USAGE, TASKUSAGE or NETWORK, not GRAPH");
+    CHECK_N(rx_do("EXPORT build/host/rexx-view.pdf VIEW SHEET"), OPJ_RX_ERROR);
+    CHECK_S(rx.lasterror, "EXPORT: VIEW is GANTT, USAGE, TASKUSAGE, NETWORK or GRAPH, not SHEET");
     CHECK_N(rx_do("EXPORT build/host/rexx-view.xml VIEW NETWORK"), OPJ_RX_ERROR);
     CHECK_S(rx.lasterror, "EXPORT: VIEW goes with a PDF only");
     if (!rx.doc->plan->nresources) {
         CHECK_N(rx_do("EXPORT build/host/rexx-view.pdf VIEW USAGE"), OPJ_RX_NOW);
         CHECK_S(rx.lasterror, "The plan has no resources to print");
+        CHECK_N(rx_do("EXPORT build/host/rexx-view.pdf VIEW GRAPH"), OPJ_RX_NOW);
+        CHECK_S(rx.lasterror, "The plan has no resources to print");
     } else {
         ok("EXPORT build/host/rexx-view.pdf VIEW USAGE");
+        ok("EXPORT build/host/rexx-view.pdf VIEW GRAPH");
     }
     remove("build/host/rexx-view.pdf");
     remove("build/host/rexx-view.out");

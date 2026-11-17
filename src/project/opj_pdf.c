@@ -151,7 +151,7 @@ int opj_pdf_write_view(const opj_doc *doc, const opj_view *proto, int kind, unsi
     if (pages) *pages = 0;
     if (!doc || !doc->plan || !proto || !data || !length) return OWF_ERR_FORMAT;
     if (kind < 0 || kind >= OPJ_NPRINTVIEWS || !doc->plan->ntasks) return OWF_ERR_FORMAT;
-    if (kind == OPJ_PRINT_USAGE && !doc->plan->nresources) return OWF_ERR_FORMAT;
+    if ((kind == OPJ_PRINT_USAGE || kind == OPJ_PRINT_GRAPH) && !doc->plan->nresources) return OWF_ERR_FORMAT;
     v = *proto;                                        /* the screen's columns and zoom; paper's own font */
     v.font.family = NULL;
     v.font.px = OPJ_PDF_FONT_PX;

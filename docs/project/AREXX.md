@@ -41,7 +41,7 @@ Amiga (start GFOpenProject, then `rx project.rexx RAM:`).
 | OPEN | `FILE/A,FORCE/S` | .gfproj, MS Project XML (MSPDI), MPX, GanttProject .gan or CSV, by what the file holds |
 | SAVE | | to the plan's file, in the format its extension names |
 | SAVEAS | `FILE/A` | .xml is MSPDI, .csv is CSV, anything else .gfproj |
-| EXPORT | `FILE/A,FORMAT/K,VIEW/K` | a copy (MSPDI, CSV or GFPROJ), or a printed view as a PDF (FORMAT PDF, or a .pdf name): the Gantt view, or VIEW USAGE (Resource Usage), TASKUSAGE or NETWORK; 5 when the plan has no tasks, or no resources for USAGE; the plan keeps its file |
+| EXPORT | `FILE/A,FORMAT/K,VIEW/K` | a copy (MSPDI, CSV or GFPROJ), or a printed view as a PDF (FORMAT PDF, or a .pdf name): the Gantt view, or VIEW USAGE (Resource Usage), TASKUSAGE, NETWORK or GRAPH (the Resource Graph, a resource a page); 5 when the plan has no tasks, or no resources for USAGE or GRAPH; the plan keeps its file |
 | TASKS | | how many rows |
 | ADDTASK | `NAME/A,AT/K/N,DURATION/K` | the new row's number (before row AT, or at the end) |
 | DELETETASK | `ROW/A/N,COUNT/N` | |

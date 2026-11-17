@@ -2,7 +2,8 @@
  * GFOpenProject: the views other than the Gantt chart laid out on pages
  * (printing, PDF and reports, step 3 part 3): Resource Usage and Task Usage
  * go down by rows and across by whole periods of the timescale, with their
- * table on every page; the Network Diagram goes down by whole lines of boxes
+ * table on every page; the Resource Graph has a resource a page down and goes
+ * across the same way; the Network Diagram goes down by whole lines of boxes
  * and across by whole columns, so no box is cut by a page's edge. Every page
  * has a footer row: the plan's title, the view's name, "Page n of m".
  * opj_pdf.c writes the pages as a PDF. Integer arithmetic only.
@@ -18,13 +19,14 @@
 
 const char *opj_viewprint_name(int kind)
 {
-    static const char *const names[OPJ_NPRINTVIEWS] = { "Gantt Chart", "Resource Usage", "Task Usage", "Network Diagram" };
+    static const char *const names[OPJ_NPRINTVIEWS] = { "Gantt Chart", "Resource Usage", "Task Usage", "Network Diagram",
+                                                          "Resource Graph" };
     return kind >= 0 && kind < OPJ_NPRINTVIEWS ? names[kind] : NULL;
 }
 
 int opj_viewprint_kind(const char *word)
 {
-    static const char *const words[OPJ_NPRINTVIEWS] = { "gantt", "usage", "taskusage", "network" };
+    static const char *const words[OPJ_NPRINTVIEWS] = { "gantt", "usage", "taskusage", "network", "graph" };
     char w[16];
     size_t n = 0;
     int k;
@@ -33,6 +35,7 @@ int opj_viewprint_kind(const char *word)
     w[n] = 0;
     if (word && *word) return -1;
     if (!strcmp(w, "resourceusage")) return OPJ_PRINT_USAGE;
+    if (!strcmp(w, "resourcegraph")) return OPJ_PRINT_GRAPH;
     if (!strcmp(w, "tracking")) return OPJ_PRINT_GANTT;        /* the Tracking Gantt is the Gantt view's */
     for (k = 0; k < OPJ_NPRINTVIEWS; k++)
         if (!strcmp(w, words[k])) return k;
@@ -68,7 +71,8 @@ int opj_viewprint_layout(opj_viewprint *vp, int kind, const opj_view *proto, con
 {
     int rh;
     if (!vp || !proto || !doc || !doc->plan || proto->row_height < 1) return 0;
-    if (kind != OPJ_PRINT_USAGE && kind != OPJ_PRINT_TASK_USAGE && kind != OPJ_PRINT_NETWORK) return 0;
+    if (kind != OPJ_PRINT_USAGE && kind != OPJ_PRINT_TASK_USAGE && kind != OPJ_PRINT_NETWORK && kind != OPJ_PRINT_GRAPH)
+        return 0;
     memset(vp, 0, sizeof *vp);
     vp->kind = kind;
     vp->proto = *proto;
@@ -103,6 +107,11 @@ int opj_viewprint_layout(opj_viewprint *vp, int kind, const opj_view *proto, con
         vp->proto.width = page_width;
         opj_usage_view(&vp->proto, &u);
         if (vp->rows_per_page < 1 || page_width - opj_chart_left(&u) < opj_zoom_day_width(u.zoom)) return 0;
+        if (kind == OPJ_PRINT_GRAPH) {                         /* a resource a page down, its graph the page high */
+            if (doc->plan->nresources < 1 || vp->rows_per_page < 6) return 0;
+            vp->rows_per_page = 1;
+            rows = doc->plan->nresources;
+        }
         vp->down = rows > 0 ? (rows + vp->rows_per_page - 1) / vp->rows_per_page : 1;
         for (i = 0; i < doc->plan->ntasks; i++)
             if (doc->plan->tasks[i].early_finish > end) end = doc->plan->tasks[i].early_finish;
@@ -127,8 +136,9 @@ int opj_viewprint_page_view(const opj_viewprint *vp, int page, opj_view *v)
         v->scroll_x = across * vp->step_x;
         v->scroll_y = down * vp->step_y;
     } else {
-        v->height = 2 * v->row_height + vp->rows_per_page * v->row_height;
-        v->first_row = down * vp->rows_per_page;
+        v->height = vp->kind == OPJ_PRINT_GRAPH ? vp->page_height - v->row_height
+                                                : 2 * v->row_height + vp->rows_per_page * v->row_height;
+        v->first_row = down * vp->rows_per_page;             /* the Resource Graph's: the page's resource */
         for (i = 0; i < across; i++) v->origin = next_origin(vp, v->origin);
     }
     return 1;
@@ -154,6 +164,10 @@ void opj_viewprint_draw(oldraw *d, const opj_viewprint *vp, const opj_doc *doc, 
         r.h = v.height;                          /* the footer's row stays clear of boxes and lines */
         if (OPJ_NET_MARGIN + vp->step_y - OPJ_NET_GAP_Y / 2 < r.h) r.h = OPJ_NET_MARGIN + vp->step_y - OPJ_NET_GAP_Y / 2;
         opj_network_draw(d, &v, net, doc, &r);
+    } else if (vp->kind == OPJ_PRINT_GRAPH) {
+        int resource = v.first_row;
+        v.first_row = 0;
+        opj_graph_draw(d, &v, doc, resource, NULL);
     } else if (vp->kind == OPJ_PRINT_TASK_USAGE) {
         opj_task_usage_draw(d, &v, doc, NULL);
     } else {

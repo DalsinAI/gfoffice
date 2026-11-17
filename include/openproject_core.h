@@ -658,14 +658,14 @@ int opj_pdf_write(const opj_doc *doc, const opj_view *proto, unsigned char **dat
  * finish. The Network Diagram goes down by whole lines of boxes and across by whole columns, so no box is
  * cut; a link to a box on another page runs to the page's edge. Every page has a footer row: the plan's
  * title, the view's name and "Page n of m". The Gantt view's pages are opj_print's. */
-enum { OPJ_PRINT_GANTT, OPJ_PRINT_USAGE, OPJ_PRINT_TASK_USAGE, OPJ_PRINT_NETWORK, OPJ_NPRINTVIEWS };
+enum { OPJ_PRINT_GANTT, OPJ_PRINT_USAGE, OPJ_PRINT_TASK_USAGE, OPJ_PRINT_NETWORK, OPJ_PRINT_GRAPH, OPJ_NPRINTVIEWS };
 /* "Gantt Chart", "Resource Usage", "Task Usage", "Network Diagram"; NULL out of range. */
 const char *opj_viewprint_name(int kind);
 /* The view a word names, as ARexx VIEW's words (GANTT, TRACKING, USAGE or RESOURCEUSAGE, TASKUSAGE, NETWORK;
  * case, spaces, - and _ aside); -1 for any other. */
 int opj_viewprint_kind(const char *word);
 typedef struct {
-    int kind;                            /* OPJ_PRINT_USAGE, OPJ_PRINT_TASK_USAGE or OPJ_PRINT_NETWORK */
+    int kind;                            /* OPJ_PRINT_USAGE, OPJ_PRINT_TASK_USAGE, OPJ_PRINT_NETWORK or OPJ_PRINT_GRAPH */
     opj_view proto;                      /* row height, zoom, origin and font to print with */
     int page_width, page_height;         /* the printable area, in the printer's pixels */
     int rows_per_page, down, across;     /* rows_per_page: a usage view's rows, the diagram's lines of boxes */
