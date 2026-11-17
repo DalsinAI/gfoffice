@@ -102,6 +102,7 @@ int owf_pdf_page(owf_pdf *pdf, int width, int height)
     }
     p = &pdf->pages[pdf->npages++];
     owf_buf_init(&p->content);
+    memset(p->alphas, 0, sizeof p->alphas);     /* the pages come from realloc: no stray /GA entries */
     p->width = width > 20 ? width : 20;
     p->height = height > 20 ? height : 20;
     pdf->dash = 0;
