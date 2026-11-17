@@ -1,4 +1,6 @@
+#ifndef OWF_USE_SPELL_LIBRARY
 #define OWF_USE_SPELL_LIBRARY
+#endif
 /*
  * owfspell.library for a program (libowf/include/owf_spell.h): its base,
  * opened the first time the program wants spelling, closed as it quits.
