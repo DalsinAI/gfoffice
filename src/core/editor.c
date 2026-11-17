@@ -2151,9 +2151,15 @@ static int tracked_delete_selection(ow_editor *editor)
     return 1;
 }
 
-/* One item of a change: a run (run >= 0), a paragraph's end (run -1) or (2.0.38) a table cell's row (run -2,
- * before its runs). */
+/* One item of a change: a run (run >= 0), a paragraph's end (run -1), (2.0.38) a table cell's row (run -2,
+ * before its runs) or (libowf 1.21) a paragraph's format (run -3, before its row). */
 typedef struct { int para, run; } ow_change_item;
+
+/* The number walk_changes gives a change: a revision's (> 0), a run format change's (-number) or, libowf 1.21,
+ * a paragraph format change's (PARA_FC_REV(number), below every run format change's) */
+#define PARA_FC_BASE 0x1000000
+#define PARA_FC_REV(n) (-(PARA_FC_BASE + (n)))
+#define PARA_FC_OF(rev) ((rev) <= -PARA_FC_BASE ? -(rev) - PARA_FC_BASE : 0)
 
 /* The changes of a story in order: each a row of items with one number. The callback gets each change's
  * first and last item; it returns nonzero to stop. */
@@ -2165,11 +2171,16 @@ static int walk_changes(const owf_story *story, change_fn fn, void *userdata)
     ow_change_item first = { 0, 0 }, last = { 0, 0 };
     for (i = 0; i < story->nparas; ++i) {
         const owf_para *p = &story->paras[i];
-        for (j = -1; j <= p->nruns; ++j) {
+        for (j = -2; j <= p->nruns; ++j) {
             int rev;
             ow_change_item it;
             it.para = i;
-            if (j < 0) {
+            if (j == -2) {
+                /* libowf 1.21: its format; a change of its own, as its paragraph end ends it */
+                if (p->para_format_change <= 0) continue;
+                it.run = -3;
+                rev = PARA_FC_REV(p->para_format_change);
+            } else if (j < 0) {
                 if (p->table_id < 0) continue;
                 it.run = -2;                         /* 2.0.38: its row */
                 rev = p->row_revision;
@@ -2206,7 +2217,7 @@ static ow_position item_start(ow_editor *editor, ow_change_item it)
     owf_para *p = &ed_story(editor)->paras[it.para];
     pos.paragraph = it.para;
     pos.box = box_of(editor, editor->selection.focus.box);
-    if (it.run == -2) {                              /* 2.0.38: a row: its cell's start */
+    if (it.run == -2 || it.run == -3) {              /* 2.0.38: a row: its cell's start; 1.21: a paragraph's format */
         pos.run = first_text_run(p);
         pos.byte_offset = 0;
     } else if (it.run < 0) {
@@ -2230,7 +2241,7 @@ static ow_position item_end(ow_editor *editor, ow_change_item it)
     owf_para *p = &story->paras[it.para];
     pos.paragraph = it.para;
     pos.box = box_of(editor, editor->selection.focus.box);
-    if (it.run == -2) {                              /* 2.0.38: a row: its cell's end */
+    if (it.run == -2 || it.run == -3) {              /* 2.0.38: a row: its cell's end; 1.21: a paragraph's format */
         pos.run = last_text_run(p);
         pos.byte_offset = pos.run >= 0 && p->runs[pos.run].text ? strlen(p->runs[pos.run].text) : 0;
     } else if (it.run < 0) {
@@ -2352,12 +2363,13 @@ int ow_editor_change_count(const ow_editor *editor)
 static void fill_info(ow_editor *editor, const change_find *f, ow_change_info *info)
 {
     const owf_revision *r = OWF_DOC_REVISION(editor->doc, f->rev);
-    const owf_format_change *fc = f->rev < 0 ? OWF_DOC_FORMAT_CHANGE(editor->doc, -f->rev) : NULL;
+    const owf_format_change *fc = f->rev < 0 && !PARA_FC_OF(f->rev) ? OWF_DOC_FORMAT_CHANGE(editor->doc, -f->rev) : NULL;
+    const owf_para_format_change *pc = OWF_DOC_PARA_FORMAT_CHANGE(editor->doc, PARA_FC_OF(f->rev));   /* 1.21 */
     memset(info, 0, sizeof(*info));
     info->index = f->want;
-    info->kind = r ? r->kind : fc ? OW_CHANGE_FORMAT : 0;
-    info->author = r ? r->author : fc ? fc->author : NULL;
-    info->date = r ? r->date : fc ? fc->date : NULL;
+    info->kind = r ? r->kind : fc || pc ? OW_CHANGE_FORMAT : 0;
+    info->author = r ? r->author : fc ? fc->author : pc ? pc->author : NULL;
+    info->date = r ? r->date : fc ? fc->date : pc ? pc->date : NULL;
     info->start = item_start(editor, f->first);
     info->end = item_end(editor, f->last);
 }
@@ -2454,12 +2466,14 @@ static int pick_cb(void *userdata, const owf_story *story, int rev, ow_change_it
         pk->items[pk->nitems++] = it;
         if (it.para == last.para && it.run == last.run) break;
         /* the next item */
-        if (it.run == -2) it.run = story->paras[it.para].nruns ? 0 : -1;
+        if (it.run == -3) it.run = story->paras[it.para].table_id >= 0 ? -2 : story->paras[it.para].nruns ? 0 : -1;
+        else if (it.run == -2) it.run = story->paras[it.para].nruns ? 0 : -1;
         else if (it.run >= 0 && it.run + 1 < story->paras[it.para].nruns) ++it.run;
         else if (it.run >= 0) it.run = -1;
         else {
             ++it.para;
-            it.run = story->paras[it.para].table_id >= 0 ? -2 : story->paras[it.para].nruns ? 0 : -1;
+            it.run = story->paras[it.para].para_format_change > 0 ? -3
+                   : story->paras[it.para].table_id >= 0 ? -2 : story->paras[it.para].nruns ? 0 : -1;
         }
     }
     return 0;
@@ -2533,7 +2547,7 @@ static int resolve_items(ow_editor *editor, owf_story *story, const ow_change_it
     for (k = n - 1; k >= 0; --k) {
         owf_para *p = &story->paras[items[k].para];
         int number, kind, keep;
-        if (items[k].run == -2) continue;            /* 2.0.38: rows after (resolve_rows) */
+        if (items[k].run == -2 || items[k].run == -3) continue;   /* 2.0.38: rows after (resolve_rows); 1.21: formats before */
         number = items[k].run < 0 ? p->mark_revision : p->runs[items[k].run].revision;
         kind = rev_kind(editor->doc, number);
         keep = (kind == OWF_REV_INSERT) == (accept != 0);
@@ -2608,6 +2622,32 @@ static int resolve_formats(ow_editor *editor, owf_story *story, int all, ow_posi
     return changed;                                  /* the runs are joined after (resolve_story) */
 }
 
+/* libowf 1.21: the tracked format changes of a story's paragraphs, all or those the selection's paragraphs
+ * (from <= to) are: accepting one keeps the paragraph's format, rejecting it gives the paragraph its format and
+ * style before. 1 when one was there, -1 no memory. */
+static int resolve_para_formats(ow_editor *editor, owf_story *story, int all, ow_position from, ow_position to,
+                                int accept, int *first_para)
+{
+    int i, changed = 0;
+    for (i = 0; i < story->nparas; ++i) {
+        owf_para *p = &story->paras[i];
+        const owf_para_format_change *pc = OWF_DOC_PARA_FORMAT_CHANGE(editor->doc, p->para_format_change);
+        if (!p->para_format_change) continue;
+        if (!all && (i < from.paragraph || i > to.paragraph)) continue;
+        if (!accept && pc) {
+            char *style = pc->style ? copy_bytes(pc->style, strlen(pc->style)) : NULL;
+            if (pc->style && !style) return -1;
+            p->fmt = pc->before;
+            owf_free(p->style);
+            p->style = style;
+        }
+        p->para_format_change = 0;
+        changed = 1;
+        if (first_para && (*first_para < 0 || i < *first_para)) *first_para = i;
+    }
+    return changed;
+}
+
 static int resolve_story(ow_editor *editor, owf_story *story, int all, int accept, int *first_para)
 {
     change_pick pk;
@@ -2621,6 +2661,9 @@ static int resolve_story(ow_editor *editor, owf_story *story, int all, int accep
         if (compare_position(pk.from, pk.to) > 0) { ow_position t = pk.from; pk.from = pk.to; pk.to = t; }
     }
     formats = resolve_formats(editor, story, all, pk.from, pk.to, accept, first_para, &low, &high);
+    rc = resolve_para_formats(editor, story, all, pk.from, pk.to, accept, first_para);   /* libowf 1.21 */
+    if (rc < 0) return rc;
+    formats |= rc;
     walk_changes(story, pick_cb, &pk);
     if (pk.failed) { owf_free(pk.items); return -1; }
     if (first_para && pk.nitems && (*first_para < 0 || pk.items[0].para < *first_para)) *first_para = pk.items[0].para;
@@ -3893,6 +3936,61 @@ int ow_editor_current_parafmt(const ow_editor *editor, owf_parafmt *fmt)
     return 1;
 }
 
+/* libowf 1.21: whether two paragraph formats are the same (the tab stops in use only) */
+static int same_parafmt(const owf_parafmt *a, const owf_parafmt *b)
+{
+    int i;
+    if (a->heading != b->heading || a->align != b->align || a->indent_left != b->indent_left ||
+        a->indent_right != b->indent_right || a->indent_first != b->indent_first || a->space_before != b->space_before ||
+        a->space_after != b->space_after || a->line_spacing != b->line_spacing ||
+        a->page_break_before != b->page_break_before || a->ntabs != b->ntabs || a->shading != b->shading ||
+        a->borders != b->borders || a->border_colour != b->border_colour)
+        return 0;
+    for (i = 0; i < a->ntabs && i < OWF_MAX_TABS; ++i)
+        if (a->tabs[i].position != b->tabs[i].position || a->tabs[i].kind != b->tabs[i].kind ||
+            a->tabs[i].leader != b->tabs[i].leader)
+            return 0;
+    return 1;
+}
+
+/* libowf 1.21: recording, the number of paragraph p's format change of the author's: the one it has when it is
+ * theirs; else a new one, now, with the format and style before: p's own, or those of the change it had (someone
+ * else's), so that rejecting it still gives the paragraph back as it was. 0 when memory runs out. */
+static int editor_para_format_change(ow_editor *editor, const owf_para *p)
+{
+    owf_doc *doc = editor->doc;
+    const owf_para_format_change *cur = OWF_DOC_PARA_FORMAT_CHANGE(doc, p->para_format_change);
+    const char *style = cur ? cur->style : p->style;
+    owf_para_format_change *c;
+    char now[32];
+    if (cur && same_text_or_null(cur->author, editor->author)) return p->para_format_change;
+    if (doc->npara_format_changes == doc->cappara_format_changes) {
+        int want = doc->cappara_format_changes ? doc->cappara_format_changes * 2 : 8;
+        owf_para_format_change *grown =
+            (owf_para_format_change *)owf_realloc(doc->para_format_changes, (size_t)want * sizeof(*grown));
+        if (!grown) return 0;
+        doc->para_format_changes = grown;
+        doc->cappara_format_changes = want;
+        cur = OWF_DOC_PARA_FORMAT_CHANGE(doc, p->para_format_change);   /* the list moved */
+        style = cur ? cur->style : p->style;
+    }
+    review_now(now, sizeof now);
+    c = &doc->para_format_changes[doc->npara_format_changes];
+    memset(c, 0, sizeof(*c));
+    c->before = cur ? cur->before : p->fmt;
+    c->date = copy_bytes(now, strlen(now));
+    if (editor->author) c->author = copy_bytes(editor->author, strlen(editor->author));
+    if (style) c->style = copy_bytes(style, strlen(style));
+    if (!c->date || (editor->author && !c->author) || (style && !c->style)) {
+        owf_free(c->date);
+        owf_free(c->author);
+        owf_free(c->style);
+        memset(c, 0, sizeof(*c));
+        return 0;
+    }
+    return ++doc->npara_format_changes;
+}
+
 int ow_editor_apply_parafmt(ow_editor *editor, const owf_parafmt *fmt,
                             unsigned mask)
 {
@@ -3905,7 +4003,14 @@ int ow_editor_apply_parafmt(ow_editor *editor, const owf_parafmt *fmt,
     if (last >= ed_story(editor)->nparas) last = ed_story(editor)->nparas - 1;
     if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
     for (p = first; p <= last; ++p) {
-        owf_parafmt *dst = &ed_story(editor)->paras[p].fmt;
+        owf_para *para = &ed_story(editor)->paras[p];
+        owf_parafmt *dst = &para->fmt;
+        const owf_para_format_change *pc;
+        if (editor->track) {                         /* libowf 1.21: recorded, with the format before */
+            int number = editor_para_format_change(editor, para);
+            if (!number) { ow_editor_undo(editor); return OWF_ERR_MEMORY; }
+            para->para_format_change = number;
+        }
         if (mask & OW_PARAFMT_HEADING) dst->heading = fmt->heading;
         if (mask & OW_PARAFMT_ALIGN) dst->align = fmt->align;
         if (mask & OW_PARAFMT_INDENTS) {
@@ -3918,6 +4023,11 @@ int ow_editor_apply_parafmt(ow_editor *editor, const owf_parafmt *fmt,
             dst->space_after = fmt->space_after;
             dst->line_spacing = fmt->line_spacing;
         }
+        /* libowf 1.21: the author's change that is back where it started is no change */
+        pc = OWF_DOC_PARA_FORMAT_CHANGE(editor->doc, para->para_format_change);
+        if (editor->track && pc && same_text_or_null(pc->author, editor->author) && same_parafmt(&pc->before, dst) &&
+            same_text_or_null(pc->style, para->style))
+            para->para_format_change = 0;
     }
     editor->typing_group = 0;
     editor->dirty = 1; ++editor->changes;
