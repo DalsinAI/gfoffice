@@ -15,7 +15,7 @@
 #include <stddef.h>
 
 #include "owf.h"
-#include "owf_shape.h"
+#include "owf_geo.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,8 +39,8 @@ const char *owf_dattrs_get(const owf_dattrs *a, const char *name);
 int owf_dattrs_set(owf_dattrs *a, const char *name, const char *value);
 void owf_dattrs_free(owf_dattrs *a);
 
-/* x, y: owf_shape.h's point, so the diagram's points and the shared shapes' are one type */
-typedef owf_spoint owf_dpoint;
+/* x, y: owf_geo.h's point, so the diagram's points and the shared shapes' are one type */
+typedef owf_gpoint owf_dpoint;
 
 /* owf_dgeometry.flags */
 #define OWF_DGEO_HAS          0x01u      /* the cell has an mxGeometry */
@@ -179,17 +179,17 @@ int owf_dpage_bounds(const owf_dpage *p, owf_dnum box[4]);
  * shape is named in its style as draw.io names it ("shape=cylinder3;", "shape=mxgraph.flowchart.delay;"), and
  * turned with direction=south, west or north and flipped with flipH=1 and flipV=1. */
 
-/* The shapes are owf_shape.h's (owf_shape.c builds them; GFOffice's one copy of shape geometry). */
-#define OWF_DSHAPE_POINTS OWF_SHAPE_POINTS
-#define OWF_DSHAPE_PARTS OWF_SHAPE_PARTS
-#define OWF_DSHAPE_CLOSED OWF_SHAPE_CLOSED   /* the part's last point joins its first */
-#define OWF_DSHAPE_FILL   OWF_SHAPE_FILL     /* filled with the fill colour */
-#define OWF_DSHAPE_LINE   OWF_SHAPE_LINE     /* drawn round with the line colour */
-#define OWF_DSHAPE_INK    OWF_SHAPE_INK      /* filled with the line colour (a dot, a light, a socket) */
-#define OWF_DSHAPE_DASHED OWF_SHAPE_DASHED   /* its line dashed whatever the style says (a lifeline) */
+/* The shapes are owf_geo.h's (owf_geo.c builds them; GFOffice's one copy of shape geometry). */
+#define OWF_DSHAPE_POINTS OWF_GEO_POINTS
+#define OWF_DSHAPE_PARTS OWF_GEO_PARTS
+#define OWF_DSHAPE_CLOSED OWF_GEO_CLOSED   /* the part's last point joins its first */
+#define OWF_DSHAPE_FILL   OWF_GEO_FILL     /* filled with the fill colour */
+#define OWF_DSHAPE_LINE   OWF_GEO_LINE     /* drawn round with the line colour */
+#define OWF_DSHAPE_INK    OWF_GEO_INK      /* filled with the line colour (a dot, a light, a socket) */
+#define OWF_DSHAPE_DASHED OWF_GEO_DASHED   /* its line dashed whatever the style says (a lifeline) */
 
-typedef owf_shape_part owf_dshape_part;  /* first, n: points[first .. first + n - 1]; flags: OWF_DSHAPE_ */
-typedef owf_shape owf_dshape;            /* points (on the page, in hundredths), npoints, parts, nparts */
+typedef owf_geo_part owf_dshape_part;  /* first, n: points[first .. first + n - 1]; flags: OWF_DSHAPE_ */
+typedef owf_geo owf_dshape;            /* points (on the page, in hundredths), npoints, parts, nparts */
 
 /* The outline of the shape a style names, in box (x, y, width, height), into s: 1 when it is one of these shapes,
  * 0 when not (a rectangle, ellipse or another shape the drawing code has itself; s is then empty). */

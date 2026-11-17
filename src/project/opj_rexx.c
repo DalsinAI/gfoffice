@@ -67,7 +67,7 @@ static const command commands[NCOMMANDS] = {
     { "UPDATE", "STATUS/A,WHOLE/S" },
     { "BASELINES", "" },
     { "REPLACE", "ROW/A/N,FROM/A,TO/A,UNITS/K" },
-    { "LEVEL", "WITHINSLACK/S" },
+    { "LEVEL", "WITHINSLACK/S,ORDER/K" },
     { "CLEARLEVELING", "" },
     { "SORT", "BY/A,DESC/S,THEN/K,THENDESC/S,LAST/K,LASTDESC/S" },
     { "FIND", "TEXT/A,COLUMN/K,FROM/K/N,BACK/S,EXACT/S,BEGINS/S,RESOURCES/S" },
@@ -673,8 +673,12 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         }
         return edit_rc(rx, opj_set_assignment(doc, (int)row, r, a->value[2] ? a->num[2] : 100), "ASSIGN");
     case C_LEVEL: {
-        int n = 0;
-        if ((rc = opj_level(doc, a->value[0] != NULL, &n)) != OWF_OK) return edit_rc(rx, rc, "LEVEL");
+        int n = 0, order = a->value[1] ? opj_level_order_parse(a->value[1]) : OWF_LEVEL_STANDARD;
+        if (order < 0) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "LEVEL: ORDER is Standard, ID or Priority");
+            return OPJ_RX_ERROR;
+        }
+        if ((rc = opj_level_by(doc, a->value[0] != NULL, order, &n)) != OWF_OK) return edit_rc(rx, rc, "LEVEL");
         snprintf(result, size, "%d", n);
         return OPJ_RX_OK;
     }

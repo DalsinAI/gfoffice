@@ -80,7 +80,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenWrite 2.0.51 (17.11.2026)"
+#define VERSION_TEXT "GFOpenWrite 2.0.52 (17.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -114,6 +114,7 @@ enum {
     M_TRACK, M_CHANGE_NEXT, M_CHANGE_PREV, M_CHANGE_ACCEPT, M_CHANGE_REJECT, M_CHANGE_ACCEPT_ALL,
     M_CHANGE_REJECT_ALL, M_REVIEW_AUTHOR, M_SHOW_CHANGES,
     M_HIDDEN, M_SHOW_HIDDEN,                         /* 2.0.46 */
+    M_COMPARE,                                       /* 2.0.52 */
     M_COMMENT, M_COMMENT_NEXT, M_COMMENT_PREV, M_COMMENT_REPLY, M_COMMENT_EDIT, M_COMMENT_DONE, M_COMMENT_DELETE,
     M_COMMENT_FILTER,                                /* 2.0.39 */
     M_FIELD_TITLE, M_FIELD_AUTHOR, M_FIELD_SUBJECT, M_FIELD_FILENAME, M_FIELD_WORDS, M_FIELD_CHAPTER, M_FIELD_USER,
@@ -301,6 +302,7 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Reject All", NULL, 0, 0, (APTR)M_CHANGE_REJECT_ALL },
     { NM_SUB, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_SUB, "Review Author...", NULL, 0, 0, (APTR)M_REVIEW_AUTHOR },
+    { NM_SUB, "Compare Documents...", NULL, 0, 0, (APTR)M_COMPARE },   /* 2.0.52 */
     /* 2.0.28: comments (core 1.3) */
     { NM_ITEM, "Comments", NULL, 0, 0, NULL },
     { NM_SUB, "Next Comment", NULL, 0, 0, (APTR)M_COMMENT_NEXT },
@@ -4275,6 +4277,37 @@ static void do_review_author(void)
     request_document_redraw();
 }
 
+/* 2.0.52: Compare Documents... (Word's Compare): a revised copy's differences put into this document as
+ * tracked changes under the review author; the changes made, or -1 */
+static int do_compare(const char *given)
+{
+    char path[512], msg[160];
+    owf_doc *revised = NULL;
+    const owf_format *used = NULL;
+    int rc;
+    if (!editor) return -1;
+    if (given && *given) snprintf(path, sizeof path, "%s", given);
+    else if (!ask_file_for(0, "Compare with the revised document", path, sizeof path)) return -1;
+    rc = owf_import_file(path, NULL, &revised, NULL, &used);
+    if (rc != OWF_OK) {
+        snprintf(msg, sizeof msg, "GFOpenWrite could not open the revised document.\n\n%s", owf_error_text(rc));
+        tell("Compare Documents", msg);
+        return -1;
+    }
+    review_author_init();
+    rc = ow_editor_compare(editor, revised, review_author);
+    owf_doc_free(revised);
+    if (rc < 0) { editor_result(-rc, ""); return -1; }
+    if (!rc) {
+        set_status("The documents are the same.");
+        request_document_redraw();
+        return 0;
+    }
+    snprintf(msg, sizeof msg, "%d change%s from %.60s, tracked; Next Change to review them.", rc, rc == 1 ? "" : "s", leaf(path));
+    editor_repaint(msg);
+    return rc;
+}
+
 /* ---- 2.0.29: fields with a value ---- */
 
 /* Pages of the bookmarked body paragraphs, from this layout, for page references (made before an update, as
@@ -5637,6 +5670,7 @@ static void menu_action(ULONG id)
     case M_CHANGE_ACCEPT_ALL: do_accept_change(1, 1); break;
     case M_CHANGE_REJECT_ALL: do_accept_change(0, 1); break;
     case M_REVIEW_AUTHOR: do_review_author(); break;
+    case M_COMPARE: do_compare(NULL); break;
     case M_COMMENT: case M_COMMENT_NEXT: case M_COMMENT_PREV: case M_COMMENT_REPLY: case M_COMMENT_EDIT:
     case M_COMMENT_DONE: case M_COMMENT_DELETE: do_comment((int)id); break;
     case M_COMMENT_FILTER: do_comment_filter(); break;
@@ -5873,6 +5907,7 @@ static int rexx_do_command(const char *command, char **result_out)
     else if(starts_word_ci(command,"CHANGES",&arg))snprintf(result,sizeof result,"%d",editor?ow_editor_change_count(editor):0);
     else if(starts_word_ci(command,"NEXTCHANGE",&arg)||starts_word_ci(command,"PREVCHANGE",&arg)){ow_change_info ci;int back=tolower((unsigned char)command[0])=='p';if(!editor||ow_editor_next_change(editor,back)<=0||!ow_editor_current_change(editor,&ci)){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"No changes");}else{bring_focus_into_view();change_text(&ci,ow_editor_change_count(editor),result,sizeof result);}}
     else if(starts_word_ci(command,"ACCEPTCHANGE",&arg)||starts_word_ci(command,"REJECTCHANGE",&arg)||starts_word_ci(command,"ACCEPTALL",&arg)||starts_word_ci(command,"REJECTALL",&arg)){int acc=tolower((unsigned char)command[0])=='a',all=tolower((unsigned char)command[6])=='a'&&tolower((unsigned char)command[7])=='l';int rc=!editor?OWF_ERR_UNSUPPORTED:all?ow_editor_accept_all_changes(editor,acc):ow_editor_accept_change(editor,acc);if(rc==OWF_ERR_UNSUPPORTED){ok=0;rc_fail=RX_WARN;snprintf(result,sizeof result,"%s",all?"The document has no changes":"No change at the caret");}else{ok=editor_result(rc,acc?"Accepted.":"Rejected.");snprintf(result,sizeof result,"%s",ok?(acc?"Accepted":"Rejected"):"Failed");}}
+    else if(starts_word_ci(command,"COMPARE",&arg)){int n=*arg?do_compare(arg):-1;if(n<0){ok=0;snprintf(result,sizeof result,"%s",*arg?"Could not compare":"COMPARE needs the revised document's path");}else snprintf(result,sizeof result,"%d",n);}   /* 2.0.52 */
     else if(starts_word_ci(command,"REVIEWAUTHOR",&arg)){if(*arg){snprintf(review_author,sizeof review_author,"%s",arg);review_author_set=1;if(editor)ow_editor_set_review_author(editor,review_author);}snprintf(result,sizeof result,"%s",review_author);}
     /* 2.0.28: comments. ADDCOMMENT, REPLYCOMMENT and EDITCOMMENT take the text ("\n": a new paragraph); COMMENTS
      * the count; NEXTCOMMENT, PREVCOMMENT and GETCOMMENT the comment (at the caret); RESOLVECOMMENT [OFF];

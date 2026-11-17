@@ -54,7 +54,7 @@ Amiga (start GFOpenProject, then `rx project.rexx RAM:`).
 | BASELINE | `ROW/N,COUNT/N,CLEAR/S,NUMBER/K/N` | sets (or with CLEAR clears) the baseline; no ROW: the whole plan. NUMBER=1 to 10: Baseline 1 to 10 (0, the default, is Baseline) |
 | BASELINES | | the baselines some task has saved, as `0 3 10`, or `none` |
 | REPLACE | `ROW/A/N,FROM/A,TO/A,UNITS/K` | Assign Resources' Replace: the row's assignment of FROM goes to TO, keeping its units unless UNITS gives them ("50%", "2.5", "120.00"); to another kind of resource, one unit of it |
-| LEVEL | `WITHINSLACK/S` | Level Resources: delays tasks until no work resource is over-allocated where a move can mend it; how many tasks were delayed. WITHINSLACK: only within each task's slack |
+| LEVEL | `WITHINSLACK/S,ORDER/K` | Level Resources: delays tasks until no work resource is over-allocated where a move can mend it; how many tasks were delayed. WITHINSLACK: only within each task's slack. ORDER: `Standard` (the default: earlier start, less slack, then ID), `ID` (ID Only) or `Priority` (Priority, Standard). Tasks of Priority 1000 are never moved |
 | CLEARLEVELING | | every task's Leveling Delay back to 0 |
 | SORT | `BY/A,DESC/S,THEN/K,THENDESC/S,LAST/K,LASTDESC/S` | Project > Sort, renumbering the tasks and keeping the outline: by up to three columns, each ascending unless its DESC is given |
 | FIND | `TEXT/A,COLUMN/K,FROM/K/N,BACK/S,EXACT/S,BEGINS/S,RESOURCES/S` | Edit > Find: the next row (after FROM, or from the top) whose COLUMN (default Name) holds TEXT, case ignored, going round the end; EXACT: the whole cell, BEGINS: its start; BACK: upwards; RESOURCES: on the resource sheet. RC 5 when none |
@@ -90,6 +90,10 @@ Fixed Work change the duration, Fixed Duration the units), and the worked-out `"
 `"Remaining Work"`, `Cost` and `"Actual Cost"`. Edits keep what the task's type fixes, as MS Project does:
 on Fixed Units, changing a resource's units changes the duration, and on Fixed Work a longer duration
 lowers the units. With Effort Driven, adding or removing a resource keeps the work.
+`Priority` takes 0 to 1000 (500 for a new task; 1000 is Do Not Level, which LEVEL never moves).
+`Overallocated` (or `over`) is worked out: `Yes` when one of the task's work resources has more
+assigned at some time within the task than its max units. Such a task's `ID` reads with a `!` after it,
+as an over-allocated resource's does.
 
 On the resource sheet: `Name`, `Type`, `Initials`, `Group`, `"Max. Units"` or `max`,
 `"Std. Rate"` or `rate`, `Work`, `Cost` and `"Base Calendar"` or `calendar` (a calendar's name or number,

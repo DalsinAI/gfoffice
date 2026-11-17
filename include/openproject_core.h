@@ -159,6 +159,9 @@ enum {
     OPJ_COL_TYPE,                        /* "Fixed Units", "Fixed Duration" or "Fixed Work" (typed: those, or
                                           * units, duration, work); a summary's is blank */
     OPJ_COL_EFFORT_DRIVEN,               /* "Yes" or "No"; Fixed Work is always Yes; a summary's is blank */
+    OPJ_COL_PRIORITY,                    /* 0..1000 (typed); 1000 is Do Not Level; a summary's is blank */
+    OPJ_COL_OVERALLOCATED,               /* "Yes" or "No" (owf_ptask_overallocated), worked out; a summary's is
+                                          * blank. An over-allocated task's ID also gets a "!", drawn red */
     OPJ_NCOLS
 };
 
@@ -197,10 +200,15 @@ void opj_date_text(owf_ptime t, int with_time, char *out);
  * gets default_minute (the start or end of a working day). 1 when it is one. */
 int opj_date_parse(const char *s, int default_minute, owf_ptime *t);
 
-/* Tools > Level Resources: owf_project_level (within_slack: only within each task's slack) as one edit;
- * how many tasks it delayed in *delayed (when not NULL). Clear Leveling: every delay back to 0 (with none,
- * nothing changes and there is no Undo step). */
+/* Tools > Level Resources: owf_project_level_by (within_slack: only within each task's slack; order an
+ * OWF_LEVEL_) as one edit; how many tasks it delayed in *delayed (when not NULL). opj_level is Standard.
+ * Clear Leveling: every delay back to 0 (with none, nothing changes and there is no Undo step). The
+ * order's name, "" out of range; opj_level_order_parse takes a name ("Priority, Standard", "priority",
+ * "ID Only", "id", "standard"), -1 for none. */
+int opj_level_by(opj_doc *doc, int within_slack, int order, int *delayed);
 int opj_level(opj_doc *doc, int within_slack, int *delayed);
+const char *opj_level_order_name(int order);
+int opj_level_order_parse(const char *name);
 int opj_clear_leveling(opj_doc *doc);
 
 /* ---- Update Tasks (MS Project's Tools > Tracking > Update Tasks...) ---- */
