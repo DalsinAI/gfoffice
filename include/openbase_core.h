@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.14.4"
+#define OB_CORE_VERSION "0.15.0"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -595,9 +595,19 @@ typedef struct ob_qcolumn {
     int sort;                       /* OB_SORT_* */
     ob_total total;
     char criteria[OB_QUERY_OR][OB_VALUE_MAX];
+    char to[OB_EXPR_MAX];           /* core 0.15: Update To (a value) or Append To (a field); "" none */
 } ob_qcolumn;
 
-/* About 24 KB: keep one static or on the heap. */
+/* What a query does (core 0.15): reads rows, or changes them. */
+typedef enum ob_qkind {
+    OB_QK_SELECT,                   /* reads: its rows are shown */
+    OB_QK_UPDATE,                   /* changes fields of the target's rows */
+    OB_QK_APPEND,                   /* adds the rows it reads to the target */
+    OB_QK_DELETE,                   /* deletes the target's rows */
+    OB_QKINDS
+} ob_qkind;
+
+/* About 27 KB: keep one static or on the heap. */
 typedef struct ob_query {
     char name[OB_NAME_MAX];
     int ntables;
@@ -608,6 +618,8 @@ typedef struct ob_query {
     char sql[OB_SQL_MAX];           /* sql_only: the statement */
     int njoins;                     /* 0: tables joined by their relationships */
     ob_qjoin joins[OB_QUERY_JOINS];
+    ob_qkind kind;                  /* core 0.15; OB_QK_SELECT (0) by ob_query_init */
+    char target[OB_NAME_MAX];       /* the table an action query changes; "" the first table */
 } ob_query;
 
 /* A result column: its heading, and the type its values are shown as
@@ -671,6 +683,40 @@ int ob_query_get(ob_project *p, const char *name, ob_query *out);
 int ob_query_save(ob_project *p, const ob_query *q);
 int ob_query_rename(ob_project *p, const char *old_name, const char *new_name);
 int ob_query_delete(ob_project *p, const char *name);
+
+/* ---- Queries that change rows (core 0.15, design 5.6) ----
+ * An Update, Append or Delete query is made in the grid as a query that
+ * reads, and changes the rows that query would show:
+ *
+ *   Update  the target (one of its tables; "" the first) gets each column of
+ *           its own with something in "to" set to it, in every row the
+ *           criteria pick: a value in the field's own form (Leeds, 12.50,
+ *           1/12/2026), empty, a [question], or =SQL (= "Products"."Price"
+ *           * 1.1). Its Counter can't be changed; no totals.
+ *   Append  the rows it reads (totals allowed) are added to the target (any
+ *           table): each column with a field's name in "to" goes to that
+ *           field; columns with "to" empty only pick the rows.
+ *   Delete  the target's rows the criteria pick are deleted, as from its
+ *           datasheet: a Lookup elsewhere refuses, cascades or clears.
+ *
+ * The SQL of one is also accepted typed (sql_only, kind set): one UPDATE,
+ * INSERT or DELETE statement on one of the project's tables, without
+ * RETURNING; it may read any table. Anything else is refused.
+ *
+ * ob_query_sql gives an action's statement; ob_query_rows, ob_query_total,
+ * CSV and views refuse it. ob_query_preview counts the rows it would add,
+ * change or delete and keeps nothing (a rule it would break is the error);
+ * ob_query_run does it, all or none, and puts it on the Undo list as one
+ * step ("Update Query Raise prices: 3 rows in Products"), unless more than
+ * OB_UNDO_ROWS rows change, the target has triggers, or a delete would reach
+ * rows of other tables (a cascade or clear): then it runs, the Undo list is
+ * emptied and *undoable is 0. Both take the [questions]' answers as
+ * ob_query_rows does. A saved action query is kept as "oadb query 3" (an
+ * older GFOpenBase refuses to run it, as SQL that changes rows). */
+#define OB_UNDO_ROWS 20000
+const char *ob_qkind_name(ob_qkind k);      /* "Select", "Update", "Append", "Delete" */
+ob_int ob_query_preview(ob_project *p, const ob_query *q, const char *const *params);
+ob_int ob_query_run(ob_project *p, const ob_query *q, const char *const *params, int *undoable);
 
 /* ---- A query's rows as CSV, a query as a view (core 0.13.1) ----
  * CSV: a header of the result's headings, then every row the query gives,

@@ -58,7 +58,7 @@ struct ob_project {
     int nundo;
     int undo_off;           /* > 0: row calls record no steps (an import records one) */
     int undo_at_begin;      /* nundo when ob_begin opened the transaction */
-    char undo_name[OB_NAME_MAX + 48];
+    char undo_name[2 * OB_NAME_MAX + 80];
     char qname[OB_NAME_MAX];   /* ob_query_name's answer */
     char fname[OB_NAME_MAX];   /* ob_form_name's answer */
 };
@@ -534,7 +534,7 @@ static int sql_fail(ob_project *p, const ob_table *t, int rc)
     int ext = sqlite3_extended_errcode(p->db);
     if ((rc & 0xff) == SQLITE_CONSTRAINT || (ext & 0xff) == SQLITE_CONSTRAINT) {
         if ((c = strstr(m, "CHECK constraint failed: ob_")) != NULL) {
-            const char *rule = c + 27, *name = strchr(rule, '_');
+            const char *rule = c + 28, *name = strchr(rule, '_');
             if (name && t && (f = field_named(t, name + 1)) != NULL) {
                 if (!strncmp(rule, "len_", 4))
                     return fail(p, "%s must be at most %d characters", field_label(f), f->max_len);
@@ -1894,7 +1894,7 @@ static int names_unique(ob_project *p, int n, const char *const *fields)
 
 /* ---- Undo ---- */
 
-enum { U_ADD, U_CHANGE, U_DELETE, U_IMPORT };
+enum { U_ADD, U_CHANGE, U_DELETE, U_IMPORT, U_QUERY };
 
 typedef struct undo_step {
     int kind;
@@ -1905,16 +1905,22 @@ typedef struct undo_step {
     int has_counter;
     char (*cols)[OB_NAME_MAX];
     sqlite3_value **vals;
-    ob_int *keys;               /* import: the rows it added */
+    ob_int *keys;               /* import: the rows it added; query: the rows' rowids after */
     ob_int nkeys;
+    ob_int *okeys;              /* query: the rows' rowids before; vals holds nkeys rows of ncols */
+    int qkind;                  /* query: ob_qkind */
+    char what[OB_NAME_MAX];     /* query: its name */
 } undo_step;
 
 static void undo_free(undo_step *u)
 {
-    int i;
     if (!u) return;
-    if (u->vals) for (i = 0; i < u->ncols; i++) sqlite3_value_free(u->vals[i]);
+    if (u->vals) {
+        ob_int n = u->kind == U_QUERY ? u->nkeys * u->ncols : u->ncols, k;
+        for (k = 0; k < n; k++) sqlite3_value_free(u->vals[k]);
+    }
     free(u->vals);
+    free(u->okeys);
     free(u->cols);
     free(u->keys);
     free(u);
@@ -2026,9 +2032,54 @@ const char *ob_undo_name(ob_project *p)
     u = p->undo[p->nundo - 1];
     if (u->kind == U_IMPORT)
         snprintf(p->undo_name, sizeof p->undo_name, "Import of %lld rows into %s", u->nkeys, u->table);
+    else if (u->kind == U_QUERY)
+        snprintf(p->undo_name, sizeof p->undo_name, "%s Query%s%s: %lld row%s in %s", ob_qkind_name((ob_qkind)u->qkind),
+                 u->what[0] ? " " : "", u->what, u->nkeys, u->nkeys == 1 ? "" : "s", u->table);
     else
         snprintf(p->undo_name, sizeof p->undo_name, "%s in %s", what[u->kind], u->table);
     return p->undo_name;
+}
+
+/* Takes back an action query: deletes the rows it added, puts back the rows
+ * it changed (rowid too) or deleted, in one step. */
+static int undo_query(ob_project *p, const undo_step *u)
+{
+    sqlite3_str *s = sqlite3_str_new(NULL);
+    sqlite3_stmt *st;
+    char *sql;
+    ob_int r;
+    int i, rc, good = 1, n = u->ncols;
+    if (u->qkind == OB_QK_APPEND) {
+        sqlite3_str_appendf(s, "DELETE FROM \"%w\" WHERE rowid = ?1", u->table);
+    } else if (u->qkind == OB_QK_UPDATE) {
+        /* a Counter is the rowid: its old value puts the rowid back */
+        sqlite3_str_appendf(s, "UPDATE \"%w\" SET %s", u->table, u->has_counter ? "" : "rowid = ?2");
+        for (i = 0; i < n; i++) sqlite3_str_appendf(s, "%s\"%w\" = ?%d", i || !u->has_counter ? ", " : "", u->cols[i], i + 3);
+        sqlite3_str_appendall(s, " WHERE rowid = ?1");
+    } else {
+        sqlite3_str_appendf(s, "INSERT INTO \"%w\"(%s", u->table, u->has_counter ? "" : "rowid");
+        for (i = 0; i < n; i++) sqlite3_str_appendf(s, "%s\"%w\"", i || !u->has_counter ? ", " : "", u->cols[i]);
+        sqlite3_str_appendf(s, ") VALUES(%s", u->has_counter ? "" : "?2");
+        for (i = 0; i < n; i++) sqlite3_str_appendf(s, "%s?%d", i || !u->has_counter ? ", " : "", i + 3);
+        sqlite3_str_appendall(s, ")");
+    }
+    if (!(sql = sqlite3_str_finish(s))) return fail(p, "Not enough memory");
+    if (!step_begin(p)) { sqlite3_free(sql); return 0; }
+    st = prep(p, sql);
+    sqlite3_free(sql);
+    if (!st) good = 0;
+    for (r = u->nkeys - 1; good && r >= 0; r--) {
+        sqlite3_reset(st);
+        sqlite3_clear_bindings(st);
+        sqlite3_bind_int64(st, 1, u->keys[r]);
+        if (u->qkind != OB_QK_APPEND) {
+            sqlite3_bind_int64(st, 2, u->okeys[r]);
+            for (i = 0; i < n; i++) sqlite3_bind_value(st, i + 3, u->vals[r * n + i]);
+        }
+        if ((rc = sqlite3_step(st)) != SQLITE_DONE) good = sql_fail(p, design(p, u->table), rc);
+    }
+    sqlite3_finalize(st);
+    return step_end(p, good);
 }
 
 int ob_undo(ob_project *p)
@@ -2044,6 +2095,12 @@ int ob_undo(ob_project *p)
     if (scalar(p, "PRAGMA schema_version", -1) != u->version) {
         ob_undo_clear(p);
         return fail(p, "A table's design has changed since, so that can't be undone");
+    }
+    if (u->kind == U_QUERY) {
+        if (!undo_query(p, u)) return 0;
+        p->nundo--;
+        undo_free(u);
+        return ok(p);
     }
     s = sqlite3_str_new(NULL);
     switch (u->kind) {
@@ -4190,6 +4247,9 @@ typedef struct qplan {
     qparam params[OB_QUERY_PARAMS];
     int nout;
     ob_qresult out[OB_QUERY_OUT];
+    ob_qkind kind;              /* core 0.15: OB_QK_SELECT, or a query that changes rows */
+    char target[OB_NAME_MAX];   /* the table it changes */
+    int undo_ok;                /* whether an undo step can say what it does */
 } qplan;
 
 static void plan_free(qplan *pl)
@@ -4476,7 +4536,7 @@ static int joins_from(ob_project *p, const ob_query *q, const ob_table *tabs, sq
     return 1;
 }
 
-static qplan *plan_make(ob_project *p, const ob_query *q)
+static qplan *select_plan(ob_project *p, const ob_query *q)
 {
     qplan *pl = calloc(1, sizeof *pl);
     ob_table *tabs = NULL;
@@ -4715,6 +4775,544 @@ bad:
     return NULL;
 }
 
+/* ---- Queries that change rows (core 0.15) ---- */
+
+static sqlite3_stmt *plan_prepare(ob_project *p, const qplan *pl, const char *const *params, const char *fmt);
+
+static const char *const qkind_names[OB_QKINDS] = { "Select", "Update", "Append", "Delete" };
+
+const char *ob_qkind_name(ob_qkind k)
+{
+    return (unsigned)k < OB_QKINDS ? qkind_names[k] : "";
+}
+
+/* "an Update", "an Append", "a Delete": the kind with its article. */
+static const char *a_kind(ob_qkind k)
+{
+    static const char *const a[OB_QKINDS] = { "a Select", "an Update", "an Append", "a Delete" };
+    return (unsigned)k < OB_QKINDS ? a[k] : "a";
+}
+
+/* A [question] in an Update To value: kept as the plan's next parameter,
+ * checked as field f; its ?N appended to s. */
+static int to_param(ob_project *p, qplan *pl, const ob_field *f, const char *t, sqlite3_str *s)
+{
+    size_t n = strlen(t);
+    qparam *q;
+    if (t[n - 1] != ']' || n < 3) return fail(p, "%s: a question to ask is written in [ ], such as [New price?]", field_label(f));
+    if (pl->nparams >= OB_QUERY_PARAMS) return fail(p, "A query asks at most %d questions", OB_QUERY_PARAMS);
+    q = &pl->params[pl->nparams++];
+    copy(q->name, sizeof q->name, t + 1);
+    q->name[n - 2 < sizeof q->name ? n - 2 : sizeof q->name - 1] = 0;
+    trimmed(q->name, q->name, sizeof q->name);
+    if (!q->name[0]) return fail(p, "%s: write the question inside [ ]", field_label(f));
+    q->has_field = 1;
+    q->f = *f;
+    q->f.required = q->f.key = 0;
+    q->f.max_len = 0;
+    if (q->f.type == OB_LOOKUP) q->f.type = OB_INTEGER;
+    sqlite3_str_appendf(s, "?%d", pl->nparams);
+    return 1;
+}
+
+/* An Update To value for field f, as SQL appended to s: =SQL, empty, a
+ * [question], or a value in the field's own form. */
+static int to_value(ob_project *p, qplan *pl, const ob_field *f, const char *text, sqlite3_str *s)
+{
+    char t[OB_EXPR_MAX];
+    trimmed(text, t, sizeof t);
+    if (t[0] == '=') {
+        const char *e = skip_space(t + 1);
+        if (!*e) return fail(p, "%s: write the SQL after =", field_label(f));
+        if (strchr(e, ';')) return fail(p, "%s: =SQL is one piece of SQL, without ;", field_label(f));
+        sqlite3_str_appendf(s, "(%s)", e);
+        return 1;
+    }
+    if (same(t, "empty")) {
+        if (f->required || f->key) return fail(p, "%s must be filled in", field_label(f));
+        sqlite3_str_appendall(s, "NULL");
+        return 1;
+    }
+    if (t[0] == '[') return to_param(p, pl, f, t, s);
+    if (f->type == OB_OBJECT) return fail(p, "%s holds Datatype objects: an Update query can only empty it", field_label(f));
+    return literal(p, f, t, s);
+}
+
+/* The table an action query changes: its name in q->target, or the first
+ * table; for an update or a delete it must be one of the query's tables. */
+static const char *action_target(ob_project *p, const ob_query *q)
+{
+    const char *t = q->target[0] ? q->target : q->ntables > 0 ? q->tables[0] : "";
+    int i, in = 0;
+    if (!t[0]) { fail(p, "%s: choose the table it %s", qname(q), q->kind == OB_QK_APPEND ? "adds rows to" : "changes"); return NULL; }
+    for (i = 0; i < q->ntables; i++) if (same(q->tables[i], t)) in = 1;
+    if (!in && q->kind != OB_QK_APPEND) {
+        fail(p, "%s: %s query changes one of its own tables, and %s isn't one", qname(q),
+             a_kind(q->kind), t);
+        return NULL;
+    }
+    return t;
+}
+
+/* Whether word (lower case) is in s as a word of its own, in any case. */
+static int has_word(const char *s, const char *word)
+{
+    size_t n = strlen(word);
+    const char *at;
+    for (at = s; *at; at++)
+        if (starts_nocase(at, word) && (at == s || !(isalnum((unsigned char)at[-1]) || at[-1] == '_'))
+            && !(isalnum((unsigned char)at[n]) || at[n] == '_'))
+            return 1;
+    return 0;
+}
+
+/* What typed action SQL does, as SQLite's authorizer sees it while it is
+ * prepared: the one table it writes, and whether anything else would be done. */
+typedef struct action_auth {
+    char table[OB_NAME_MAX];
+    int writes;                 /* SQLITE_INSERT, _UPDATE, _DELETE seen: 1, 2, 4 */
+    int tables;                 /* different tables written */
+    int by_trigger;             /* a trigger writes too */
+    char other[8][OB_NAME_MAX]; /* other tables written: each must be a Lookup's cascade or clear */
+    int nother;
+    int refused;
+    char why[OB_ERR_MAX];
+} action_auth;
+
+static int action_authorize(void *user, int code, const char *a3, const char *a4, const char *db, const char *trigger)
+{
+    action_auth *a = user;
+    int bit;
+    (void)a4;
+    switch (code) {
+    case SQLITE_SELECT:
+    case SQLITE_READ:
+    case SQLITE_FUNCTION:
+    case SQLITE_RECURSIVE:
+        return SQLITE_OK;
+    case SQLITE_INSERT: bit = 1; break;
+    case SQLITE_UPDATE: bit = 2; break;
+    case SQLITE_DELETE: bit = 4; break;
+    default:
+        a->refused = 1;
+        copy(a->why, sizeof a->why, "it may only add, change or delete rows of one table");
+        return SQLITE_DENY;
+    }
+    if (trigger) { a->by_trigger = 1; return SQLITE_OK; }
+    if (!a3 || (db && strcmp(db, "main")) || starts_nocase(a3, "sqlite_")) {
+        a->refused = 1;
+        copy(a->why, sizeof a->why, "it may only add, change or delete rows of one table");
+        return SQLITE_DENY;
+    }
+    if (starts_nocase(a3, "oadb_")) {
+        a->refused = 1;
+        snprintf(a->why, sizeof a->why, "%s isn't one of the project's tables", a3);
+        return SQLITE_DENY;
+    }
+    if (!a->table[0]) {
+        copy(a->table, sizeof a->table, a3);
+        a->tables = 1;
+    } else if (!same(a->table, a3)) {
+        /* another table: a Lookup's cascade or clear (checked once prepared), or a second table */
+        int k, known = 0;
+        for (k = 0; k < a->nother; k++) if (same(a->other[k], a3)) known = 1;
+        if (!known && a->nother < 8) copy(a->other[a->nother++], OB_NAME_MAX, a3);
+        else if (!known) a->tables = 9;
+        return SQLITE_OK;
+    }
+    a->writes |= bit;
+    return SQLITE_OK;
+}
+
+/* Typed SQL that changes rows: one INSERT, UPDATE or DELETE, of the kind the
+ * query says, on one of the project's tables. */
+static qplan *sql_action_plan(ob_project *p, const ob_query *q, qplan *pl)
+{
+    static const int want[OB_QKINDS] = { 0, 2, 1, 4 };
+    action_auth a;
+    sqlite3_stmt *st = NULL;
+    const char *tail = NULL;
+    char *sql;
+    size_t n;
+    int rc, i;
+    memset(&a, 0, sizeof a);
+    pl->sql_only = 1;
+    if (!(sql = sqlite3_mprintf("%s", q->sql))) { fail(p, "Not enough memory"); goto bad; }
+    n = strlen(sql);
+    while (n && (isspace((unsigned char)sql[n - 1]) || sql[n - 1] == ';')) sql[--n] = 0;
+    pl->sql = sql;
+    if (!n || !*skip_space(sql)) { fail(p, "%s: type its SQL", qname(q)); goto bad; }
+    sqlite3_set_authorizer(p->db, action_authorize, &a);
+    rc = sqlite3_prepare_v2(p->db, sql, -1, &st, &tail);
+    sqlite3_set_authorizer(p->db, NULL, NULL);
+    if (a.refused) { fail(p, "%s: %s", qname(q), a.why); goto bad; }
+    if (rc != SQLITE_OK) { fail(p, "%s: %s", qname(q), sqlite3_errmsg(p->db)); goto bad; }
+    if (!st) { fail(p, "%s: type its SQL", qname(q)); goto bad; }
+    if (tail && *tail) {
+        const char *t = tail;
+        while (*t && (isspace((unsigned char)*t) || *t == ';')) t++;
+        if (*t) { fail(p, "%s is one statement: take out what follows the first ;", qname(q)); goto bad; }
+    }
+    if (sqlite3_stmt_readonly(st) || !a.writes) {
+        fail(p, "%s: %s query's SQL %s rows (a query that reads is a Select query)", qname(q),
+             a_kind(q->kind), q->kind == OB_QK_APPEND ? "adds" : q->kind == OB_QK_DELETE ? "deletes" : "changes");
+        goto bad;
+    }
+    for (i = 0; i < a.nother && a.tables == 1; i++) {
+        char *chk = sqlite3_mprintf("SELECT count(*) FROM pragma_foreign_key_list(%Q) WHERE \"table\" = %Q COLLATE NOCASE"
+                                    " AND (on_delete IN ('CASCADE', 'SET NULL', 'SET DEFAULT')"
+                                    " OR on_update IN ('CASCADE', 'SET NULL', 'SET DEFAULT'))", a.other[i], a.table);
+        if (!chk || scalar(p, chk, 0) < 1) a.tables = 2;
+        sqlite3_free(chk);
+    }
+    if (a.tables > 1) { fail(p, "%s: %s query changes one table", qname(q), a_kind(q->kind)); goto bad; }
+    if (sqlite3_column_count(st) > 0) { fail(p, "%s: %s query shows no rows, so it has no RETURNING", qname(q), a_kind(q->kind)); goto bad; }
+    if (!(a.writes & want[q->kind]) || (q->kind != OB_QK_APPEND && (a.writes & ~want[q->kind]))) {
+        fail(p, "%s: %s query's SQL is %s", qname(q), a_kind(q->kind),
+             q->kind == OB_QK_APPEND ? "INSERT" : q->kind == OB_QK_DELETE ? "DELETE" : "UPDATE");
+        goto bad;
+    }
+    if (!table_exists(p, a.table)) { fail(p, "%s: %s isn't one of the project's tables", qname(q), a.table); goto bad; }
+    copy(pl->target, sizeof pl->target, a.table);
+    /* an upsert or REPLACE deletes or changes rows an undo would not see */
+    pl->undo_ok = !a.by_trigger && a.writes == want[q->kind] && !has_word(sql, "replace");
+    pl->nparams = sqlite3_bind_parameter_count(st);
+    if (pl->nparams > OB_QUERY_PARAMS) { fail(p, "A query asks at most %d questions", OB_QUERY_PARAMS); goto bad; }
+    for (i = 0; i < pl->nparams; i++) {
+        const char *nm = sqlite3_bind_parameter_name(st, i + 1);
+        if (nm && nm[0] != '?' && nm[1]) copy(pl->params[i].name, sizeof pl->params[i].name, nm + 1);
+        else snprintf(pl->params[i].name, sizeof pl->params[i].name, "Value %d", i + 1);
+    }
+    sqlite3_finalize(st);
+    return pl;
+bad:
+    sqlite3_finalize(st);
+    plan_free(pl);
+    return NULL;
+}
+
+/* An action query made in the grid: the query that reads the rows (for an
+ * update or a delete, the target's rowid; for an append, the columns that go
+ * to a field), wrapped in the statement that changes them. */
+static qplan *grid_action_plan(ob_project *p, const ob_query *q)
+{
+    static ob_query sq;
+    ob_table *t = NULL;
+    qplan *pl = NULL;
+    sqlite3_str *s = NULL;
+    const char *target;
+    char *done;
+    int c, i, n = 0;
+    if (!(target = action_target(p, q))) return NULL;
+    if (!(t = malloc(sizeof *t))) { fail(p, "Not enough memory"); return NULL; }
+    if (!ob_table_get(p, target, t)) {
+        fail(p, "%s uses the table %s, which isn't there", qname(q), target);
+        goto bad;
+    }
+    sq = *q;
+    sq.kind = OB_QK_SELECT;
+    for (c = 0; c < sq.ncolumns; c++) {
+        ob_qcolumn *k = &sq.columns[c];
+        const ob_field *f = NULL;
+        int to = *skip_space(k->to) != 0;
+        if (q->kind != OB_QK_APPEND && k->total != OB_TOTAL_NONE) {
+            fail(p, "%s: %s query has no totals", qname(q), a_kind(q->kind));
+            goto bad;
+        }
+        if (to && q->kind == OB_QK_DELETE) {
+            fail(p, "%s: a Delete query changes no fields: take out what is in Update To", qname(q));
+            goto bad;
+        }
+        if (to && q->kind == OB_QK_UPDATE) {
+            if (!same(k->table, t->name) || !strcmp(k->field, "*") || !(f = field_named(t, k->field))) {
+                fail(p, "%s: Update To changes a field of %s, so that column must be one", qname(q), t->name);
+                goto bad;
+            }
+            if (f->type == OB_COUNTER) { fail(p, "%s is a Counter: its numbers can't be changed", field_label(f)); goto bad; }
+            for (i = 0; i < c; i++)
+                if (*skip_space(sq.columns[i].to) && same(sq.columns[i].field, k->field) && same(sq.columns[i].table, k->table)) {
+                    fail(p, "%s: %s is changed twice", qname(q), field_label(f));
+                    goto bad;
+                }
+            n++;
+        }
+        if (to && q->kind == OB_QK_APPEND) {
+            char want[OB_NAME_MAX];
+            trimmed(k->to, want, sizeof want);
+            if (!(f = field_named(t, want))) { fail(p, "%s has no field %s to append to", t->name, want); goto bad; }
+            if (!strcmp(k->field, "*")) { fail(p, "%s: a column of every field can't go to one field", qname(q)); goto bad; }
+            if (f->type == OB_OBJECT) { fail(p, "%s holds Datatype objects: an Append query can't fill it yet", field_label(f)); goto bad; }
+            if (k->table[0] && strcmp(k->field, "*")) {
+                const ob_table *from = NULL;
+                static ob_table src;
+                if (ob_table_get(p, k->table, &src)) from = &src;
+                if (from) {
+                    const ob_field *sf = field_named(from, k->field);
+                    if (sf && sf->type == OB_OBJECT) {
+                        fail(p, "%s holds Datatype objects: an Append query can't copy it yet", field_label(sf));
+                        goto bad;
+                    }
+                }
+            }
+            for (i = 0; i < c; i++) {
+                char other[OB_NAME_MAX];
+                trimmed(sq.columns[i].to, other, sizeof other);
+                if (other[0] && same(other, want)) { fail(p, "%s: two columns go to %s", qname(q), field_label(f)); goto bad; }
+            }
+            n++;
+        }
+        if (q->kind == OB_QK_APPEND) k->show = to;
+        else { k->show = 0; k->sort = OB_SORT_NONE; }
+    }
+    if (q->kind == OB_QK_UPDATE && !n) {
+        fail(p, "%s: give a field of %s a value in Update To", qname(q), t->name);
+        goto bad;
+    }
+    if (q->kind == OB_QK_APPEND && !n) {
+        fail(p, "%s: give a column the field of %s it goes to in Append To", qname(q), t->name);
+        goto bad;
+    }
+    if (q->kind == OB_QK_APPEND)        /* a required field left out with no default: say so before SQLite does */
+        for (i = 0; i < t->nfields; i++) {
+            const ob_field *f = &t->fields[i];
+            int given = 0;
+            for (c = 0; c < q->ncolumns; c++) {
+                char want[OB_NAME_MAX];
+                trimmed(q->columns[c].to, want, sizeof want);
+                if (want[0] && same(want, f->name)) given = 1;
+            }
+            if (!given && (f->required || f->key) && !f->has_default && f->type != OB_COUNTER) {
+                fail(p, "%s must be filled in: give it a column in Append To", field_label(f));
+                goto bad;
+            }
+        }
+    if (q->kind != OB_QK_APPEND) {
+        char rowid[OB_NAME_MAX + 16];
+        ob_qcolumn *k;
+        sqlite3_snprintf((int)sizeof rowid, rowid, "\"%w\".rowid", t->name);
+        if (!(k = ob_query_add_column(&sq, NULL, rowid))) {
+            fail(p, "%s has %d columns: %s query needs one free", qname(q), OB_QUERY_COLUMNS, a_kind(q->kind));
+            goto bad;
+        }
+        copy(k->heading, sizeof k->heading, "rowid");
+    }
+    if (!(pl = select_plan(p, &sq))) goto bad;
+    s = sqlite3_str_new(NULL);
+    if (q->kind == OB_QK_UPDATE) {
+        sqlite3_str_appendf(s, "UPDATE \"%w\" SET ", t->name);
+        for (c = 0, i = 0; c < q->ncolumns; c++) {
+            const ob_qcolumn *k = &q->columns[c];
+            if (!*skip_space(k->to)) continue;
+            sqlite3_str_appendf(s, "%s\"%w\" = ", i++ ? ", " : "", field_named(t, k->field)->name);
+            if (!to_value(p, pl, field_named(t, k->field), k->to, s)) goto bad;
+        }
+        sqlite3_str_appendf(s, " WHERE rowid IN (%s)", pl->sql);
+    } else if (q->kind == OB_QK_DELETE) {
+        sqlite3_str_appendf(s, "DELETE FROM \"%w\" WHERE rowid IN (%s)", t->name, pl->sql);
+    } else {
+        sqlite3_str_appendf(s, "INSERT INTO \"%w\"(", t->name);
+        for (c = 0, i = 0; c < q->ncolumns; c++) {
+            char want[OB_NAME_MAX];
+            trimmed(q->columns[c].to, want, sizeof want);
+            if (want[0]) sqlite3_str_appendf(s, "%s\"%w\"", i++ ? ", " : "", field_named(t, want)->name);
+        }
+        sqlite3_str_appendf(s, ") %s", pl->sql);
+    }
+    done = sqlite3_str_finish(s);
+    s = NULL;
+    if (!done) { fail(p, "Not enough memory"); goto bad; }
+    sqlite3_free(pl->sql);
+    pl->sql = done;
+    pl->nout = 0;
+    copy(pl->target, sizeof pl->target, t->name);
+    pl->undo_ok = 1;
+    {
+        sqlite3_stmt *st = NULL;
+        int rc = sqlite3_prepare_v2(p->db, pl->sql, -1, &st, NULL);
+        sqlite3_finalize(st);
+        if (rc != SQLITE_OK) { fail(p, "%s: %s", qname(q), sqlite3_errmsg(p->db)); goto bad; }
+    }
+    free(t);
+    return pl;
+bad:
+    sqlite3_free(sqlite3_str_finish(s));
+    plan_free(pl);
+    free(t);
+    return NULL;
+}
+
+/* A query made ready: one that reads (select_plan), or one that changes rows. */
+static qplan *plan_make(ob_project *p, const ob_query *q)
+{
+    qplan *pl;
+    if (q->kind == OB_QK_SELECT) return select_plan(p, q);
+    if ((unsigned)q->kind >= OB_QKINDS) { fail(p, "%s: a query of no kind", qname(q)); return NULL; }
+    if (q->sql_only) {
+        if (!(pl = calloc(1, sizeof *pl))) { fail(p, "Not enough memory"); return NULL; }
+        pl = sql_action_plan(p, q, pl);
+    } else {
+        pl = grid_action_plan(p, q);
+    }
+    if (pl) pl->kind = q->kind;
+    return pl;
+}
+
+/* A step that undoes an action query: the rows it added (keys), or the rows
+ * it changed or deleted as they were (okeys their rowids before, keys after). */
+static undo_step *capture_take(ob_project *p, const ob_table *t, const ob_query *q, ob_qkind kind)
+{
+    undo_step *u;
+    sqlite3_stmt *st;
+    ob_int n, r = 0;
+    int i, ncols = kind == OB_QK_APPEND ? 0 : t->nfields;
+    n = scalar(p, "SELECT count(*) FROM temp.oadb_undo_rows", -1);
+    if (n < 0 || n > OB_UNDO_ROWS) return NULL;
+    if (!(u = undo_new(p, U_QUERY, t->name, 0))) return NULL;
+    u->qkind = kind;
+    copy(u->what, sizeof u->what, q->name[0] ? q->name : "");
+    u->ncols = ncols;
+    u->nkeys = n;
+    u->keys = malloc(sizeof *u->keys * (size_t)(n ? n : 1));
+    u->okeys = malloc(sizeof *u->okeys * (size_t)(n ? n : 1));
+    u->cols = malloc(sizeof *u->cols * (size_t)(ncols ? ncols : 1));
+    u->vals = calloc((size_t)((n * ncols) != 0 ? n * ncols : 1), sizeof *u->vals);
+    if (!u->keys || !u->okeys || !u->cols || !u->vals) { undo_free(u); return NULL; }
+    for (i = 0; i < ncols; i++) {
+        copy(u->cols[i], sizeof u->cols[i], t->fields[i].name);
+        if (t->fields[i].type == OB_COUNTER) u->has_counter = 1;
+    }
+    if (!(st = prep(p, "SELECT * FROM temp.oadb_undo_rows ORDER BY rowid"))) { undo_free(u); return NULL; }
+    while (r < n && sqlite3_step(st) == SQLITE_ROW) {
+        u->keys[r] = sqlite3_column_int64(st, 0);
+        u->okeys[r] = sqlite3_column_int64(st, 1);
+        for (i = 0; i < ncols; i++)
+            if (!(u->vals[r * ncols + i] = sqlite3_value_dup(sqlite3_column_value(st, 2 + i)))) {
+                sqlite3_finalize(st);
+                u->nkeys = r + 1;
+                undo_free(u);
+                return NULL;
+            }
+        r++;
+    }
+    sqlite3_finalize(st);
+    if (r != n) { u->nkeys = r; undo_free(u); return NULL; }
+    return u;
+}
+
+/* The temporary table and trigger that keep, as the statement runs, each
+ * row it adds (its rowid), or each row it changes or deletes as it was. */
+static int capture_start(ob_project *p, const ob_table *t, ob_qkind kind)
+{
+    sqlite3_str *s = sqlite3_str_new(NULL);
+    char *sql;
+    int i, good;
+    const char *row = kind == OB_QK_APPEND ? "new" : "old";
+    sqlite3_str_appendall(s, "DROP TRIGGER IF EXISTS temp.oadb_undo_trigger; DROP TABLE IF EXISTS temp.oadb_undo_rows;"
+                             " CREATE TEMP TABLE oadb_undo_rows(k, ok");
+    for (i = 0; kind != OB_QK_APPEND && i < t->nfields; i++) sqlite3_str_appendf(s, ", c%d", i);
+    sqlite3_str_appendf(s, "); CREATE TEMP TRIGGER oadb_undo_trigger AFTER %s ON \"%w\" BEGIN INSERT INTO oadb_undo_rows VALUES(%s.rowid, %s.rowid",
+                        kind == OB_QK_APPEND ? "INSERT" : kind == OB_QK_DELETE ? "DELETE" : "UPDATE", t->name,
+                        kind == OB_QK_UPDATE ? "new" : row, row);
+    for (i = 0; kind != OB_QK_APPEND && i < t->nfields; i++) sqlite3_str_appendf(s, ", old.\"%w\"", t->fields[i].name);
+    sqlite3_str_appendall(s, "); END;");
+    if (!(sql = sqlite3_str_finish(s))) return fail(p, "Not enough memory");
+    good = run(p, sql);
+    sqlite3_free(sql);
+    return good;
+}
+
+static void capture_stop(ob_project *p)
+{
+    sqlite3_exec(p->db, "DROP TRIGGER IF EXISTS temp.oadb_undo_trigger; DROP TABLE IF EXISTS temp.oadb_undo_rows;",
+                 NULL, NULL, NULL);
+}
+
+/* Whether an undo step can say what the statement does to the file: no
+ * triggers of the project's own on the target, and for a delete (or typed
+ * SQL that changes rows) no Lookup elsewhere that cascades or clears. */
+static int undo_can(ob_project *p, const qplan *pl, ob_qkind kind)
+{
+    char *sql;
+    ob_int n;
+    if (!pl->undo_ok || p->undo_off) return 0;
+    sql = sqlite3_mprintf("SELECT count(*) FROM main.sqlite_schema WHERE type = 'trigger' AND tbl_name = %Q COLLATE NOCASE",
+                          pl->target);
+    n = sql ? scalar(p, sql, 1) : 1;
+    sqlite3_free(sql);
+    if (n != 0) return 0;
+    if (kind == OB_QK_DELETE || (kind == OB_QK_UPDATE && pl->sql_only)) {
+        sql = sqlite3_mprintf("SELECT count(*) FROM sqlite_schema m, pragma_foreign_key_list(m.name) k"
+                              " WHERE m.type = 'table' AND k.\"table\" = %Q COLLATE NOCASE"
+                              " AND (k.on_delete IN ('CASCADE', 'SET NULL', 'SET DEFAULT')"
+                              " OR k.on_update IN ('CASCADE', 'SET NULL', 'SET DEFAULT'))", pl->target);
+        n = sql ? scalar(p, sql, 1) : 1;
+        sqlite3_free(sql);
+        if (n != 0) return 0;
+    }
+    return 1;
+}
+
+/* Runs an action query: keep 0 counts what it would do and takes it back. */
+static ob_int action_go(ob_project *p, const ob_query *q, const char *const *params, int keep, int *undoable)
+{
+    qplan *pl;
+    ob_table *t = NULL;
+    sqlite3_stmt *st = NULL;
+    undo_step *u = NULL;
+    ob_int n = -1;
+    int rc = SQLITE_ERROR, capture = 0, good;
+    if (undoable) *undoable = 0;
+    if (q->kind == OB_QK_SELECT) { fail(p, "%s reads rows: open it to see them", qname(q)); return -1; }
+    if (p->readonly) { fail(p, "The project is open read-only"); return -1; }
+    if (!(pl = plan_make(p, q))) return -1;
+    if (!(t = malloc(sizeof *t)) || !ob_table_get(p, pl->target, t)) {
+        if (t) fail(p, "%s uses the table %s, which isn't there", qname(q), pl->target);
+        else fail(p, "Not enough memory");
+        free(t);
+        plan_free(pl);
+        return -1;
+    }
+    if (!step_begin(p)) { free(t); plan_free(pl); return -1; }
+    if (keep && undo_can(p, pl, q->kind)) capture = capture_start(p, t, q->kind);
+    if (keep && !capture) ok(p);
+    if ((st = plan_prepare(p, pl, params, "%s"))) {
+        rc = sqlite3_step(st);
+        if (rc == SQLITE_DONE) n = (ob_int)sqlite3_changes64(p->db);
+        else sql_fail(p, t, rc);
+        sqlite3_finalize(st);
+    }
+    if (capture && rc == SQLITE_DONE) u = capture_take(p, t, q, q->kind);
+    if (capture) capture_stop(p);
+    good = keep && rc == SQLITE_DONE;
+    if (!step_end(p, good)) {
+        undo_free(u);
+        free(t);
+        plan_free(pl);
+        if (!keep && rc == SQLITE_DONE) { ok(p); return n; }    /* a preview: taken back */
+        return -1;
+    }
+    if (u) {
+        undo_push(p, u);
+        if (undoable) *undoable = 1;
+    } else if (!p->undo_off) {
+        ob_undo_clear(p);       /* the older steps may no longer fit what the file holds */
+    }
+    free(t);
+    plan_free(pl);
+    ok(p);
+    return n;
+}
+
+ob_int ob_query_preview(ob_project *p, const ob_query *q, const char *const *params)
+{
+    return action_go(p, q, params, 0, NULL);
+}
+
+ob_int ob_query_run(ob_project *p, const ob_query *q, const char *const *params, int *undoable)
+{
+    return action_go(p, q, params, 1, undoable);
+}
+
 int ob_query_check(ob_project *p, const ob_query *q)
 {
     qplan *pl = plan_make(p, q);
@@ -4832,13 +5430,21 @@ static sqlite3_stmt *plan_prepare(ob_project *p, const qplan *pl, const char *co
     return st;
 }
 
+/* An action query's rows aren't shown: it is run (ob_query_run). */
+static int reads(ob_project *p, const ob_query *q)
+{
+    if (q->kind == OB_QK_SELECT) return 1;
+    return fail(p, "%s is %s query: it %s rows, so it is run, not opened", qname(q), a_kind(q->kind),
+                q->kind == OB_QK_APPEND ? "adds" : q->kind == OB_QK_DELETE ? "deletes" : "changes");
+}
+
 ob_int ob_query_total(ob_project *p, const ob_query *q, const char *const *params)
 {
-    qplan *pl = plan_make(p, q);
+    qplan *pl;
     sqlite3_stmt *st;
     ob_int n = -1;
     int rc;
-    if (!pl) return -1;
+    if (!reads(p, q) || !(pl = plan_make(p, q))) return -1;
     st = plan_prepare(p, pl, params, "SELECT count(*) FROM (%s)");
     if (st) {
         if ((rc = sqlite3_step(st)) == SQLITE_ROW) { n = sqlite3_column_int64(st, 0); ok(p); }
@@ -4857,6 +5463,7 @@ int ob_query_rows(ob_project *p, const ob_query *q, const char *const *params, o
     const char *vals[OB_QUERY_OUT];
     char (*cells)[48];
     int i, n = 0, rc, nout;
+    if (!reads(p, q)) return -1;
     if (max == 0) return 0;
     if (first < 0) first = 0;
     if (!(pl = plan_make(p, q))) return -1;
@@ -4967,7 +5574,13 @@ static char *grid_text(const ob_query *q)
 {
     sqlite3_str *s = sqlite3_str_new(NULL);
     int i, r;
-    sqlite3_str_appendall(s, q->njoins > 0 ? "oadb query 2\n" : "oadb query 1\n");
+    int action = q->kind != OB_QK_SELECT;
+    sqlite3_str_appendall(s, action ? "oadb query 3\n" : q->njoins > 0 ? "oadb query 2\n" : "oadb query 1\n");
+    if (action) {
+        sqlite3_str_appendf(s, "kind\t%d", (int)q->kind);
+        put_escaped(s, q->target);
+        sqlite3_str_appendall(s, q->sql_only ? "\nsql\n" : "\n");
+    }
     for (i = 0; i < q->ntables; i++) {
         sqlite3_str_appendall(s, "table");
         put_escaped(s, q->tables[i]);
@@ -4982,6 +5595,7 @@ static char *grid_text(const ob_query *q)
         put_escaped(s, c->heading);
         sqlite3_str_appendf(s, "\t%d\t%d\t%d", c->show ? 1 : 0, c->sort, (int)c->total);
         for (r = 0; r < OB_QUERY_OR; r++) put_escaped(s, c->criteria[r]);
+        if (action) put_escaped(s, c->to);
         sqlite3_str_appendall(s, "\n");
     }
     for (i = 0; i < q->njoins && i < OB_QUERY_JOINS; i++) {
@@ -5018,7 +5632,7 @@ static int grid_read(const char *text, ob_query *q)
 {
     const char *s = text;
     char word[16], num[16];
-    if (strncmp(s, "oadb query 1\n", 13) && strncmp(s, "oadb query 2\n", 13)) return 0;
+    if (strncmp(s, "oadb query 1\n", 13) && strncmp(s, "oadb query 2\n", 13) && strncmp(s, "oadb query 3\n", 13)) return 0;
     s += 13;
     while (*s) {
         grid_cell(&s, word, sizeof word);
@@ -5038,6 +5652,14 @@ static int grid_read(const char *text, ob_query *q)
             grid_cell(&s, num, sizeof num); c->total = (ob_total)atoi(num);
             if ((unsigned)c->total >= OB_TOTALS) c->total = OB_TOTAL_NONE;
             for (r = 0; r < OB_QUERY_OR; r++) grid_cell(&s, c->criteria[r], sizeof c->criteria[r]);
+            grid_cell(&s, c->to, sizeof c->to);
+        } else if (!strcmp(word, "kind")) {
+            grid_cell(&s, num, sizeof num);
+            q->kind = (ob_qkind)atoi(num);
+            if ((unsigned)q->kind >= OB_QKINDS) q->kind = OB_QK_SELECT;
+            grid_cell(&s, q->target, sizeof q->target);
+        } else if (!strcmp(word, "sql")) {
+            q->sql_only = 1;
         } else if (!strcmp(word, "join") && q->njoins < OB_QUERY_JOINS) {
             ob_qjoin *k = &q->joins[q->njoins++];
             memset(k, 0, sizeof *k);
@@ -5066,6 +5688,10 @@ int ob_query_get(ob_project *p, const char *name, ob_query *out)
         ob_query_init(out, (const char *)sqlite3_column_text(st, 0));
         if (grid && grid_read(grid, out)) {
             found = 1;
+            if (out->sql_only) {        /* typed SQL that changes rows: its kind is in the grid */
+                const char *sql = (const char *)sqlite3_column_text(st, 2);
+                copy(out->sql, sizeof out->sql, sql ? sql : "");
+            }
         } else {
             const char *sql = (const char *)sqlite3_column_text(st, 2);
             out->sql_only = 1;
@@ -5097,7 +5723,7 @@ int ob_query_save(ob_project *p, const ob_query *q)
     int rc;
     if (!query_name_ok(p, q->name, NULL)) return 0;
     if (!(pl = plan_make(p, q))) return 0;
-    if (!q->sql_only && !(grid = grid_text(q))) { plan_free(pl); return fail(p, "Not enough memory"); }
+    if ((!q->sql_only || q->kind != OB_QK_SELECT) && !(grid = grid_text(q))) { plan_free(pl); return fail(p, "Not enough memory"); }
     if (!has_queries(p) && !run(p, QUERIES_SQL)) { sqlite3_free(grid); plan_free(pl); return 0; }
     st = prep(p, "INSERT OR REPLACE INTO oadb_queries(name, grid, sql) VALUES(?1, ?2, ?3)");
     if (!st) { sqlite3_free(grid); plan_free(pl); return 0; }
@@ -5718,7 +6344,9 @@ static int rename_in_query(ob_query *q, const char *old_name, const char *new_na
     for (i = 0; i < q->ncolumns; i++) {
         if (same(q->columns[i].table, old_name)) { copy(q->columns[i].table, OB_NAME_MAX, new_name); n++; }
         if (!q->columns[i].table[0]) n += rename_in_expr(q->columns[i].expr, old_name, new_name);
+        if (q->kind == OB_QK_UPDATE) n += rename_in_expr(q->columns[i].to, old_name, new_name);
     }
+    if (same(q->target, old_name)) { copy(q->target, OB_NAME_MAX, new_name); n++; }
     return n;
 }
 
@@ -5820,6 +6448,7 @@ int ob_query_save_view(ob_project *p, const ob_query *q, const char *name)
     if (!name_ok(name, why, sizeof why, "view")) return fail(p, "%s", why);
     if (table_exists(p, name)) return fail(p, "There is a table named %s: give the view another name", name);
     if (query_exists(p, name)) return fail(p, "There is a query named %s: give the view another name", name);
+    if (!reads(p, q)) return 0;
     if (!(pl = plan_make(p, q))) return 0;
     if (pl->nparams) {
         plan_free(pl);
