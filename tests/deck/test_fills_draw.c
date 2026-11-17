@@ -209,8 +209,33 @@ static void test_pdf_gradient_alpha(void)
     owf_pdf_free(pdf);
 }
 
+/* Budgie's case on #18: pages come from realloc, so a page's own alphas start cleared; one see-through page
+ * and twenty opaque ones (past the first growth of the page table) name /ExtGState once, on the first */
+static void test_opaque_pages(void)
+{
+    owf_pdf *pdf = owf_pdf_new();
+    unsigned char *data = NULL;
+    size_t length = 0;
+    int k;
+    CHECK(pdf && owf_pdf_page(pdf, 4000, 4000) == 0, "a page");
+    owf_pdf_alpha(pdf, 40);
+    owf_pdf_rect(pdf, 0, 0, 1000, 1000, OWF_SHADE(0xFF0000), 0, 0);
+    owf_pdf_alpha(pdf, 100);
+    for (k = 0; k < 20; k++) {
+        CHECK(owf_pdf_page(pdf, 4000, 4000) == 0, "an opaque page");
+        owf_pdf_rect(pdf, 0, 0, 1000, 1000, OWF_SHADE(0x0000FF), 0, 0);
+    }
+    CHECK(owf_pdf_finish(pdf, "o", &data, &length, NULL) == OWF_OK && data, "finished");
+    if (data)
+        CHECK(count(data, length, "/ExtGState") == 1 && count(data, length, "/GA40 << /ca") == 1 &&
+              count(data, length, " gs\n") == 1, "the opaque pages name no graphics states");
+    free(data);
+    owf_pdf_free(pdf);
+}
+
 int main(void)
 {
+    test_opaque_pages();
     test_lines();
     test_layout_and_pdf();
     test_pdf_alpha();
