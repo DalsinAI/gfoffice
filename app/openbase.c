@@ -4397,6 +4397,8 @@ static void design_events(void)
     }
 }
 
+static void design_spell(struct Window *dw);
+
 static void design_button(struct Window *dw, int id)
 {
     static char names[PICK_MAX][OB_NAME_MAX];
