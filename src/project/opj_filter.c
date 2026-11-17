@@ -107,7 +107,7 @@ int opj_column_parse(const char *name, int resource_sheet)
         { "leveldelay", OPJ_COL_LEVELING_DELAY }, { "delay", OPJ_COL_LEVELING_DELAY },
     }, res[] = {
         { "maxunits", OPJ_RCOL_MAX }, { "max", OPJ_RCOL_MAX }, { "rate", OPJ_RCOL_RATE },
-        { "stdrate", OPJ_RCOL_RATE }, { "name", OPJ_RCOL_NAME },
+        { "stdrate", OPJ_RCOL_RATE }, { "name", OPJ_RCOL_NAME }, { "calendar", OPJ_RCOL_CALENDAR },
     };
     char want[40], have[40];
     int i, n = resource_sheet ? OPJ_NRCOLS : OPJ_NCOLS;

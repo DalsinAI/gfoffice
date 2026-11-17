@@ -1078,7 +1078,7 @@ static void test_format_nav(void)
     owf_doc_free(doc);
 }
 
-/* libowf 1.18: Word's tracked paragraph format changes (w:pPrChange, ECMA-376 part 1, 17.13.5.29): the
+/* libowf 1.20: Word's tracked paragraph format changes (w:pPrChange, ECMA-376 part 1, 17.13.5.29): the
  * paragraph's format now, the format before in the change's own w:pPr; one centred, one indented with its
  * spacing taken away, and one with none, in a document with no other change */
 static const char *para_format_changes_dump(const owf_doc *doc)

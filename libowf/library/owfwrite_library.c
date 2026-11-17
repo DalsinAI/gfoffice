@@ -63,17 +63,21 @@
  * 3.21: libowf 1.16 (3.18 to 3.20, libowf 1.13 to 1.15, are #368's, #373's and #375's), conditional text
  * (OWF_FIELD_IF, owf_ifform.h): DOCX IF with its fields nested in its code, and ODT text:conditional-text,
  * in and out. No new calls and no structure grew, so owfpub and owfpresent stay.
- * 3.22: libowf 1.19 (numbered 3.18, libowf 1.13, until 3.19 to 3.21 and libowf 1.14 to 1.18 merged first), tracked paragraph format
- * changes (owf_para.para_format_change, owf_doc.para_format_changes, owf_para_format_change): DOCX w:pPrChange
- * in and out; other formats the format as it is now (accepted). No new calls; owf_para and owf_doc grew, so the
- * three libraries go together again (owfpub.library 3.7, owfpresent.library 3.17).
+ * 3.22: libowf 1.19 (was 3.20 and libowf 1.15 before #376 and the presentation work merged first), input
+ * fields (OWF_FIELD_FILLIN): DOCX FILLIN and ODT text:text-input in and out. No new calls and no structure
+ * grew, so owfpub and owfpresent stay.
+ * 3.23: libowf 1.20 (numbered 3.18, libowf 1.13, until 3.19 to 3.22 and libowf 1.14 to 1.19 merged first),
+ * tracked paragraph format changes (owf_para.para_format_change, owf_doc.para_format_changes,
+ * owf_para_format_change): DOCX w:pPrChange in and out; other formats the format as it is now (accepted). No new
+ * calls; owf_para and owf_doc grew, so the three libraries go together again (owfpub.library 3.7,
+ * owfpresent.library 3.17).
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 22
-#define OWF_LIB_VERS "3.22"
+#define OWF_LIB_REVISION 23
+#define OWF_LIB_VERS "3.23"
 #define OWF_LIB_DATE "16.11.2026"
 #define OWF_LIB_CALLS_H "owfwrite_calls.h"
 #include "owf_libbase.h"

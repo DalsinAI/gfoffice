@@ -319,7 +319,7 @@ int owf_track_split_para(owf_story *story, int para, int run, int rev)
     np->table_cols = p->table_cols;
     np->cell_shading = p->cell_shading;
     np->mark_revision = p->mark_revision;
-    np->para_format_change = p->para_format_change;   /* 1.19 */
+    np->para_format_change = p->para_format_change;   /* 1.20 */
     np->style = copy_string(p->style);
     if (moved) {
         np->runs = malloc((size_t)moved * sizeof *np->runs);
@@ -361,7 +361,7 @@ static void finish_story(owf_doc *doc, owf_story *s)
         if (p->row_revision < 0 || p->row_revision > doc->nrevisions || p->table_id < 0)
             p->row_revision = 0;                     /* 1.12 */
         if (p->para_format_change < 0 || p->para_format_change > doc->npara_format_changes)
-            p->para_format_change = 0;               /* 1.19 */
+            p->para_format_change = 0;               /* 1.20 */
     }
     if (s->nparas)                                   /* the story's last end is no paragraph mark */
         s->paras[s->nparas - 1].mark_revision = 0;
@@ -412,7 +412,7 @@ static int story_has_format_changes(const owf_story *s)
 {
     int i, j;
     for (i = 0; i < s->nparas; ++i) {
-        if (s->paras[i].para_format_change > 0)      /* 1.19: a paragraph's */
+        if (s->paras[i].para_format_change > 0)      /* 1.20: a paragraph's */
             return 1;
         for (j = 0; j < s->paras[i].nruns; ++j)
             if (s->paras[i].runs[j].format_change > 0)
@@ -508,7 +508,7 @@ static int accept_story(const owf_doc *doc, const owf_story *src, owf_story *dst
         }
         dp->mark_revision = 0;
         dp->row_revision = 0;
-        dp->para_format_change = 0;                  /* 1.19: accepted, the format is the paragraph's now */
+        dp->para_format_change = 0;                  /* 1.20: accepted, the format is the paragraph's now */
         if (sp->nruns) {
             owf_run *runs = realloc(dp->runs, (size_t)(dp->nruns + sp->nruns) * sizeof *runs);
             if (!runs)

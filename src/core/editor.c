@@ -135,7 +135,7 @@ static void clear_doc_data(owf_doc *doc)
         owf_free(doc->format_changes[i].date);
     }
     owf_free(doc->format_changes);
-    for (i = 0; i < doc->npara_format_changes; ++i) {   /* libowf 1.18 */
+    for (i = 0; i < doc->npara_format_changes; ++i) {   /* libowf 1.20 */
         owf_free(doc->para_format_changes[i].author);
         owf_free(doc->para_format_changes[i].date);
         owf_free(doc->para_format_changes[i].style);
@@ -166,7 +166,7 @@ static int clone_story(owf_story *dst, const owf_story *src)
         dp->section_break = sp->section_break;
         dp->mark_revision = sp->mark_revision;       /* 2.1.0 */
         dp->row_revision = sp->row_revision;         /* 2.0.38 */
-        dp->para_format_change = sp->para_format_change;   /* libowf 1.18 */
+        dp->para_format_change = sp->para_format_change;   /* libowf 1.20 */
         dp->style = NULL;                            /* 2.0.12: its style and bookmarks too */
         dp->bookmarks = NULL;
         if (sp->style && !(dp->style = copy_bytes(sp->style, strlen(sp->style)))) return 0;
@@ -297,7 +297,7 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     capformat_changes = dst->capformat_changes;
     dst->format_changes = NULL;
     dst->nformat_changes = dst->capformat_changes = 0;
-    para_format_changes = dst->para_format_changes;   /* libowf 1.18: the paragraphs' too */
+    para_format_changes = dst->para_format_changes;   /* libowf 1.20: the paragraphs' too */
     npara_format_changes = dst->npara_format_changes;
     cappara_format_changes = dst->cappara_format_changes;
     dst->para_format_changes = NULL;
@@ -1830,7 +1830,7 @@ static int split_paragraph(ow_editor *editor, ow_position pos,
     }
     p->nruns = pos.run + 1;
     marks_split(p, np, at);                          /* 2.0.21: the bookmarks after the caret go with the text */
-    np->para_format_change = p->para_format_change;   /* libowf 1.18: both halves have the format, and its change */
+    np->para_format_change = p->para_format_change;   /* libowf 1.20: both halves have the format, and its change */
     np->mark_revision = p->mark_revision;            /* 2.1.0: the old end is the new paragraph's; the new end */
     p->mark_revision = editor->typing_rev;           /* is the change being typed, if one is */
 
@@ -5770,7 +5770,7 @@ int ow_editor_insert_link(ow_editor *editor, const char *text, const char *url)
 static int field_wants_arg(owf_field f)
 {
     return f == OWF_FIELD_USER || f == OWF_FIELD_REF || f == OWF_FIELD_REF_PAGE || f == OWF_FIELD_MERGE ||
-           f == OWF_FIELD_INDEX || f == OWF_FIELD_SEQ || f == OWF_FIELD_IF;
+           f == OWF_FIELD_INDEX || f == OWF_FIELD_SEQ || f == OWF_FIELD_IF || f == OWF_FIELD_FILLIN;
 }
 
 static void merge_field_value(const ow_editor *editor, const char *column, char *out, size_t size);   /* 2.5.0 */
@@ -6035,6 +6035,7 @@ static int update_story_fields(ow_editor *editor, owf_story *story)
             owf_run *r = &story->paras[i].runs[j];
             char *v;
             if (r->kind != OWF_RUN_FIELD || r->field <= OWF_FIELD_TIME) continue;
+            if (r->field == OWF_FIELD_FILLIN) continue;   /* libowf 1.19: the answer given, kept */
             field_value(editor, story, i, r, value, sizeof value);
             if (r->text && !strcmp(r->text, value)) continue;
             if (!(v = copy_bytes(value, strlen(value)))) return -1;
@@ -6059,6 +6060,73 @@ static int update_fields(ow_editor *editor)
     }
     if (changed) ++editor->changes;
     return changed;
+}
+
+/* libowf 1.19: the index-th input field (FILLIN), in update_fields' order of stories; NULL: none */
+static owf_run *fill_in_run(ow_editor *editor, int index)
+{
+    owf_doc *doc = editor->doc;
+    int s, i, j, k = 0;
+    for (s = 0; s < 5 + doc->nframes; ++s) {
+        owf_story *st = s == 0 ? &doc->body : s == 1 ? &doc->header : s == 2 ? &doc->footer
+                      : s == 3 ? &doc->header_left : s == 4 ? &doc->footer_left : &doc->frames[s - 5].story;
+        for (i = 0; i < st->nparas; ++i)
+            for (j = 0; j < st->paras[i].nruns; ++j) {
+                owf_run *r = &st->paras[i].runs[j];
+                if (r->kind == OWF_RUN_FIELD && r->field == OWF_FIELD_FILLIN && k++ == index) return r;
+            }
+    }
+    return NULL;
+}
+
+int ow_editor_fill_in_count(ow_editor *editor)
+{
+    int n = 0;
+    if (!editor || !editor->doc) return 0;
+    while (fill_in_run(editor, n)) ++n;
+    return n;
+}
+
+int ow_editor_fill_in_at(ow_editor *editor, int index, const char **prompt, const char **answer)
+{
+    const owf_run *r = editor && editor->doc && index >= 0 ? fill_in_run(editor, index) : NULL;
+    if (!r) return 0;
+    if (prompt) *prompt = r->href ? r->href : "";
+    if (answer) *answer = r->text ? r->text : "";
+    return 1;
+}
+
+int ow_editor_set_fill_in(ow_editor *editor, int index, const char *answer)
+{
+    owf_run *r;
+    char *v;
+    if (!editor || !editor->doc || index < 0 || !(r = fill_in_run(editor, index))) return OWF_ERR_FORMAT;
+    if (!answer) answer = "";
+    if (r->text && !strcmp(r->text, answer)) return OWF_OK;
+    editor->typing_group = 0;
+    if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
+    r = fill_in_run(editor, index);                  /* (the snapshot is a copy: the run is where it was) */
+    if (!r || !(v = copy_bytes(answer, strlen(answer)))) { ow_editor_undo(editor); return OWF_ERR_MEMORY; }
+    owf_free(r->text);
+    r->text = v;
+    editor->dirty = 1; ++editor->changes;
+    return ow_editor_layout(editor);
+}
+
+int ow_editor_insert_fill_in(ow_editor *editor, const char *prompt, const char *answer)
+{
+    ow_position pos;
+    owf_run *r;
+    char *v;
+    int rc = ow_editor_insert_field_arg(editor, OWF_FIELD_FILLIN, prompt);
+    if (rc != OWF_OK) return rc;
+    pos = editor->selection.focus;                   /* just after it: the field is the run before */
+    r = &ed_story(editor)->paras[pos.paragraph].runs[pos.run - 1];
+    if (!answer || !*answer || r->kind != OWF_RUN_FIELD || r->field != OWF_FIELD_FILLIN) return OWF_OK;
+    if (!(v = copy_bytes(answer, strlen(answer)))) return OWF_ERR_MEMORY;
+    owf_free(r->text);
+    r->text = v;
+    return ow_editor_layout(editor);
 }
 
 int ow_editor_update_fields(ow_editor *editor)
@@ -6638,7 +6706,7 @@ static int story_final(owf_doc *d, owf_story *story)
         owf_para *p = &story->paras[i];
         owf_run *runs;
         p->mark_revision = 0;
-        p->para_format_change = 0;                   /* libowf 1.18 */
+        p->para_format_change = 0;                   /* libowf 1.20 */
         for (j = 0, cap = 1; j < p->nruns; ++j) {    /* room: a value's lines each take two runs */
             const char *t = p->runs[j].kind == OWF_RUN_FIELD && p->runs[j].text ? p->runs[j].text : NULL;
             ++cap;

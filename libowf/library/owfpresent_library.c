@@ -60,7 +60,7 @@
  * shadow fields (so owf_obj is larger), and owf_slide and owf_master end with background_transparency and
  * the background hatch fields, so a program's size check refuses 3.15 and before. No call changes.
  * 3.17 (3.14 is #382's, 3.15 #262's, 3.16 #412's): owf_para.para_format_change and
- * owf_doc.para_format_changes (owfwrite.library 3.22, libowf 1.19), so owf_para and owf_doc are larger and a
+ * owf_doc.para_format_changes (owfwrite.library 3.23, libowf 1.20), so owf_para and owf_doc are larger and a
  * program's size check refuses 3.16 and before. No call changes.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.

@@ -135,6 +135,14 @@ check: diagram-stencil-check
 
 .PHONY: diagram-stencil-test diagram-stencil-check
 
+# No state kept between calls in the diagram code a library is to hold (tests/diag/check_no_state.sh).
+diagram-state-check:
+	tests/diag/check_no_state.sh $(CC)
+
+check: diagram-state-check
+
+.PHONY: diagram-state-check
+
 # The shapes' outlines (libowf/diagram/owf_dshape.c), shared by the canvas and the writers.
 $(OUT)/test-dshape: $(DIAG_DEPS) $(OWF_SRC) tests/diagram/test_dshape.c
 	mkdir -p $(OUT)
