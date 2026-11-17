@@ -202,8 +202,9 @@ int opj_date_parse(const char *s, int default_minute, owf_ptime *t);
 
 /* Tools > Level Resources: owf_project_level_by (within_slack: only within each task's slack; order an
  * OWF_LEVEL_) as one edit; how many tasks it delayed in *delayed (when not NULL). opj_level is Standard.
- * Clear Leveling: every delay back to 0. The order's name, "" out of range; opj_level_order_parse takes
- * a name ("Priority, Standard", "priority", "ID Only", "id", "standard"), -1 for none. */
+ * Clear Leveling: every delay back to 0 (with none, nothing changes and there is no Undo step). The
+ * order's name, "" out of range; opj_level_order_parse takes a name ("Priority, Standard", "priority",
+ * "ID Only", "id", "standard"), -1 for none. */
 int opj_level_by(opj_doc *doc, int within_slack, int order, int *delayed);
 int opj_level(opj_doc *doc, int within_slack, int *delayed);
 const char *opj_level_order_name(int order);
@@ -380,6 +381,8 @@ void opj_assign_line(const opj_doc *doc, int task, int resource, char *out, size
 /* Assign: the resource on the task at units (NULL or "": the assignment's own units, else 100%, or one
  * unit of a material; a cost resource needs its amount), as one edit. */
 int opj_assign_resource(opj_doc *doc, int task, int resource, const char *units);
+/* The resource named (any case, blanks around it skipped), or a row number from 1; -1 when there is none. */
+int opj_find_resource(const opj_doc *doc, const char *name);
 /* Remove: the resource's assignment on the task, as one edit; OWF_ERR_FORMAT when there is none. */
 int opj_remove_resource(opj_doc *doc, int task, int resource);
 /* Replace: the task's assignment of from goes to to, keeping its place and, with units NULL or "", its
