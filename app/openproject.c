@@ -48,7 +48,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenProject 0.1.17 (16.11.2026)"
+#define VERSION_TEXT "GFOpenProject 0.1.20 (16.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenProject, the project planner of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -60,7 +60,19 @@ enum {
     M_DAYS, M_WEEKS, M_MONTHS, M_QUARTERS, M_SHOW_BASELINE, M_RESOURCES, M_START, M_GANTT, M_USAGE, M_NETWORK, M_TASK_USAGE, M_GRAPH, M_TRACKING,
     M_SET_BASELINE, M_CLEAR_BASELINE, M_LEVEL, M_CLEAR_LEVELING, M_UPDATE_PROJECT, M_WORKTIME, M_PLAN_CALENDAR, M_TASK_CALENDAR,
     M_INFO,
+    M_FIND, M_FIND_NEXT, M_REPLACE, M_SORT_START, M_SORT_FINISH, M_SORT_NAME, M_SORT_DURATION, M_SORT_BY,
+    M_AUTOFILTER_ROW, M_AUTOFILTER, M_FILTER_SUMMARIES, M_GROUP_COLUMN, M_GROUP_DESC,
+    M_UPDATE_TASKS, M_PROGRESS_LINES,
     M_COLUMN                                 /* View > Columns: M_COLUMN + the column (OPJ_COL_) */
+};
+#define M_FILTER 200                         /* View > Filter: M_FILTER + an OPJ_FILTER_ (All .. Unstarted) */
+#define M_GROUP 220                          /* View > Group By: M_GROUP + an index into group_cols */
+#define DATA_ITEM 19                         /* View's item number of Sort; Filter and Group By follow */
+#define PROGRESS_ITEM 8                      /* Tools' item number of Progress Lines */
+#define NFILTER_ITEMS 7                      /* Filter's items 0 to 6: the filters, one ticked at a time */
+#define NGROUP_ITEMS 7                       /* Group By's items 0 to 6: No Group and six columns */
+static const int group_cols[NGROUP_ITEMS] = {
+    -1, OPJ_COL_DURATION, OPJ_COL_START, OPJ_COL_FINISH, OPJ_COL_RESOURCES, OPJ_COL_PERCENT, OPJ_COL_CONSTRAINT_TYPE
 };
 /* View's items 10 to 15 are the views, one ticked at a time: the others an item excludes. */
 #define VIEWS_BUT(item) (0xFC00L & ~(1L << (item)))
@@ -94,6 +106,10 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Outdent", "<", 0, 0, (APTR)M_OUTDENT },
     { NM_ITEM, "Link to Next Task", "L", 0, 0, (APTR)M_LINK },
     { NM_ITEM, "Unlink", "U", 0, 0, (APTR)M_UNLINK },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Find...", "F", 0, 0, (APTR)M_FIND },
+    { NM_ITEM, "Find Next", "X", 0, 0, (APTR)M_FIND_NEXT },
+    { NM_ITEM, "Replace...", NULL, 0, 0, (APTR)M_REPLACE },
     { NM_TITLE, "View", NULL, 0, 0, NULL },
     { NM_ITEM, "Days", "1", CHECKIT | CHECKED, 2 | 4 | 8, (APTR)M_DAYS },
     { NM_ITEM, "Weeks", "2", CHECKIT, 1 | 4 | 8, (APTR)M_WEEKS },
@@ -139,6 +155,41 @@ static struct NewMenu menus[] = {
     { NM_SUB, "SV", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_SV) },
     { NM_SUB, "CV", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_CV) },
     { NM_SUB, "Leveling Delay", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_LEVELING_DELAY) },
+    { NM_SUB, "Work", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_WORK) },
+    { NM_SUB, "Actual Work", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_ACTUAL_WORK) },
+    { NM_SUB, "Remaining Work", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_REMAINING_WORK) },
+    { NM_SUB, "Cost", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_COST) },
+    { NM_SUB, "Actual Cost", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)(M_COLUMN + OPJ_COL_ACTUAL_COST) },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Sort", NULL, 0, 0, NULL },
+    { NM_SUB, "by Start Date", NULL, 0, 0, (APTR)M_SORT_START },
+    { NM_SUB, "by Finish Date", NULL, 0, 0, (APTR)M_SORT_FINISH },
+    { NM_SUB, "by Name", NULL, 0, 0, (APTR)M_SORT_NAME },
+    { NM_SUB, "by Duration", NULL, 0, 0, (APTR)M_SORT_DURATION },
+    { NM_SUB, "Sort By...", NULL, 0, 0, (APTR)M_SORT_BY },
+    { NM_ITEM, "Filter", NULL, 0, 0, NULL },
+    { NM_SUB, "All Tasks", NULL, CHECKIT | CHECKED, 0x7F & ~1, (APTR)(M_FILTER + OPJ_FILTER_ALL) },
+    { NM_SUB, "Critical", NULL, CHECKIT, 0x7F & ~2, (APTR)(M_FILTER + OPJ_FILTER_CRITICAL) },
+    { NM_SUB, "Milestones", NULL, CHECKIT, 0x7F & ~4, (APTR)(M_FILTER + OPJ_FILTER_MILESTONES) },
+    { NM_SUB, "Incomplete Tasks", NULL, CHECKIT, 0x7F & ~8, (APTR)(M_FILTER + OPJ_FILTER_INCOMPLETE) },
+    { NM_SUB, "Completed Tasks", NULL, CHECKIT, 0x7F & ~16, (APTR)(M_FILTER + OPJ_FILTER_COMPLETED) },
+    { NM_SUB, "Summary Tasks", NULL, CHECKIT, 0x7F & ~32, (APTR)(M_FILTER + OPJ_FILTER_SUMMARY) },
+    { NM_SUB, "Unstarted Tasks", NULL, CHECKIT, 0x7F & ~64, (APTR)(M_FILTER + OPJ_FILTER_UNSTARTED) },
+    { NM_SUB, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_SUB, "AutoFilter Row", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)M_AUTOFILTER_ROW },
+    { NM_SUB, "AutoFilter on Column...", NULL, 0, 0, (APTR)M_AUTOFILTER },
+    { NM_SUB, "Show Related Summaries", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)M_FILTER_SUMMARIES },
+    { NM_ITEM, "Group By", NULL, 0, 0, NULL },
+    { NM_SUB, "No Group", NULL, CHECKIT | CHECKED, 0x7F & ~1, (APTR)(M_GROUP + 0) },
+    { NM_SUB, "Duration", NULL, CHECKIT, 0x7F & ~2, (APTR)(M_GROUP + 1) },
+    { NM_SUB, "Start", NULL, CHECKIT, 0x7F & ~4, (APTR)(M_GROUP + 2) },
+    { NM_SUB, "Finish", NULL, CHECKIT, 0x7F & ~8, (APTR)(M_GROUP + 3) },
+    { NM_SUB, "Resource Names", NULL, CHECKIT, 0x7F & ~16, (APTR)(M_GROUP + 4) },
+    { NM_SUB, "% Complete", NULL, CHECKIT, 0x7F & ~32, (APTR)(M_GROUP + 5) },
+    { NM_SUB, "Constraint Type", NULL, CHECKIT, 0x7F & ~64, (APTR)(M_GROUP + 6) },
+    { NM_SUB, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_SUB, "Group By Column...", NULL, 0, 0, (APTR)M_GROUP_COLUMN },
+    { NM_SUB, "Descending", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)M_GROUP_DESC },
     { NM_TITLE, "Tools", NULL, 0, 0, NULL },
     { NM_ITEM, "Set Baseline...", NULL, 0, 0, (APTR)M_SET_BASELINE },
     { NM_ITEM, "Clear Baseline...", NULL, 0, 0, (APTR)M_CLEAR_BASELINE },
@@ -146,7 +197,9 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Level Resources...", NULL, 0, 0, (APTR)M_LEVEL },
     { NM_ITEM, "Clear Leveling", NULL, 0, 0, (APTR)M_CLEAR_LEVELING },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Update Tasks...", NULL, 0, 0, (APTR)M_UPDATE_TASKS },
     { NM_ITEM, "Update Project...", NULL, 0, 0, (APTR)M_UPDATE_PROJECT },
+    { NM_ITEM, "Progress Lines", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)M_PROGRESS_LINES },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Change Working Time...", NULL, 0, 0, (APTR)M_WORKTIME },
     { NM_ITEM, "Plan Calendar...", NULL, 0, 0, (APTR)M_PLAN_CALENDAR },
@@ -167,6 +220,10 @@ static int quit_now;
 static opj_rexx rx;                /* the plan (rx.doc) and its file (rx.file), shared with the ARexx port */
 static unsigned long shown;         /* rx.docs + 1 for the doc the view was made for, 0 none yet (OPEN and NEW bump rx.docs) */
 static opj_view view;
+static opj_lines lines;              /* View > Filter and Group By: the Gantt view's lines (rx.lines too) */
+static int autofilter_row;           /* View > Filter > AutoFilter Row: a column's title filters on a click */
+static char find_text[80];           /* Edit > Find...: what, and in which column */
+static int find_col = OPJ_COL_NAME;
 static oldraw *od;
 static int sel_col = OPJ_COL_NAME;
 /* The Resource Usage view in place of the Gantt view (View menu): it shares the zoom and the timescale's
@@ -359,17 +416,26 @@ static int inner_h(void) { return win ? win->GZZHeight : 0; }
 /* The view for the doc shown: a new doc gets a new view, the same doc keeps its scroll and choices. */
 static void view_for_doc(void)
 {
-    int zoom = view.zoom, base = view.show_baseline, tracking = view.tracking;
+    int zoom = view.zoom, base = view.show_baseline, tracking = view.tracking, progress = view.progress_lines;
     if (shown != rx.docs + 1) {
         opj_view_init(&view, DOC, inner_w(), inner_h(), fh + 5, shown ? zoom : OPJ_ZOOM_DAYS);
         view.show_baseline = base;
         view.tracking = tracking;
+        view.progress_lines = progress;     /* Tools > Progress Lines stays ticked for the next plan */
         view.selected = DOC->plan->ntasks ? 0 : -1;
         shown = rx.docs + 1;
     }
     view.width = inner_w();
     view.height = inner_h();
     if (view.selected >= DOC->plan->ntasks) view.selected = DOC->plan->ntasks - 1;
+    /* the lines for the plan as it is now (after any edit, NEW or OPEN); none on no memory: every task */
+    view.lines = opj_lines_update(&lines, DOC) == OWF_OK ? &lines : NULL;
+    if (view.lines && view.selected >= 0 && opj_view_task_line(&view, DOC, view.selected) < 0) {
+        int line;                                       /* the selection hidden: the first task shown */
+        view.selected = -1;
+        for (line = 0; line < lines.n && view.selected < 0; line++) view.selected = opj_view_line_task(&view, DOC, line);
+    }
+    if (view.first_row > 0 && view.first_row >= opj_view_lines(&view, DOC)) view.first_row = 0;
     if (usage_sel >= usage_rows()) usage_sel = usage_rows() - 1;
     if (usage_first > usage_sel && usage_first > 0) usage_first = usage_sel > 0 ? usage_sel : 0;
 }
@@ -386,8 +452,8 @@ static void update_title(void)
 /* The selected cell's box, or 0 when it isn't on show. */
 static int cell_box(oldraw_rect *r)
 {
-    int c, x = 0;
-    if (view.selected < view.first_row || view.selected >= view.first_row + opj_rows_shown(&view)) return 0;
+    int c, x = 0, line = opj_view_task_line(&view, DOC, view.selected);
+    if (line < view.first_row || line >= view.first_row + opj_rows_shown(&view)) return 0;
     if (!view.columns[sel_col]) return 0;
     for (c = 0; c < sel_col; c++) x += view.columns[c];
     if (x >= opj_chart_left(&view)) return 0;
@@ -446,10 +512,10 @@ static void redraw(void)
 /* The selection on show: rows scrolled to it. */
 static void keep_selection_shown(void)
 {
-    int shown_rows = opj_rows_shown(&view);
-    if (view.selected < 0) return;
-    if (view.selected < view.first_row) view.first_row = view.selected;
-    if (shown_rows > 1 && view.selected >= view.first_row + shown_rows - 1) view.first_row = view.selected - shown_rows + 2;
+    int shown_rows = opj_rows_shown(&view), line = opj_view_task_line(&view, DOC, view.selected);
+    if (line < 0) return;
+    if (line < view.first_row) view.first_row = line;
+    if (shown_rows > 1 && line >= view.first_row + shown_rows - 1) view.first_row = line - shown_rows + 2;
     if (view.first_row < 0) view.first_row = 0;
 }
 
@@ -486,9 +552,17 @@ static void move_selection(int rows, int cols)
         redraw();
         return;
     }
-    if (rows && n) {
-        int s = view.selected < 0 ? 0 : view.selected + rows;
-        view.selected = s < 0 ? 0 : s >= n ? n - 1 : s;
+    if (rows && n) {                                    /* up and down the lines, over group headings */
+        int nl = opj_view_lines(&view, DOC), line = opj_view_task_line(&view, DOC, view.selected);
+        int step = rows > 0 ? 1 : -1, t = -1;
+        line = line < 0 ? 0 : line + rows;
+        line = line < 0 ? 0 : line >= nl ? nl - 1 : line;
+        while (line >= 0 && line < nl && (t = opj_view_line_task(&view, DOC, line)) < 0) line += step;
+        while (t < 0 && line - step >= 0 && line - step < nl) {      /* none that way: the nearest back */
+            line -= step;
+            t = opj_view_line_task(&view, DOC, line);
+        }
+        if (t >= 0) view.selected = t;
         keep_selection_shown();
     }
     while (cols) {
@@ -728,10 +802,13 @@ static int may_drop(void)
     return 1;
 }
 
+static void tick_view(void);
+
 static void open_file(const char *path)
 {
     if (run_file("OPEN", path, "FORCE") != OPJ_RX_OK) tell(rx.lasterror);
     else set_status("");
+    tick_view();                        /* the new plan's Filter and Group By (All Tasks, No Group) */
     redraw();
 }
 
@@ -1064,6 +1141,43 @@ static void level_resources(void)
     set_status(msg);
 }
 
+/* ---- Tools > Update Tasks... (the selected task's progress in one Undo) ---- */
+
+static void update_tasks(void)
+{
+    static const int cols[5] = { OPJ_COL_PERCENT, OPJ_COL_ACTUAL_DURATION, OPJ_COL_REMAINING_DURATION,
+                                 OPJ_COL_ACTUAL_START, OPJ_COL_ACTUAL_FINISH };
+    static const char *const labels[5] = { "% Complete", "Actual duration", "Remaining duration",
+                                           "Actual start (NA: none)", "Actual finish (NA: none)" };
+    char was[5][80], now[5][80], msg[200];
+    const char *given[5];
+    int row = view.selected, i, rc, summary;
+    if (rexx_busy) return;
+    if (row < 0 || row >= DOC->plan->ntasks) { set_status("Update Tasks: select a task first"); return; }
+    summary = DOC->plan->tasks[row].summary;
+    for (i = 0; i < 5; i++) {
+        char *text = opj_cell_text_dup(DOC, row, cols[i]);
+        put_text(was[i], sizeof was[i], text ? text : "");
+        free(text);
+        put_text(now[i], sizeof now[i], was[i]);
+        given[i] = NULL;
+    }
+    for (i = 0; i < (summary ? 1 : 5); i++) {    /* a summary rolls up its subtasks: % Complete only */
+        if (!ask_text("Update Tasks", labels[i], now[i], sizeof now[i])) return;
+        if (strcmp(now[i], was[i])) given[i] = now[i];
+    }
+    if (!given[0] && !given[1] && !given[2] && !given[3] && !given[4]) return;
+    rc = opj_update_task(DOC, row, given[0], given[1], given[2], given[3], given[4]);
+    if (rc != OWF_OK) { edit_failed(rc, "Update Tasks"); return; }
+    {
+        char *pc = opj_cell_text_dup(DOC, row, OPJ_COL_PERCENT);
+        snprintf(msg, sizeof msg, "Update Tasks: %.80s now %s complete", DOC->plan->tasks[row].name
+                 ? DOC->plan->tasks[row].name : "the task", pc ? pc : "?");
+        free(pc);
+    }
+    set_status(msg);
+}
+
 /* ---- Tools > Update Project... ---- */
 
 static owf_ptime today(void);
@@ -1194,6 +1308,182 @@ static void task_calendar(void)
     edit_failed(opj_set_task_calendar(DOC, row, cal), "Task Calendar");
 }
 
+/* ---- Sort, Filter, Group By, Find and Replace (View and Edit menus; opj_core.c, opj_filter.c) ---- */
+
+/* Sorts by keys, keeping the selected task selected. */
+static void sort_by(const opj_sort_key *keys, int n)
+{
+    int uid = view.selected >= 0 && view.selected < DOC->plan->ntasks ? DOC->plan->tasks[view.selected].uid : 0;
+    int rc = opj_sort_tasks(DOC, keys, n), i;
+    if (rc != OWF_OK) {
+        edit_failed(rc, "Sort");
+        return;
+    }
+    for (i = 0; uid && i < DOC->plan->ntasks; i++)
+        if (DOC->plan->tasks[i].uid == uid) view.selected = i;
+    set_status("Sorted");
+}
+
+static void sort_one(int column)
+{
+    opj_sort_key k;
+    k.column = column;
+    k.descending = 0;
+    sort_by(&k, 1);
+}
+
+/* Sort By...: up to three columns typed, "Start, Duration desc, Name". */
+static void sort_dialog(void)
+{
+    static char keys[120] = "Start, Name";
+    opj_sort_key k[3];
+    int n;
+    for (;;) {
+        if (!ask_text("Sort By", "Columns (desc after one: down)", keys, sizeof keys)) return;
+        if (opj_sort_parse(keys, k, &n) == OWF_OK) break;
+        tell("Sort By takes up to three column titles, each with desc after it to sort down,\nas \"Start, Duration desc, Name\"");
+    }
+    sort_by(k, n);
+}
+
+/* The lines' filter or group changed: back to the top, the selection on show. */
+static void lines_changed(const char *what)
+{
+    char msg[120];
+    view.first_row = 0;
+    view_for_doc();                     /* works the lines out once; none (every task shown) on no memory */
+    if (!view.lines) {
+        edit_failed(OWF_ERR_MEMORY, what);
+        return;
+    }
+    keep_selection_shown();
+    if (lines.group >= 0) {
+        int i, groups = 0;
+        for (i = 0; i < lines.n; i++) groups += lines.task[i] < 0;
+        snprintf(msg, sizeof msg, "Grouped by %s: %d group%s", opj_column_title(lines.group), groups, groups == 1 ? "" : "s");
+    } else if (lines.filter.kind != OPJ_FILTER_ALL) {
+        snprintf(msg, sizeof msg, "%s: %d of %d tasks", lines.filter.kind == OPJ_FILTER_CELL ? "AutoFilter"
+                 : opj_filter_name(lines.filter.kind), lines.n, DOC->plan->ntasks);
+    } else msg[0] = 0;
+    set_status(msg);
+}
+
+/* The AutoFilter on a column: tasks whose cell there contains what is typed (nothing: every task). */
+static void autofilter(int column)
+{
+    char text[sizeof lines.filter.text], prompt[80];
+    if (column < 0 || column >= OPJ_NCOLS) return;
+    put_text(text, sizeof text, lines.filter.kind == OPJ_FILTER_CELL && lines.filter.column == column ? lines.filter.text : "");
+    snprintf(prompt, sizeof prompt, "%.40s contains (empty: all)", opj_column_title(column));
+    if (!ask_text("AutoFilter", prompt, text, sizeof text)) return;
+    if (text[0]) {
+        lines.filter.kind = OPJ_FILTER_CELL;
+        lines.filter.column = column;
+        lines.filter.how = OPJ_FIND_CONTAINS;
+        put_text(lines.filter.text, sizeof lines.filter.text, text);
+    } else lines.filter.kind = OPJ_FILTER_ALL;
+    lines_changed("AutoFilter");
+}
+
+/* Group By Column...: any column by its title. */
+static void group_dialog(void)
+{
+    char name[60];
+    int col;
+    put_text(name, sizeof name, lines.group >= 0 ? opj_column_title(lines.group) : "");
+    for (;;) {
+        if (!ask_text("Group By", "Column (empty: no group)", name, sizeof name)) return;
+        if (!name[0] || (col = opj_column_parse(name, 0)) >= 0) break;
+        tell("There is no such column: View > Columns lists them");
+    }
+    lines.group = name[0] ? col : -1;
+    lines_changed("Group By");
+}
+
+/* Find Next: the next task after the selection whose find_col cell has find_text, among the tasks shown
+ * (going round the end); in the Resource Usage view, the next resource by name. */
+static void find_next(void)
+{
+    char msg[160];
+    int from, k, r;
+    if (!find_text[0]) {
+        set_status("Find: Edit > Find... first");
+        return;
+    }
+    if (usage_mode == OPJ_VIEW_USAGE) {
+        int res = -1, a, row;
+        if (usage_sel >= 0) opj_usage_row(DOC, usage_sel, &res, &a);
+        if ((r = opj_find_resource_row(DOC, OPJ_RCOL_NAME, find_text, OPJ_FIND_CONTAINS, res, 0)) < 0) {
+            snprintf(msg, sizeof msg, "Find: no resource has %.60s", find_text);
+            set_status(msg);
+            return;
+        }
+        for (row = 0; row < usage_rows(); row++)
+            if (opj_usage_row(DOC, row, &res, &a) && res == r && a < 0) { move_usage(row - (usage_sel < 0 ? 0 : usage_sel)); break; }
+        return;
+    }
+    if (usage_mode) {
+        set_status("Find: in the Gantt chart, the Network Diagram or Resource Usage");
+        return;
+    }
+    from = view.selected;
+    for (k = 0; k < DOC->plan->ntasks; k++) {           /* past the matches the filter hides */
+        r = opj_find_task(DOC, find_col, find_text, OPJ_FIND_CONTAINS, from, 0);
+        if (r < 0 || (k && r == view.selected)) break;
+        if (network_mode || opj_view_task_line(&view, DOC, r) >= 0) {
+            view.selected = r;
+            if (network_mode) opj_network_reveal(&view, &net, r);
+            else keep_selection_shown();
+            snprintf(msg, sizeof msg, "Found %.60s in task %d", find_text, r + 1);
+            set_status(msg);
+            return;
+        }
+        from = r;
+    }
+    snprintf(msg, sizeof msg, "Find: no %.40s %.60s%s", opj_column_title(find_col), find_text,
+             opj_lines_active(&lines) ? " among the tasks shown" : "");
+    set_status(msg);
+}
+
+/* Find...: what to look for, in the selected column (Task Name when none), then the first one. */
+static void find_dialog(void)
+{
+    char prompt[80];
+    if (!usage_mode) find_col = view.columns[sel_col] ? sel_col : OPJ_COL_NAME;
+    snprintf(prompt, sizeof prompt, "Find in %.40s", usage_mode == OPJ_VIEW_USAGE ? "Resource Name" : opj_column_title(find_col));
+    if (!ask_text("Find", prompt, find_text, sizeof find_text) || !find_text[0]) return;
+    find_next();
+}
+
+/* Replace...: in the selected column of every task (shown or not), as Replace All; one Undo step. */
+static void replace_dialog(void)
+{
+    static char with[80];
+    char prompt[80], msg[200];
+    int changed = 0, refused = 0, rc;
+    find_col = view.columns[sel_col] ? sel_col : OPJ_COL_NAME;
+    if (!opj_column_typed(find_col)) {
+        set_status("Replace: that column is worked out; choose one you can type in");
+        return;
+    }
+    snprintf(prompt, sizeof prompt, "Find in %.40s", opj_column_title(find_col));
+    if (!ask_text("Replace", prompt, find_text, sizeof find_text) || !find_text[0]) return;
+    if (!ask_text("Replace", "Replace with", with, sizeof with)) return;
+    rc = opj_replace_text(DOC, find_col, find_text, with, 0, -1, &changed, &refused);
+    if (rc == OWF_ERR_FORMAT && refused) {
+        snprintf(msg, sizeof msg, "Replace: %d cell%s wouldn't take the new text, so nothing changed", refused,
+                 refused == 1 ? "" : "s");
+        tell(msg);
+        return;
+    }
+    if (rc != OWF_OK) {
+        edit_failed(rc, "Replace");
+        return;
+    }
+    snprintf(msg, sizeof msg, changed ? "Replaced in %d cell%s" : "Replace: nothing to replace", changed, changed == 1 ? "" : "s");
+    set_status(msg);
+}
+
 static void set_zoom(int zoom)
 {
     owf_ptime mid = opj_view_time(&view, opj_chart_left(&view));
@@ -1202,7 +1492,6 @@ static void set_zoom(int zoom)
     redraw();
 }
 
-static void tick_view(void);
 
 static void menu_action(ULONG id, struct MenuItem *item)
 {
@@ -1211,8 +1500,23 @@ static void menu_action(ULONG id, struct MenuItem *item)
     {   /* the task edits act on the Gantt chart's selection, which the Resource Usage view hides */
         int edit = id == M_EDIT ? OPJ_EDIT_CELL : id == M_INSERT ? OPJ_EDIT_INSERT : id == M_DELETE ? OPJ_EDIT_DELETE
                  : id == M_INDENT ? OPJ_EDIT_INDENT : id == M_OUTDENT ? OPJ_EDIT_OUTDENT : id == M_LINK ? OPJ_EDIT_LINK
-                 : id == M_UNLINK ? OPJ_EDIT_UNLINK : id == M_INFO ? OPJ_EDIT_INFO : OPJ_EDIT_NONE;
+                 : id == M_UNLINK ? OPJ_EDIT_UNLINK : id == M_INFO ? OPJ_EDIT_INFO
+                 : id == M_REPLACE || id == M_UPDATE_TASKS ? OPJ_EDIT_CELL : OPJ_EDIT_NONE;
         if (!edit_allowed(edit)) return;
+    }
+    if (id >= M_FILTER && id < M_FILTER + NFILTER_ITEMS) {     /* View > Filter: a filter, ticked alone */
+        lines.filter.kind = (int)(id - M_FILTER);
+        lines_changed("Filter");
+        tick_view();
+        redraw();
+        return;
+    }
+    if (id >= M_GROUP && id < M_GROUP + NGROUP_ITEMS) {
+        lines.group = group_cols[id - M_GROUP];
+        lines_changed("Group By");
+        tick_view();
+        redraw();
+        return;
     }
     if (id >= M_COLUMN && id < M_COLUMN + OPJ_NCOLS) {
         int column = (int)(id - M_COLUMN), show = item && (item->Flags & CHECKED) ? 1 : 0;
@@ -1296,15 +1600,46 @@ static void menu_action(ULONG id, struct MenuItem *item)
     case M_SET_BASELINE: baseline_n(0); break;
     case M_CLEAR_BASELINE: baseline_n(1); break;
     case M_LEVEL: level_resources(); break;
-    case M_CLEAR_LEVELING:
-        if ((i = opj_clear_leveling(DOC)) == OWF_OK) set_status("Leveling cleared");
-        else edit_failed(i, "Clear Leveling");
+    case M_CLEAR_LEVELING: {
+        int rc = opj_clear_leveling(DOC);
+        if (rc == OWF_OK) set_status("Leveling cleared");
+        else edit_failed(rc, "Clear Leveling");
+        break;
+    }
+    case M_FIND: find_dialog(); break;
+    case M_FIND_NEXT: find_next(); break;
+    case M_REPLACE: replace_dialog(); break;
+    case M_SORT_START: sort_one(OPJ_COL_START); break;
+    case M_SORT_FINISH: sort_one(OPJ_COL_FINISH); break;
+    case M_SORT_NAME: sort_one(OPJ_COL_NAME); break;
+    case M_SORT_DURATION: sort_one(OPJ_COL_DURATION); break;
+    case M_SORT_BY: sort_dialog(); break;
+    case M_AUTOFILTER_ROW:
+        autofilter_row = item && (item->Flags & CHECKED) ? 1 : 0;
+        set_status(autofilter_row ? "AutoFilter: click a column's title to filter on it" : "");
+        break;
+    case M_AUTOFILTER: autofilter(view.columns[sel_col] ? sel_col : OPJ_COL_NAME); break;
+    case M_FILTER_SUMMARIES:
+        lines.filter.summaries = item && (item->Flags & CHECKED) ? 1 : 0;
+        lines_changed("Filter");
+        break;
+    case M_GROUP_COLUMN: group_dialog(); break;
+    case M_GROUP_DESC:
+        lines.group_descending = item && (item->Flags & CHECKED) ? 1 : 0;
+        lines_changed("Group By");
         break;
     case M_UPDATE_PROJECT: update_project(); break;
+    case M_UPDATE_TASKS: update_tasks(); break;
+    case M_PROGRESS_LINES:
+        view.progress_lines = item && (item->Flags & CHECKED) ? 1 : 0;
+        if (view.progress_lines && !DOC->plan->has_status_date)
+            set_status("Progress lines need a status date: Tools > Update Project... sets one");
+        break;
     case M_WORKTIME: change_working_time(); break;
     case M_PLAN_CALENDAR: plan_calendar(); break;
     case M_TASK_CALENDAR: task_calendar(); break;
     }
+    if (id == M_NEW) tick_view();       /* the new plan's Filter and Group By (All Tasks, No Group) */
     redraw();
 }
 
@@ -1335,6 +1670,28 @@ static void tick_view(void)
         if (!it) continue;
         if (opj_view_column_shown(&view, c)) it->Flags |= CHECKED;
         else it->Flags &= ~CHECKED;
+    }
+    for (c = 0; c < NFILTER_ITEMS; c++) {                   /* View > Filter and Group By follow the lines */
+        struct MenuItem *it = ItemAddress(menu, FULLMENUNUM(2, DATA_ITEM + 1, c));
+        if (!it) continue;
+        if (lines.filter.kind == c) it->Flags |= CHECKED;
+        else it->Flags &= ~CHECKED;
+    }
+    for (c = 0; c < NGROUP_ITEMS; c++) {
+        struct MenuItem *it = ItemAddress(menu, FULLMENUNUM(2, DATA_ITEM + 2, c));
+        if (!it) continue;
+        if (lines.group == group_cols[c]) it->Flags |= CHECKED;
+        else it->Flags &= ~CHECKED;
+    }
+    {
+        struct MenuItem *sum = ItemAddress(menu, FULLMENUNUM(2, DATA_ITEM + 1, NFILTER_ITEMS + 3));
+        struct MenuItem *down = ItemAddress(menu, FULLMENUNUM(2, DATA_ITEM + 2, NGROUP_ITEMS + 2));
+        if (sum) sum->Flags = (UWORD)(lines.filter.summaries ? sum->Flags | CHECKED : sum->Flags & ~CHECKED);
+        if (down) down->Flags = (UWORD)(lines.group_descending ? down->Flags | CHECKED : down->Flags & ~CHECKED);
+    }
+    {   /* Tools > Progress Lines follows the view (ARexx PROGRESSLINES too) */
+        struct MenuItem *pl = ItemAddress(menu, FULLMENUNUM(3, PROGRESS_ITEM, NOSUB));
+        if (pl) pl->Flags = (UWORD)(view.progress_lines ? pl->Flags | CHECKED : pl->Flags & ~CHECKED);
     }
     ResetMenuStrip(win, menu);
 }
@@ -1423,7 +1780,12 @@ static void click(int x, int y, ULONG secs, ULONG micros)
         else if (hit.what == OPJ_HIT_BAR && !rexx_busy && edit_allowed(OPJ_EDIT_CELL))
             dragging = opj_drag_begin(&view, DOC, &hit, x, y, &drag);
     } else if (hit.what == OPJ_HIT_COLUMN_TITLE) {
-        if (hit.column >= 0 && hit.column < OPJ_NCOLS) { sel_col = hit.column; redraw(); }
+        if (hit.column >= 0 && hit.column < OPJ_NCOLS) {
+            sel_col = hit.column;
+            if (autofilter_row && !rexx_busy) autofilter(hit.column);   /* the AutoFilter row: filter on it */
+            tick_view();
+            redraw();
+        }
     }
 }
 
@@ -1690,6 +2052,8 @@ int main(int argc, char **argv)
             AddPart((STRPTR)first, w->sm_ArgList[1].wa_Name, sizeof first);
     }
     rx.view = &view;                       /* EXPORT FORMAT PDF prints the window's columns and zoom */
+    opj_lines_init(&lines);
+    rx.lines = &lines;                     /* FILTER and GROUP set the window's lines */
     if (!(rx.doc = opj_doc_new(NULL, today()))) {
         if (argc) PutStr((STRPTR)"GFOpenProject: not enough memory\n");
         rc = 20;
@@ -1718,6 +2082,7 @@ out:
     close_window();
     res_free();
     opj_network_free(&net);
+    opj_lines_free(&lines);
     if (rx.doc) opj_doc_free(rx.doc);
     if (AslBase) CloseLibrary(AslBase);
     if (GadToolsBase) CloseLibrary(GadToolsBase);

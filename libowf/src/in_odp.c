@@ -1400,6 +1400,81 @@ static int read_gradient(odp *o, const char *name, owf_look *look)
     return 1;
 }
 
+/* The draw:hatch named name into look: single, double or triple lines of draw:color, draw:distance
+ * apart, at draw:rotation (tenths of a degree anticlockwise, as ours). 0 when there is none. */
+static int read_hatch(odp *o, const char *name, owf_look *look)
+{
+    const owf_xml_node *c;
+    const char *style;
+    int distance = 0;
+    for (c = o->common ? o->common->first : NULL; c; c = c->next)
+        if (is(c, NS_DRAW, "hatch") && same(attr(c, NS_DRAW, "name"), name))
+            break;
+    if (!c) return 0;
+    style = attr(c, NS_DRAW, "style");
+    look->hatch = same(style, "double") ? OWF_HATCH_DOUBLE : same(style, "triple") ? OWF_HATCH_TRIPLE
+                                                                                  : OWF_HATCH_SINGLE;
+    look->hatch_colour = shade(attr(c, NS_DRAW, "color"));
+    if (!look->hatch_colour) look->hatch_colour = OWF_SHADE(0);
+    look->hatch_angle = odf_angle(attr(c, NS_DRAW, "rotation"));
+    if (look->hatch_angle < 0) look->hatch_angle += 3600;
+    if (length_attr(c, NS_DRAW, "distance", &distance) && distance > 0)
+        look->hatch_distance = clamp(distance, 6, 5670);
+    return 1;
+}
+
+/* draw:opacity ("40%": 60% shows through), or the draw:opacity gradient draw:opacity-name names
+ * (drawn evenly at the middle of its start and end), as look->transparency. */
+static void read_opacity(odp *o, const gstyle *st, const char *element, owf_look *look)
+{
+    const char *v = prop(o, st, element, NS_DRAW, "opacity"), *name;
+    int opacity = percent(v, -1);
+    if (opacity < 0 && (name = prop(o, st, element, NS_DRAW, "opacity-name")) && *name) {
+        const owf_xml_node *c;
+        for (c = o->common ? o->common->first : NULL; c; c = c->next)
+            if (is(c, NS_DRAW, "opacity") && same(attr(c, NS_DRAW, "name"), name)) {
+                opacity = (percent(attr(c, NS_DRAW, "start"), 0) + percent(attr(c, NS_DRAW, "end"), 100)) / 2;
+                owf_report_add(o->report, OWF_NOTE_APPROX, "Graded transparency is drawn even all over");
+                break;
+            }
+    }
+    if (opacity >= 0)
+        look->transparency = (unsigned char)(opacity >= 100 ? 0 : 100 - opacity);
+}
+
+/* draw:shadow="visible": its offset (0.2 cm each way when the file has none), colour and opacity */
+static void read_shadow(odp *o, const gstyle *st, owf_look *look)
+{
+    int dx = 113, dy = 113, opacity, blur = 0;
+    if (!same(prop(o, st, "graphic-properties", NS_DRAW, "shadow"), "visible"))
+        return;
+    look->shadow = 1;
+    parse_len(prop(o, st, "graphic-properties", NS_DRAW, "shadow-offset-x"), &dx);
+    parse_len(prop(o, st, "graphic-properties", NS_DRAW, "shadow-offset-y"), &dy);
+    look->shadow_dx = clamp(dx, -5670, 5670);
+    look->shadow_dy = clamp(dy, -5670, 5670);
+    look->shadow_colour = shade(prop(o, st, "graphic-properties", NS_DRAW, "shadow-color"));
+    if (!look->shadow_colour) look->shadow_colour = OWF_SHADE(OWF_SHADOW_COLOUR);
+    opacity = percent(prop(o, st, "graphic-properties", NS_DRAW, "shadow-opacity"), 100);
+    look->shadow_transparency = (unsigned char)(opacity >= 100 ? 0 : opacity <= 0 ? 100 : 100 - opacity);
+    if (parse_len(prop(o, st, "graphic-properties", NS_DRAW, "shadow-blur"), &blur) && blur > 0)
+        owf_report_add(o->report, OWF_NOTE_APPROX, "Soft shadows are drawn with a sharp edge");
+}
+
+/* A hatch fill (draw:fill="hatch") into look: over draw:fill-color when draw:fill-hatch-solid, on its own
+ * otherwise. 0 when its draw:hatch is missing. */
+static int read_hatch_fill(odp *o, const gstyle *st, const char *element, owf_look *look)
+{
+    if (!read_hatch(o, prop(o, st, element, NS_DRAW, "fill-hatch-name"), look))
+        return 0;
+    look->fill = 0;
+    if (same(prop(o, st, element, NS_DRAW, "fill-hatch-solid"), "true")) {
+        look->fill = shade(prop(o, st, element, NS_DRAW, "fill-color"));
+        if (!look->fill) look->fill = OWF_SHADE(0xFFFFFF);
+    }
+    return 1;
+}
+
 /* Fill, line, insets, alignment and fitting from the object's style. */
 static void read_look(odp *o, owf_obj *obj, const gstyle *st, int is_shape)
 {
@@ -1414,12 +1489,17 @@ static void read_look(odp *o, owf_obj *obj, const gstyle *st, int is_shape)
     else if (fill && !strcmp(fill, "gradient") &&
              read_gradient(o, prop(o, st, "graphic-properties", NS_DRAW, "fill-gradient-name"), &obj->look))
         ;
+    else if (fill && !strcmp(fill, "hatch") && read_hatch_fill(o, st, "graphic-properties", &obj->look))
+        ;
     else if (fill && (!strcmp(fill, "gradient") || !strcmp(fill, "hatch") || !strcmp(fill, "bitmap"))) {
         obj->look.fill = shade(prop(o, st, "graphic-properties", NS_DRAW, "fill-color"));
-        owf_report_add(o->report, OWF_NOTE_APPROX, "Hatched and picture fills are drawn in one colour");
+        owf_report_add(o->report, OWF_NOTE_APPROX, "Picture fills are drawn in one colour");
     } else if (!fill && is_shape) {
         obj->look.fill = shade(prop(o, st, "graphic-properties", NS_DRAW, "fill-color"));
     }
+    if (OWF_LOOK_FILLED(&obj->look))
+        read_opacity(o, st, "graphic-properties", &obj->look);
+    read_shadow(o, st, &obj->look);
     if (stroke && strcmp(stroke, "none")) {
         obj->look.line = shade(prop(o, st, "graphic-properties", NS_SVG, "stroke-color"));
         if (!obj->look.line)
@@ -1641,7 +1721,7 @@ static void read_text(odp *o, owf_obj *obj, const owf_xml_node *box, const owf_x
 static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_master *m, int which)
 {
     const owf_xml_node *groups[8], *g, *row, *cell;
-    int widths[TABLE_MAX_COLS], ncols = 0, ngroups = 0, nrows = 0, i, merged = 0;
+    int widths[TABLE_MAX_COLS], ncols = 0, ngroups = 0, nrows = 0, i;
     textctx t;
 
     memset(&t, 0, sizeof t);
@@ -1728,7 +1808,6 @@ static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_
                         }
                     }
                     col++;
-                    merged = 1;
                     continue;
                 }
                 if (!is(cell, NS_TABLE, "table-cell") || col >= TABLE_MAX_COLS)
@@ -1739,7 +1818,6 @@ static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_
                     if (span_c > 1 || span_r > 1) {
                         if (owf_table_add_merge(obj, nrows, col, span_r > 0 ? span_r : 1, span_c > 0 ? span_c : 1) < 0)
                             o->failed = 1;
-                        merged = 1;
                     }
                 }
                 cs = find_style(o, attr(cell, NS_TABLE, "style-name"), "table-cell", which);
@@ -1776,8 +1854,6 @@ static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_
         obj->text.paras[i].table_cols = ncols;
     if (obj->nrows > 0 && obj->nrows < nrows && owf_table_set_row_height(obj, nrows - 1, 0) < 0)
         o->failed = 1;        /* rows past the last with a height: as their text needs */
-    if (merged)
-        owf_report_add(o->report, OWF_NOTE_APPROX, "Merged table cells are shown apart");
     obj->ncols = ncols;
     if (ncols) {
         int any = 0;
@@ -2091,14 +2167,17 @@ static int read_object(odp *o, objctx *c, const owf_xml_node *n, int parent, int
 
 /* ---- Pages ---- */
 
-/* A drawing-page style's background onto *colour and *image. */
-static void read_background(odp *o, const gstyle *st, unsigned long *colour, int *image)
+/* A drawing-page style's background onto bg (its colour, gradient, hatching and transparency) and *image. */
+static void read_background(odp *o, const gstyle *st, owf_look *bg, int *image)
 {
     const char *fill = prop(o, st, "drawing-page-properties", NS_DRAW, "fill");
+    owf_look g;
     if (!fill)
         return;
+    memset(&g, 0, sizeof g);
     if (!strcmp(fill, "solid")) {
-        *colour = shade(prop(o, st, "drawing-page-properties", NS_DRAW, "fill-color"));
+        *bg = g;
+        bg->fill = shade(prop(o, st, "drawing-page-properties", NS_DRAW, "fill-color"));
     } else if (!strcmp(fill, "bitmap")) {
         const char *name = prop(o, st, "drawing-page-properties", NS_DRAW, "fill-image-name");
         const owf_xml_node *c;
@@ -2108,18 +2187,29 @@ static void read_background(odp *o, const gstyle *st, unsigned long *colour, int
                 break;
             }
     } else if (!strcmp(fill, "gradient")) {
-        const char *name = prop(o, st, "drawing-page-properties", NS_DRAW, "fill-gradient-name");
-        const owf_xml_node *c;
-        for (c = o->common ? o->common->first : NULL; c; c = c->next)
-            if (is(c, NS_DRAW, "gradient") && same(attr(c, NS_DRAW, "name"), name)) {
-                *colour = shade(attr(c, NS_DRAW, "start-color"));
-                break;
-            }
-        owf_report_add(o->report, OWF_NOTE_APPROX, "Gradient backgrounds are drawn in one colour");
+        if (read_gradient(o, prop(o, st, "drawing-page-properties", NS_DRAW, "fill-gradient-name"), &g)) {
+            *bg = g;
+        } else {
+            /* its draw:gradient is missing: the page's fill-color, and the report says so */
+            *bg = g;
+            bg->fill = shade(prop(o, st, "drawing-page-properties", NS_DRAW, "fill-color"));
+            owf_report_add(o->report, OWF_NOTE_APPROX, "Gradient backgrounds are drawn in one colour");
+        }
     } else if (!strcmp(fill, "hatch")) {
-        *colour = shade(prop(o, st, "drawing-page-properties", NS_DRAW, "fill-color"));
-        owf_report_add(o->report, OWF_NOTE_APPROX, "Hatched backgrounds are drawn in one colour");
+        if (read_hatch_fill(o, st, "drawing-page-properties", &g)) {
+            /* hatching on its own is drawn over white, as Impress does */
+            if (!g.fill) g.fill = OWF_SHADE(0xFFFFFF);
+            *bg = g;
+        } else {
+            *bg = g;
+            bg->fill = shade(prop(o, st, "drawing-page-properties", NS_DRAW, "fill-color"));
+            owf_report_add(o->report, OWF_NOTE_APPROX, "Hatched backgrounds are drawn in one colour");
+        }
+    } else if (!strcmp(fill, "none")) {
+        return;
     }
+    if (OWF_SHADE_SET(bg->fill) || *image >= 0)
+        read_opacity(o, st, "drawing-page-properties", bg);
 }
 
 /* The transition, from smil:type and the like. */
@@ -2285,7 +2375,12 @@ static void read_page(odp *o, const owf_xml_node *page)
     if ((v = attr(page, NS_DRAW, "name")) && owf_deck_set_text(&s->name, v) < 0)
         o->failed = 1;
     st = find_style(o, attr(page, NS_DRAW, "style-name"), "drawing-page", OWF_ODF_CONTENT_AUTO);
-    read_background(o, st, &s->background, &s->background_image);
+    {
+        owf_look bg;
+        OWF_BACKGROUND_LOOK(s, &bg);
+        read_background(o, st, &bg, &s->background_image);
+        OWF_BACKGROUND_SET(s, &bg);
+    }
     read_transition(o, s, st);
     s->hidden = same(prop(o, st, "drawing-page-properties", NS_PRES, "visibility"), "hidden");
     if (!same(prop(o, st, "drawing-page-properties", NS_PRES, "display-footer"), "false") &&
@@ -2595,7 +2690,12 @@ static void read_master(odp *o, const owf_xml_node *mp)
     read_master_levels(o, m, o->mnames[index], o->deck->res->base.font);
     m->background = OWF_SHADE(0xFFFFFF);
     st = find_style(o, attr(mp, NS_DRAW, "style-name"), "drawing-page", OWF_ODF_STYLES_AUTO);
-    read_background(o, st, &m->background, &m->background_image);
+    {
+        owf_look bg;
+        OWF_BACKGROUND_LOOK(m, &bg);
+        read_background(o, st, &bg, &m->background_image);
+        OWF_BACKGROUND_SET(m, &bg);
+    }
     oc.objs = &m->objs;
     oc.n = &m->nobjs;
     oc.cap = &m->capobjs;

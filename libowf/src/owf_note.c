@@ -99,7 +99,7 @@ static void tidy_story(const owf_doc *doc, owf_story *s)
         p->table_row = p->table_col = p->table_cols = 0;
         p->section_columns = p->section_gap = 0;
         p->section_break = 0;
-        p->para_format_change = 0;                   /* 1.18 */
+        p->para_format_change = 0;                   /* 1.19 */
         for (j = 0; j < p->nruns;) {
             owf_run *r = &p->runs[j];
             const owf_revision *chg = OWF_DOC_REVISION(doc, r->revision);

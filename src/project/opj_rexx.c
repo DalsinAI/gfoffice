@@ -12,7 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_ARGS 6
+#define MAX_ARGS 8
 #define ARG_TEXT 1024
 #define NUM_LIMIT 1000000000L
 
@@ -25,7 +25,7 @@ enum {
     C_HELP, C_LASTERROR, C_ISDIRTY, C_GETFILE, C_NEW, C_OPEN, C_SAVE, C_SAVEAS, C_EXPORT, C_TASKS, C_ADDTASK,
     C_DELETETASK, C_GETCELL, C_SETCELL, C_INDENT, C_OUTDENT, C_LINK, C_UNLINK, C_UNDO, C_REDO, C_BASELINE,
     C_RESOURCES, C_ADDRESOURCE, C_DELETERESOURCE, C_GETRESOURCE, C_SETRESOURCE, C_ASSIGN, C_USAGE, C_FINISH,
-    C_CRITICAL, C_COLUMN, C_CALENDARS, C_ADDCALENDAR, C_WORKTIME, C_SETCALENDAR, C_UPDATE, C_BASELINES, C_REPLACE, C_LEVEL, C_CLEARLEVELING, NCOMMANDS
+    C_CRITICAL, C_COLUMN, C_CALENDARS, C_ADDCALENDAR, C_WORKTIME, C_SETCALENDAR, C_UPDATE, C_BASELINES, C_REPLACE, C_LEVEL, C_CLEARLEVELING, C_SORT, C_FIND, C_REPLACETEXT, C_FILTER, C_GROUP, C_LINES, C_LINE, C_UPDATETASK, C_PROGRESSLINES, NCOMMANDS
 };
 
 static const command commands[NCOMMANDS] = {
@@ -69,6 +69,15 @@ static const command commands[NCOMMANDS] = {
     { "REPLACE", "ROW/A/N,FROM/A,TO/A,UNITS/K" },
     { "LEVEL", "WITHINSLACK/S" },
     { "CLEARLEVELING", "" },
+    { "SORT", "BY/A,DESC/S,THEN/K,THENDESC/S,LAST/K,LASTDESC/S" },
+    { "FIND", "TEXT/A,COLUMN/K,FROM/K/N,BACK/S,EXACT/S,BEGINS/S,RESOURCES/S" },
+    { "REPLACETEXT", "COLUMN/A,FIND/A,WITH/A,ROW/K/N" },
+    { "FILTER", "NAME/A,COLUMN/K,TEXT/K,EXACT/S,BEGINS/S,SUMMARIES/S" },
+    { "GROUP", "BY/K,DESC/S" },
+    { "LINES", "" },
+    { "LINE", "LINE/A/N" },
+    { "UPDATETASK", "ROW/A/N,PERCENT/K,ACTUAL/K,REMAINING/K,START/K,FINISH/K" },
+    { "PROGRESSLINES", "ON/S,OFF/S" },
 };
 
 /* ---- Words ---- */
@@ -268,33 +277,7 @@ static void squash(const char *s, char *out, size_t size)
 
 static int find_column(const char *name, int resource_sheet)
 {
-    static const struct { const char *alias; int column; } tasks[] = {
-        { "name", OPJ_COL_NAME }, { "percent", OPJ_COL_PERCENT }, { "complete", OPJ_COL_PERCENT },
-        { "resources", OPJ_COL_RESOURCES }, { "startvariance", OPJ_COL_START_VARIANCE },
-        { "finishvariance", OPJ_COL_FINISH_VARIANCE },
-        { "constraint", OPJ_COL_CONSTRAINT_TYPE }, { "actualstart", OPJ_COL_ACTUAL_START },
-        { "actualfinish", OPJ_COL_ACTUAL_FINISH }, { "actualduration", OPJ_COL_ACTUAL_DURATION },
-        { "remaining", OPJ_COL_REMAINING_DURATION }, { "remainingduration", OPJ_COL_REMAINING_DURATION }, { "earned", OPJ_COL_BCWP }, { "planned", OPJ_COL_BCWS },
-        { "leveldelay", OPJ_COL_LEVELING_DELAY }, { "delay", OPJ_COL_LEVELING_DELAY },
-    }, res[] = {
-        { "maxunits", OPJ_RCOL_MAX }, { "max", OPJ_RCOL_MAX }, { "rate", OPJ_RCOL_RATE },
-        { "stdrate", OPJ_RCOL_RATE }, { "name", OPJ_RCOL_NAME },
-    };
-    char want[40], have[40];
-    int i, n = resource_sheet ? OPJ_NRCOLS : OPJ_NCOLS;
-    squash(name, want, sizeof want);
-    if (!want[0]) return -1;
-    for (i = 0; i < n; i++) {
-        squash(resource_sheet ? opj_resource_column_title(i) : opj_column_title(i), have, sizeof have);
-        if (strcmp(have, want) == 0) return i;
-    }
-    if (resource_sheet) {
-        for (i = 0; i < (int)(sizeof res / sizeof *res); i++)
-            if (strcmp(res[i].alias, want) == 0) return res[i].column;
-    } else
-        for (i = 0; i < (int)(sizeof tasks / sizeof *tasks); i++)
-            if (strcmp(tasks[i].alias, want) == 0) return tasks[i].column;
-    return -1;
+    return opj_column_parse(name, resource_sheet);
 }
 
 /* A resource by its number (from 1) or its name (case ignored); its index or -1. */
@@ -494,6 +477,8 @@ static int worktime(opj_rexx *rx, args *a, char *result, size_t size)
     return OPJ_RX_OK;
 }
 
+static int run_lines(opj_rexx *rx, int which, const args *a, char *result, size_t size);
+
 static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
 {
     opj_doc *doc = rx->doc;
@@ -575,6 +560,10 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         opj_doc_free(doc);
         rx->doc = fresh;
         rx->docs++;
+        if (rx->lines) {                    /* a new plan starts on All Tasks, ungrouped, as MS Project's do */
+            opj_lines_free(rx->lines);
+            opj_lines_init(rx->lines);
+        }
         if (c == C_OPEN) set_file(rx, a->value[0]);
         else rx->file[0] = 0;
         return OPJ_RX_OK;
@@ -690,6 +679,54 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         return OPJ_RX_OK;
     }
     case C_CLEARLEVELING: return edit_rc(rx, opj_clear_leveling(doc), "CLEARLEVELING");
+    case C_SORT: {
+        opj_sort_key k[3];
+        int n = 0, i;
+        static const int name_at[3] = { 0, 2, 4 };
+        for (i = 0; i < 3; i++) {
+            const char *name = a->value[name_at[i]];
+            if (!name) continue;
+            if ((k[n].column = find_column(name, 0)) < 0) {
+                snprintf(rx->lasterror, sizeof rx->lasterror, "SORT: no column %.100s", name);
+                return OPJ_RX_ERROR;
+            }
+            k[n++].descending = a->value[name_at[i] + 1] != NULL;
+        }
+        return edit_rc(rx, opj_sort_tasks(doc, k, n), "SORT");
+    }
+    case C_FIND: {
+        int res = a->value[6] != NULL, how = a->value[4] ? OPJ_FIND_EQUALS : a->value[5] ? OPJ_FIND_BEGINS : OPJ_FIND_CONTAINS;
+        int from = a->value[2] ? (int)a->num[2] - 1 : -1;
+        col = res ? OPJ_RCOL_NAME : OPJ_COL_NAME;
+        if (a->value[1] && (col = find_column(a->value[1], res)) < 0) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "FIND: no column %.100s", a->value[1]);
+            return OPJ_RX_ERROR;
+        }
+        r = res ? opj_find_resource_row(doc, col, a->value[0], how, from, a->value[3] != NULL)
+                : opj_find_task(doc, col, a->value[0], how, from, a->value[3] != NULL);
+        if (r < 0) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "FIND: no %.100s", a->value[0]);
+            return OPJ_RX_NOW;
+        }
+        snprintf(result, size, "%d", r + 1);
+        return OPJ_RX_OK;
+    }
+    case C_REPLACETEXT: {
+        int changed = 0, refused = 0, first = a->value[3] ? (int)a->num[3] - 1 : 0, n = a->value[3] ? 1 : -1;
+        if ((col = find_column(a->value[0], 0)) < 0) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "REPLACETEXT: no column %.100s", a->value[0]);
+            return OPJ_RX_ERROR;
+        }
+        rc = opj_replace_text(doc, col, a->value[1], a->value[2], first, n, &changed, &refused);
+        if (rc == OWF_ERR_FORMAT && refused) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "REPLACETEXT: %d cell%s wouldn't take it; nothing changed",
+                     refused, refused == 1 ? "" : "s");
+            return OPJ_RX_ERROR;
+        }
+        if (rc != OWF_OK) return edit_rc(rx, rc, "REPLACETEXT");
+        snprintf(result, size, "%d", changed);
+        return OPJ_RX_OK;
+    }
     case C_REPLACE: {
         int to;
         if ((r = find_resource(p, a->value[1])) < 0 || (to = find_resource(p, a->value[2])) < 0) {
@@ -722,6 +759,22 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         put(result, size, text);
         return OPJ_RX_OK;
     }
+    case C_FILTER: case C_GROUP: case C_LINES: case C_LINE: return run_lines(rx, c, a, result, size);
+    case C_UPDATETASK:
+        return edit_rc(rx, opj_update_task(doc, (int)row, a->value[1], a->value[2], a->value[3], a->value[4], a->value[5]),
+                       "UPDATETASK");
+    case C_PROGRESSLINES:
+        if (!rx->view) {
+            put(rx->lasterror, sizeof rx->lasterror, "PROGRESSLINES: there is no window to draw them in");
+            return OPJ_RX_NOW;
+        }
+        if (a->value[0] && a->value[1]) {
+            put(rx->lasterror, sizeof rx->lasterror, "PROGRESSLINES: ON or OFF, not both");
+            return OPJ_RX_ERROR;
+        }
+        if (a->value[0] || a->value[1]) rx->view->progress_lines = a->value[0] != NULL;
+        put(result, size, rx->view->progress_lines ? "1" : "0");
+        return OPJ_RX_OK;
     case C_COLUMN:
         if ((col = find_column(a->value[0], 0)) < 0) {
             snprintf(rx->lasterror, sizeof rx->lasterror, "COLUMN: no column %s", a->value[0]);
@@ -790,6 +843,61 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
     return OPJ_RX_FAIL;
 }
 
+/* FILTER, GROUP, LINES and LINE: the window's lines. */
+static int run_lines(opj_rexx *rx, int which, const args *a, char *result, size_t size)
+{
+    opj_lines *l = rx->lines;
+    int i, n = 0, rc;
+    if (!l) {
+        snprintf(rx->lasterror, sizeof rx->lasterror, "%s: there is no window to filter or group", commands[which].name);
+        return OPJ_RX_NOW;
+    }
+    if (which == C_FILTER) {
+        opj_filter f;
+        memset(&f, 0, sizeof f);
+        if ((f.kind = opj_filter_parse(a->value[0])) < 0) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "FILTER: no filter %.100s", a->value[0]);
+            return OPJ_RX_ERROR;
+        }
+        if (f.kind == OPJ_FILTER_CELL) {
+            if (!a->value[1] || (f.column = find_column(a->value[1], 0)) < 0) {
+                snprintf(rx->lasterror, sizeof rx->lasterror, "FILTER: AutoFilter needs a COLUMN");
+                return OPJ_RX_ERROR;
+            }
+            if (a->value[2]) snprintf(f.text, sizeof f.text, "%s", a->value[2]);
+            f.how = a->value[3] ? OPJ_FIND_EQUALS : a->value[4] ? OPJ_FIND_BEGINS : OPJ_FIND_CONTAINS;
+        }
+        f.summaries = a->value[5] != NULL;
+        l->filter = f;
+    } else if (which == C_GROUP) {
+        int col = -1;
+        if (a->value[0] && (col = find_column(a->value[0], 0)) < 0) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "GROUP: no column %.100s", a->value[0]);
+            return OPJ_RX_ERROR;
+        }
+        l->group = col;
+        l->group_descending = a->value[1] != NULL;
+    }
+    if ((rc = opj_lines_update(l, rx->doc)) != OWF_OK) return edit_rc(rx, rc, commands[which].name);
+    if (which == C_LINE) {
+        int line = (int)a->num[0] - 1;
+        if (line < 0 || line >= l->n) {
+            snprintf(rx->lasterror, sizeof rx->lasterror, "LINE: no line %ld", a->num[0]);
+            return OPJ_RX_ERROR;
+        }
+        if (l->task[line] >= 0) snprintf(result, size, "%d", l->task[line] + 1);
+        else opj_lines_heading_text(l, rx->doc, line, result, size);
+        return OPJ_RX_OK;
+    }
+    if (which == C_GROUP) {
+        for (i = 0; i < l->n; i++) n += l->task[i] < 0;
+    } else if (which == C_FILTER) {
+        for (i = 0; i < l->n; i++) n += l->task[i] >= 0;
+    } else n = l->n;
+    snprintf(result, size, "%d", n);
+    return OPJ_RX_OK;
+}
+
 int opj_rexx_command(opj_rexx *rx, const char *line, char *result, size_t size)
 {
     char scratch[8];
@@ -817,5 +925,6 @@ int opj_rexx_command(opj_rexx *rx, const char *line, char *result, size_t size)
     }
     rc = run(rx, i, &a, result, size);
     if (rc != OPJ_RX_OK) result[0] = 0;
+    if (rx->lines && rx->doc) opj_lines_update(rx->lines, rx->doc);   /* after an edit, NEW or OPEN */
     return rc;
 }
