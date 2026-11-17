@@ -3,7 +3,7 @@
  * worked out once for the canvas and every writer (SVG, PDF, EPS) to draw: closed outlines to fill and stroke,
  * and lines to stroke. The basic and flowchart sets, UML's, and the network set as flat drawings of our own. Integer
  * arithmetic only. The geometry (the pen that turns and flips a shape into its box, arcs, boxes, lines, ovals and
- * the 64-step sine) is GFOffice's one copy in libowf/src/owf_shape.c; what is here is which shape a style names and
+ * the 64-step sine) is GFOffice's one copy in libowf/src/owf_geo.c; what is here is which shape a style names and
  * how each one is drawn.
  * The shapes are drawn in our own way from their plain geometric descriptions; only their names (draw.io's
  * style words, "shape=cylinder3", "shape=note", and its direction, flipH and flipV keys) are taken from the
@@ -12,15 +12,15 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_diag_int.h"
-#include "owf_shape.h"
+#include "owf_geo.h"
 
 #include <string.h>
 
 typedef long long wide;
 
-/* the curves' sine, owf_shape.c's: sin and cos of a/64 of a turn, times 10000 */
-#define sin64(a) owf_shape_sin64(a)
-#define cos64(a) owf_shape_cos64(a)
+/* the curves' sine, owf_geo.c's: sin and cos of a/64 of a turn, times 10000 */
+#define sin64(a) owf_geo_sin64(a)
+#define cos64(a) owf_geo_cos64(a)
 
 /* ---- The table of shapes ---- */
 
@@ -123,13 +123,13 @@ const char *owf_dshape_name(const char *style)
 
 /* ---- Building an outline ---- */
 
-/* A shape is built with owf_shape.c's pen: pointing east, w across and h down, then turned and flipped into the box
- * (owf_shape_pen: s, bx, by, bw, bh, w, h, turn, flip_h, flip_v, full). */
-typedef owf_shape_pen build;
+/* A shape is built with owf_geo.c's pen: pointing east, w across and h down, then turned and flipped into the box
+ * (owf_geo_pen: s, bx, by, bw, bh, w, h, turn, flip_h, flip_v, full). */
+typedef owf_geo_pen build;
 
-#define start(b, flags) owf_shape_start(b, flags)
-#define pt(b, x, y) owf_shape_point(b, x, y)
-#define arc(b, cx, cy, rx, ry, a0, a1, step) owf_shape_arc(b, cx, cy, rx, ry, a0, a1, step)
+#define start(b, flags) owf_geo_start(b, flags)
+#define pt(b, x, y) owf_geo_point(b, x, y)
+#define arc(b, cx, cy, rx, ry, a0, a1, step) owf_geo_arc(b, cx, cy, rx, ry, a0, a1, step)
 
 static owf_dnum clamp(owf_dnum v, owf_dnum lo, owf_dnum hi)
 {
@@ -168,10 +168,10 @@ static owf_dnum smaller(owf_dnum a, owf_dnum b)
 #define INKED (OWF_DSHAPE_CLOSED | OWF_DSHAPE_INK | OWF_DSHAPE_LINE)
 
 /* A box from x0, y0 to x1, y1 as one part; a line as one; a whole ellipse as one, a point each step 64ths of a
- * turn (owf_shape.c). */
-#define rect(b, flags, x0, y0, x1, y1) owf_shape_rect(b, flags, x0, y0, x1, y1)
-#define line(b, flags, x0, y0, x1, y1) owf_shape_line(b, flags, x0, y0, x1, y1)
-#define oval(b, flags, cx, cy, rx, ry, step) owf_shape_oval(b, flags, cx, cy, rx, ry, step)
+ * turn (owf_geo.c). */
+#define rect(b, flags, x0, y0, x1, y1) owf_geo_rect(b, flags, x0, y0, x1, y1)
+#define line(b, flags, x0, y0, x1, y1) owf_geo_line(b, flags, x0, y0, x1, y1)
+#define oval(b, flags, cx, cy, rx, ry, step) owf_geo_oval(b, flags, cx, cy, rx, ry, step)
 
 /* A short drum from y to y + h (the cylinder's, its ends a high): the side and bottom, then the top's near edge. */
 static void drum(build *b, owf_dnum y, owf_dnum w, owf_dnum h, owf_dnum a, int step)
@@ -614,7 +614,7 @@ int owf_dshape_outline(const char *style, const owf_dnum box[4], owf_dshape *s)
         else if (!strcmp(v, "west")) turn = 2;
         else if (!strcmp(v, "north")) turn = 3;
     }
-    owf_shape_pen_init(&b, s, box, turn, owf_dstyle_get(style, "flipH", v, sizeof v) && !strcmp(v, "1"),
+    owf_geo_pen_init(&b, s, box, turn, owf_dstyle_get(style, "flipH", v, sizeof v) && !strcmp(v, "1"),
                        owf_dstyle_get(style, "flipV", v, sizeof v) && !strcmp(v, "1"));
     make(&b, style, kind);
     return 1;
