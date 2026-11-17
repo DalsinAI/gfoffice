@@ -3918,6 +3918,135 @@ static void test_query_window(void)
     ob_close(p);
 }
 
+/* ---- ARexx query commands and FINDROW (core 0.18.0) ---- */
+
+static void test_rexx_queries(void)
+{
+    ob_project *p = fresh("rexxqueries.oadb");
+    static ob_query q;
+    ob_qcolumn *c;
+    ob_view v;
+    char out[400], small[8], before[1024];
+    int changed = -1;
+    ob_int pos = 99;
+    if (!p) return;
+    five_customers(p);
+    shop_orders(p);
+    snprintf(before, sizeof before, "%s", cust_rows(p));
+#define RQ(cmd) ob_rexx_queries(p, cmd, out, sizeof out, &changed)
+#define RF(cur, cmd) ob_rexx_find(p, "Customers", NULL, cur, cmd, out, sizeof out, &pos)
+
+    CHECK(RQ("QUERIES") == 0 && !out[0], "no queries yet: %s", out);
+    CHECK(RQ("GETROW") == -1 && RQ("QUERY") == -1 && RQ("") == -1 && ob_rexx_queries(p, NULL, out, sizeof out, NULL) == -1,
+          "not these commands");
+    save_pair(p, "York", "Town", "york");
+    save_pair(p, "Credits", "Credit", "");
+    ob_query_init(&q, "In town");
+    ob_query_add_table(&q, "Customers");
+    ob_query_add_column(&q, "Customers", "Name");
+    c = ob_query_add_column(&q, "Customers", "Town");
+    c->show = 0;
+    strcpy(c->criteria[0], "[Which town?]");
+    CHECK(ob_query_save(p, &q), "In town: %s", ob_error(p));
+    ob_query_init(&q, "Move York");
+    ob_query_add_table(&q, "Customers");
+    c = ob_query_add_column(&q, "Customers", "Town");
+    strcpy(c->criteria[0], "york");
+    ob_query_set_kind(&q, OB_QK_UPDATE);
+    strcpy(c->to, "Hull");
+    CHECK(ob_query_save(p, &q), "Move York: %s", ob_error(p));
+
+    CHECK(RQ("queries") == 0 && !strcmp(out, "\"Credits\" \"In town\" \"Move York\" \"York\""), "QUERIES: %s", out);
+    CHECK(RQ("QUERIES now") == 10 && !strcmp(out, "QUERIES takes nothing"), "QUERIES with more: %s", out);
+    CHECK(ob_rexx_queries(p, "QUERIES", small, sizeof small, NULL) == 5, "QUERIES that don't fit: %s", small);
+    CHECK(ob_rexx_queries(NULL, "QUERIES", out, sizeof out, NULL) == 5 && strstr(out, "No project"), "no project: %s", out);
+    CHECK(ob_rexx_queries(p, "QUERIES", out, 1, NULL) == 20, "no room at all");
+
+    /* headings */
+    CHECK(RQ("QUERYFIELDS York") == 0 && !strcmp(out, "\"Name\" \"Town\""), "QUERYFIELDS: %s", out);
+    CHECK(RQ("QUERYFIELDS \"Credits\"") == 0 && !strcmp(out, "\"Name\" \"Credit limit\""), "a label as heading: %s", out);
+    CHECK(RQ("QUERYFIELDS") == 10 && !strcmp(out, "QUERYFIELDS takes a saved query's name"), "no name: %s", out);
+    CHECK(RQ("QUERYFIELDS Nosuch") == 10 && out[0], "no such query: %s", out);
+    CHECK(RQ("QUERYFIELDS York ANSWER x") == 10 && !strcmp(out, "QUERYFIELDS takes a name"), "QUERYFIELDS with more: %s", out);
+
+    /* counting and reading rows */
+    CHECK(RQ("COUNTQUERY York") == 0 && !strcmp(out, "2"), "COUNTQUERY: %s", out);
+    CHECK(RQ("QUERYROW York ROW 1") == 0 && !strcmp(out, "dan\tYork"), "QUERYROW 1: %s", out);
+    CHECK(RQ("queryrow york row 2 field name") == 0 && !strcmp(out, "bob"), "one column, any case: %s", out);
+    CHECK(RQ("QUERYROW York FIELD Town ROW=2") == 0 && !strcmp(out, "York"), "any order, ROW=: %s", out);
+    CHECK(RQ("QUERYROW York ROW 3") == 5 && !strcmp(out, "No row 3 in York"), "past the end: %s", out);
+    CHECK(RQ("QUERYROW York ROW 0") == 10 && strstr(out, "ROW takes a row's number from 1"), "row 0: %s", out);
+    CHECK(RQ("QUERYROW York ROW two") == 10, "a row that isn't a number: %s", out);
+    CHECK(RQ("QUERYROW York") == 10 && !strcmp(out, "QUERYROW takes ROW, a row's number from 1"), "no ROW: %s", out);
+    CHECK(RQ("QUERYROW York ROW 1 FIELD Age") == 10 && !strcmp(out, "York has no column Age"), "no such column: %s", out);
+    CHECK(RQ("QUERYROW York ROW 1 KEY 2") == 10 && !strcmp(out, "QUERYROW takes a name, ROW, FIELD and ANSWER"), "a word it doesn't take: %s", out);
+    CHECK(ob_rexx_queries(p, "QUERYROW Credits ROW 1", small, sizeof small, NULL) == 5 && strlen(small) < sizeof small,
+          "a row that doesn't fit: %s", small);
+    CHECK(RQ("QUERYROW Credits ROW 2") == 0 && !strcmp(out, "Ann\t1,500.00"), "money as its field shows it: %s", out);
+
+    /* questions */
+    CHECK(RQ("COUNTQUERY \"In town\"") == 10
+          && !strcmp(out, "In town asks 1 question: give an ANSWER for each, in order (Which town?)"), "an answer owed: %s", out);
+    CHECK(RQ("COUNTQUERY \"In town\" ANSWER leeds") == 0 && !strcmp(out, "2"), "answered: %s", out);
+    CHECK(RQ("QUERYROW 'In town' ROW 2 ANSWER \"Leeds\"") == 0 && !strcmp(out, "Eve"), "a row with an answer: %s", out);
+    CHECK(RQ("COUNTQUERY \"In town\" ANSWER=Hull") == 0 && !strcmp(out, "1"), "ANSWER=: %s", out);
+    CHECK(RQ("COUNTQUERY \"In town\" ANSWER Paris") == 10 && out[0], "an answer the field refuses: %s", out);
+    CHECK(RQ("COUNTQUERY York ANSWER x") == 10 && !strcmp(out, "York asks nothing: leave ANSWER out"), "an answer too many: %s", out);
+    CHECK(RQ("COUNTQUERY \"In town\" ANSWER a ANSWER b") == 10 && strstr(out, "asks 1 question"), "two for one: %s", out);
+
+    /* queries that change rows */
+    CHECK(RQ("COUNTQUERY \"Move York\"") == 0 && !strcmp(out, "2") && changed == 0, "counted, not run: %s", out);
+    CHECK(!strcmp(cust_rows(p), before), "nothing kept: %s", cust_rows(p));
+    CHECK(RQ("QUERYROW \"Move York\" ROW 1") == 10
+          && !strcmp(out, "Move York changes rows: RUNQUERY runs it and COUNTQUERY counts what it would change"), "no rows to read: %s", out);
+    CHECK(RQ("QUERYFIELDS \"Move York\"") == 10 && !strcmp(out, "Move York changes rows: it shows no columns"), "nor headings: %s", out);
+    CHECK(RQ("RUNQUERY York") == 10 && !strcmp(out, "York reads rows: COUNTQUERY counts them and QUERYROW reads one") && changed == 0,
+          "RUNQUERY of a query that reads: %s", out);
+    CHECK(RQ("RUNQUERY") == 10 && RQ("RUNQUERY Nosuch") == 10 && changed == 0, "no name, no such query: %s", out);
+    CHECK(RQ("RUNQUERY \"Move York\" ROW 1") == 10 && !strcmp(out, "RUNQUERY takes a name and ANSWER"), "RUNQUERY with ROW: %s", out);
+    CHECK(RQ("RUNQUERY \"Move York\"") == 0 && !strcmp(out, "2") && changed == 1, "RUNQUERY: %s", out);
+    CHECK(!strcmp(cust_rows(p), "Ann|Leeds|1,500.00;bob|Hull|;Cy|Hull|99.99;dan|Hull|250.00;Eve|Leeds|-5.00"), "moved: %s", cust_rows(p));
+    CHECK(!strcmp(ob_undo_name(p), "Update Query Move York: 2 rows in Customers"), "one step of Undo: %s", ob_undo_name(p));
+    CHECK(RQ("RUNQUERY \"Move York\"") == 0 && !strcmp(out, "0") && changed == 1, "again: none left: %s", out);
+    CHECK(ob_undo(p) && ob_undo(p) && !strcmp(cust_rows(p), before), "undone: %s", cust_rows(p));
+
+    /* FINDROW: key order is dan Ann Cy bob Eve */
+    CHECK(RF(-1, "FINDROW Town=york") == 0 && pos == 0 && !strcmp(out, "1"), "the first York: %s", out);
+    CHECK(RF(0, "findrow town=YORK") == 0 && pos == 3 && !strcmp(out, "4"), "the next: %s", out);
+    CHECK(RF(3, "FINDROW Town=york") == 5 && pos == -1 && !strcmp(out, "No later row has york in Town"), "no more: %s", out);
+    CHECK(RF(3, "FINDROW Town=york BACK") == 0 && pos == 0, "back: %s", out);
+    CHECK(RF(0, "FINDROW BACK Town=york") == 5 && !strcmp(out, "No earlier row has york in Town"), "none before the first: %s", out);
+    CHECK(RF(0, "FINDROW Town=york FIRST BACK") == 0 && pos == 3, "from the last: %s", out);
+    CHECK(RF(4, "FINDROW FIRST \"Name=an\"") == 0 && pos == 0, "text contains: %s", out);
+    CHECK(RF(0, "FINDROW Name=\"an\"") == 0 && pos == 1, "Ann after dan: %s", out);
+    CHECK(RF(-1, "FINDROW Credit=250.00") == 0 && pos == 0, "money equals: %s", out);
+    CHECK(RF(-1, "FINDROW Name=zz FIRST") == 5 && !strcmp(out, "No row has zz in Name"), "none at all: %s", out);
+    CHECK(RF(99, "FINDROW Town=Hull") == 0 && pos == 2, "a row chosen that isn't there: from the first: %s", out);
+    CHECK(RF(-1, "FINDROW") == 10 && strstr(out, "FINDROW takes Field=Value"), "nothing to find: %s", out);
+    CHECK(RF(-1, "FINDROW Town") == 10 && !strcmp(out, "Town needs a value: Field=Value"), "no value: %s", out);
+    CHECK(RF(-1, "FINDROW Age=1") == 10 && strstr(out, "has no field Age"), "no such field: %s", out);
+    CHECK(RF(-1, "FINDROW Town=york Name=dan") == 10 && !strcmp(out, "FINDROW takes one Field=Value, BACK and FIRST"), "two pairs: %s", out);
+    CHECK(RF(-1, "FINDROW Credit=lots") == 10 && out[0], "money that isn't: %s", out);
+    CHECK(RF(-1, "GETROW") == -1, "not FINDROW");
+    CHECK(ob_rexx_find(p, NULL, NULL, -1, "FINDROW Town=york", out, sizeof out, &pos) == 5 && strstr(out, "No table"), "no table: %s", out);
+    CHECK(ob_rexx_find(p, "Nosuch", NULL, -1, "FINDROW Town=york", out, sizeof out, &pos) == 10, "no such table: %s", out);
+    /* in the datasheet's sort and filter: by name, Ann bob Cy dan Eve */
+    view_set(&v, "Name", 0, "", OB_FILTER_NONE, "");
+    CHECK(ob_rexx_find(p, "Customers", &v, -1, "FINDROW Name=an", out, sizeof out, &pos) == 0 && pos == 0, "sorted: Ann first: %s", out);
+    CHECK(ob_rexx_find(p, "Customers", &v, 0, "FINDROW Name=an", out, sizeof out, &pos) == 0 && pos == 3 && !strcmp(out, "4"),
+          "then dan: %s", out);
+    view_set(&v, "", 0, "Town", OB_FILTER_EQUALS, "Leeds");
+    CHECK(ob_rexx_find(p, "Customers", &v, -1, "FINDROW Name=an", out, sizeof out, &pos) == 0 && pos == 0, "filtered: Ann: %s", out);
+    CHECK(ob_rexx_find(p, "Customers", &v, 0, "FINDROW Name=an", out, sizeof out, &pos) == 5, "dan is filtered out: %s", out);
+
+    CHECK(ob_rexx_form_refuses("RUNQUERY \"Move York\"") && ob_rexx_form_refuses("findrow Town=york"), "refused while a form is open");
+    CHECK(!ob_rexx_form_refuses("COUNTQUERY York") && !ob_rexx_form_refuses("QUERYROW York ROW 1") && !ob_rexx_form_refuses("QUERIES")
+          && !ob_rexx_form_refuses("QUERYFIELDS York"), "reading still answers");
+#undef RQ
+#undef RF
+    ob_close(p);
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1) {
@@ -3956,6 +4085,7 @@ int main(int argc, char **argv)
     test_action_queries();
     test_union_queries();
     test_query_window();
+    test_rexx_queries();
     test_relation_draw();
     test_dbf();
     test_rexx_rows();

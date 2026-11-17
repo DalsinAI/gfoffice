@@ -1,7 +1,8 @@
 /*
  * GFOpenBase's ARexx row commands (core 0.10.0): ADDROW, CHANGEROW,
- * DELETEROW, GETROW and GETFIELDS on a table, as the GFOPENBASE port gets
- * them (amicradle-teams ARexx-RULE.md). They live here rather than in the
+ * DELETEROW, GETROW and GETFIELDS on a table, and (core 0.18.0) QUERIES,
+ * QUERYFIELDS, COUNTQUERY, QUERYROW, RUNQUERY and FINDROW, as the
+ * GFOPENBASE port gets them (amicradle-teams ARexx-RULE.md). They live here rather than in the
  * app so that the host tests reach them. Nothing here asks: the answer, or
  * the reason, goes back as text with an ARexx return code.
  * MIT, Copyright (c) 2026 AmiCradle Team.
@@ -251,12 +252,228 @@ done:
     return rc;
 }
 
+/* ---- Saved queries from ARexx (core 0.18.0) ---- */
+
+/* names, each in quotes with a space between, into out; 0 when they don't fit */
+static int rx_quoted(char *out, size_t size, size_t *k, const char *name)
+{
+    size_t l = strlen(name);
+    if (*k + l + 4 > size) return 0;
+    if (*k) out[(*k)++] = ' ';
+    out[(*k)++] = '"';
+    memcpy(out + *k, name, l);
+    *k += l;
+    out[(*k)++] = '"';
+    out[*k] = 0;
+    return 1;
+}
+
+int ob_rexx_queries(ob_project *p, const char *command, char *out, size_t size, int *changed)
+{
+    enum { RQ_LIST, RQ_FIELDS, RQ_COUNT, RQ_ROW, RQ_RUN } cmd;
+    static const char *const cmd_names[] = { "QUERIES", "QUERYFIELDS", "COUNTQUERY", "QUERYROW", "RUNQUERY" };
+    const char *s, *answers[OB_QUERY_PARAMS];
+    ob_query *q = NULL;
+    ob_qresult *cols = NULL;
+    char (*asks)[OB_VALUE_MAX] = NULL;
+    char *scratch = NULL, *w, name[OB_NAME_MAX] = "", field[OB_NAME_MAX] = "";
+    int rc = 0, i, n, na = 0, reads, want;
+    long long rownum = 0;
+    if (changed) *changed = 0;
+    command = rx_skip(command ? command : "");
+    if (rx_word(command, "QUERIES", &s)) cmd = RQ_LIST;
+    else if (rx_word(command, "QUERYFIELDS", &s)) cmd = RQ_FIELDS;
+    else if (rx_word(command, "COUNTQUERY", &s)) cmd = RQ_COUNT;
+    else if (rx_word(command, "QUERYROW", &s)) cmd = RQ_ROW;
+    else if (rx_word(command, "RUNQUERY", &s)) cmd = RQ_RUN;
+    else return -1;                                   /* not one of these */
+    if (!out || size < 2) return 20;
+    out[0] = 0;
+    if (!p) { snprintf(out, size, "No project is open: OPEN opens one"); return 5; }
+    if (cmd == RQ_LIST) {
+        size_t k = 0;
+        if (*s) { snprintf(out, size, "QUERIES takes nothing"); return 10; }
+        n = ob_query_count(p);
+        if (n < 0) { snprintf(out, size, "%s", ob_error(p)); return 10; }
+        for (i = 0; i < n; i++) {
+            if (!rx_quoted(out, size, &k, ob_query_name(p, i))) { snprintf(out, size, "The queries are too many for the answer"); return 5; }
+        }
+        return 0;
+    }
+    s = rx_arg(s, name, sizeof name);
+    if (!name[0]) { snprintf(out, size, "%s takes a saved query's name", cmd_names[cmd]); return 10; }
+    q = (ob_query *)malloc(sizeof *q);
+    cols = (ob_qresult *)malloc(OB_QUERY_OUT * sizeof *cols);
+    asks = (char (*)[OB_VALUE_MAX])malloc(OB_QUERY_PARAMS * sizeof *asks);
+    scratch = (char *)malloc(2 * strlen(s) + 8);
+    if (!q || !cols || !asks || !scratch) { snprintf(out, size, "Not enough memory"); rc = 20; goto done; }
+
+    /* ROW n, FIELD heading, and an ANSWER for each [question], in order */
+    w = scratch;
+    while (*s) {
+        const char *r;
+        if (cmd == RQ_ROW && rx_word(s, "ROW", &r)) {
+            char num[32], *end;
+            s = rx_arg(r, num, sizeof num);
+            rownum = strtoll(num, &end, 10);
+            if (!num[0] || *end || rownum < 1) { snprintf(out, size, "ROW takes a row's number from 1, not \"%.40s\"", num); rc = 10; goto done; }
+            continue;
+        }
+        if (cmd == RQ_ROW && rx_word(s, "FIELD", &r)) {
+            s = rx_arg(r, field, sizeof field);
+            continue;
+        }
+        if (cmd != RQ_FIELDS && rx_word(s, "ANSWER", &r)) {
+            if (na >= OB_QUERY_PARAMS) { snprintf(out, size, "A query asks at most %d questions", OB_QUERY_PARAMS); rc = 10; goto done; }
+            answers[na++] = w;
+            s = rx_skip(rx_take(r, &w));
+            continue;
+        }
+        snprintf(out, size, "%s takes a name%s", cmd_names[cmd],
+                 cmd == RQ_ROW ? ", ROW, FIELD and ANSWER" : cmd == RQ_FIELDS ? "" : " and ANSWER");
+        rc = 10;
+        goto done;
+    }
+    if (!ob_query_get(p, name, q)) { snprintf(out, size, "%s", ob_error(p)); rc = 10; goto done; }
+    reads = q->kind == OB_QK_SELECT || q->kind == OB_QK_UNION;
+
+    if (cmd == RQ_FIELDS) {
+        size_t k = 0;
+        if (!reads) { snprintf(out, size, "%.60s changes rows: it shows no columns", q->name); rc = 10; goto done; }
+        n = ob_query_columns(p, q, cols, OB_QUERY_OUT);
+        if (n < 0) { snprintf(out, size, "%s", ob_error(p)); rc = 10; goto done; }
+        for (i = 0; i < n && i < OB_QUERY_OUT; i++) {
+            if (!rx_quoted(out, size, &k, cols[i].heading)) { snprintf(out, size, "The fields are too many for the answer"); rc = 5; goto done; }
+        }
+        goto done;
+    }
+    /* every question answered, no more and no fewer */
+    want = ob_query_params(p, q, asks, OB_QUERY_PARAMS);
+    if (want < 0) { snprintf(out, size, "%s", ob_error(p)); rc = 10; goto done; }
+    if (want != na) {
+        if (!want) snprintf(out, size, "%.60s asks nothing: leave ANSWER out", q->name);
+        else snprintf(out, size, "%.60s asks %d question%s: give an ANSWER for each, in order (%s%.60s)", q->name, want,
+                      want == 1 ? "" : "s", want == 1 ? "" : "the first: ", asks[0]);
+        rc = 10;
+        goto done;
+    }
+    if (cmd == RQ_COUNT) {
+        ob_int t = reads ? ob_query_total(p, q, na ? answers : NULL) : ob_query_preview(p, q, na ? answers : NULL);
+        if (t < 0) { snprintf(out, size, "%s", ob_error(p)); rc = 10; goto done; }
+        snprintf(out, size, "%lld", (long long)t);
+        goto done;
+    }
+    if (cmd == RQ_RUN) {
+        ob_int t;
+        if (reads) {
+            snprintf(out, size, "%.60s reads rows: COUNTQUERY counts them and QUERYROW reads one", q->name);
+            rc = 10;
+            goto done;
+        }
+        t = ob_query_run(p, q, na ? answers : NULL, NULL);
+        if (t < 0) { snprintf(out, size, "%s", ob_error(p)); rc = 10; goto done; }
+        if (changed) *changed = 1;
+        snprintf(out, size, "%lld", (long long)t);
+        goto done;
+    }
+    /* QUERYROW */
+    {
+        struct rx_get g;
+        if (!reads) {
+            snprintf(out, size, "%.60s changes rows: RUNQUERY runs it and COUNTQUERY counts what it would change", q->name);
+            rc = 10;
+            goto done;
+        }
+        if (rownum < 1) { snprintf(out, size, "QUERYROW takes ROW, a row's number from 1"); rc = 10; goto done; }
+        memset(&g, 0, sizeof g);
+        g.key = (ob_int)(rownum - 1);
+        g.field = -1;
+        g.out = out;
+        g.size = size;
+        if (field[0]) {
+            n = ob_query_columns(p, q, cols, OB_QUERY_OUT);
+            if (n < 0) { snprintf(out, size, "%s", ob_error(p)); rc = 10; goto done; }
+            for (i = 0; i < n && i < OB_QUERY_OUT && !rx_same(cols[i].heading, field); i++) ;
+            if (i >= n || i >= OB_QUERY_OUT) { snprintf(out, size, "%.60s has no column %.60s", q->name, field); rc = 10; goto done; }
+            g.field = i;
+        }
+        if (ob_query_rows(p, q, na ? answers : NULL, (ob_int)(rownum - 1), 1, rx_get_cb, &g) < 0) {
+            snprintf(out, size, "%s", ob_error(p));
+            rc = 10;
+            goto done;
+        }
+        if (!g.found) { snprintf(out, size, "No row %lld in %.60s", rownum, q->name); rc = 5; goto done; }
+        if (g.over) {
+            snprintf(out, size, field[0] ? "The value is too long for the answer" : "The row is too long for the answer: ask for one FIELD");
+            rc = 5;
+        }
+    }
+done:
+    free(scratch);
+    free(asks);
+    free(cols);
+    free(q);
+    return rc;
+}
+
+/* ---- FINDROW (core 0.18.0) ---- */
+
+int ob_rexx_find(ob_project *p, const char *table, const ob_view *view, ob_int current, const char *command,
+                 char *out, size_t size, ob_int *pos)
+{
+    const char *s, *val = NULL;
+    char *scratch = NULL, *w, *name = NULL;
+    ob_int total, from, at;
+    int back = 0, first = 0, rc = 0;
+    if (pos) *pos = -1;
+    command = rx_skip(command ? command : "");
+    if (!rx_word(command, "FINDROW", &s)) return -1;
+    if (!out || size < 2) return 20;
+    out[0] = 0;
+    if (!p || !table || !*table) { snprintf(out, size, "No table is shown: TABLE chooses one"); return 5; }
+    if (!(scratch = (char *)malloc(2 * strlen(s) + 8))) { snprintf(out, size, "Not enough memory"); return 20; }
+    w = scratch;
+    while (*s) {
+        const char *r;
+        int quoted = *s == '"' || *s == '\'';
+        if (!quoted && rx_word(s, "BACK", &r) && s[4] != '=') { back = 1; s = r; continue; }
+        if (!quoted && rx_word(s, "FIRST", &r) && s[5] != '=') { first = 1; s = r; continue; }
+        if (name) { snprintf(out, size, "FINDROW takes one Field=Value, BACK and FIRST"); rc = 10; goto done; }
+        name = w;
+        if (quoted) {
+            char *eq;
+            s = rx_take(s, &w);
+            if ((eq = strchr(name, '=')) != NULL) { *eq = 0; val = eq + 1; }
+            else if (*s == '=') { val = w; s = rx_take(s + 1, &w); }
+        } else {
+            while (*s && !rx_space(*s) && *s != '=') *w++ = *s++;
+            *w++ = 0;
+            if (*s == '=') { val = w; s = rx_take(s + 1, &w); }
+        }
+        s = rx_skip(s);
+        if (!val) { snprintf(out, size, "%.60s needs a value: Field=Value", name); rc = 10; goto done; }
+    }
+    if (!name) { snprintf(out, size, "FINDROW takes Field=Value: the field to look in and what to find"); rc = 10; goto done; }
+    total = ob_view_total(p, table, view);
+    if (total < 0) { snprintf(out, size, "%s", ob_error(p)); rc = 10; goto done; }
+    if (first || current < 0 || current >= total) from = back ? total - 1 : 0;
+    else from = back ? current - 1 : current + 1;
+    at = from < 0 || from >= total ? -1 : ob_view_find(p, table, view, name, val, from, back);
+    if (at == -2) { snprintf(out, size, "%s", ob_error(p)); rc = 10; goto done; }
+    if (at < 0) { snprintf(out, size, "No %srow has %.60s in %.60s", first ? "" : back ? "earlier " : "later ", val, name); rc = 5; goto done; }
+    if (pos) *pos = at;
+    snprintf(out, size, "%lld", (long long)at + 1);
+done:
+    free(scratch);
+    return rc;
+}
+
 /* While a form is open, the ARexx commands that would change the table or
  * row it shows, or the rows themselves, are refused (core 0.14.3). */
 int ob_rexx_form_refuses(const char *command)
 {
     static const char *const moves[] = { "OPEN", "QUIT", "FIRSTROW", "NEXTROW", "PREVROW", "LASTROW",
-                                         "ADDROW", "CHANGEROW", "DELETEROW" };
+                                         "ADDROW", "CHANGEROW", "DELETEROW", "RUNQUERY", "FINDROW" };
     const char *rest = "";
     size_t i;
     if (!command) return 0;

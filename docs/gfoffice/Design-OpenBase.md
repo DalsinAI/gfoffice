@@ -606,6 +606,27 @@ Queries and statements from ARexx use bound parameters where the script gives
 values (`QUERY "SELECT * FROM People WHERE Town = ?" ARGS Leeds`), so a quote
 in a value can't break the SQL.
 
+### 9.1 Saved queries and finding rows (core 0.18.0, GFOpenBase 0.17.0)
+
+What the port does today, in src/base/ob_rexx.c so the host tests reach it.
+Nothing asks; the reason for a refusal is in LASTERROR.
+
+| Command | RESULT |
+| --- | --- |
+| QUERIES | The saved queries' names, each in quotes |
+| QUERYFIELDS name | A Select or Union query's headings, each in quotes |
+| COUNTQUERY name [ANSWER a]... | The rows a Select or Union gives; for an Update, Append or Delete the rows it would change, counted and not kept |
+| QUERYROW name ROW n [FIELD h] [ANSWER a]... | Row n (from 1): the column's value, or every value with a tab between |
+| RUNQUERY name [ANSWER a]... | Runs an Update, Append or Delete, all or none: the rows changed. One step on the Undo list. A query that reads is refused (COUNTQUERY and QUERYROW read it) |
+| FINDROW Field=Value [BACK] [FIRST] | The next row of the table shown, in its sort and filter, that holds the value (text contains, other fields equal) is chosen: its key, as NEXTROW gives. BACK looks before the row chosen, FIRST from the first row (with BACK, the last). 5 when no row has it |
+
+Each `[question]` a query asks gets one ANSWER, in the query's order; too
+few or too many is refused, with the first question named. While a form is
+open RUNQUERY and FINDROW are refused; the reading commands still answer.
+
+Tests: `test_rexx_queries` in tests/base/test_base_core.c; tests/arexx/base.rexx
+for the lab (owed while Cradle labs are paused).
+
 ## 10. Runtime mode
 
 A finished front end opens like an application:
