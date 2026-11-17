@@ -64,5 +64,12 @@
 #pragma libcall OWFPubBase opp_template_find 156 801
 #pragma libcall OWFPubBase opp_template_new 15c 8002
 #pragma libcall OWFPubBase owf_deck_free 162 801
+#pragma libcall OWFPubBase owf_print_bleed 168 001
+#pragma libcall OWFPubBase owf_print_mark_gap 16e 001
+#pragma libcall OWFPubBase owf_print_margin 174 1002
+#pragma libcall OWFPubBase owf_print_crop_lines 17a 8321005
+#pragma libcall OWFPubBase owf_print_bleed_colour 180 0802
+#pragma libcall OWFPubBase owf_print_booklet_sides 186 001
+#pragma libcall OWFPubBase owf_print_booklet_side 18c 981004
 
 #endif /* PRAGMAS_OWFPUB_PRAGMAS_H */

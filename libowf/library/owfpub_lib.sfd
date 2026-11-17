@@ -21,6 +21,7 @@
 ==include <ow_merge.h>
 ==include <openpressmaster_merge.h>
 ==include <openpressmaster_template.h>
+==include <owf_print.h>
 ==version 3
 * libowf's shared calls
 const char *owf_error_text(int error) (d0)
@@ -83,4 +84,14 @@ const opp_template_info *opp_template_info_at(int i) (d0)
 int opp_template_find(const char *name) (a0)
 int opp_template_new(int i, owf_deck **deck) (d0,a0)
 void owf_deck_free(owf_deck *deck) (a0)
+*
+* 3.10: the print core (libowf/src/owf_print.c, owf_print.h)
+*
+int owf_print_bleed(int bleed) (d0)
+int owf_print_mark_gap(int bleed) (d0)
+int owf_print_margin(int bleed, int crop_marks) (d0,d1)
+int owf_print_crop_lines(int m, int w, int h, int gap, int *xy) (d0,d1,d2,d3,a0)
+unsigned long owf_print_bleed_colour(const owf_deck *deck, int page) (a0,d0)
+int owf_print_booklet_sides(int pages) (d0)
+int owf_print_booklet_side(int pages, int side, int *left, int *right) (d0,d1,a0,a1)
 ==end
