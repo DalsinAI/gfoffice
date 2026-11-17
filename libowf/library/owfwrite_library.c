@@ -70,9 +70,14 @@
  * owf_para_hidden) and hidden text: ODT text:hidden-paragraph and text:hidden-text in and out; a hidden
  * paragraph is left out of Markdown, HTML and PDF and is DOCX w:vanish while it holds. No new calls and no
  * structure grew, so owfpub and owfpresent stay.
- * 3.25: libowf 1.22 (3.24, libowf 1.21, is #2's), tracked table cells (owf_para.cell_revision): a column
+ * 3.24: libowf 1.21 (numbered 3.18, libowf 1.13, until 3.19 to 3.23 and libowf 1.14 to 1.20 merged first),
+ * tracked paragraph format changes (owf_para.para_format_change, owf_doc.para_format_changes,
+ * owf_para_format_change): DOCX w:pPrChange in and out; other formats the format as it is now (accepted). No new
+ * calls; owf_para and owf_doc grew, so the three libraries go together again (owfpub.library 3.7,
+ * owfpresent.library 3.17).
+ * 3.25: libowf 1.22 (3.24, libowf 1.21, is #2's: tracked paragraph formats), tracked table cells (owf_para.cell_revision): a column
  * put in or deleted while recording is a change cell by cell, DOCX w:tcPr/w:cellIns and w:cellDel in and
- * out, ODT saves them accepted. No new calls; owf_para grew, so owfpub (3.8) and owfpresent (3.19) go too.
+ * out, ODT saves them accepted. No new calls; owf_para grew, so owfpub (3.9) and owfpresent (3.19) go too.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */

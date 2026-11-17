@@ -40,8 +40,8 @@ build = read('build-os3.sh')
 check('-o "$OUT/GFOpenPressmaster"' in build, 'build-os3.sh writes GFOpenPressmaster')
 check('-DOPENPRESSMASTER' in build, 'build-os3.sh defines OPENPRESSMASTER')
 
-for f in ('include/openpressmaster_core.h', 'include/openpressmaster_merge.h',
-          'include/openpressmaster_template.h', 'docs/gfoffice/Design-OpenPressmaster.md',
+for f in ('include/openpressmaster_core.h', 'libowf/include/openpressmaster_merge.h',
+          'libowf/include/openpressmaster_template.h', 'docs/gfoffice/Design-OpenPressmaster.md',
           'docs/parity/pressmaster.md'):
     check(os.path.exists(os.path.join(ROOT, f)), f + ' exists')
 

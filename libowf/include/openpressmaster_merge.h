@@ -1,9 +1,15 @@
 /*
- * GFOpenPressmaster's mail merge on the shared page model (src/pub/opp_merge.c).
- * The data source is the suite's merge table (include/ow_merge.h), the same
+ * GFOpenPressmaster's mail merge on the shared page model (libowf/pub/opp_merge.c).
+ * The data source is the suite's merge table (libowf/include/ow_merge.h), the same
  * one GFOpenWrite reads. A merge field is a field run (OWF_RUN_FIELD,
  * OWF_FIELD_MERGE) in a frame's text: its href is the column, its text the
- * value shown. MIT, Copyright (c) 2026 AmiCradle Team.
+ * value shown.
+ *
+ * On owfpub.library (3.8) these calls grow and free a deck's runs, objects and
+ * pages from that library's own memory, so give them only decks the same
+ * library made (opp_template_new), never one from owfpresent.library or a
+ * program's own libowf. Free those decks with the library's owf_deck_free.
+ * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OPENPRESSMASTER_MERGE_H
 #define OPENPRESSMASTER_MERGE_H

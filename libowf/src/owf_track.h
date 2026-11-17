@@ -16,6 +16,11 @@ int owf_track_add(owf_doc *doc, int kind, const char *author, const char *date);
  * author and date may be NULL; before is the runs' format before the change. */
 int owf_track_format_add(owf_doc *doc, const char *author, const char *date, const owf_charfmt *before);
 
+/* 1.21: a paragraph format change for the document's list (owf_para.para_format_change's number), 0 when
+ * memory runs out. author, date and style may be NULL; before is the paragraph's format before the change. */
+int owf_track_para_format_add(owf_doc *doc, const char *author, const char *date, const char *style,
+                              const owf_parafmt *before);
+
 /* 1.11: the runs a reader adds between begin and end get a format change (DOCX's w:rPrChange) that end adds
  * to the document's list, only when there are runs to name it (a complex field's begin and code runs add none).
  * Begin seals the paragraph's last run so that no changed text joins it (owf_para_add_text), and end opens

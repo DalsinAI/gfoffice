@@ -23,13 +23,25 @@ $(OUT)/test-pfile-asan: $(PROJECT_DEPS) $(OWF_SRC) tests/project/test_pfile.c
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
 		-Ilibowf/include -Ilibowf/src $(OWF_SRC) $(PROJECT_SRC) tests/project/test_pfile.c -lz -o $@
 
-project-test: $(OUT)/test-project $(OUT)/test-pfile
+$(OUT)/test-preport: $(PROJECT_DEPS) $(OWF_SRC) tests/project/test_preport.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(OWF_SRC) $(PROJECT_SRC) \
+		tests/project/test_preport.c -lz -o $@
+
+$(OUT)/test-preport-asan: $(PROJECT_DEPS) $(OWF_SRC) tests/project/test_preport.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(OWF_SRC) $(PROJECT_SRC) tests/project/test_preport.c -lz -o $@
+
+project-test: $(OUT)/test-project $(OUT)/test-pfile $(OUT)/test-preport
 	$(OUT)/test-project
 	$(OUT)/test-pfile
+	$(OUT)/test-preport
 
-project-check: $(OUT)/test-project-asan $(OUT)/test-pfile-asan
+project-check: $(OUT)/test-project-asan $(OUT)/test-pfile-asan $(OUT)/test-preport-asan
 	$(OUT)/test-project-asan
 	$(OUT)/test-pfile-asan
+	$(OUT)/test-preport-asan
 
 test: project-test
 check: project-check

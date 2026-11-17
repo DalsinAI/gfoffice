@@ -2,7 +2,8 @@
 """GFOffice's libraries' SFDs against the C they stand for, on the PC
 (make sfd-check): owf.library 2 (owf_lib.sfd) and the five of
 docs/suite/owf-libraries.md (owfwrite_lib.sfd, owfcalc_lib.sfd,
-owfpub_lib.sfd, owfpresent_lib.sfd, owfdiag_lib.sfd).
+owfpub_lib.sfd, owfpresent_lib.sfd, owfdiag_lib.sfd), and owfspell.library,
+GFOffice's one spell checker (owfspell_lib.sfd, owf_spell.h; docs/suite/owf-spell.md).
 
     check_sfd.py [REPO]
 
@@ -36,7 +37,8 @@ import sys
 REPO = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 LIB = os.path.join(REPO, "libowf", "library")
 HEADERS = [os.path.join(REPO, "libowf", "include", h)
-           for h in ("owf.h", "owf_calc.h", "owf_pub.h", "owf_zip.h", "owf_deck.h", "owf_pdf.h", "owf_diagram.h")]
+           for h in ("owf.h", "owf_calc.h", "owf_pub.h", "owf_zip.h", "owf_deck.h", "owf_pdf.h", "owf_diagram.h", "owf_spell.h",
+                     "ow_merge.h", "openpressmaster_merge.h", "openpressmaster_template.h")]
 HEADERS += [os.path.join(REPO, "include", "opendiag_%s.h" % h)
             for h in ("core", "clip", "order", "align", "mind", "style", "stencil", "rexx")]
 FOUR = ("owfwrite", "owfcalc", "owfpub", "owfpresent", "owfdiag")   # the split's libraries (five, with owfdiag)
@@ -294,6 +296,17 @@ def main():
             problem("%s_lib.sfd's first %d calls are not %s_lib.sfd's (the shared ones, at the same offsets)"
                     % (stem, SHARED, FOUR[0]))
 
+    # owfspell.library: its own calls only, none of the four's shared ones, so a file can use it beside any of them
+    spell = check_library("owfspell", ["owf_libbase.h", "owfspell_calls.h"])
+    sfd = os.path.join(LIB, "owfspell_lib.sfd")
+    have = open(gen.target(sfd), encoding="utf-8").read() if os.path.exists(gen.target(sfd)) else None
+    if have != gen.generate(sfd):
+        problem("owfspell_calls.h is not what scripts/gen-lib-calls.py makes from owfspell_lib.sfd (run scripts/gen-sdk.sh)")
+    shared = set(c["name"] for c in four[FOUR[0]][:SHARED])
+    for c in spell:
+        if c["name"] in shared or not c["name"].startswith("owf_spell_"):
+            problem("owfspell_lib.sfd: %s is not one of its own owf_spell_ calls" % c["name"])
+
     # OWConvert's deck PDF (src/deck/opr_pdf.c) is built against owfpresent.library on the Amiga, so every
     # call owf_pdf.h declares has to be one of its calls, or OWConvert's m68k link fails (owf_pdf_gradient).
     pdf_h = open(os.path.join(REPO, "libowf", "include", "owf_pdf.h"), encoding="utf-8").read()
@@ -313,6 +326,8 @@ def main():
     print("check_sfd.py: %s: %s calls agree with the headers, their generated glue and the SDK's offsets; the "
           "first %d are the same in all five" % (", ".join("%s.library" % s for s in FOUR),
                                                  ", ".join(str(len(four[s])) for s in FOUR), SHARED))
+    print("check_sfd.py: owfspell.library: %d calls agree with owf_spell.h, its generated glue and the SDK's offsets"
+          % len(spell))
     return 0
 
 

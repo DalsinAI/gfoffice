@@ -1,8 +1,10 @@
-/* GFOpenPressmaster's mail merge on the shared page model (include/openpressmaster_merge.h).
+/* GFOpenPressmaster's mail merge on the shared page model (libowf/include/openpressmaster_merge.h).
  * MIT, Copyright (c) 2026 AmiCradle Team. */
 #include "openpressmaster_merge.h"
+#include "owf_internal.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static char *text_copy(const char *s, size_t n)
@@ -176,20 +178,17 @@ int opp_insert_page_field_at(owf_obj *obj, int para, size_t offset, owf_field wh
 
 int opp_merge_load_file(const char *path, ow_merge_table **table)
 {
-    FILE *f;
-    char *data;
-    long size;
-    int memory = 0;
+    unsigned char *data;
+    size_t size;
+    int memory = 0, result;
     if (!table) return OWF_ERR_FORMAT;
     *table = NULL;
-    if (!path || !(f = fopen(path, "rb"))) return OWF_ERR_IO;
-    if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) < 0 || fseek(f, 0, SEEK_SET) != 0) { fclose(f); return OWF_ERR_IO; }
-    if ((unsigned long)size > OW_MERGE_MAX_BYTES) { fclose(f); return OWF_ERR_UNSUPPORTED; }
-    if (!(data = (char *)owf_malloc((size_t)size + 1))) { fclose(f); return OWF_ERR_MEMORY; }
-    if (size && fread(data, 1, (size_t)size, f) != (size_t)size) { fclose(f); owf_free(data); return OWF_ERR_IO; }
-    fclose(f);
-    *table = ow_merge_table_from_text(data, (size_t)size, &memory);
-    owf_free(data);
+    if (!path) return OWF_ERR_IO;
+    /* libowf's file reading (owf_sys.c, or AmigaDOS's in the libraries), as owf_pub_read_file */
+    if ((result = owf_sys_read_file(path, &data, &size)) != OWF_OK) return result;
+    if (size > OW_MERGE_MAX_BYTES) { free(data); return OWF_ERR_UNSUPPORTED; }
+    *table = ow_merge_table_from_text((const char *)data, size, &memory);
+    free(data);
     if (!*table) return memory ? OWF_ERR_MEMORY : OWF_ERR_FORMAT;
     return OWF_OK;
 }

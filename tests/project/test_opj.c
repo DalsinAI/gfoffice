@@ -1261,9 +1261,8 @@ static void test_level_order_cells(void)
     CHECK_N(opj_add_resource(doc, "Dale", NULL), OWF_OK);
     CHECK_N(opj_set_assignment(doc, 0, 0, 100), OWF_OK);
     CHECK_N(opj_set_assignment(doc, 3, 0, 100), OWF_OK);
-    CHECK_S(cell_of(doc, 0, OPJ_COL_ID), "1!");
-    CHECK_S(cell_of(doc, 3, OPJ_COL_ID), "4!");
-    CHECK_S(cell_of(doc, 1, OPJ_COL_ID), "2");
+    CHECK_S(cell_of(doc, 0, OPJ_COL_ID), "1");                           /* the number: "!" is drawn only */
+    CHECK_S(cell_of(doc, 3, OPJ_COL_ID), "4");
     CHECK_S(cell_of(doc, 3, OPJ_COL_OVERALLOCATED), "Yes");
     CHECK_S(cell_of(doc, 1, OPJ_COL_OVERALLOCATED), "No");
     CHECK_S(cell_of(doc, 2, OPJ_COL_OVERALLOCATED), "No");                /* Ship, a milestone */
@@ -1294,7 +1293,6 @@ static void test_level_order_cells(void)
     CHECK_N(n, 1);
     CHECK_S(cell_of(doc, 3, OPJ_COL_START), "Mon 16/11/26");
     CHECK_S(cell_of(doc, 0, OPJ_COL_START), "Tue 17/11/26");
-    CHECK_S(cell_of(doc, 0, OPJ_COL_ID), "1");
     CHECK_S(cell_of(doc, 3, OPJ_COL_OVERALLOCATED), "No");
     CHECK_N(opj_undo(doc), OWF_OK);                                     /* one edit */
     CHECK_S(cell_of(doc, 0, OPJ_COL_START), "Mon 16/11/26");

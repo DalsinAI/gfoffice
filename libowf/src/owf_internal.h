@@ -26,6 +26,15 @@ typedef struct {
 } owf_time;
 /* The local time now; 0 when the clock can't be read. */
 int owf_sys_now(owf_time *t);
+/* The file's whole name into name (size bytes): on the Amiga through its
+ * lock, so PROGDIR: becomes the calling program's drawer; the path as it is
+ * when it can't be resolved, and on the PC. */
+void owf_sys_full_name(const char *path, char *name, size_t size);
+/* One lock for state shared by every program on a library (owf_spell.c's
+ * word lists): an Exec semaphore in the libraries, nothing on the PC and in
+ * a program that links libowf in. */
+void owf_sys_shared_lock(void);
+void owf_sys_shared_unlock(void);
 
 /* ---- ASCII case, as the file formats' names and keywords are ---- */
 

@@ -141,3 +141,13 @@ int owf_sys_now(owf_time *t)
     t->second = tm->tm_sec;
     return 1;
 }
+
+void owf_sys_full_name(const char *path, char *name, size_t size)
+{
+    if (size)
+        snprintf(name, size, "%s", path ? path : "");
+}
+
+/* one task: nothing to share */
+void owf_sys_shared_lock(void) {}
+void owf_sys_shared_unlock(void) {}

@@ -6,6 +6,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_pdf.h"
+#include "owf_fill.h"
 #include "owf_internal.h"
 #include "owf_metafile.h"
 
@@ -40,6 +41,7 @@ struct owf_pdf {
     int dash;
     int failed;
     int mf_skipped;              /* records of WMF and EMF pictures played as nothing (owf_metafile.h) */
+    int mf_box[4];               /* the picture being played: what it is drawn inside, x y w h */
 };
 
 owf_pdf *owf_pdf_new(void)
@@ -262,36 +264,8 @@ int owf_pdf_path(owf_pdf *pdf, const int *xy, int n, int closed, unsigned long f
     return o->failed ? -1 : 0;
 }
 
-/* sin of whole degrees 0..90, * 16384 */
-static const unsigned short sin_degree[91] = {
-    0, 286, 572, 857, 1143, 1428, 1713, 1997, 2280, 2563, 2845, 3126, 3406, 3686, 3964, 4240, 4516, 4790, 5063,
-    5334, 5604, 5872, 6138, 6402, 6664, 6924, 7182, 7438, 7692, 7943, 8192, 8438, 8682, 8923, 9162, 9397, 9630,
-    9860, 10087, 10311, 10531, 10749, 10963, 11174, 11381, 11585, 11786, 11982, 12176, 12365, 12551, 12733, 12911,
-    13085, 13255, 13421, 13583, 13741, 13894, 14044, 14189, 14330, 14466, 14598, 14726, 14849, 14968, 15082, 15191,
-    15296, 15396, 15491, 15582, 15668, 15749, 15826, 15897, 15964, 16026, 16083, 16135, 16182, 16225, 16262, 16294,
-    16322, 16344, 16362, 16374, 16382, 16384
-};
-
-/* sin of tenths of a degree (to the nearest degree), * 16384 */
-static long sin16k(int tenths)
-{
-    int d = ((tenths % 3600 + 3600) % 3600 + 5) / 10 % 360;
-    return d <= 90 ? sin_degree[d] : d <= 180 ? sin_degree[180 - d] : d <= 270 ? -(long)sin_degree[d - 180]
-                                                                                : -(long)sin_degree[360 - d];
-}
-
-/* a colour part of the way (k of n) from one to the other */
-static unsigned long blend(unsigned long from, unsigned long to, long k, long n)
-{
-    unsigned long r = 0;
-    int shift;
-    for (shift = 16; shift >= 0; shift -= 8) {
-        long a = (long)((from >> shift) & 255), b = (long)((to >> shift) & 255);
-        r |= (unsigned long)(a + (b - a) * k / n) << shift;
-    }
-    return r;
-}
-
+/* the gradients' sine and colours are owf_fill.c's (owf_fill_sin16k, owf_fill_blend), the one copy the
+ * screens' bands use too */
 #define GRADIENT_BANDS 48
 
 int owf_pdf_gradient(owf_pdf *pdf, const int *xy, int n, int x, int y, int w, int h, int kind, int angle,
@@ -323,12 +297,12 @@ int owf_pdf_gradient(owf_pdf *pdf, const int *xy, int n, int x, int y, int w, in
         for (i = 0; i < GRADIENT_BANDS; i++) {
             long k = GRADIENT_BANDS - i, ex = rx * k / GRADIENT_BANDS, ey = ry * k / GRADIENT_BANDS;
             if (owf_pdf_ellipse(pdf, (int)(cx - ex), (int)(cy - ey), (int)(ex * 2), (int)(ey * 2),
-                                OWF_SHADE(blend(from, to, k * 2 - 1, GRADIENT_BANDS * 2)), 0, 0) < 0)
+                                OWF_SHADE(owf_fill_blend(from, to, k * 2 - 1, GRADIENT_BANDS * 2)), 0, 0) < 0)
                 return -1;
         }
     } else {
         /* strips across the way the gradient runs, from fill to fill2 */
-        long ux = sin16k(angle + 900), uy = -sin16k(angle);          /* the way, y down, * 16384 */
+        long ux = owf_fill_sin16k(angle + 900), uy = -owf_fill_sin16k(angle);   /* the way, y down, * 16384 */
         long long lo = 0, hi = 0;
         long len = 0, span;
         /* from the outline's first point along the way to its last (any shape, turned or not) */
@@ -351,7 +325,8 @@ int owf_pdf_gradient(owf_pdf *pdf, const int *xy, int n, int x, int y, int w, in
             q[2] = (int)(cx + ux8 * t1 / 16384 - uy8 * len8 / 16384); q[3] = (int)(cy + uy8 * t1 / 16384 + ux8 * len8 / 16384);
             q[4] = (int)(cx + ux8 * t1 / 16384 + uy8 * len8 / 16384); q[5] = (int)(cy + uy8 * t1 / 16384 - ux8 * len8 / 16384);
             q[6] = (int)(cx + ux8 * t0 / 16384 + uy8 * len8 / 16384); q[7] = (int)(cy + uy8 * t0 / 16384 - ux8 * len8 / 16384);
-            if (owf_pdf_path(pdf, q, 4, 1, OWF_SHADE(blend(from, to, i * 2 + 1, GRADIENT_BANDS * 2)), 0, 0) < 0)
+            if (owf_pdf_path(pdf, q, 4, 1, OWF_SHADE(owf_fill_blend(from, to, i * 2 + 1, GRADIENT_BANDS * 2)), 0,
+                             0) < 0)
                 return -1;
         }
     }
@@ -574,19 +549,40 @@ static int mf_text_width(void *ctx, const char *utf8, size_t length, owf_font_ki
     return owf_pdf_text_width(utf8, length, kind, flags, size);
 }
 
+static void clip_to(pdf_page *p, long x, long y, long w, long h)
+{
+    put_xy(&p->content, p, x, y + h);
+    put_num(&p->content, w);
+    owf_buf_putc(&p->content, ' ');
+    put_num(&p->content, h);
+    owf_buf_puts(&p->content, " re W n\n");
+}
+
+/* the picture's own clip (IntersectClipRect): its state put back to the picture's box, then cut down again */
+static int mf_clip(void *ctx, int x, int y, int w, int h)
+{
+    owf_pdf *pdf = (owf_pdf *)ctx;
+    pdf_page *p = current(pdf);
+    if (!p) return -1;
+    owf_buf_puts(&p->content, "Q\nq\n");
+    clip_to(p, pdf->mf_box[0], pdf->mf_box[1], pdf->mf_box[2], pdf->mf_box[3]);
+    if (w >= 0) clip_to(p, x, y, w, h);
+    return p->content.failed ? -1 : 0;
+}
+
 /* the picture's records drawn in its box, nothing outside the box (or clip) */
 static int pdf_metafile(owf_pdf *pdf, pdf_page *p, const owf_image *image, int x, int y, int w, int h,
                         const int *clip)
 {
-    static const owf_mf_sink sink = { mf_path, mf_ellipse, mf_text, mf_text_width };
+    static const owf_mf_sink sink = { mf_path, mf_ellipse, mf_text, mf_text_width, mf_clip };
     owf_mf_result res;
     int dash = pdf->dash, rc;
+    pdf->mf_box[0] = clip ? clip[0] : x;
+    pdf->mf_box[1] = clip ? clip[1] : y;
+    pdf->mf_box[2] = clip ? clip[2] : w;
+    pdf->mf_box[3] = clip ? clip[3] : h;
     owf_buf_puts(&p->content, "q\n");
-    put_xy(&p->content, p, clip ? clip[0] : x, clip ? (long)clip[1] + clip[3] : (long)y + h);
-    put_num(&p->content, clip ? clip[2] : w);
-    owf_buf_putc(&p->content, ' ');
-    put_num(&p->content, clip ? clip[3] : h);
-    owf_buf_puts(&p->content, " re W n\n");
+    clip_to(p, pdf->mf_box[0], pdf->mf_box[1], pdf->mf_box[2], pdf->mf_box[3]);
     rc = owf_metafile_play(image->data, image->length, x, y, w, h, &sink, pdf, &res);
     owf_buf_puts(&p->content, "Q\n");
     pdf->dash = dash;
@@ -754,7 +750,7 @@ int owf_pdf_finish(owf_pdf *pdf, const char *title, unsigned char **data, size_t
         owf_report_add(report, OWF_NOTE_LOST, "Pictures in a format the PDF export does not draw yet (only JPEG, PNG and WMF) are left out");
     if (pdf->mf_skipped)
         owf_report_add(report, OWF_NOTE_APPROX,
-                       "Parts of WMF and EMF pictures (pictures inside them, clipping, world transforms) are left out");
+                       "Parts of WMF and EMF pictures (pictures inside them, clip regions, world transforms) are left out");
     link_obj = nobj;
     nobj += pdf->nlinks;
     info_obj = nobj++;

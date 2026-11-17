@@ -61,6 +61,8 @@ typedef struct {
     int map_mode;
     long ewx, ewy, eww, ewh, evx, evy, evw, evh;
     int arc_clockwise;                 /* an EMF's SetArcDirection AD_CLOCKWISE */
+    int clip_on;                       /* IntersectClipRect: drawing only inside clip (box units, l t r b) */
+    int clip[4];
 } mf_dc;
 
 typedef struct {
@@ -86,6 +88,7 @@ typedef struct {
     int *figs;                         /* each figure: its first point, its count, closed */
     int nfigs, capfigs;
     int in_path, path_done;
+    int sent_on, sent[4];              /* the clip the sink was last given */
 } mf_player;
 
 static void arc_figure(mf_player *m, long l, long t, long r, long b, long xs, long ys, long xe, long ye, int kind);
@@ -183,6 +186,60 @@ static void drew(mf_player *m, int rc)
     else m->res.drawn++;
 }
 
+/* the sink given the clip before it draws, when it changed (a sink with no clip draws it all) */
+static void sync_clip(mf_player *m)
+{
+    if (!m->sink->clip) return;
+    if (m->dc.clip_on == m->sent_on &&
+        (!m->sent_on || !memcmp(m->dc.clip, m->sent, sizeof m->sent)))
+        return;
+    m->sent_on = m->dc.clip_on;
+    memcpy(m->sent, m->dc.clip, sizeof m->sent);
+    if (m->sink->clip(m->ctx, m->dc.clip[0], m->dc.clip[1], m->sent_on ? m->dc.clip[2] - m->dc.clip[0] : -1,
+                      m->sent_on ? m->dc.clip[3] - m->dc.clip[1] : -1) < 0)
+        m->stop = 1;
+}
+
+static int sk_path(mf_player *m, const int *xy, int n, int closed, unsigned long fill, unsigned long line, int lw,
+                   int dash)
+{
+    sync_clip(m);
+    return m->stop ? -1 : m->sink->path(m->ctx, xy, n, closed, fill, line, lw, dash);
+}
+
+static int sk_ellipse(mf_player *m, int x, int y, int w, int h, unsigned long fill, unsigned long line, int lw,
+                      int dash)
+{
+    sync_clip(m);
+    return m->stop ? -1 : m->sink->ellipse(m->ctx, x, y, w, h, fill, line, lw, dash);
+}
+
+static int sk_text(mf_player *m, int x, int y, const char *u, size_t len, owf_font_kind kind, unsigned flags,
+                   int size, unsigned long colour)
+{
+    sync_clip(m);
+    return m->stop ? -1 : m->sink->text(m->ctx, x, y, u, len, kind, flags, size, colour);
+}
+
+/* IntersectClipRect: the logical rectangle l, t, r, b, in the box, and with any clip there was */
+static void clip_rect(mf_player *m, long l, long t, long r, long b)
+{
+    int x0 = map_x(m, l), x1 = map_x(m, r), y0 = map_y(m, t), y1 = map_y(m, b), v;
+    if (!m->sink->clip) { m->res.skipped++; return; }
+    if (x0 > x1) { v = x0; x0 = x1; x1 = v; }
+    if (y0 > y1) { v = y0; y0 = y1; y1 = v; }
+    if (m->dc.clip_on) {
+        if (x0 < m->dc.clip[0]) x0 = m->dc.clip[0];
+        if (y0 < m->dc.clip[1]) y0 = m->dc.clip[1];
+        if (x1 > m->dc.clip[2]) x1 = m->dc.clip[2];
+        if (y1 > m->dc.clip[3]) y1 = m->dc.clip[3];
+        if (x1 < x0) x1 = x0;              /* nothing left: an empty clip */
+        if (y1 < y0) y1 = y0;
+    }
+    m->dc.clip_on = 1;
+    m->dc.clip[0] = x0; m->dc.clip[1] = y0; m->dc.clip[2] = x1; m->dc.clip[3] = y1;
+}
+
 static int points(mf_player *m, int n)
 {
     if (n > m->capxy) {
@@ -204,7 +261,7 @@ static void poly(mf_player *m, const unsigned char *p, int n, int closed)
         m->xy[i * 2 + 1] = map_y(m, s16(p + i * 4 + 2));
     }
     if (!OWF_SHADE_SET(line_of(m)) && !(closed && OWF_SHADE_SET(fill_of(m)))) return;
-    drew(m, m->sink->path(m->ctx, m->xy, n, closed, closed ? fill_of(m) : 0, line_of(m), line_width_of(m),
+    drew(m, sk_path(m, m->xy, n, closed, closed ? fill_of(m) : 0, line_of(m), line_width_of(m),
                           m->dc.pen.dash));
 }
 
@@ -223,7 +280,7 @@ static void rectangle(mf_player *m, int l, int t, int r, int b)
     box_of(m, l, t, r, b, &x, &y, &w, &h);
     if (!OWF_SHADE_SET(line_of(m)) && !OWF_SHADE_SET(fill_of(m))) return;
     xy[0] = x; xy[1] = y; xy[2] = x + w; xy[3] = y; xy[4] = x + w; xy[5] = y + h; xy[6] = x; xy[7] = y + h;
-    drew(m, m->sink->path(m->ctx, xy, 4, 1, fill_of(m), line_of(m), line_width_of(m), m->dc.pen.dash));
+    drew(m, sk_path(m, xy, 4, 1, fill_of(m), line_of(m), line_width_of(m), m->dc.pen.dash));
 }
 
 static void ellipse(mf_player *m, int l, int t, int r, int b)
@@ -231,7 +288,7 @@ static void ellipse(mf_player *m, int l, int t, int r, int b)
     int x, y, w, h;
     box_of(m, l, t, r, b, &x, &y, &w, &h);
     if (!OWF_SHADE_SET(line_of(m)) && !OWF_SHADE_SET(fill_of(m))) return;
-    drew(m, m->sink->ellipse(m->ctx, x, y, w, h, fill_of(m), line_of(m), line_width_of(m), m->dc.pen.dash));
+    drew(m, sk_ellipse(m, x, y, w, h, fill_of(m), line_of(m), line_width_of(m), m->dc.pen.dash));
 }
 
 /* a rectangle with rounded corners, as a polygon: each corner a quarter in four steps */
@@ -257,7 +314,7 @@ static void round_rect(mf_player *m, int l, int t, int r, int b, int cw, int ch)
             n++;
         }
     }
-    drew(m, m->sink->path(m->ctx, m->xy, n, 1, fill_of(m), line_of(m), line_width_of(m), m->dc.pen.dash));
+    drew(m, sk_path(m, m->xy, n, 1, fill_of(m), line_of(m), line_width_of(m), m->dc.pen.dash));
 }
 
 /* Windows-1252's 0x80-0x9F as Unicode (0: none) */
@@ -313,7 +370,7 @@ static void text_utf8(mf_player *m, long lx, long ly, const char *u, size_t len)
         if (m->dc.align & TA_BOTTOM) y -= size / 5;                                 /* up by the descent */
         else y += size * 4 / 5;                                                     /* the top: down by the ascent */
     }
-    rc = len ? m->sink->text(m->ctx, x, y, u, len, f->kind, f->flags, size, m->dc.text_colour) : 0;
+    rc = len ? sk_text(m, x, y, u, len, f->kind, f->flags, size, m->dc.text_colour) : 0;
     if (len) drew(m, rc);
     if (m->dc.align & TA_UPDATECP) {
         long w = m->dc.win_w < 0 ? -m->dc.win_w : m->dc.win_w;
@@ -399,10 +456,11 @@ static void record(mf_player *m, unsigned fn, const unsigned char *p, size_t n)
         m->dc.cur_y = s16(p); m->dc.cur_x = s16(p + 2);
         xy[2] = map_x(m, m->dc.cur_x); xy[3] = map_y(m, m->dc.cur_y);
         if (OWF_SHADE_SET(line_of(m)))
-            drew(m, m->sink->path(m->ctx, xy, 2, 0, 0, line_of(m), line_width_of(m), m->dc.pen.dash));
+            drew(m, sk_path(m, xy, 2, 0, 0, line_of(m), line_width_of(m), m->dc.pen.dash));
         break;
     }
     case META_RECTANGLE: NEED(8); rectangle(m, s16(p + 6), s16(p + 4), s16(p + 2), s16(p)); break;
+    case META_INTERSECTCLIPRECT: NEED(8); clip_rect(m, s16(p + 6), s16(p + 4), s16(p + 2), s16(p)); break;
     case META_ELLIPSE: NEED(8); ellipse(m, s16(p + 6), s16(p + 4), s16(p + 2), s16(p)); break;
     case META_ARC: case META_CHORD: case META_PIE:   /* YEnd, XEnd, YStart, XStart, Bottom, Right, Top, Left */
         NEED(16);
@@ -669,7 +727,7 @@ static void emf_figure(mf_player *m, const long *lp, int n, int closed, int fill
         m->xy[i * 2 + 1] = map_y(m, lp[i * 2 + 1]);
     }
     if (!OWF_SHADE_SET(line_of(m)) && !(filled && OWF_SHADE_SET(fill_of(m)))) return;
-    drew(m, m->sink->path(m->ctx, m->xy, n, closed, filled ? fill_of(m) : 0, line_of(m), line_width_of(m),
+    drew(m, sk_path(m, m->xy, n, closed, filled ? fill_of(m) : 0, line_of(m), line_width_of(m),
                           m->dc.pen.dash));
 }
 
@@ -1281,8 +1339,17 @@ static void emf_record(mf_player *m, unsigned long type, const unsigned char *p,
         break;
     }
     /* drawn as nothing and counted: pictures inside, clipping, world transforms, gradients */
+    case EMR_INTERSECTCLIPRECT:
+        NEED(16);
+        clip_rect(m, s32(p), s32(p + 4), s32(p + 8), s32(p + 12));
+        break;
+    case EMR_EXTSELECTCLIPRGN:                           /* cbRgnData, RegionMode, RgnData */
+        NEED(8);
+        if (!u32(p) && u32(p + 4) == 5) { m->dc.clip_on = 0; break; }   /* RGN_COPY of no region: no clip */
+        m->res.skipped++;
+        break;
     case EMR_EXCLUDECLIPRECT:
-    case EMR_INTERSECTCLIPRECT: case EMR_EXTSELECTCLIPRGN: case EMR_SELECTCLIPPATH: case EMR_SETWORLDTRANSFORM:
+    case EMR_SELECTCLIPPATH: case EMR_SETWORLDTRANSFORM:
     case EMR_MODIFYWORLDTRANSFORM: case EMR_BITBLT: case EMR_STRETCHBLT: case EMR_MASKBLT: case EMR_PLGBLT:
     case EMR_SETDIBITSTODEVICE: case EMR_STRETCHDIBITS: case EMR_ALPHABLEND: case EMR_TRANSPARENTBLT:
     case EMR_GRADIENTFILL:
