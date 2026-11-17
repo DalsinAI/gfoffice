@@ -96,7 +96,7 @@ done
 # owfwrite.library, owc_book.c owfcalc, owc_pub.c owfpub, owc_deck.c and the deck's PDF owfpresent), so a
 # conversion opens only the libraries it needs.
 OWC_DECK="-DOWC_DECK_PDF -I$HERE/include -I$OPENLAYOUT_SRC/include"
-OWC_PDF="$HERE/src/deck/opr_layout.c $HERE/src/deck/opr_pdf.c $HERE/src/core/ow_layout.c $OL_C"
+OWC_PDF="$HERE/src/deck/opr_layout.c $HERE/src/deck/opr_pdf.c $HERE/src/deck/opr_gradient.c $HERE/src/core/ow_layout.c $OL_C"
 OWCFLAGS="$CFLAGS_COMMON -m68040 -specs=$SPECS -Os $OWFFLAGS -I$HERE/tools"
 if [ "$OWF" = library ]; then
     OWC_OBJ="$OUT/obj-owconvert"
