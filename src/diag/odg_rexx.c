@@ -135,6 +135,15 @@ typedef struct {
     size_t used;
 } args;
 
+/* A command's working room: its arguments, the ids it names and those it makes. About 4 KB, too much for an Amiga
+ * task's stack, so each command takes it from memory and gives it back: nothing is kept between commands, and
+ * two tasks can run commands at once, as a library's callers do. */
+typedef struct {
+    args a;
+    char idbuf[ARG_TEXT];
+    char made[MAX_IDS][ODG_CLIP_ID];     /* the ids PASTE, DUPLICATE and UNGROUP make (ODG_ORDER_ID is as long) */
+} work;
+
 static void parse_template(const char *t, args *a)
 {
     memset(a, 0, sizeof *a);
@@ -605,10 +614,11 @@ static int way_arg(odg_rexx *rx, const char *what, const char *w, const char *co
     return -1;
 }
 
-static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
+static int run(odg_rexx *rx, int c, work *wk, char *result, size_t size)
 {
     odg_doc *doc = &rx->doc;
-    static char idbuf[ARG_TEXT];         /* off the Amiga's small stack, as args is */
+    args *a = &wk->a;
+    char *idbuf = wk->idbuf;
     char text[64];
     const char *ids[MAX_IDS];
     int rc, n;
@@ -793,13 +803,13 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
             put(result, size, text);
         return rc;
     case C_MOVE:
-        if ((n = split_ids(rx, "MOVE", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        if ((n = split_ids(rx, "MOVE", a->value[0], idbuf, sizeof wk->idbuf, ids)) < 0) return ODG_RX_ERROR;
         return edit_rc(rx, odg_move(doc, ids, n, a->num[1], a->num[2]), "MOVE", "no such shape or connector");
     case C_RESIZE:
         return edit_rc(rx, odg_resize(doc, a->value[0], a->num[1], a->num[2], a->num[3], a->num[4]), "RESIZE",
                        "not a shape, or the size is not above 0");
     case C_DELETE:
-        if ((n = split_ids(rx, "DELETE", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        if ((n = split_ids(rx, "DELETE", a->value[0], idbuf, sizeof wk->idbuf, ids)) < 0) return ODG_RX_ERROR;
         return edit_rc(rx, odg_delete(doc, ids, n), "DELETE", "no such cell (the page and its layers stay)");
     case C_SETVALUE:
         return edit_rc(rx, odg_set_value(doc, a->value[0], a->value[1]), "SETVALUE", "no such cell");
@@ -810,7 +820,7 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         return ODG_RX_OK;
     }
     case C_STYLE:
-        if ((n = split_ids(rx, "STYLE", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        if ((n = split_ids(rx, "STYLE", a->value[0], idbuf, sizeof wk->idbuf, ids)) < 0) return ODG_RX_ERROR;
         return edit_rc(rx, odg_set_style(doc, ids, n, a->value[1], a->value[2]), "STYLE", "no such cell");
     case C_GETSTYLE: {
         const owf_dcell *cell = find_cell(rx, "GETSTYLE", a->value[0]);
@@ -1065,10 +1075,10 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
     case C_COPY:
     case C_CUT:
     case C_DUPLICATE: {
-        static char made[MAX_IDS][ODG_CLIP_ID];
+        char (*made)[ODG_CLIP_ID] = wk->made;
         const char *what = commands[c].name;
         int count = 0;
-        if ((n = split_ids(rx, what, a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        if ((n = split_ids(rx, what, a->value[0], idbuf, sizeof wk->idbuf, ids)) < 0) return ODG_RX_ERROR;
         if (c == C_COPY) {
             rc = odg_copy(doc, ids, n, &rx->clip);
             if (rc == OWF_OK) return ODG_RX_OK;      /* the page doesn't change */
@@ -1083,7 +1093,7 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         return rc;
     }
     case C_PASTE: {
-        static char made[MAX_IDS][ODG_CLIP_ID];
+        char (*made)[ODG_CLIP_ID] = wk->made;
         int count = 0;
         if (odg_clip_empty(&rx->clip)) {
             snprintf(rx->lasterror, sizeof rx->lasterror, "PASTE: nothing has been copied");
@@ -1103,7 +1113,7 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         static const odg_order how[4] = { ODG_ORDER_FRONT, ODG_ORDER_BACK, ODG_ORDER_FORWARD, ODG_ORDER_BACKWARD };
         int w = way_arg(rx, "ORDER", a->value[1], ways, 4);
         if (w < 0) return ODG_RX_ERROR;
-        if ((n = split_ids(rx, "ORDER", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        if ((n = split_ids(rx, "ORDER", a->value[0], idbuf, sizeof wk->idbuf, ids)) < 0) return ODG_RX_ERROR;
         rc = odg_reorder(doc, ids, n, how[w]);
         if (rc == OWF_ERR_FORMAT) {
             snprintf(rx->lasterror, sizeof rx->lasterror, "ORDER: no shape or connector to move %s", ways[w]);
@@ -1112,14 +1122,14 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         return edit_rc(rx, rc, "ORDER", "not possible");
     }
     case C_GROUP:
-        if ((n = split_ids(rx, "GROUP", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        if ((n = split_ids(rx, "GROUP", a->value[0], idbuf, sizeof wk->idbuf, ids)) < 0) return ODG_RX_ERROR;
         rc = odg_group(doc, ids, n, text);
         if ((rc = edit_rc(rx, rc, "GROUP", "no shape or connector to group")) == ODG_RX_OK) put(result, size, text);
         return rc;
     case C_UNGROUP: {
-        static char made[MAX_IDS][ODG_ORDER_ID];
+        char (*made)[ODG_ORDER_ID] = wk->made;
         int count = 0;
-        if ((n = split_ids(rx, "UNGROUP", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        if ((n = split_ids(rx, "UNGROUP", a->value[0], idbuf, sizeof wk->idbuf, ids)) < 0) return ODG_RX_ERROR;
         rc = odg_ungroup(doc, ids, n, made, MAX_IDS, &count);
         if ((rc = edit_rc(rx, rc, "UNGROUP", "no group (or shape holding others) to take apart")) == ODG_RX_OK)
             put_made(result, size, made, count, MAX_IDS);
@@ -1130,7 +1140,7 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         int w;
         if (a->value[1] && word_at(a->value[1], "CENTER", 6, 0) && !a->value[1][6]) w = 1;
         else if ((w = way_arg(rx, "ALIGN", a->value[1], ways, 6)) < 0) return ODG_RX_ERROR;
-        if ((n = split_ids(rx, "ALIGN", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        if ((n = split_ids(rx, "ALIGN", a->value[0], idbuf, sizeof wk->idbuf, ids)) < 0) return ODG_RX_ERROR;
         rc = odg_align(doc, ids, n, (odg_align_how)w);
         if (rc == OWF_ERR_FORMAT) {
             snprintf(rx->lasterror, sizeof rx->lasterror, "ALIGN: needs two shapes or more, not lined up already");
@@ -1139,7 +1149,7 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         return edit_rc(rx, rc, "ALIGN", "not possible");
     }
     case C_DISTRIBUTE:
-        if ((n = split_ids(rx, "DISTRIBUTE", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        if ((n = split_ids(rx, "DISTRIBUTE", a->value[0], idbuf, sizeof wk->idbuf, ids)) < 0) return ODG_RX_ERROR;
         rc = odg_distribute(doc, ids, n, a->value[1] == NULL);
         if (rc == OWF_ERR_FORMAT) {
             snprintf(rx->lasterror, sizeof rx->lasterror, "DISTRIBUTE: needs three shapes or more, not spread evenly already");
@@ -1161,7 +1171,7 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
 int odg_rexx_command(odg_rexx *rx, const char *line, char *result, size_t size)
 {
     char scratch[8];
-    static args a;                       /* 2 KB of argument text: off the Amiga's small stack */
+    work *wk;
     int i, rc;
     if (!result || !size) result = scratch, size = sizeof scratch;
     result[0] = 0;
@@ -1176,14 +1186,20 @@ int odg_rexx_command(odg_rexx *rx, const char *line, char *result, size_t size)
                  (int)n, line);
         return ODG_RX_FAIL;
     }
-    parse_template(commands[i].tmpl, &a);
-    if (!parse_args(line + strlen(commands[i].name), &a, rx->lasterror, sizeof rx->lasterror)) {
+    if (!(wk = (work *)owf_malloc(sizeof *wk))) {
+        snprintf(rx->lasterror, sizeof rx->lasterror, "%s: out of memory", commands[i].name);
+        return ODG_RX_FAIL;
+    }
+    parse_template(commands[i].tmpl, &wk->a);
+    if (!parse_args(line + strlen(commands[i].name), &wk->a, rx->lasterror, sizeof rx->lasterror)) {
         char why[sizeof rx->lasterror];
         memcpy(why, rx->lasterror, sizeof why);
         snprintf(rx->lasterror, sizeof rx->lasterror, "%s: %.200s", commands[i].name, why);
+        owf_free(wk);
         return ODG_RX_ERROR;
     }
-    rc = run(rx, i, &a, result, size);
+    rc = run(rx, i, wk, result, size);
+    owf_free(wk);
     if (rc != ODG_RX_OK) result[0] = 0;
     return rc;
 }

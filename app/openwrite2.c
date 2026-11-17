@@ -80,7 +80,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenWrite 2.0.48 (16.11.2026)"
+#define VERSION_TEXT "GFOpenWrite 2.0.50 (16.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -119,6 +119,7 @@ enum {
     M_FIELD_TITLE, M_FIELD_AUTHOR, M_FIELD_SUBJECT, M_FIELD_FILENAME, M_FIELD_WORDS, M_FIELD_CHAPTER, M_FIELD_USER,
     M_CROSS_REF, M_DOC_INFO, M_USER_FIELDS, M_UPDATE_FIELDS, M_FIELD_SEQ,
     M_FIELD_IF,                                      /* 2.0.48 */
+    M_FIELD_FILLIN, M_FILL_IN,                       /* 2.0.50 */
     M_FOOTNOTE, M_ENDNOTE, M_NOTE_NEXT, M_NOTE_PREV, M_NOTE_EDIT, M_NOTE_CONVERT, M_NOTE_DELETE, M_NOTE_NUMBERING,
     M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_DOC, M_MERGE_FILES,
     M_INDEX_ENTRY, M_INDEX,
@@ -214,6 +215,8 @@ static struct NewMenu menus[] = {
     { NM_SUB, "User Field...", NULL, 0, 0, (APTR)M_FIELD_USER },
     { NM_SUB, "Number Range...", NULL, 0, 0, (APTR)M_FIELD_SEQ },   /* 2.0.43: Figure 1, Table 2 */
     { NM_SUB, "Conditional Text...", NULL, 0, 0, (APTR)M_FIELD_IF }, /* 2.0.48: Word's IF */
+    { NM_SUB, "Input Field...", NULL, 0, 0, (APTR)M_FIELD_FILLIN },  /* 2.0.50: Word's FILLIN */
+    { NM_SUB, "Fill In Fields...", NULL, 0, 0, (APTR)M_FILL_IN },
     { NM_ITEM, "Cross-reference...", NULL, 0, 0, (APTR)M_CROSS_REF },
 
     { NM_TITLE, "Format", NULL, 0, 0, NULL },
@@ -4669,6 +4672,50 @@ static char *comment_utf8(const char *latin1);
 
 /* 2.0.43 (libowf 1.12.6): Insert > Fields > Number Range...: a numbered field of a name (Figure, Table), its number
  * the count of that name's fields up to it, renumbered as they move */
+/* 2.0.50 (libowf 1.19): Insert > Field > Input Field...: a field that asks its prompt and shows the answer */
+static void do_input_field(void)
+{
+    static char last[96] = "Name:";
+    char prompt[96], answer[128], msg[64];
+    char *up, *ua;
+    int rc;
+    if (!editor) return;
+    if (!text_requester("Input Field", "Prompt:", last, prompt, sizeof prompt) || !prompt[0]) return;
+    snprintf(last, sizeof last, "%s", prompt);
+    answer[0] = 0;
+    if (!text_requester("Input Field", prompt, "", answer, sizeof answer)) return;
+    up = comment_utf8(prompt);
+    ua = comment_utf8(answer);
+    if (!up || !ua) { free(up); free(ua); DisplayBeep(scr); return; }
+    rc = ow_editor_insert_fill_in(editor, up, ua);
+    snprintf(msg, sizeof msg, "Input field inserted.");
+    editor_result(rc, msg);
+    free(up);
+    free(ua);
+}
+
+/* 2.0.50: Insert > Field > Fill In Fields...: each input field's prompt asked in turn, its answer given (Cancel
+ * stops; each answer is one undo) */
+static void do_fill_in(void)
+{
+    int i, n = editor ? ow_editor_fill_in_count(editor) : 0, done = 0;
+    if (!n) { editor_repaint("No input fields in this document."); return; }
+    for (i = 0; i < n; ++i) {
+        const char *prompt, *answer;
+        char p[96], a[128], typed[128];
+        char *u;
+        if (!ow_editor_fill_in_at(editor, i, &prompt, &answer)) break;
+        to_latin1(prompt, strlen(prompt), p, sizeof p);
+        to_latin1(answer, strlen(answer), a, sizeof a);
+        if (!text_requester("Fill In", p[0] ? p : "Answer:", a, typed, sizeof typed)) break;
+        if (!(u = comment_utf8(typed))) { DisplayBeep(scr); break; }
+        if (ow_editor_set_fill_in(editor, i, u) == OWF_OK) ++done;
+        free(u);
+    }
+    pages_changed();
+    editor_repaint(done ? "Input fields filled in." : "No input field changed.");
+}
+
 /* 2.0.48 (libowf 1.16): Insert > Field > Conditional Text...: an IF field on a user field (or a mail merge
  * column, "MERGEFIELD name"): its value compared with a text, one text shown when it holds, another when not */
 static void do_conditional_text(void)
@@ -5542,6 +5589,8 @@ static void menu_action(ULONG id)
     case M_CROSS_REF: do_cross_reference(); break;
     case M_FIELD_SEQ: do_number_range(); break;
     case M_FIELD_IF: do_conditional_text(); break;   /* 2.0.48 */
+    case M_FIELD_FILLIN: do_input_field(); break;    /* 2.0.50 */
+    case M_FILL_IN: do_fill_in(); break;
     case M_DOC_INFO: do_doc_info(); break;
     case M_UPDATE_FIELDS:
         if (editor) { fields_update(); set_status("Fields updated."); request_document_redraw(); }
@@ -5785,7 +5834,7 @@ static int rexx_do_command(const char *command, char **result_out)
     else if(starts_word_ci(command,"HELP",&arg))snprintf(result,sizeof result,"VERSION ACTIVATE DEACTIVATE HELP FAULT LASTERROR WORDCOUNT PAGECOUNT FONTCHECK MEMCHECK "
         "OPEN SAVEAS SAVE EXPORT PRINT INSERTTEXT FIND GETTEXT COMMAND TRACKCHANGES CHANGES NEXTCHANGE PREVCHANGE "
         "ACCEPTCHANGE REJECTCHANGE ACCEPTALL REJECTALL REVIEWAUTHOR ADDCOMMENT COMMENTS NEXTCOMMENT PREVCOMMENT GETCOMMENT "
-        "REPLYCOMMENT EDITCOMMENT RESOLVECOMMENT DELETECOMMENT COMMENTSBY INSERTFIELD DOCINFO USERFIELD CROSSREF UPDATEFIELDS "
+        "REPLYCOMMENT EDITCOMMENT RESOLVECOMMENT DELETECOMMENT COMMENTSBY INSERTFIELD FILLIN DOCINFO USERFIELD CROSSREF UPDATEFIELDS "
         "ADDFOOTNOTE ADDENDNOTE NOTES NEXTNOTE PREVNOTE GETNOTE EDITNOTE CONVERTNOTE DELETENOTE NOTENUMBERING NOTERESTART "
         "MERGESOURCE MERGEFIELDS MERGERECORDS MERGERECORD INSERTMERGEFIELD MERGE INDEXENTRY INDEXENTRIES INSERTINDEX "
         "AUTOCORRECT ACREPLACE TYPETEXT COMPLETE LABELSHEETS LABELS LABELSIZE ENVELOPE RETURNADDRESS FEED QUIT");
@@ -5996,9 +6045,19 @@ static int rexx_do_command(const char *command, char **result_out)
         while(*rest&&*rest!=' '&&n<15){kind[n++]=(char)toupper((unsigned char)*rest++);}kind[n]=0;rest=skip_space(rest);
         for(k=0;k<13&&strcmp(kinds[k],kind);++k);
         if(k==13&&!strcmp(kind,"SEQ"))k=OWF_FIELD_SEQ;   /* 2.0.43: INSERTFIELD SEQ name, a number range */
+        if(k==13&&!strcmp(kind,"FILLIN"))k=OWF_FIELD_FILLIN;   /* 2.0.50: INSERTFIELD FILLIN prompt (FILLIN n answer gives it one) */
         if(k==13&&!strcmp(kind,"IF"))k=OWF_FIELD_IF;     /* 2.0.48: INSERTFIELD IF form, Word's ({DOCVARIABLE x} = "1" "yes" "no") */
-        if(!editor||k==13){ok=0;snprintf(result,sizeof result,"INSERTFIELD takes PAGE PAGES DATE TIME TITLE AUTHOR SUBJECT FILENAME WORDS CHAPTER, or USER, REF, REFPAGE or SEQ and a name, or IF and its form");}
+        if(!editor||k==13){ok=0;snprintf(result,sizeof result,"INSERTFIELD takes PAGE PAGES DATE TIME TITLE AUTHOR SUBJECT FILENAME WORDS CHAPTER, or USER, REF, REFPAGE, SEQ or FILLIN and a name, or IF and its form");}
         else{if(*rest)u=comment_utf8(rest);rc=ow_editor_insert_field_arg(editor,(owf_field)k,u&&*u?u:NULL);free(u);if(rc==OWF_ERR_FORMAT){ok=0;snprintf(result,sizeof result,"%s",k==OWF_FIELD_SEQ&&*rest?"A number range's name is a letter, then letters, digits and _, 40 at most":k>=10?"That field needs a name":"That field takes no name");}else{ok=editor_result(rc,"Field inserted.");if(ok)fields_update();snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}}
+    /* 2.0.50: FILLIN: how many input fields; FILLIN n: its answer; FILLIN n answer: gives it that answer */
+    else if(starts_word_ci(command,"FILLIN",&arg)){const char *rest=arg,*prompt,*answer;char *end;long k;
+        if(!editor){ok=0;snprintf(result,sizeof result,"No document");}
+        else if(!*rest)snprintf(result,sizeof result,"%d",ow_editor_fill_in_count(editor));
+        else{k=strtol(rest,&end,10);rest=skip_space(end);
+            if(end==arg||!ow_editor_fill_in_at(editor,(int)k-1,&prompt,&answer)){ok=0;snprintf(result,sizeof result,"FILLIN n: no input field %ld",k);}
+            else if(*rest){char *u=comment_utf8(!strcmp(rest,"\"\"")?"":rest);ok=u&&ow_editor_set_fill_in(editor,(int)k-1,u)==OWF_OK;free(u);
+                if(ok){pages_changed();request_document_redraw();ow_editor_fill_in_at(editor,(int)k-1,&prompt,&answer);to_latin1(answer,strlen(answer),result,sizeof result);}else snprintf(result,sizeof result,"Failed");}
+            else to_latin1(answer,strlen(answer),result,sizeof result);}}
     else if(starts_word_ci(command,"DOCINFO",&arg)){char what[16];const char *rest=arg;int n=0,k;while(*rest&&*rest!=' '&&n<15){what[n++]=(char)toupper((unsigned char)*rest++);}what[n]=0;rest=skip_space(rest);
         k=!strcmp(what,"TITLE")?0:!strcmp(what,"AUTHOR")?1:!strcmp(what,"SUBJECT")?2:-1;
         if(!editor||k<0){ok=0;snprintf(result,sizeof result,"DOCINFO takes TITLE, AUTHOR or SUBJECT, and a value to set");}
