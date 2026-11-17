@@ -2754,9 +2754,15 @@ static void test_sheet_document(void)
     free(text);
     v.lines = NULL;
     opj_lines_free(&l);
+    /* an over-allocated task's ID with the sheet's "!": Dale on Plan and on Check, both on Monday */
+    CHECK_N(opj_insert_task(doc, 3, "Check"), OWF_OK);
+    CHECK_N(opj_set_assignment(doc, 3, 0, 100), OWF_OK);
+    text = sheet_text(doc, &v, OPJ_SHEET_TASKS);
+    CHECK(text && strstr(text, "\n1!\tPlan\t") && strstr(text, "\n4!\tCheck\t") && strstr(text, "\n2\tBuild\t"));
+    free(text);
     text = sheet_text(doc, NULL, OPJ_SHEET_RESOURCES);
     CHECK(text && !strncmp(text, "Resource Sheet\nID\tResource Name\t", 32));
-    CHECK(text && strstr(text, "\n1\tDale\tWork\t"));
+    CHECK(text && strstr(text, "\n1!\tDale\tWork\t"));                    /* the resource sheet's own "!" */
     free(text);
     CHECK_N(opj_sheet_document(doc, NULL, OPJ_SHEET_TASKS, &d), OWF_ERR_FORMAT);
     CHECK(d == NULL);

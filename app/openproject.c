@@ -49,7 +49,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenProject 0.1.25 (17.11.2026)"
+#define VERSION_TEXT "GFOpenProject 0.1.26 (17.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenProject, the project planner of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -1357,20 +1357,28 @@ static void assign_window(void)
 /* ---- Project > Reports... ---- */
 
 /* The Reports requester, as MS Project's Reports dialog: one of the plan's reports (owf_preport.c, built as
- * a libowf document), then Print (the suite's print route: GFOpenPrint when it is there, else
+ * a libowf document) or one of the sheets (opj_sheetdoc.c: the task sheet as the window shows it, or the
+ * resource sheet), then Print (the suite's print route: GFOpenPrint when it is there, else
  * printer.device), Save (PDF, ODT, DOCX, RTF, HTML or text by the name's extension; PDF with none) or
  * Cancel. The report stays chosen for the next time. 1 Print, 2 Save, 0 Cancel. */
+#define NREPORT_KINDS (OWF_PREPORT_N + OPJ_NSHEETS)   /* the reports, then the sheets */
 static int report_kind = OWF_PREPORT_SUMMARY;
+
+/* A kind's name: a report's, then a sheet's. */
+static const char *report_kind_name(int kind)
+{
+    return kind < OWF_PREPORT_N ? owf_preport_name(kind) : opj_sheet_name(kind - OWF_PREPORT_N);
+}
 
 static int reports_dialog(void)
 {
-    static STRPTR names[OWF_PREPORT_N + 1];
+    static STRPTR names[NREPORT_KINDS + 1];
     struct Window *aw;
     struct Gadget *eg = NULL, *g;
     struct NewGadget ng;
     int i, done = 0, answer = 0, kind = report_kind, lw = fw * 7 + 12, w = fw * 48, h = (fh + 8) * 3 + 16;
-    for (i = 0; i < OWF_PREPORT_N; i++) names[i] = (STRPTR)owf_preport_name(i);
-    names[OWF_PREPORT_N] = NULL;
+    for (i = 0; i < NREPORT_KINDS; i++) names[i] = (STRPTR)report_kind_name(i);
+    names[NREPORT_KINDS] = NULL;
     aw = OpenWindowTags(NULL, WA_Title, (ULONG)"Reports", WA_PubScreen, (ULONG)scr,
         WA_Left, win->LeftEdge + 40, WA_Top, win->TopEdge + 30, WA_InnerWidth, w, WA_InnerHeight, h,
         WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SmartRefresh, TRUE,
@@ -1426,7 +1434,7 @@ static int reports_dialog(void)
                 answer = gg->GadgetID == 3 ? 0 : gg->GadgetID, done = 1;
         }
     }
-    if (answer) report_kind = kind >= 0 && kind < OWF_PREPORT_N ? kind : OWF_PREPORT_SUMMARY;
+    if (answer) report_kind = kind >= 0 && kind < NREPORT_KINDS ? kind : OWF_PREPORT_SUMMARY;
     RemoveGList(aw, eg, -1);
     FreeGadgets(eg);
     CloseWindow(aw);
@@ -1447,14 +1455,16 @@ static void reports(void)
         if (!ask_file("Save the report as", TRUE, "#?.(pdf|odt|docx|rtf|html|txt)", path, sizeof path)) return;
         if (!strchr(leaf(path), '.') && strlen(path) + 4 < sizeof path) strcat(path, ".pdf");
     }
-    if (owf_project_report(DOC->plan, report_kind, &doc) != OWF_OK) { tell("Reports: not enough memory"); return; }
+    rc = report_kind < OWF_PREPORT_N ? owf_project_report(DOC->plan, report_kind, &doc)
+                                     : opj_sheet_document(DOC, &view, report_kind - OWF_PREPORT_N, &doc);
+    if (rc != OWF_OK) { tell(rc == OWF_ERR_MEMORY ? "Reports: not enough memory" : "Reports: not possible"); return; }
     if (how == 1) {
-        if (!ow_print_document_named(doc, owf_preport_name(report_kind), msg, sizeof msg)) tell(msg);
+        if (!ow_print_document_named(doc, report_kind_name(report_kind), msg, sizeof msg)) tell(msg);
         else set_status("Report printed");
     } else {
         rc = owf_export_file(doc, path, NULL, NULL);
         if (rc == OWF_OK) {
-            snprintf(msg, sizeof msg, "Saved %.60s as %.80s", owf_preport_name(report_kind), leaf(path));
+            snprintf(msg, sizeof msg, "Saved %.60s as %.80s", report_kind_name(report_kind), leaf(path));
             set_status(msg);
         } else if (rc == OWF_ERR_FORMAT || rc == OWF_ERR_UNSUPPORTED) {
             snprintf(msg, sizeof msg, "A report can't be saved as %.100s (PDF, ODT, DOCX, RTF, HTML or TXT)", leaf(path));

@@ -167,6 +167,8 @@ document in the same way. The task sheet takes the view's shown columns in order
 and groups, with a group's heading as a bold row); summaries are bold, and an over-allocated task's ID
 gets the sheet's "!". The resource sheet takes every column. Both print A4 landscape. ARexx's SAVESHEET
 saves them.
+The Reports requester lists the two sheets after the six reports, so Print and Save... work for them too.
+The task sheet comes out as the window shows it.
 
 ## Checked
 
