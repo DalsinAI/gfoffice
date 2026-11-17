@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.18.0"
+#define OWF_VERSION "1.19.0"
 
 /* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
@@ -98,8 +98,11 @@ typedef enum { OWF_FIELD_PAGE, OWF_FIELD_PAGES, OWF_FIELD_DATE, OWF_FIELD_TIME,
                /* 1.16: conditional text: href is Word's form after IF, two operands, an operator and the two
                 * texts ({DOCVARIABLE Gender} = "F" "Ms" "Mr"; owf_ifform.h), text the one last shown (DOCX IF,
                 * ODF text:conditional-text) */
-               OWF_FIELD_IF } owf_field;
-#define OWF_FIELD_LAST OWF_FIELD_IF
+               OWF_FIELD_IF,
+               /* 1.19: an input field: href is its prompt, text the answer last given (kept, never worked out
+                * again: GFOpenWrite asks for it). DOCX FILLIN, ODF text:text-input */
+               OWF_FIELD_FILLIN } owf_field;
+#define OWF_FIELD_LAST OWF_FIELD_FILLIN
 
 typedef struct {
     owf_run_kind kind;
