@@ -19,5 +19,6 @@
 #pragma libcall OWFSpellBase owf_spell_scan 48 ba109806
 #pragma libcall OWFSpellBase owf_spell_words 4e 1a09805
 #pragma libcall OWFSpellBase owf_spell_count 54 801
+#pragma libcall OWFSpellBase owf_spell_command 5a 0a9804
 
 #endif /* PRAGMAS_OWFSPELL_PRAGMAS_H */

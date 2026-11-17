@@ -199,4 +199,22 @@ __owfspell_owf_spell_count(void *__base, const owf_spell *spell)
 #define owf_spell_count(spell) __owfspell_owf_spell_count((OWFSPELL_BASE_NAME), (const owf_spell *)(spell))
 #define __owf_spell_count_base(__in_base, spell) __owfspell_owf_spell_count((__in_base), (const owf_spell *)(spell))
 
+static __inline__ int
+__owfspell_owf_spell_command(void *__base, owf_spell *spell, const char *args, char *out, size_t size)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(spell);
+	register ULONG _a1 __asm("a1") = (ULONG)(args);
+	register ULONG _a2 __asm("a2") = (ULONG)(out);
+	register ULONG _d0 __asm("d0") = (ULONG)(size);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -90(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_spell_command(spell, args, out, size) __owfspell_owf_spell_command((OWFSPELL_BASE_NAME), (owf_spell *)(spell), (const char *)(args), (char *)(out), (size_t)(size))
+#define __owf_spell_command_base(__in_base, spell, args, out, size) __owfspell_owf_spell_command((__in_base), (owf_spell *)(spell), (const char *)(args), (char *)(out), (size_t)(size))
+
 #endif /* INLINE_OWFSPELL_H */
