@@ -833,3 +833,16 @@ publisher-merge-show-test: pressmaster-merge-show-test
 publisher-template-check: pressmaster-template-check
 publisher-template-test: pressmaster-template-test
 .PHONY: publisher-core-check publisher-core-test publisher-merge-check publisher-merge-test publisher-merge-show-check publisher-merge-show-test publisher-template-check publisher-template-test
+
+# No tool attribution in the tree: scripts/check-attribution.sh, tested by
+# tests/repo/test_attribution.sh on throwaway repositories.
+attribution-test:
+	sh tests/repo/test_attribution.sh
+
+attribution-check:
+	sh scripts/check-attribution.sh .
+
+test: attribution-test attribution-check
+check: attribution-test attribution-check
+
+.PHONY: attribution-test attribution-check

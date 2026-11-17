@@ -16,6 +16,7 @@
 #include "opendiag_core.h"
 
 #define ODG_ORDER_ID 24                  /* bytes of an id Group and Ungroup give back */
+typedef char odg_order_id[ODG_ORDER_ID];   /* one of them */
 
 typedef enum {
     ODG_ORDER_FRONT,                     /* over every other cell with its parent */
@@ -38,8 +39,14 @@ int odg_group(odg_doc *doc, const char *const *ids, int n, char *group);
  * connector joined to a group that goes keeps that end loose where it was. The ids
  * of the cells that came out go into made[0..max-1] when made is not NULL, how many there are into *nmade.
  * OWF_ERR_FORMAT when none of them holds anything. */
-int odg_ungroup(odg_doc *doc, const char *const *ids, int n, char (*made)[ODG_ORDER_ID], int max, int *nmade);
+int odg_ungroup(odg_doc *doc, const char *const *ids, int n, odg_order_id *made, int max, int *nmade);
 /* 1 when the cell is a group (style "group"). */
 int odg_is_group(const owf_dcell *c);
+
+/* On owfdiag.library (OWF_USE_DIAG_LIBRARY): its calls, once every header that declares them is complete. */
+#define OPENDIAG_ORDER_H_DONE
+#if defined(OWF_USE_DIAG_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
+#include "opendiag_proto.h"
+#endif
 
 #endif

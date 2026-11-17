@@ -105,9 +105,10 @@ int opj_column_parse(const char *name, int resource_sheet)
         { "actualfinish", OPJ_COL_ACTUAL_FINISH }, { "actualduration", OPJ_COL_ACTUAL_DURATION },
         { "remaining", OPJ_COL_REMAINING_DURATION }, { "remainingduration", OPJ_COL_REMAINING_DURATION }, { "earned", OPJ_COL_BCWP }, { "planned", OPJ_COL_BCWS },
         { "leveldelay", OPJ_COL_LEVELING_DELAY }, { "delay", OPJ_COL_LEVELING_DELAY },
+        { "overallocation", OPJ_COL_OVERALLOCATED }, { "over", OPJ_COL_OVERALLOCATED },
     }, res[] = {
         { "maxunits", OPJ_RCOL_MAX }, { "max", OPJ_RCOL_MAX }, { "rate", OPJ_RCOL_RATE },
-        { "stdrate", OPJ_RCOL_RATE }, { "name", OPJ_RCOL_NAME },
+        { "stdrate", OPJ_RCOL_RATE }, { "name", OPJ_RCOL_NAME }, { "calendar", OPJ_RCOL_CALENDAR },
     };
     char want[40], have[40];
     int i, n = resource_sheet ? OPJ_NRCOLS : OPJ_NCOLS;

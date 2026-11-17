@@ -119,6 +119,10 @@ static void test_resources_and_baseline(void)
     CHECK_S(ok("GETRESOURCE 1 rate"), "20.00/h");
     CHECK_S(ok("GETRESOURCE 1 Work"), "28h");                                /* 16h, and half of 24h */
     CHECK_S(ok("GETRESOURCE 1 Cost"), "560.00");
+    CHECK_S(ok("GETRESOURCE 1 Calendar"), "Standard");                      /* Base Calendar: the plan's */
+    CHECK_N(rx_do("SETRESOURCE 1 Calendar Nights"), OPJ_RX_ERROR);          /* no such calendar */
+    ok("SETRESOURCE 1 \"Base Calendar\" 1");
+    CHECK_S(ok("GETRESOURCE 1 basecalendar"), "Standard");
     CHECK_S(ok("GETRESOURCE 1 Name"), "Dale");
     CHECK_N(rx_do("GETRESOURCE 2 Name"), OPJ_RX_ERROR);
     CHECK_N(rx_do("SETRESOURCE 1 Work 3h"), OPJ_RX_ERROR);
@@ -528,6 +532,23 @@ static void test_level(void)
     CHECK_S(ok("GETCELL 2 Start"), "Tue 17/11/26");
     ok("UNDO");
     CHECK_S(ok("GETCELL 2 Start"), "Mon 16/11/26");
+    /* ORDER, Priority and Overallocated */
+    CHECK_S(ok("GETCELL 1 ID"), "1!");
+    CHECK_S(ok("GETCELL 2 Overallocated"), "Yes");
+    CHECK_S(ok("LEVEL ORDER ID"), "1");                                   /* Dig is first: Fill waits */
+    CHECK_S(ok("GETCELL 2 Start"), "Wed 18/11/26");
+    CHECK_S(ok("GETCELL 2 Overallocated"), "No");
+    ok("SETCELL 2 Priority 900");
+    CHECK_S(ok("GETCELL 2 Priority"), "900");
+    CHECK_S(ok("LEVEL ORDER \"Priority, Standard\""), "1");              /* Fill keeps Monday now */
+    CHECK_S(ok("GETCELL 2 Start"), "Mon 16/11/26");
+    CHECK_S(ok("GETCELL 1 Start"), "Tue 17/11/26");
+    ok("SETCELL 1 Priority 1000");                                        /* Do Not Level */
+    CHECK_S(ok("LEVEL ORDER Priority"), "1");
+    CHECK_S(ok("GETCELL 1 Start"), "Mon 16/11/26");
+    CHECK_N(rx_do("LEVEL ORDER Sideways"), OPJ_RX_ERROR);
+    CHECK(strstr(rx.lasterror, "ORDER is Standard, ID or Priority") != NULL);
+    CHECK_N(rx_do("SETCELL 1 Priority 1001"), OPJ_RX_ERROR);
 }
 
 /* SORT, FIND and REPLACETEXT. */
@@ -650,6 +671,10 @@ static void test_update_task(void)
     CHECK_N(rx_do("UPDATETASK 1 ACTUAL soon"), OPJ_RX_ERROR);
     CHECK_N(rx_do("UPDATETASK 2 PERCENT 5"), OPJ_RX_ERROR);
     CHECK_S(ok("GETCELL 1 Work"), "0h");
+    CHECK_S(ok("GETCELL 1 Type"), "Fixed Units");                             /* task types by column */
+    ok("SETCELL 1 Type \"Fixed Work\"");
+    CHECK_S(ok("GETCELL 1 EffortDriven"), "Yes");
+    CHECK_N(rx_do("SETCELL 1 EffortDriven No"), OPJ_RX_ERROR);
     CHECK_N(rx_do("PROGRESSLINES ON"), OPJ_RX_NOW);                         /* no window */
     opj_view_init(&v, rx.doc, 800, 200, 16, OPJ_ZOOM_DAYS);
     rx.view = &v;

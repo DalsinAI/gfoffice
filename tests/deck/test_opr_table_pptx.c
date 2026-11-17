@@ -218,11 +218,59 @@ static void block_merge(void)
     owf_deck_free(d);
 }
 
+static int noted(const owf_report *report, const char *what)
+{
+    int i, note = 0;
+    for (i = 0; i < owf_report_count(report); i++) {
+        const char *t = owf_report_note(report, i, NULL, NULL);
+        note |= t && strstr(t, what) != NULL;
+    }
+    return note;
+}
+
+/* a table wider than the 64 columns both formats are written with: a note
+ * says the rest were left out (as a table read from a file can be) */
+static void too_wide(void)
+{
+    int obj = -1, c;
+    owf_deck *d = table_deck(&obj, STYLE);
+    unsigned char *data = NULL;
+    size_t n = 0;
+    owf_report *pptx = owf_report_new(), *odp = owf_report_new(), *fine = owf_report_new();
+
+    CHECK(d && obj >= 0, "a deck with a table (wide)");
+    CHECK(d && opr_export_pptx(d, &data, &n, fine) == OWF_OK && !noted(fine, "past the 64th"),
+          "no note for 3 columns");
+    free(data);
+    data = NULL;
+    if (d && obj >= 0) {
+        owf_obj *w = &d->slides[0].objs[obj];
+        int *cw = owf_realloc(w->col_widths, 70 * sizeof *cw);
+        CHECK(cw != NULL, "70 columns");
+        if (cw) {
+            for (c = w->ncols; c < 70; c++)
+                cw[c] = 100;
+            w->col_widths = cw;
+            w->ncols = 70;
+        }
+    }
+    CHECK(d && opr_export_pptx(d, &data, &n, pptx) == OWF_OK && data, "saved as PPTX (wide)");
+    CHECK(noted(pptx, "past the 64th"), "PPTX: a note for the columns left out");
+    CHECK(d && owf_export_deck_file(d, "build/test-opr-table-wide.odp", "odp", odp) == 0, "saved as ODP (wide)");
+    CHECK(noted(odp, "past the 64th"), "ODP: a note for the columns left out");
+    owf_report_free(fine);
+    owf_report_free(odp);
+    owf_report_free(pptx);
+    free(data);
+    owf_deck_free(d);
+}
+
 int main(void)
 {
     round_trip(STYLE, 1);
     round_trip("blue", 0);
     block_merge();
+    too_wide();
     printf("test_opr_table_pptx: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }
