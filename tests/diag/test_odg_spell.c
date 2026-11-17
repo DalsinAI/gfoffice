@@ -84,10 +84,10 @@ int main(void)
     CHECK(odg_spell_next(&doc, spell, h, 0, &hit) == 1 && !strcmp(hit.word, "bb"));
     CHECK(odg_spell_replace(&doc, &hit, "be") == OWF_OK && !strcmp(value_of(&doc, h), "<bb>be</bb>"));
     /* an entity inside the word: refused, the label as it was */
-    CHECK(odg_set_value(&doc, h, "caf&eacute; menu") == OWF_OK);
+    CHECK(odg_set_value(&doc, h, "caf&#233; menu") == OWF_OK);
     CHECK(odg_spell_next(&doc, spell, h, 0, &hit) == 1 && !strcmp(hit.word, "caf\xc3\xa9"));
     CHECK(odg_spell_replace(&doc, &hit, "cafe") == OWF_ERR_UNSUPPORTED &&
-          !strcmp(value_of(&doc, h), "caf&eacute; menu"));
+          !strcmp(value_of(&doc, h), "caf&#233; menu"));
     CHECK(odg_set_value(&doc, h, "sales") == OWF_OK);
 
     /* ARexx SPELL */
