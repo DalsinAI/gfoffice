@@ -88,4 +88,26 @@ test: project-view-test
 check: project-view-check
 
 .PHONY: project-view-test project-view-check
+
+# Spelling through a plan's names and notes (src/project/opj_spell.c) with GFOffice's one spell checker
+$(OUT)/test-opj-spell: $(OPJ_DEPS) $(OWF_SRC) include/openproject_spell.h tests/project/test_opj_spell.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB $(OPJ_FLAGS) $(OWF_SRC) $(PROJECT_SRC) $(OPJ_SRC) $(OLDRAW_SRC) \
+		tests/project/test_opj_spell.c -lz -o $@
+
+$(OUT)/test-opj-spell-asan: $(OPJ_DEPS) $(OWF_SRC) include/openproject_spell.h tests/project/test_opj_spell.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		$(OPJ_FLAGS) $(OWF_SRC) $(PROJECT_SRC) $(OPJ_SRC) $(OLDRAW_SRC) tests/project/test_opj_spell.c -lz -o $@
+
+project-spell-test: $(OUT)/test-opj-spell
+	$(OUT)/test-opj-spell
+
+project-spell-check: $(OUT)/test-opj-spell-asan
+	$(OUT)/test-opj-spell-asan
+
+test: project-spell-test
+check: project-spell-check
+
+.PHONY: project-spell-test project-spell-check
 endif
