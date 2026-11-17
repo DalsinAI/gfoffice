@@ -637,6 +637,40 @@ static int odf_operand(owf_buf *out, const char *v, int field)
 
 /* 1.16: conditional text as text:conditional-text, its condition in ODF's form; its shown text alone when
  * ODF can't say the condition */
+/* An IF's (or a hidden paragraph's) condition in ODF's form into cond (initialised); 0 when ODF can't say it */
+static int odf_condition(const owf_run *run, owf_if_form *f, owf_buf *cond)
+{
+    int ok = owf_if_parse(run->href, f);
+    if (ok) {
+        owf_buf_puts(cond, "ooow:");
+        ok = odf_operand(cond, f->a, f->a_field);
+        owf_buf_puts(cond, !strcmp(f->op, "=") ? " == " : !strcmp(f->op, "<>") ? " != " : " ");
+        if (strcmp(f->op, "=") && strcmp(f->op, "<>")) { owf_buf_puts_xml(cond, f->op); owf_buf_puts(cond, " "); }
+        ok = ok && odf_operand(cond, f->b, f->b_field) && !cond->failed;
+    }
+    return ok;
+}
+
+/* 1.20: a note for each kind of condition ODF can't say: a hidden paragraph's goes (the paragraph is shown),
+ * conditional text keeps only the text it shows */
+static void note_conditions(const owf_story *st, owf_report *report)
+{
+    int i, j;
+    for (i = 0; report && i < st->nparas; ++i)
+        for (j = 0; j < st->paras[i].nruns; ++j) {
+            const owf_run *r = &st->paras[i].runs[j];
+            owf_if_form f;
+            owf_buf cond;
+            if (r->kind != OWF_RUN_FIELD || (r->field != OWF_FIELD_IF && r->field != OWF_FIELD_HIDE_PARA)) continue;
+            owf_buf_init(&cond);
+            if (!odf_condition(r, &f, &cond))
+                owf_report_add(report, OWF_NOTE_LOST, r->field == OWF_FIELD_HIDE_PARA
+                               ? "A hidden paragraph's condition ODF can't write is left out (the paragraph is shown)"
+                               : "Conditional text whose condition ODF can't write is saved as the text it shows");
+            owf_buf_free(&cond);
+        }
+}
+
 static void put_conditional(owf_buf *out, const owf_run *run)
 {
     owf_if_form f;
@@ -644,16 +678,28 @@ static void put_conditional(owf_buf *out, const owf_run *run)
     const char *shown = run->text ? run->text : "";
     int ok;
     owf_buf_init(&cond);
-    ok = owf_if_parse(run->href, &f);
-    if (ok) {
-        owf_buf_puts(&cond, "ooow:");
-        ok = odf_operand(&cond, f.a, f.a_field);
-        owf_buf_puts(&cond, !strcmp(f.op, "=") ? " == " : !strcmp(f.op, "<>") ? " != " : " ");
-        if (strcmp(f.op, "=") && strcmp(f.op, "<>")) { owf_buf_puts_xml(&cond, f.op); owf_buf_puts(&cond, " "); }
-        ok = ok && odf_operand(&cond, f.b, f.b_field) && !cond.failed;
-    }
+    ok = odf_condition(run, &f, &cond);
     if (!ok) {
-        owf_buf_puts_xml(out, shown);
+        if (run->field != OWF_FIELD_HIDE_PARA) owf_buf_puts_xml(out, shown);
+        owf_buf_free(&cond);
+        return;
+    }
+    if (run->field == OWF_FIELD_HIDE_PARA || (!f.yes[0] && f.no[0])) {
+        /* 1.20: a hidden paragraph, or text hidden while it holds (an IF whose first text is ""), as ODF's own */
+        int para = run->field == OWF_FIELD_HIDE_PARA;
+        owf_buf_puts(out, para ? "<text:hidden-paragraph text:condition=\"" : "<text:hidden-text text:condition=\"");
+        owf_buf_put(out, (const char *)cond.data, cond.length);
+        if (!para) {
+            owf_buf_puts(out, "\" text:string-value=\"");
+            owf_buf_puts_xml(out, f.no);
+        }
+        owf_buf_printf(out, "\" text:is-hidden=\"%s\"", (para ? *shown : !*shown) ? "true" : "false");
+        if (para) owf_buf_puts(out, "/>");
+        else {
+            owf_buf_puts(out, ">");
+            owf_buf_puts_xml(out, f.no);
+            owf_buf_puts(out, "</text:hidden-text>");
+        }
         owf_buf_free(&cond);
         return;
     }
@@ -675,10 +721,10 @@ static void put_field(owf_buf *out, const owf_doc *doc, const owf_run *run)
     static const char *const names[] = { "title", "initial-creator", "subject", "file-name", "word-count",
                                          "chapter", "user-field-get", "bookmark-ref", "bookmark-ref",
                                          "database-display", "alphabetical-index-mark", "sequence", NULL,
-                                         "text-input" };
+                                         "text-input", NULL };
     const char *name = run->field >= OWF_FIELD_TITLE && run->field <= OWF_FIELD_LAST
                      ? names[run->field - OWF_FIELD_TITLE] : NULL;
-    if (run->field == OWF_FIELD_IF) { put_conditional(out, run); return; }   /* 1.16 */
+    if (run->field == OWF_FIELD_IF || run->field == OWF_FIELD_HIDE_PARA) { put_conditional(out, run); return; }   /* 1.16, 1.20 */
     if (!name) return;
     if (run->field == OWF_FIELD_INDEX) {             /* 1.10: a point mark, Main:Sub as key1 and its value */
         const char *e = run->href ? run->href : "", *colon = strchr(e, ':');
@@ -1178,6 +1224,7 @@ static int build_content_xml(const owf_doc *doc, owf_buf *out, owf_report *repor
 
     memset(&s, 0, sizeof s);
     memset(&tk, 0, sizeof tk);
+    note_conditions(&doc->body, report);             /* 1.20 */
     tk.doc = doc;
     s.track = &tk;
     owf_buf_init(&body);

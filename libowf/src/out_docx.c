@@ -138,19 +138,14 @@ static void put_section_columns(owf_buf *out, const owf_doc *doc,
 
 static void put_change_attrs(owf_buf *out, const owf_revision *r, long id);
 
-static void put_ppr(owf_buf *out, const owf_doc *doc, const owf_parafmt *f, const char *style,
-                    int section_end, const owf_para *section, int next_break,
-                    const owf_revision *mark, long mark_id)
+/* w:pPr's properties, in the schema's order, before its w:rPr */
+static void put_ppr_props(owf_buf *out, const owf_parafmt *f, const char *style)
 {
     static const char *tab_val[] = { "left", "center", "right", "decimal" };
     static const char *jc[] = { "left", "center", "right", "both" };
     int i, spacing = f->space_before || f->space_after || (f->line_spacing && f->line_spacing != 100);
     int ind = f->indent_left || f->indent_right || f->indent_first;
 
-    if (!style && !section_end && !f->page_break_before && !f->ntabs && !spacing && !ind && f->align == OWF_ALIGN_LEFT &&
-        !f->borders && !OWF_SHADE_SET(f->shading) && !mark)
-        return;
-    owf_buf_puts(out, "<w:pPr>");
     if (style)
         owf_buf_printf(out, "<w:pStyle w:val=\"%s\"/>", style);
     if (f->page_break_before)
@@ -212,6 +207,23 @@ static void put_ppr(owf_buf *out, const owf_doc *doc, const owf_parafmt *f, cons
     }
     if (f->align != OWF_ALIGN_LEFT)
         owf_buf_printf(out, "<w:jc w:val=\"%s\"/>", jc[f->align]);
+}
+
+/* 1.21: fc is the paragraph's tracked format change (w:pPrChange, last, the format before in its own w:pPr),
+ * style_before the style it names there */
+static void put_ppr(owf_buf *out, const owf_doc *doc, const owf_parafmt *f, const char *style,
+                    int section_end, const owf_para *section, int next_break,
+                    const owf_revision *mark, long mark_id,
+                    const owf_para_format_change *fc, const char *style_before, long fc_id)
+{
+    int spacing = f->space_before || f->space_after || (f->line_spacing && f->line_spacing != 100);
+    int ind = f->indent_left || f->indent_right || f->indent_first;
+
+    if (!style && !section_end && !f->page_break_before && !f->ntabs && !spacing && !ind && f->align == OWF_ALIGN_LEFT &&
+        !f->borders && !OWF_SHADE_SET(f->shading) && !mark && !fc)
+        return;
+    owf_buf_puts(out, "<w:pPr>");
+    put_ppr_props(out, f, style);
     if (mark) {
         /* 1.5: the paragraph mark inserted or deleted */
         owf_buf_puts(out, mark->kind == OWF_REV_DELETE ? "<w:rPr><w:del" : "<w:rPr><w:ins");
@@ -222,6 +234,17 @@ static void put_ppr(owf_buf *out, const owf_doc *doc, const owf_parafmt *f, cons
         owf_buf_puts(out, "<w:sectPr>");
         put_section_columns(out, doc, section, next_break);
         owf_buf_puts(out, "</w:sectPr>");
+    }
+    if (fc) {
+        owf_revision r;
+        r.kind = 0;
+        r.author = fc->author;
+        r.date = fc->date;
+        owf_buf_puts(out, "<w:pPrChange");
+        put_change_attrs(out, &r, fc_id);
+        owf_buf_puts(out, "><w:pPr>");
+        put_ppr_props(out, &fc->before, style_before);
+        owf_buf_puts(out, "</w:pPr></w:pPrChange>");
     }
     owf_buf_puts(out, "</w:pPr>");
 }
@@ -690,7 +713,7 @@ static void build_comments_extended(owf_buf *out, const owf_doc *doc)
 static void field_instr(const owf_run *run, char *out, size_t size)
 {
     static const char *const word[] = { "PAGE", "NUMPAGES", "DATE", "TIME", "TITLE", "AUTHOR", "SUBJECT", "FILENAME",
-                                         "NUMWORDS", "STYLEREF", "DOCVARIABLE", "REF", "PAGEREF", "MERGEFIELD", "XE", "SEQ", "IF", "FILLIN" };
+                                         "NUMWORDS", "STYLEREF", "DOCVARIABLE", "REF", "PAGEREF", "MERGEFIELD", "XE", "SEQ", "IF", "FILLIN", "IF" };
     const char *arg = run->href ? run->href : "";
     int f = (int)run->field >= 0 && (int)run->field <= OWF_FIELD_LAST ? (int)run->field : 0;
     if (f == OWF_FIELD_CHAPTER) snprintf(out, size, " STYLEREF 1 ");
@@ -757,20 +780,26 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
                       int section_end, const owf_para *section, int next_break)
 {
     char instr[320];
-    char style[16];
-    const char *pstyle = NULL;
+    char style[16], ostyle[16];
+    const char *pstyle = NULL, *opstyle = NULL;
+    const owf_para_format_change *pfc = OWF_DOC_PARA_FORMAT_CHANGE(doc, para->para_format_change);   /* 1.21 */
     docx_marks mk;
     size_t at = 0;
-    int j;
+    int j, hidden_para = para->table_id < 0 && owf_para_hidden(para);   /* 1.20 (a table's cell is never hidden) */
     if (para->fmt.heading >= 1 && para->fmt.heading <= 6) {
         snprintf(style, sizeof style, "Heading%d", para->fmt.heading); pstyle = style;
     } else if (own_style(para->style)) {
         pstyle = para->style;                        /* 1.4: TOC1 and the like, so Word's contents update */
     }
+    if (pfc && pfc->before.heading >= 1 && pfc->before.heading <= 6) {
+        snprintf(ostyle, sizeof ostyle, "Heading%d", pfc->before.heading); opstyle = ostyle;
+    } else if (pfc && own_style(pfc->style)) {
+        opstyle = pfc->style;
+    }
     owf_buf_puts(out, "<w:p>");
     put_ppr(out, doc, &para->fmt, pstyle, section_end, section, next_break,
             para < story->paras + story->nparas - 1 ? run_change(doc, para->mark_revision) : NULL,
-            change_id(doc, story, para, para->nruns));
+            change_id(doc, story, para, para->nruns), pfc, opstyle, change_id(doc, story, para, para->nruns) + 1);
     /* 1.4: its bookmarks, where the contents' links go; 2.0.21: each where it is in the text */
     mk.n = para->bookmarks ? owf_marks_parse(para->bookmarks, mk.m, 16) : 0;
     for (j = 0; j < mk.n; ++j) {
@@ -779,7 +808,16 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
     }
     for (j = 0; j < para->nruns; ++j) {
         const owf_run *run=&para->runs[j];
-        int link = run->kind == OWF_RUN_TEXT && run->href && story == &doc->body;
+        owf_run vanished;
+        int link;
+        if (run->kind == OWF_RUN_FIELD && run->field == OWF_FIELD_HIDE_PARA) {
+            /* 1.20: Word has no hidden paragraph: its condition goes (noted), its text is written w:vanish while
+             * it holds */
+            owf_report_add(report, OWF_NOTE_APPROX, "A hidden paragraph is saved as hidden text, without its condition");
+            continue;
+        }
+        if (hidden_para) { vanished = *run; vanished.fmt.flags |= OWF_HIDDEN; run = &vanished; }
+        link = run->kind == OWF_RUN_TEXT && run->href && story == &doc->body;
         if (run->comment) {                          /* 1.6 */
             put_comment_mark(out, doc, run->comment);
             continue;
@@ -909,7 +947,7 @@ static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, 
                 owf_parafmt empty;
                 owf_parafmt_init(&empty);
                 owf_buf_puts(out, "<w:p>");
-                put_ppr(out, doc, &empty, NULL, 1, section, story->paras[i].section_break, NULL, 0);
+                put_ppr(out, doc, &empty, NULL, 1, section, story->paras[i].section_break, NULL, 0, NULL, NULL, 0);
                 owf_buf_puts(out, "</w:p>");
             }
         } else {

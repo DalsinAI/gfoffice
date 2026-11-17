@@ -53,7 +53,8 @@ void opj_view_init(opj_view *v, const opj_doc *doc, int width, int height, int r
 int opj_column_width(int column)
 {
     static const int widths[OPJ_NCOLS] = { 32, 180, 56, 96, 96, 84, 64, 48, 140, 96, 96, 72, 72, 140, 96, 160,
-                                                   96, 96, 96, 96, 80, 80, 80, 80, 80, 96, 64, 80, 96, 80, 80, 96, 80 };
+                                                   96, 96, 96, 96, 80, 80, 80, 80, 80, 96, 64, 80, 96, 80, 80, 96, 80,
+                                                   56, 88 };
     return column >= 0 && column < OPJ_NCOLS ? widths[column] : 0;
 }
 
@@ -530,6 +531,14 @@ void opj_label_text(const opj_view *v, const opj_doc *doc, int row, char *out, s
     else owf_presource_names_text(doc->plan, row, out, size);
 }
 
+/* The ink of an ID cell: an over-allocated row's ID ends in "!" and is drawn red, as MS Project's
+ * indicator, but not on the selection's fill (red on it would not read). */
+static oldraw_colour flagged(const char *text, int id_cell, int selected, oldraw_colour ink)
+{
+    size_t n = strlen(text);
+    return id_cell && !selected && n && text[n - 1] == '!' ? OPJ_COLOUR_CRITICAL : ink;
+}
+
 static void draw_sheet_row(oldraw *d, const opj_view *v, const opj_doc *doc, int row)
 {
     const owf_ptask *t = &doc->plan->tasks[row];
@@ -544,12 +553,15 @@ static void draw_sheet_row(oldraw *d, const opj_view *v, const opj_doc *doc, int
         if (v->columns[c] <= 0) continue;
         if (c == OPJ_COL_NAME) indent = (t->level - 1) * (v->row_height * 3 / 4);
         opj_cell_text(doc, row, c, text, sizeof text);
+        if (c == OPJ_COL_ID && owf_ptask_overallocated(doc->plan, row) && strlen(text) + 1 < sizeof text)
+            strcat(text, "!");                              /* drawn only: the cell's text stays the number */
         r.x = x + 3 + indent;
         r.y = y;
         r.w = v->columns[c] - 6 - indent;
         r.h = v->row_height;
         if (r.w > 0)
-            oldraw_text_box(d, &r, text, (size_t)-1, &v->font, ink, c == OPJ_COL_NAME && t->summary ? OLDRAW_BOLD : 0,
+            oldraw_text_box(d, &r, text, (size_t)-1, &v->font, flagged(text, c == OPJ_COL_ID, selected, ink),
+                            c == OPJ_COL_NAME && t->summary ? OLDRAW_BOLD : 0,
                             c == OPJ_COL_ID || c == OPJ_COL_PERCENT ? OLDRAW_RIGHT : OLDRAW_LEFT);
         x += v->columns[c];
         fill(d, x - 1, y, 1, v->row_height, OPJ_COLOUR_GRID);
@@ -820,7 +832,7 @@ static void task_usage_cell(const opj_doc *doc, int t, int a, int column, char *
     const owf_project *p = doc->plan;
     char text[16];
     if (a < 0) {
-        if (column == OPJ_UCOL_ID) snprintf(out, size, "%d", t + 1);
+        if (column == OPJ_UCOL_ID) snprintf(out, size, owf_ptask_overallocated(p, t) ? "%d!" : "%d", t + 1);
         else if (column == OPJ_UCOL_NAME) snprintf(out, size, "%s", p->tasks[t].name ? p->tasks[t].name : "");
         else {
             opj_work_text(p->tasks[t].work, text);
@@ -905,7 +917,7 @@ static void draw_usage_row(oldraw *d, const opj_view *u, const opj_doc *doc, int
         r.w = widths[c] - 6 - indent;
         r.h = u->row_height;
         if (r.w > 0)
-            oldraw_text_box(d, &r, text, (size_t)-1, &u->font, ink,
+            oldraw_text_box(d, &r, text, (size_t)-1, &u->font, flagged(text, c == OPJ_UCOL_ID, selected, ink),
                             assign < 0 && c == OPJ_UCOL_NAME && (!tasks || doc->plan->tasks[owner].summary) ? OLDRAW_BOLD : 0,
                             c == OPJ_UCOL_NAME ? OLDRAW_LEFT : OLDRAW_RIGHT);
         x += widths[c];

@@ -328,6 +328,7 @@ static void pdf_story_para(owf_buf *out, const owf_doc *doc, const owf_para *p,
             else if (r->kind == OWF_RUN_FIELD) {
                 if (r->field == OWF_FIELD_PAGE) snprintf(field,sizeof field,"%d",page_num);
                 else if (r->field == OWF_FIELD_PAGES) snprintf(field,sizeof field,"%d",total_pages);
+                else if (r->field == OWF_FIELD_HIDE_PARA) field[0] = 0;   /* 1.20: it shows nothing */
                 else if (r->field > OWF_FIELD_TIME) snprintf(field,sizeof field,"%s",r->text?r->text:"");
                 else snprintf(field,sizeof field,"%s",r->field==OWF_FIELD_DATE?"date":"time");
                 text=field;n=strlen(field);
@@ -539,7 +540,7 @@ static int pdf_layout_para(pdf_layout *l, const owf_para *p, int i)
                 /* 1.3: a frame's picture where it is anchored, as before frames were read */
                 if(line.n){if(!pdf_flush_line(l,p,&line,first))return 0;first=0;}
                 if(!pdf_place_image(l,p,l->doc->frames[r->image].image))return 0;}
-            else if(r->kind==OWF_RUN_FIELD){owf_run fake=*r;fake.kind=OWF_RUN_TEXT;fake.text=(char *)(r->field>OWF_FIELD_TIME?(r->text?r->text:""):"#");   /* a literal: the line keeps the pointer until it is flushed, after this block */
+            else if(r->kind==OWF_RUN_FIELD){owf_run fake=*r;fake.kind=OWF_RUN_TEXT;fake.text=(char *)(r->field==OWF_FIELD_HIDE_PARA?"":r->field>OWF_FIELD_TIME?(r->text?r->text:""):"#");   /* a literal: the line keeps the pointer until it is flushed, after this block */
                 if(!pdf_layout_text_run(l,p,&fake,&line,&first))return 0;}
         }
         if(line.n || !p->nruns){if(!pdf_flush_line(l,p,&line,first))return 0;}
@@ -715,7 +716,8 @@ static int pdf_layout_document(pdf_layout *l)
     int i;
     if(!pdf_new_page(l))return 0;
     for(i=0;i<l->doc->body.nparas;++i)
-        if(!pdf_layout_para(l,&l->doc->body.paras[i],i))return 0;
+        if((l->doc->body.paras[i].table_id>=0||!owf_para_hidden(&l->doc->body.paras[i]))&&   /* 1.20: a hidden paragraph isn't printed */
+           !pdf_layout_para(l,&l->doc->body.paras[i],i))return 0;
     if(l->note_marks&&(!pdf_layout_notes(l,0)||!pdf_layout_notes(l,1)))return 0;
     if(l->strip&&l->comment_marks){                  /* 1.12.1: those with no mark in the body: listed */
         for(i=0;i<l->doc->ncomments;++i)l->listed[i]=1;

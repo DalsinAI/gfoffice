@@ -339,32 +339,16 @@ int odg_rexx_format(const char *file)
     return ODG_FILE_DRAWIO;
 }
 
+/* libowf's own files (owf_sys.c, or over dos.library on owfdiag.library: owf_sys_dos.c), so the commands use no
+ * C library stdio and the library links with none (scripts/check-library-libc.sh). */
+int owf_sys_read_file(const char *path, unsigned char **data, size_t *length);
+int owf_sys_write_file(const char *path, const unsigned char *data, size_t length);
+
+/* name's bytes into *data (owf_malloc'd): 1; 0 when it can't be read; -1 when there is no memory for it */
 static int read_file(const char *name, unsigned char **data, size_t *length)
 {
-    FILE *f = fopen(name, "rb");
-    unsigned char *buf = NULL;
-    size_t n = 0, cap = 0;
-    if (!f) return 0;
-    for (;;) {
-        size_t got;
-        if (n == cap) {
-            unsigned char *grown;
-            cap = cap ? cap * 2 : 65536;
-            if (cap > 64UL * 1024 * 1024 || !(grown = owf_realloc(buf, cap))) {
-                owf_free(buf);
-                fclose(f);
-                return -1;
-            }
-            buf = grown;
-        }
-        got = fread(buf + n, 1, cap - n, f);
-        n += got;
-        if (got == 0) break;
-    }
-    fclose(f);
-    *data = buf;
-    *length = n;
-    return 1;
+    int rc = owf_sys_read_file(name, data, length);
+    return rc == OWF_OK ? 1 : rc == OWF_ERR_MEMORY ? -1 : 0;
 }
 
 /* The page drawn by the app (rx->picture) as a PNG with the diagram inside, or as an IFF ILBM, into *data
@@ -405,7 +389,7 @@ static int picture_file(odg_rexx *rx, const char *name, int format, unsigned cha
     }
     pic = format == ODG_FILE_PNG ? opr_png_encode(rgb, (int)w, (int)h, (size_t)w * 3, &n)
                                  : opr_ilbm_encode(rgb, (int)w, (int)h, (size_t)w * 3, &n);
-    free(rgb);
+    owf_free(rgb);
     if (!pic) return OWF_ERR_MEMORY;
     if (format == ODG_FILE_PNG)
         rc = owf_dpng_embed(pic, n, &rx->d, data, length);
@@ -423,7 +407,6 @@ static int write_file(odg_rexx *rx, const char *name, int format, int compressed
 {
     unsigned char *data = NULL;
     size_t length = 0;
-    FILE *f;
     int rc, ok;
     if (format == ODG_FILE_PNG || format == ODG_FILE_ILBM) {
         rc = picture_file(rx, name, format, &data, &length);
@@ -446,9 +429,7 @@ static int write_file(odg_rexx *rx, const char *name, int format, int compressed
         snprintf(rx->lasterror, sizeof rx->lasterror, "Could not make %.200s", name);
         return ODG_RX_ERROR;
     }
-    f = fopen(name, "wb");
-    ok = f && fwrite(data, 1, length, f) == length;
-    if (f && fclose(f) != 0) ok = 0;
+    ok = owf_sys_write_file(name, data, length) == OWF_OK;
     owf_free(data);
     if (!ok) {
         snprintf(rx->lasterror, sizeof rx->lasterror, "Could not write %.200s", name);
@@ -973,7 +954,6 @@ static int run(odg_rexx *rx, int c, work *wk, char *result, size_t size)
         }
         if (c == C_MAPEXPORT) {
             char *out = NULL;
-            FILE *f;
             int ok;
             if (!fmt) kind = owf_outline_guess(name, NULL, 0);
             rc = odg_mind_items(doc, a->value[0], &items, &n);
@@ -984,9 +964,7 @@ static int run(odg_rexx *rx, int c, work *wk, char *result, size_t size)
                          : "MAPEXPORT: %.100s is not in a map (or its map loops back on itself)", a->value[0]);
                 return rc == OWF_ERR_MEMORY ? ODG_RX_FAIL : ODG_RX_ERROR;
             }
-            f = fopen(name, "wb");
-            ok = f && fwrite(out, 1, length, f) == length;
-            if (f && fclose(f) != 0) ok = 0;
+            ok = owf_sys_write_file(name, (const unsigned char *)out, length) == OWF_OK;
             owf_free(out);
             if (!ok) {
                 snprintf(rx->lasterror, sizeof rx->lasterror, "MAPEXPORT: could not write %.200s", name);

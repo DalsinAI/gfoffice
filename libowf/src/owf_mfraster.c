@@ -20,6 +20,7 @@ typedef struct {
     int *pts;                    /* a line's or an ellipse's polygon */
     int cappts;
     int skipped_text;
+    int cx0, cy0, cx1, cy1;      /* the pixels drawn: from cx0, cy0 up to, not at, cx1, cy1 */
 } raster;
 
 static int grow_cross(raster *r, int n)
@@ -73,8 +74,8 @@ static int fill_polygon(raster *r, const int *xy, int n, unsigned long rgb)
     if (!grow_cross(r, n)) return 0;
     ymin = ymin / SUB - 1;
     ymax = ymax / SUB + 1;
-    if (ymin < 0) ymin = 0;
-    if (ymax > r->h - 1) ymax = r->h - 1;
+    if (ymin < r->cy0) ymin = r->cy0;
+    if (ymax > r->cy1 - 1) ymax = r->cy1 - 1;
     for (y = ymin; y <= ymax; y++) {
         long sy = (long)y * SUB + SUB / 2;
         int k = 0, j;
@@ -90,8 +91,8 @@ static int fill_polygon(raster *r, const int *xy, int n, unsigned long rgb)
             /* the pixels whose centres x * SUB + SUB / 2 lie from one crossing up to the next */
             long xa = ceil_div(r->cross[j] - SUB / 2, SUB), xb = ceil_div(r->cross[j + 1] - SUB / 2, SUB) - 1;
             int x;
-            if (xa < 0) xa = 0;
-            if (xb > r->w - 1) xb = r->w - 1;
+            if (xa < r->cx0) xa = r->cx0;
+            if (xb > r->cx1 - 1) xb = r->cx1 - 1;
             for (x = (int)xa; x <= xb; x++) {
                 unsigned char *p = r->argb + ((size_t)y * r->w + x) * 4;
                 p[0] = 255; p[1] = cr; p[2] = cg; p[3] = cb;
@@ -175,10 +176,27 @@ static int r_text(void *ctx, int x, int baseline, const char *utf8, size_t lengt
     return 0;
 }
 
+/* the pixels whose centres are inside x, y, w, h (sixteenths); w -1: all of them */
+static int r_clip(void *ctx, int x, int y, int w, int h)
+{
+    raster *r = (raster *)ctx;
+    long long x1 = (long long)x + w, y1 = (long long)y + h;
+    if (w < 0) { r->cx0 = r->cy0 = 0; r->cx1 = r->w; r->cy1 = r->h; return 0; }
+    r->cx0 = (int)ceil_div(x - SUB / 2, SUB);
+    r->cy0 = (int)ceil_div(y - SUB / 2, SUB);
+    r->cx1 = (int)ceil_div((long)(x1 > 0x3FFFFFFF ? 0x3FFFFFFF : x1) - SUB / 2, SUB);
+    r->cy1 = (int)ceil_div((long)(y1 > 0x3FFFFFFF ? 0x3FFFFFFF : y1) - SUB / 2, SUB);
+    if (r->cx0 < 0) r->cx0 = 0;
+    if (r->cy0 < 0) r->cy0 = 0;
+    if (r->cx1 > r->w) r->cx1 = r->w;
+    if (r->cy1 > r->h) r->cy1 = r->h;
+    return 0;
+}
+
 int owf_metafile_render(const unsigned char *data, size_t length, unsigned char *argb, int w, int h,
                         owf_mf_result *result)
 {
-    static const owf_mf_sink sink = { r_path, r_ellipse, r_text, NULL };
+    static const owf_mf_sink sink = { r_path, r_ellipse, r_text, NULL, r_clip };
     raster r;
     owf_mf_result res;
     int rc;
@@ -188,6 +206,8 @@ int owf_metafile_render(const unsigned char *data, size_t length, unsigned char 
     r.argb = argb;
     r.w = w;
     r.h = h;
+    r.cx1 = w;
+    r.cy1 = h;
     rc = owf_metafile_play(data, length, 0, 0, w * SUB, h * SUB, &sink, &r, &res);
     res.drawn -= r.skipped_text;
     res.skipped += r.skipped_text;

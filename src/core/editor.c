@@ -135,6 +135,12 @@ static void clear_doc_data(owf_doc *doc)
         owf_free(doc->format_changes[i].date);
     }
     owf_free(doc->format_changes);
+    for (i = 0; i < doc->npara_format_changes; ++i) {   /* libowf 1.21 */
+        owf_free(doc->para_format_changes[i].author);
+        owf_free(doc->para_format_changes[i].date);
+        owf_free(doc->para_format_changes[i].style);
+    }
+    owf_free(doc->para_format_changes);
     for (i = 0; i < doc->nnote_stories; ++i) free_story_data(&doc->note_stories[i]);   /* libowf 1.12.2 */
     owf_free(doc->note_stories);
     memset(doc, 0, sizeof(*doc));
@@ -160,6 +166,7 @@ static int clone_story(owf_story *dst, const owf_story *src)
         dp->section_break = sp->section_break;
         dp->mark_revision = sp->mark_revision;       /* 2.1.0 */
         dp->row_revision = sp->row_revision;         /* 2.0.38 */
+        dp->para_format_change = sp->para_format_change;   /* libowf 1.21 */
         dp->style = NULL;                            /* 2.0.12: its style and bookmarks too */
         dp->bookmarks = NULL;
         if (sp->style && !(dp->style = copy_bytes(sp->style, strlen(sp->style)))) return 0;
@@ -249,6 +256,8 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     char *merge_source;
     owf_format_change *format_changes;
     int nformat_changes, capformat_changes;
+    owf_para_format_change *para_format_changes;
+    int npara_format_changes, cappara_format_changes;
     owf_story *note_stories;
     int nnote_stories;
     if (!dst || !snapshot) return;
@@ -288,6 +297,11 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     capformat_changes = dst->capformat_changes;
     dst->format_changes = NULL;
     dst->nformat_changes = dst->capformat_changes = 0;
+    para_format_changes = dst->para_format_changes;   /* libowf 1.21: the paragraphs' too */
+    npara_format_changes = dst->npara_format_changes;
+    cappara_format_changes = dst->cappara_format_changes;
+    dst->para_format_changes = NULL;
+    dst->npara_format_changes = dst->cappara_format_changes = 0;
     note_stories = dst->note_stories;   /* libowf 1.12.2: the notes' formats, which go with the notes */
     nnote_stories = dst->nnote_stories;
     dst->note_stories = NULL;
@@ -316,6 +330,9 @@ static void restore_doc(owf_doc *dst, owf_doc *snapshot)
     dst->format_changes = format_changes;
     dst->nformat_changes = nformat_changes;
     dst->capformat_changes = capformat_changes;
+    dst->para_format_changes = para_format_changes;
+    dst->npara_format_changes = npara_format_changes;
+    dst->cappara_format_changes = cappara_format_changes;
     dst->note_stories = note_stories;
     dst->nnote_stories = nnote_stories;
     owf_free(snapshot);                 /* only the old outer shell */
@@ -1358,11 +1375,15 @@ static ow_position word_left_pos(ow_editor *editor, ow_position pos)
     return pos;
 }
 
-/* 2.0.38: in the final view a deleted table row is not shown: whether paragraph i is one of its cells */
+/* 2.0.38: in the final view a deleted table row is not shown: whether paragraph i is one of its cells (2.0.51:
+ * or a hidden paragraph whose condition holds, where hidden text isn't shown) */
 static int hidden_para(ow_editor *editor, int i)
 {
     const owf_story *story = ed_story(editor);
     const owf_revision *r;
+    if (!editor->show_hidden && i >= 0 && i < story->nparas && story->paras[i].table_id < 0 &&
+        owf_para_hidden(&story->paras[i]))
+        return 1;
     if (!editor->final_view || i < 0 || i >= story->nparas || story->paras[i].table_id < 0) return 0;
     r = OWF_DOC_REVISION(editor->doc, story->paras[i].row_revision);
     return r && r->kind == OWF_REV_DELETE;
@@ -1379,8 +1400,8 @@ static int hidden_run(ow_editor *editor, ow_position pos)
     run = &p->runs[pos.run];
     if (!editor->show_hidden && (run->fmt.flags & OWF_HIDDEN) && !run->comment && run->note <= 0)
         return 1;                                    /* 2.0.46: hidden text, not shown (as the layout leaves it out) */
+    if (hidden_para(editor, pos.paragraph)) return 1;   /* (2.0.51: a hidden paragraph's, too) */
     if (!editor->final_view) return 0;
-    if (hidden_para(editor, pos.paragraph)) return 1;
     r = OWF_DOC_REVISION(editor->doc, run->revision);
     return r && r->kind == OWF_REV_DELETE;
 }
@@ -1396,7 +1417,8 @@ static int hiding(ow_editor *editor)
     story = ed_story(editor);
     for (i = 0; i < story->nparas; ++i)
         for (j = 0; j < story->paras[i].nruns; ++j)
-            if (story->paras[i].runs[j].fmt.flags & OWF_HIDDEN) return 1;
+            if ((story->paras[i].runs[j].fmt.flags & OWF_HIDDEN) || (story->paras[i].runs[j].kind == OWF_RUN_FIELD &&
+                story->paras[i].runs[j].field == OWF_FIELD_HIDE_PARA)) return 1;   /* (2.0.51) */
     return 0;
 }
 
@@ -1813,6 +1835,7 @@ static int split_paragraph(ow_editor *editor, ow_position pos,
     }
     p->nruns = pos.run + 1;
     marks_split(p, np, at);                          /* 2.0.21: the bookmarks after the caret go with the text */
+    np->para_format_change = p->para_format_change;   /* libowf 1.21: both halves have the format, and its change */
     np->mark_revision = p->mark_revision;            /* 2.1.0: the old end is the new paragraph's; the new end */
     p->mark_revision = editor->typing_rev;           /* is the change being typed, if one is */
 
@@ -5752,7 +5775,8 @@ int ow_editor_insert_link(ow_editor *editor, const char *text, const char *url)
 static int field_wants_arg(owf_field f)
 {
     return f == OWF_FIELD_USER || f == OWF_FIELD_REF || f == OWF_FIELD_REF_PAGE || f == OWF_FIELD_MERGE ||
-           f == OWF_FIELD_INDEX || f == OWF_FIELD_SEQ || f == OWF_FIELD_IF || f == OWF_FIELD_FILLIN;
+           f == OWF_FIELD_INDEX || f == OWF_FIELD_SEQ || f == OWF_FIELD_IF || f == OWF_FIELD_FILLIN ||
+           f == OWF_FIELD_HIDE_PARA;
 }
 
 static void merge_field_value(const ow_editor *editor, const char *column, char *out, size_t size);   /* 2.5.0 */
@@ -5994,7 +6018,8 @@ static void field_value(ow_editor *editor, const owf_story *story, int para, con
         k = seq_count(doc, story, run, run->href);
         snprintf(out, size, "%d", k);
         break;
-    case OWF_FIELD_IF: {                             /* libowf 1.16: the text for whether it holds */
+    case OWF_FIELD_IF:                               /* libowf 1.16: the text for whether it holds */
+    case OWF_FIELD_HIDE_PARA: {                      /* (libowf 1.20: "1" while it hides its paragraph) */
         owf_if_form f;
         char a[256], b[256];
         if (!owf_if_parse(run->href, &f)) break;
@@ -6028,6 +6053,16 @@ static int update_story_fields(ow_editor *editor, owf_story *story)
     return changed;
 }
 
+/* 2.0.51: the caret out of a paragraph a hidden-paragraph field has just hidden (inserted, or a user field
+ * changed), to the next one shown (else the one before), so what is typed is never typed unseen */
+static void caret_out_of_hidden_para(ow_editor *editor)
+{
+    if (!hidden_para(editor, editor->selection.focus.paragraph)) return;
+    editor->selection.focus = out_of_hidden(editor, editor->selection.focus, 1);
+    editor->selection.anchor = editor->selection.focus;
+    sync_typing_fmt(editor);
+}
+
 static int update_fields(ow_editor *editor)
 {
     owf_doc *doc = editor->doc;
@@ -6041,6 +6076,7 @@ static int update_fields(ow_editor *editor)
         changed += n;
     }
     if (changed) ++editor->changes;
+    caret_out_of_hidden_para(editor);
     return changed;
 }
 
@@ -6339,11 +6375,21 @@ int ow_editor_insert_field_arg(ow_editor *editor, owf_field field, const char *a
     char *right;
     size_t right_len;
     int old_n, move;
-    char *arg_copy = NULL;
+    char *arg_copy = NULL, hide_form[400];
     if (!editor || field < OWF_FIELD_PAGE || field > OWF_FIELD_LAST) return OWF_ERR_FORMAT;
+    if (field == OWF_FIELD_HIDE_PARA && arg && *arg) {   /* libowf 1.20: the condition, as an IF giving "1" or "" */
+        owf_if_form whole;
+        if (owf_if_parse(arg, &whole)) {             /* (a whole form already: as it is) */
+            if (strcmp(whole.yes, "1") || whole.no[0]) return OWF_ERR_FORMAT;
+        } else if (strlen(arg) + 8 >= sizeof hide_form) return OWF_ERR_FORMAT;
+        else {
+            snprintf(hide_form, sizeof hide_form, "%s \"1\" \"\"", arg);
+            arg = hide_form;
+        }
+    }
     if (field_wants_arg(field) != (arg && *arg)) return OWF_ERR_FORMAT;   /* 2.3.0: a name, for those that take one */
     if (field == OWF_FIELD_SEQ && !seq_name_ok(arg)) return OWF_ERR_FORMAT;   /* libowf 1.12.6: Word's rule */
-    if (field == OWF_FIELD_IF) {                     /* libowf 1.16: a form that reads (owf_ifform.h) */
+    if (field == OWF_FIELD_IF || field == OWF_FIELD_HIDE_PARA) {   /* libowf 1.16: a form that reads (owf_ifform.h) */
         owf_if_form f;
         if (!owf_if_parse(arg, &f)) return OWF_ERR_FORMAT;
     }
@@ -6688,6 +6734,7 @@ static int story_final(owf_doc *d, owf_story *story)
         owf_para *p = &story->paras[i];
         owf_run *runs;
         p->mark_revision = 0;
+        p->para_format_change = 0;                   /* libowf 1.21 */
         for (j = 0, cap = 1; j < p->nruns; ++j) {    /* room: a value's lines each take two runs */
             const char *t = p->runs[j].kind == OWF_RUN_FIELD && p->runs[j].text ? p->runs[j].text : NULL;
             ++cap;
@@ -7700,4 +7747,303 @@ int ow_editor_complete_accept(ow_editor *editor)
         editor->selection.focus = editor->selection.anchor;
     editor->selection.anchor = editor->selection.focus;
     return 1;
+}
+
+/* ---- 2.0.52: document compare ------------------------------------------------------------------------
+ * The revised document's body against this one's, as tracked changes by an author (Word's Compare): the
+ * paragraphs matched by their text (a longest common run of them), each paired changed paragraph word by
+ * word, and the paragraphs only one side has deleted or inserted whole. Text runs only: fields, pictures and
+ * paragraph formats aren't compared; a table's paragraphs are compared in place, never added or taken away
+ * (a table's shape is left as it is). One undo. */
+
+#define COMPARE_CELLS 262144UL               /* the longest-common table's most cells (512 KB), else replaced */
+
+/* A paragraph's text runs' text, malloc'd ("" for none) */
+static char *compare_text(const owf_para *p)
+{
+    size_t n = 0;
+    int i;
+    char *s;
+    for (i = 0; i < p->nruns; ++i)
+        if (p->runs[i].kind == OWF_RUN_TEXT && p->runs[i].text) n += strlen(p->runs[i].text);
+    if (!(s = (char *)owf_malloc(n + 1))) return NULL;
+    n = 0;
+    for (i = 0; i < p->nruns; ++i)
+        if (p->runs[i].kind == OWF_RUN_TEXT && p->runs[i].text) {
+            size_t k = strlen(p->runs[i].text);
+            memcpy(s + n, p->runs[i].text, k);
+            n += k;
+        }
+    s[n] = 0;
+    return s;
+}
+
+/* Where the words are: a word (letters and digits, and any byte of a UTF-8 character), a row of spaces, or
+ * one other character; at[k] its start, at[n] the end. n tokens; -1 when memory ran out. */
+static int compare_tokens(const char *s, size_t **at)
+{
+    size_t len = strlen(s), i = 0;
+    int n = 0;
+    *at = (size_t *)owf_malloc((len + 1) * sizeof **at);
+    if (!*at) return -1;
+    while (i < len) {
+        unsigned char c = (unsigned char)s[i];
+        (*at)[n++] = i;
+        if (isalnum(c) || c >= 0x80) {
+            while (i < len && (isalnum((unsigned char)s[i]) || (unsigned char)s[i] >= 0x80)) ++i;
+        } else if (c == ' ') {
+            while (i < len && s[i] == ' ') ++i;
+        } else ++i;
+    }
+    (*at)[n] = len;
+    return n;
+}
+
+typedef int (*compare_same_fn)(const void *ctx, int i, int j);
+
+/* The longest common run of two sequences (n and m long, same(ctx, i, j)), as an edit list: ops[k] '=' (one
+ * of each), '-' (one of the first) or '+' (one of the second); its count, or -1 for memory, or -2 when the
+ * table would be too big (the caller takes it all as changed). The ends both have in common first, so the
+ * table is only the middle's. */
+static int compare_lcs(const void *ctx, int n, int m, compare_same_fn same, char **ops_out)
+{
+    int head = 0, tail = 0, a, b, i, j, k = 0;
+    unsigned short *t;
+    char *ops;
+    while (head < n && head < m && same(ctx, head, head)) ++head;
+    while (tail < n - head && tail < m - head && same(ctx, n - 1 - tail, m - 1 - tail)) ++tail;
+    a = n - head - tail;
+    b = m - head - tail;
+    if ((unsigned long)(a + 1) * (unsigned long)(b + 1) > COMPARE_CELLS || a > 65535 || b > 65535) return -2;
+    if (!(ops = (char *)owf_malloc((size_t)n + (size_t)m + 1))) return -1;
+    if (!(t = (unsigned short *)owf_calloc((size_t)(a + 1) * (size_t)(b + 1), sizeof *t))) {
+        owf_free(ops);
+        return -1;
+    }
+#define T(x, y) t[(size_t)(x) * (size_t)(b + 1) + (size_t)(y)]
+    for (i = a - 1; i >= 0; --i)                     /* T(i, j): the common run of the middles from i and j */
+        for (j = b - 1; j >= 0; --j)
+            T(i, j) = same(ctx, head + i, head + j) ? (unsigned short)(T(i + 1, j + 1) + 1)
+                    : T(i + 1, j) >= T(i, j + 1) ? T(i + 1, j) : T(i, j + 1);
+    for (i = 0; i < head; ++i) ops[k++] = '=';
+    for (i = 0, j = 0; i < a || j < b; ) {
+        if (i < a && j < b && same(ctx, head + i, head + j)) { ops[k++] = '='; ++i; ++j; }
+        else if (j < b && (i == a || T(i, j + 1) >= T(i + 1, j))) { ops[k++] = '+'; ++j; }
+        else { ops[k++] = '-'; ++i; }
+    }
+#undef T
+    for (i = 0; i < tail; ++i) ops[k++] = '=';
+    owf_free(t);
+    *ops_out = ops;
+    return k;
+}
+
+typedef struct {
+    const char *a, *b;                       /* two texts */
+    const size_t *at, *bt;                   /* their tokens' starts (and ends) */
+    char **pa, **pb;                         /* or two lists of paragraphs' texts */
+} compare_ctx;
+
+static int same_token(const void *ctx, int i, int j)
+{
+    const compare_ctx *c = (const compare_ctx *)ctx;
+    size_t n = c->at[i + 1] - c->at[i];
+    return n == c->bt[j + 1] - c->bt[j] && !memcmp(c->a + c->at[i], c->b + c->bt[j], n);
+}
+
+static int same_para(const void *ctx, int i, int j)
+{
+    const compare_ctx *c = (const compare_ctx *)ctx;
+    return !strcmp(c->pa[i], c->pb[j]);
+}
+
+/* The revised paragraph's text from byte from to to, put in at the original paragraph's offset as the
+ * author's insertion, each piece in its own run's format; 0 for memory */
+static int compare_insert(ow_editor *editor, int para, size_t offset, const owf_para *rp, size_t from, size_t to)
+{
+    size_t at = 0;
+    int i;
+    ow_position pos = para_offset_position(editor, para, offset);
+    for (i = 0; i < rp->nruns && at < to; ++i) {
+        const owf_run *r = &rp->runs[i];
+        size_t n, s, e;
+        if (r->kind != OWF_RUN_TEXT || !r->text) continue;
+        n = strlen(r->text);
+        s = from > at ? from - at : 0;
+        e = to < at + n ? to - at : n;
+        if (s < e) {
+            editor->typing_rev = editor_revision(editor, OWF_REV_INSERT);
+            if (!editor->typing_rev || !insert_formatted_text(editor, pos, r->text + s, e - s, &r->fmt, &pos)) {
+                editor->typing_rev = 0;
+                return 0;
+            }
+            editor->typing_rev = 0;
+        }
+        at += n;
+    }
+    return 1;
+}
+
+/* One paired paragraph, word by word: from its last change to its first, so the offsets before stay put
+ * (a tracked deletion keeps its text). Changes made, or -1. */
+static int compare_words(ow_editor *editor, int para, const owf_para *rp)
+{
+    char *a = compare_text(&ed_story(editor)->paras[para]), *b = compare_text(rp), *ops = NULL;
+    size_t *at = NULL, *bt = NULL;
+    int na, nb, nops, k, i, j, changes = 0;
+    compare_ctx c;
+    if (!a || !b) { owf_free(a); owf_free(b); return -1; }
+    if (!strcmp(a, b)) { owf_free(a); owf_free(b); return 0; }
+    na = compare_tokens(a, &at);
+    nb = compare_tokens(b, &bt);
+    if (na < 0 || nb < 0) { changes = -1; goto done; }
+    memset(&c, 0, sizeof c);
+    c.a = a; c.b = b; c.at = at; c.bt = bt;
+    nops = compare_lcs(&c, na, nb, same_token, &ops);
+    if (nops == -1) { changes = -1; goto done; }
+    if (nops == -2) {                                /* too long to match: all of it changed */
+        if (!(ops = (char *)owf_malloc((size_t)na + (size_t)nb + 1))) { changes = -1; goto done; }
+        for (k = 0; k < na; ++k) ops[k] = '-';
+        for (; k < na + nb; ++k) ops[k] = '+';
+        nops = na + nb;
+    }
+    /* from the end: i and j count the tokens before op k */
+    for (i = na, j = nb, k = nops; k > 0; ) {
+        int di = 0, dj = 0;
+        while (k > 0 && ops[k - 1] == '=') { --k; --i; --j; }
+        while (k > 0 && ops[k - 1] != '=') { if (ops[k - 1] == '-') ++di; else ++dj; --k; }
+        if (!di && !dj) break;
+        i -= di; j -= dj;
+        if (dj && !compare_insert(editor, para, at[i + di], rp, bt[j], bt[j + dj])) { changes = -1; goto done; }
+        if (di) {                                    /* (the insertion after it: the deletion reads first) */
+            ow_position s = para_offset_position(editor, para, at[i]), e = para_offset_position(editor, para, at[i + di]);
+            if (tracked_delete_range(editor, &s, e) < 0) { changes = -1; goto done; }
+        }
+        ++changes;
+    }
+done:
+    owf_free(ops); owf_free(at); owf_free(bt); owf_free(a); owf_free(b);
+    return changes;
+}
+
+/* A revised paragraph put in whole before paragraph para (para = nparas: after the last), as the author's:
+ * its mark inserted, its format the revised one's; 0 for memory */
+static int compare_add_para(ow_editor *editor, int para, const owf_para *rp)
+{
+    owf_story *story = ed_story(editor);
+    ow_position pos, next;
+    char *text = compare_text(rp);
+    int target, ok;
+    if (!text) return 0;
+    if (para < story->nparas) pos = para_offset_position(editor, para, 0);
+    else pos = para_offset_position(editor, story->nparas - 1, (size_t)-1 / 2);   /* the last one's end */
+    editor->typing_rev = editor_revision(editor, OWF_REV_INSERT);
+    ok = editor->typing_rev && split_paragraph(editor, pos, &next) >= 0;
+    editor->typing_rev = 0;
+    target = para < story->nparas ? para : story->nparas - 1;   /* the empty half: before, or the new last */
+    if (ok) {
+        owf_para *p = &ed_story(editor)->paras[target];
+        p->fmt = rp->fmt;
+        ok = compare_insert(editor, target, 0, rp, 0, strlen(text));
+    }
+    owf_free(text);
+    return ok;
+}
+
+int ow_editor_compare(ow_editor *editor, const owf_doc *revised, const char *author)
+{
+    owf_story *story;
+    char **pa = NULL, **pb = NULL, *ops = NULL, *old_author = NULL;
+    int n, m, nops, k, i, j, changes = 0, rc = OWF_OK;
+    compare_ctx c;
+    if (!editor || !editor->doc || !revised || !revised->body.nparas) return -OWF_ERR_FORMAT;
+    editor->typing_group = 0;
+    memset(&editor->selection, 0, sizeof editor->selection);   /* the body */
+    if (!remember_before_edit(editor)) return -OWF_ERR_MEMORY;
+    story = ed_story(editor);
+    n = story->nparas;
+    m = revised->body.nparas;
+    pa = (char **)owf_calloc((size_t)n + 1, sizeof *pa);
+    pb = (char **)owf_calloc((size_t)m + 1, sizeof *pb);
+    if (!pa || !pb) { rc = OWF_ERR_MEMORY; goto done; }
+    for (i = 0; i < n; ++i) if (!(pa[i] = compare_text(&story->paras[i]))) { rc = OWF_ERR_MEMORY; goto done; }
+    for (j = 0; j < m; ++j) if (!(pb[j] = compare_text(&revised->body.paras[j]))) { rc = OWF_ERR_MEMORY; goto done; }
+    memset(&c, 0, sizeof c);
+    c.pa = pa; c.pb = pb;
+    nops = compare_lcs(&c, n, m, same_para, &ops);
+    if (nops == -1) { rc = OWF_ERR_MEMORY; goto done; }
+    if (nops == -2) {                                /* too many to match: paired in order */
+        if (!(ops = (char *)owf_malloc((size_t)n + (size_t)m + 1))) { rc = OWF_ERR_MEMORY; goto done; }
+        for (k = 0; k < n && k < m; ++k) ops[k] = '~';
+        for (i = k; i < n; ++i) ops[k++] = '-';
+        for (j = i; j < m; ++j) ops[k++] = '+';
+        nops = k;
+    }
+    if (author && *author) {                         /* the changes under the author asked for */
+        if (editor->author && !(old_author = copy_bytes(editor->author, strlen(editor->author)))) {
+            rc = OWF_ERR_MEMORY;
+            goto done;
+        }
+        if ((rc = ow_editor_set_review_author(editor, author)) != OWF_OK) goto done;
+    }
+    /* from the end, each run of changes: the paragraphs paired, then the rest deleted or added */
+    for (i = n, j = m, k = nops; k > 0 && rc == OWF_OK; ) {
+        int di = 0, dj = 0, pair, t;
+        while (k > 0 && ops[k - 1] == '=') { --k; --i; --j; }
+        while (k > 0 && ops[k - 1] != '=') {
+            if (ops[k - 1] == '-') ++di;
+            else if (ops[k - 1] == '+') ++dj;
+            else { ++di; ++dj; }
+            --k;
+        }
+        if (!di && !dj) break;
+        i -= di; j -= dj;
+        pair = di < dj ? di : dj;
+        /* a table's paragraphs: only paired, never added or taken away */
+        if (dj > pair) {                             /* each before the paragraph after the run, in order */
+            int added = 0;                           /* (the ones really put in: a table's are skipped) */
+            for (t = pair; t < dj && rc == OWF_OK; ++t)
+                if (revised->body.paras[j + t].table_id >= 0) continue;
+                else if (!compare_add_para(editor, i + di + added, &revised->body.paras[j + t]))
+                    rc = OWF_ERR_MEMORY;
+                else { ++added; ++changes; }
+        } else if (di > pair) {
+            int from = i + pair, to = i + di, keep = 1;
+            for (t = from; t < to; ++t) if (story->paras[t].table_id >= 0) keep = 0;
+            if (keep) {
+                ow_position s, e;
+                if (to < story->nparas) {
+                    s = para_offset_position(editor, from, 0);
+                    e = para_offset_position(editor, to, 0);
+                } else {                             /* the last ones: from the end of the one before */
+                    s = from > 0 ? para_offset_position(editor, from - 1, strlen(pa[from - 1]))
+                                 : para_offset_position(editor, from, 0);
+                    e = para_offset_position(editor, to - 1, strlen(pa[to - 1]));
+                }
+                if (tracked_delete_range(editor, &s, e) < 0) rc = OWF_ERR_MEMORY;
+                else ++changes;
+            }
+        }
+        for (t = pair - 1; t >= 0 && rc == OWF_OK; --t) {
+            int w = compare_words(editor, i + t, &revised->body.paras[j + t]);
+            if (w < 0) rc = OWF_ERR_MEMORY;
+            else changes += w;
+        }
+    }
+    if (author && *author) ow_editor_set_review_author(editor, old_author);
+done:
+    for (i = 0; pa && i < n; ++i) owf_free(pa[i]);
+    for (j = 0; pb && j < m; ++j) owf_free(pb[j]);
+    owf_free(pa); owf_free(pb); owf_free(ops); owf_free(old_author);
+    memset(&editor->selection, 0, sizeof editor->selection);
+    if (rc != OWF_OK) { ow_editor_undo(editor); return -rc; }
+    if (!changes) {                                  /* the same: no undo point */
+        snapshot_free(&editor->undo[editor->nundo - 1]);
+        --editor->nundo;
+        return 0;
+    }
+    editor->dirty = 1; ++editor->changes;
+    sync_typing_fmt(editor);
+    ow_editor_layout(editor);
+    return changes;
 }

@@ -59,6 +59,7 @@
 #include "opendiag_mind.h"
 #include "opendiag_order.h"
 #include "opendiag_align.h"
+#include "owf_open.h"
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL, *DiskfontBase = NULL;
 struct Library *CyberGfxBase = NULL;     /* the page as a picture (PNG, ILBM): its pixels read back; optional */   /* labels' sizes: OpenDiskFont */
@@ -561,10 +562,10 @@ static unsigned char *page_picture(void *user, const owf_dnum box[4], int width,
         oldraw_free(pd);
         /* ReadPixelArray says how many pixels it read; fewer than the whole page is no picture, not one with
          * whatever was in the memory (a planar screen's bitmap reads through cybergraphics' emulation) */
-        if ((rgb = (unsigned char *)malloc((size_t)width * (size_t)height * 3)) != NULL &&
+        if ((rgb = (unsigned char *)owf_malloc((size_t)width * (size_t)height * 3)) != NULL &&
             ReadPixelArray(rgb, 0, 0, (UWORD)(width * 3), &rp, 0, 0, (UWORD)width, (UWORD)height, RECTFMT_RGB) <
                 (ULONG)width * (ULONG)height) {
-            free(rgb);
+            owf_free(rgb);
             rgb = NULL;
         }
     }
@@ -1580,6 +1581,17 @@ int main(int argc, char **argv)
         rc = 20;
         goto out;
     }
+    /* owfdiag.library from LIBS: when built on it (OWF=library); nothing to open when libowf is linked in */
+    if (!owf_open()) {
+#ifdef OWF_USE_LIBRARY
+        if (owf_open_sizes_differ)
+            tell("GFOpenDiag needs the " OWF_LIBRARY_NAME " it was built with: the one in LIBS: is another.");
+        else
+#endif
+            tell("GFOpenDiag needs " OWF_LIBRARY_NAME " in LIBS:.");
+        rc = 20;
+        goto out;
+    }
     if (argc > 1) put_text(first, sizeof first, argv[1]);
     else if (argc == 0) {
         struct WBStartup *w = (struct WBStartup *)argv;
@@ -1623,5 +1635,6 @@ out:
     if (CyberGfxBase) { CloseLibrary(CyberGfxBase); CyberGfxBase = NULL; }
     if (AslBase) CloseLibrary(AslBase);
     if (GadToolsBase) CloseLibrary(GadToolsBase);
+    owf_close();
     return rc;
 }

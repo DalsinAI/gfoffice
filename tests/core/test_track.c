@@ -1078,6 +1078,213 @@ static void test_format_nav(void)
     owf_doc_free(doc);
 }
 
+/* libowf 1.21: Word's tracked paragraph format changes (w:pPrChange, ECMA-376 part 1, 17.13.5.29): the
+ * paragraph's format now, the format before in the change's own w:pPr; one centred, one indented with its
+ * spacing taken away, and one with none, in a document with no other change */
+static const char *para_format_changes_dump(const owf_doc *doc)
+{
+    static char buf[1024];
+    size_t used = 0;
+    int i;
+    buf[0] = 0;
+    for (i = 0; i < doc->body.nparas && used < sizeof buf; ++i) {
+        const owf_para *p = &doc->body.paras[i];
+        const owf_para_format_change *fc = OWF_DOC_PARA_FORMAT_CHANGE(doc, p->para_format_change);
+        used += (size_t)snprintf(buf + used, sizeof buf - used, "<a%d l%d s%d", (int)p->fmt.align, p->fmt.indent_left,
+                                 p->fmt.space_after);
+        if (fc && used < sizeof buf)
+            used += (size_t)snprintf(buf + used, sizeof buf - used, " was a%d l%d s%d %s %s", (int)fc->before.align,
+                                     fc->before.indent_left, fc->before.space_after, fc->author ? fc->author : "-",
+                                     fc->date ? fc->date : "-");
+        if (used < sizeof buf)
+            used += (size_t)snprintf(buf + used, sizeof buf - used, ">");
+    }
+    return buf;
+}
+
+/* 2.0.52: document compare: the revised text as tracked changes by an author; one undo; the same: nothing */
+static const char *plain(const owf_doc *doc)
+{
+    static char buf[8192];
+    size_t used = 0;
+    int i, j;
+    buf[0] = 0;
+    for (i = 0; i < doc->body.nparas; ++i) {
+        const owf_para *p = &doc->body.paras[i];
+        for (j = 0; j < p->nruns; ++j)
+            if (p->runs[j].kind == OWF_RUN_TEXT && p->runs[j].text && used + strlen(p->runs[j].text) + 2 < sizeof buf) {
+                memcpy(buf + used, p->runs[j].text, strlen(p->runs[j].text) + 1);
+                used += strlen(p->runs[j].text);
+            }
+        if (i + 1 < doc->body.nparas && used + 2 < sizeof buf) { buf[used++] = '|'; buf[used] = 0; }
+    }
+    return buf;
+}
+
+static void test_para_format_changes(void)
+{
+    static const char *const names[] = { "[Content_Types].xml", "_rels/.rels", "word/document.xml" };
+    static const char *const parts[] = {
+        "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+        "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+        "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+        "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>"
+        "</Types>",
+        "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+        "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>"
+        "</Relationships>",
+        "<?xml version=\"1.0\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>"
+        "<w:p><w:pPr><w:jc w:val=\"center\"/><w:pPrChange w:id=\"4\" w:author=\"Gil\" w:date=\"2026-11-03T11:00:00Z\">"
+        "<w:pPr/></w:pPrChange></w:pPr><w:r><w:t>Centred</w:t></w:r></w:p>"
+        "<w:p><w:pPr><w:ind w:left=\"720\"/><w:pPrChange w:id=\"5\" w:author=\"Hal\"><w:pPr>"
+        "<w:spacing w:after=\"240\"/></w:pPr></w:pPrChange></w:pPr><w:r><w:t>Indented</w:t></w:r></w:p>"
+        "<w:p><w:r><w:t>Plain</w:t></w:r></w:p>"
+        "<w:sectPr/></w:body></w:document>" };
+    static const char want[] = "<a1 l0 s0 was a0 l0 s0 Gil 2026-11-03T11:00:00Z><a0 l720 s0 was a0 l0 s240 Hal -><a0 l0 s0>";
+    owf_doc *doc = NULL, *back = NULL, *view = NULL;
+    owf_report *rp = owf_report_new();
+    char first[1024];
+    int i, kept = 0;
+    CHECK(rp && zip_import(names, parts, 3, &doc) == OWF_OK && doc, "Word's paragraph format changes");
+    if (!doc) { owf_report_free(rp); return; }
+    strcpy(first, para_format_changes_dump(doc));
+    CHECK(!strcmp(first, want), first);
+    CHECK(doc->npara_format_changes == 2 && !doc->nformat_changes && !doc->nrevisions,
+          "two paragraph format changes and no other change");
+    CHECK(owf_doc_has_changes(doc) && owf_doc_has_format_changes(doc),
+          "a paragraph format change alone is a change, and a format change");
+
+    /* out as DOCX and back: the same, and the same again */
+    CHECK(owf_export_file(doc, "/tmp/openwrite-parachange.docx", "docx", rp) == OWF_OK, "docx");
+    CHECK(owf_import_file("/tmp/openwrite-parachange.docx", NULL, &back, NULL, NULL) == OWF_OK && back, "docx back");
+    if (back) {
+        CHECK(!strcmp(para_format_changes_dump(back), want), para_format_changes_dump(back));
+        CHECK(owf_export_file(back, "/tmp/openwrite-parachange.docx", "docx", NULL) == OWF_OK, "docx again");
+        owf_doc_free(back);
+        back = NULL;
+        CHECK(owf_import_file("/tmp/openwrite-parachange.docx", NULL, &back, NULL, NULL) == OWF_OK && back &&
+              !strcmp(para_format_changes_dump(back), want), back ? para_format_changes_dump(back) : "second read");
+        owf_doc_free(back);
+    }
+    for (i = 0; i < owf_report_count(rp); ++i) {
+        owf_note_level level;
+        const char *note = owf_report_note(rp, i, &level, NULL);
+        if (note && strstr(note, "format changes are kept as the format is now")) kept = 1;
+    }
+    CHECK(!kept, "the paragraphs' format changes are kept, not reported");
+
+    /* ODT keeps none yet, and says so */
+    {
+        owf_report *op = owf_report_new();
+        int said = 0;
+        CHECK(op && owf_export_file(doc, "/tmp/openwrite-parachange.odt", "odt", op) == OWF_OK, "odt");
+        for (i = 0; op && i < owf_report_count(op); ++i) {
+            owf_note_level level;
+            const char *note = owf_report_note(op, i, &level, NULL);
+            if (note && strstr(note, "Tracked format changes were saved accepted")) said = 1;
+        }
+        CHECK(said, "the ODT report says the paragraph format changes were saved accepted");
+        owf_report_free(op);
+    }
+    /* an edit and its undo leave the changes the document's (the editor keeps the list through undo) */
+    {
+        ow_editor *ed = ow_editor_new(doc);
+        CHECK(ed != NULL, "editor");
+        if (ed) {
+            caret(ed, 0, 3);
+            CHECK(ow_editor_insert_utf8(ed, "x", 1) == OWF_OK && ow_editor_undo(ed) == 1, "an edit undone");
+            CHECK(!strcmp(para_format_changes_dump(doc), want), para_format_changes_dump(doc));
+            CHECK(ow_editor_redo(ed) == 1 && ow_editor_undo(ed) == 1 && doc->npara_format_changes == 2, "redo, undo");
+            ow_editor_free(ed);
+        }
+    }
+    /* accepted (formats without tracked changes): the format now, no change left */
+    CHECK(owf_doc_accepted(doc, &view) == OWF_OK && view, "accepted view");
+    if (view) {
+        CHECK(!strcmp(para_format_changes_dump(view), "<a1 l0 s0><a0 l720 s0><a0 l0 s0>"), para_format_changes_dump(view));
+        CHECK(!owf_doc_has_changes(view) && !owf_doc_has_format_changes(view), "no changes once accepted");
+        owf_doc_accepted_free(view);
+    }
+    /* a number past the list is no change (owf_track_finish) */
+    doc->body.paras[2].para_format_change = 9;
+    owf_track_finish(doc);
+    CHECK(doc->body.paras[2].para_format_change == 0, "a paragraph naming no change is cleared");
+    owf_report_free(rp);
+    owf_doc_free(doc);
+}
+
+static void test_compare(void)
+{
+    static const char *const before[] = { "The quick brown fox", "Second line", "Third" };
+    static const char *const after[] = { "The slow brown fox jumps", "Third", "New last" };
+    static const char *const first[] = { "Opening", "The quick brown fox", "Second line", "Third" };
+    owf_doc *doc = doc_of(before, 3), *rev = doc_of(after, 3), *rev2 = doc_of(first, 4), *same = doc_of(before, 3);
+    ow_editor *ed;
+    int n, i, ok;
+    if (!doc || !rev || !rev2 || !same) { CHECK(0, "compare docs"); return; }
+    ed = ow_editor_new(doc);
+    ow_editor_set_review_author(ed, "Ann");
+    n = ow_editor_compare(ed, rev, "Reviewer");
+    CHECK(n == 4, "compare: two word changes, a paragraph deleted, one added");
+    CHECK(!strcmp(dump(doc), "The [-quick-]{+slow+} brown fox{+ jumps+}|[-Second line-]|-Third|+{+New last+}"),
+          "compare: the changes tracked");
+    if (strcmp(dump(doc), "The [-quick-]{+slow+} brown fox{+ jumps+}|[-Second line-]|-Third|+{+New last+}"))
+        printf("  got %s\n", dump(doc));
+    for (i = 0, ok = doc->nrevisions > 0; i < doc->nrevisions; ++i)
+        if (!doc->revisions[i].author || strcmp(doc->revisions[i].author, "Reviewer")) ok = 0;
+    CHECK(ok, "compare: the changes are the author's");
+    CHECK(!strcmp(ow_editor_review_author(ed), "Ann"), "compare: the review author is put back");
+    CHECK(ow_editor_accept_all_changes(ed, 1) >= 0 && !strcmp(plain(doc), "The slow brown fox jumps|Third|New last"),
+          "compare: all accepted is the revised document");
+    ow_editor_undo(ed);
+    CHECK(ow_editor_undo(ed) > 0 && !ow_editor_can_undo(ed) && !strcmp(dump(doc), "The quick brown fox|Second line|Third"),
+          "compare: one undo takes it all back");
+    CHECK(ow_editor_compare(ed, same, NULL) == 0 && !strcmp(dump(doc), "The quick brown fox|Second line|Third"),
+          "compare: the same document changes nothing");
+    n = ow_editor_compare(ed, rev2, NULL);
+    CHECK(n == 1 && !strcmp(dump(doc), "{+Opening+}|+The quick brown fox|Second line|Third"),
+          "compare: a paragraph added at the start");
+    if (n != 1) printf("  got %d %s\n", n, dump(doc));
+    CHECK(ow_editor_accept_all_changes(ed, 0) >= 0 && !strcmp(plain(doc), "The quick brown fox|Second line|Third"),
+          "compare: all rejected is the original");
+    ow_editor_free(ed);
+    owf_doc_free(doc); owf_doc_free(rev); owf_doc_free(rev2); owf_doc_free(same);
+
+    {   /* Agnus on #4: a table's paragraph in the revised one is skipped, and the next goes where it belongs */
+        static const char *const ab[] = { "A", "B" }, *const atnb[] = { "A", "T", "N", "B" };
+        doc = doc_of(ab, 2);
+        rev = doc_of(atnb, 4);
+        if (!doc || !rev) { CHECK(0, "compare table docs"); owf_doc_free(doc); owf_doc_free(rev); return; }
+        rev->body.paras[1].table_id = 0;
+        rev->body.paras[1].table_row = rev->body.paras[1].table_col = 0;
+        rev->body.paras[1].table_cols = 1;
+        ed = ow_editor_new(doc);
+        CHECK(ow_editor_compare(ed, rev, "R") == 1, "compare: one paragraph added past the table's");
+        CHECK(!strcmp(plain(doc), "A|N|B"), "compare: N between A and B");
+        if (strcmp(plain(doc), "A|N|B")) printf("  got %s\n", plain(doc));
+        ow_editor_free(ed);
+        owf_doc_free(doc); owf_doc_free(rev);
+    }
+
+    {                                                /* too long to match word by word: replaced whole */
+        static char x[6000], y[6000];
+        const char *xs[1], *ys[1];
+        size_t ux = 0, uy = 0;
+        for (i = 0; i < 700; ++i) {
+            ux += (size_t)sprintf(x + ux, "%sa%d", i ? " " : "", i);
+            uy += (size_t)sprintf(y + uy, "%sb%d", i ? " " : "", i);
+        }
+        xs[0] = x; ys[0] = y;
+        doc = doc_of(xs, 1); rev = doc_of(ys, 1);
+        if (!doc || !rev) { CHECK(0, "compare long docs"); owf_doc_free(doc); owf_doc_free(rev); return; }
+        ed = ow_editor_new(doc);
+        CHECK(ow_editor_compare(ed, rev, "R") == 1, "compare: a long paragraph replaced in one change");
+        CHECK(ow_editor_accept_all_changes(ed, 1) >= 0 && !strcmp(plain(doc), y), "compare: the long one accepted");
+        ow_editor_free(ed);
+        owf_doc_free(doc); owf_doc_free(rev);
+    }
+}
+
 int main(void)
 {
     test_recording();
@@ -1088,12 +1295,14 @@ int main(void)
     test_word_form();
     test_odf_form();
     test_format_changes();
+    test_para_format_changes();
     test_final_view();
     test_pictures();
     test_frames();
     test_rows();
     test_format_accept();
     test_format_nav();
+    test_compare();
     printf("track changes: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }
