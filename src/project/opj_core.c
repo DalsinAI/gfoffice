@@ -773,6 +773,7 @@ static const char *const column_titles[OPJ_NCOLS] = {
     "Baseline Start", "Baseline Finish", "Start Var.", "Finish Var.", "Constraint Type", "Constraint Date", "Notes",
     "Actual Start", "Actual Finish", "Actual Duration", "Remaining Dur.", "BCWS", "BCWP", "ACWP", "SV", "CV", "Leveling Delay",
     "Work", "Actual Work", "Remaining Work", "Cost", "Actual Cost", "Type", "Effort Driven",
+    "Priority", "Overallocated",
 };
 
 static const char *const type_names[] = { "Fixed Units", "Fixed Duration", "Fixed Work" };   /* OWF_TT_ */
@@ -845,7 +846,7 @@ void opj_cell_text(const opj_doc *doc, int row, int column, char *out, size_t si
     t = &doc->plan->tasks[row];
     text[0] = 0;
     switch (column) {
-    case OPJ_COL_ID: sprintf(text, "%d", row + 1); break;
+    case OPJ_COL_ID: sprintf(text, owf_ptask_overallocated(doc->plan, row) ? "%d!" : "%d", row + 1); break;
     case OPJ_COL_NAME: s = t->name ? t->name : ""; break;
     case OPJ_COL_DURATION: {
         int estimated = t->estimated, i;
@@ -913,6 +914,12 @@ void opj_cell_text(const opj_doc *doc, int row, int column, char *out, size_t si
         break;
     case OPJ_COL_EFFORT_DRIVEN:
         if (!t->summary) s = t->effort_driven || t->type == OWF_TT_FIXED_WORK ? "Yes" : "No";
+        break;
+    case OPJ_COL_PRIORITY:
+        if (!t->summary) sprintf(text, "%d", t->priority);
+        break;
+    case OPJ_COL_OVERALLOCATED:
+        if (!t->summary) s = owf_ptask_overallocated(doc->plan, row) ? "Yes" : "No";
         break;
     default: return;
     }
@@ -1059,6 +1066,16 @@ static int set_field(owf_project *work, int row, int column, const char *text, i
         t->effort_driven = c;
         return OWF_OK;
     }
+    case OPJ_COL_PRIORITY: {
+        const char *s = text;
+        if (t->summary) return OWF_ERR_FORMAT;
+        while (*s == ' ') s++;
+        if (!take_int(&s, &v, NULL)) return OWF_ERR_FORMAT;
+        while (*s == ' ') s++;
+        if (*s || v < 0 || v > OWF_PRIORITY_DO_NOT_LEVEL) return OWF_ERR_FORMAT;
+        t->priority = (int)v;
+        return OWF_OK;
+    }
     default:
         return OWF_ERR_FORMAT;
     }
@@ -1070,7 +1087,7 @@ int opj_column_typed(int column)
     case OPJ_COL_NAME: case OPJ_COL_DURATION: case OPJ_COL_START: case OPJ_COL_FINISH: case OPJ_COL_PREDECESSORS:
     case OPJ_COL_PERCENT: case OPJ_COL_RESOURCES: case OPJ_COL_CONSTRAINT_TYPE: case OPJ_COL_CONSTRAINT_DATE:
     case OPJ_COL_NOTES: case OPJ_COL_ACTUAL_START: case OPJ_COL_ACTUAL_FINISH: case OPJ_COL_LEVELING_DELAY:
-    case OPJ_COL_WORK: case OPJ_COL_TYPE: case OPJ_COL_EFFORT_DRIVEN:
+    case OPJ_COL_WORK: case OPJ_COL_TYPE: case OPJ_COL_EFFORT_DRIVEN: case OPJ_COL_PRIORITY:
         return 1;
     default:
         return 0;
@@ -1191,14 +1208,40 @@ int opj_update_project(opj_doc *doc, owf_ptime status, int whole, int *changed)
     return commit(doc, work);
 }
 
+static const char *const level_order_names[OWF_LEVEL_NORDERS] = { "Standard", "ID Only", "Priority, Standard" };
+
+const char *opj_level_order_name(int order)
+{
+    return order >= 0 && order < OWF_LEVEL_NORDERS ? level_order_names[order] : "";
+}
+
+int opj_level_order_parse(const char *name)
+{
+    static const char *const shorts[OWF_LEVEL_NORDERS] = { "STANDARD", "ID", "PRIORITY" };
+    char word[24], have[24];
+    int i;
+    if (!name) return -1;
+    squeeze(name, word, sizeof word);
+    for (i = 0; i < OWF_LEVEL_NORDERS; i++) {
+        squeeze(level_order_names[i], have, sizeof have);
+        if (!strcmp(word, have) || !strcmp(word, shorts[i])) return i;
+    }
+    return -1;
+}
+
 int opj_level(opj_doc *doc, int within_slack, int *delayed)
+{
+    return opj_level_by(doc, within_slack, OWF_LEVEL_STANDARD, delayed);
+}
+
+int opj_level_by(opj_doc *doc, int within_slack, int order, int *delayed)
 {
     owf_project *work;
     int n;
     if (delayed) *delayed = 0;
-    if (!doc) return OWF_ERR_FORMAT;
+    if (!doc || order < 0 || order >= OWF_LEVEL_NORDERS) return OWF_ERR_FORMAT;
     if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
-    if ((n = owf_project_level(work, within_slack)) < 0) return fail(work, OWF_ERR_FORMAT);
+    if ((n = owf_project_level_by(work, within_slack, order)) < 0) return fail(work, OWF_ERR_FORMAT);
     if (delayed) *delayed = n;
     return commit(doc, work);
 }
@@ -1206,8 +1249,10 @@ int opj_level(opj_doc *doc, int within_slack, int *delayed)
 int opj_clear_leveling(opj_doc *doc)
 {
     owf_project *work;
-    int i;
+    int i, any = 0;
     if (!doc) return OWF_ERR_FORMAT;
+    for (i = 0; i < doc->plan->ntasks; i++) any |= doc->plan->tasks[i].level_delay != 0;
+    if (!any) return OWF_OK;                     /* nothing to clear: no Undo step, the plan not changed */
     if (!(work = owf_project_copy(doc->plan))) return OWF_ERR_MEMORY;
     for (i = 0; i < work->ntasks; i++) work->tasks[i].level_delay = 0, work->tasks[i].level_delay_elapsed = 0;
     return commit(doc, work);
@@ -1324,6 +1369,8 @@ int opj_cell_value(const opj_doc *doc, int row, int column, long *v, int *na)
     case OPJ_COL_ACTUAL_COST: *v = owf_ptask_earned(doc->plan, row, doc->plan->status_date, OWF_EV_ACWP); return 1;
     case OPJ_COL_TYPE: *na = t->summary; *v = t->type; return 1;
     case OPJ_COL_EFFORT_DRIVEN: *na = t->summary; *v = t->effort_driven || t->type == OWF_TT_FIXED_WORK; return 1;
+    case OPJ_COL_PRIORITY: *na = t->summary; *v = t->priority; return 1;
+    case OPJ_COL_OVERALLOCATED: *na = t->summary; *v = owf_ptask_overallocated(doc->plan, row); return 1;
     default: return 0;
     }
 }
@@ -1942,11 +1989,34 @@ int opj_assign_resource(opj_doc *doc, int task, int resource, const char *units)
     return commit(doc, work);
 }
 
+int opj_find_resource(const opj_doc *doc, const char *name)
+{
+    char want[128];
+    size_t n;
+    long row = 0;
+    int i, digits = 1;
+    if (!doc || !name) return -1;
+    while (*name == ' ') name++;
+    n = strlen(name);
+    while (n && name[n - 1] == ' ') n--;
+    if (!n || n >= sizeof want) return -1;
+    memcpy(want, name, n);
+    want[n] = 0;
+    for (i = 0; i < doc->plan->nresources; i++)
+        if (doc->plan->resources[i].name && same_name(doc->plan->resources[i].name, want)) return i;
+    for (i = 0; want[i]; i++) {
+        if (want[i] < '0' || want[i] > '9' || i > 6) digits = 0;
+        else row = row * 10 + (want[i] - '0');
+    }
+    return digits && row >= 1 && row <= doc->plan->nresources ? (int)row - 1 : -1;
+}
+
 int opj_remove_resource(opj_doc *doc, int task, int resource)
 {
     owf_project *work;
     int rc;
-    if (!doc || task < 0 || task >= doc->plan->ntasks || find_assign(doc->plan, task, resource) < 0)
+    if (!doc || task < 0 || task >= doc->plan->ntasks || resource < 0 || resource >= doc->plan->nresources ||
+        find_assign(doc->plan, task, resource) < 0)
         return OWF_ERR_FORMAT;
     if (!(work = begin(doc, task, &rc))) return rc;
     owf_project_unassign(work, task, resource);

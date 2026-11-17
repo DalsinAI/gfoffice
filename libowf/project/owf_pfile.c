@@ -706,6 +706,7 @@ static int read_xml(const char *text, size_t length, owf_project **out)
         k->milestone = child_flag(&r, t, "Milestone");
         if (child_long(&r, t, "Type", &v) && v >= OWF_TT_FIXED_UNITS && v <= OWF_TT_FIXED_WORK) k->type = (int)v;
         k->effort_driven = child_flag(&r, t, "EffortDriven") || k->type == OWF_TT_FIXED_WORK;
+        if (child_long(&r, t, "Priority", &v) && v >= 0 && v <= OWF_PRIORITY_DO_NOT_LEVEL) k->priority = (int)v;
         if (child_long(&r, t, "ConstraintType", &v) && v >= OWF_CON_ASAP && v <= OWF_CON_FNLT) k->constraint = (int)v;
         if (child_text(&r, t, "ConstraintDate") && !parse_time(r.buf, &k->constraint_date)) k->constraint_date = 0;
         if (k->constraint != OWF_CON_ASAP && k->constraint != OWF_CON_ALAP && !owf_xml_child(t, r.ns, "ConstraintDate"))
@@ -884,6 +885,7 @@ static void write_xml(const owf_project *p, owf_buf *b, const char *ns)
         put_text(b, "Name", t->name);
         put_long(b, "Type", t->type);                                   /* 0 Fixed Units, 1 Duration, 2 Work */
         put_long(b, "OutlineLevel", t->level);
+        put_long(b, "Priority", t->priority);
         put_date(b, "Start", t->early_start);
         put_date(b, "Finish", t->early_finish);
         owf_buf_puts(b, "<Duration>");

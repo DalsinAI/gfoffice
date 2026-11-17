@@ -108,7 +108,7 @@ remain later P1 work.
 
 # GFOpenWrite
 
-GFOpenWrite 2.0.50 is a native word processor for AmigaOS 3.2.
+GFOpenWrite 2.0.52 is a native word processor for AmigaOS 3.2.
 
 ![GFOpenWrite on AmigaOS 3.2.3: a Word document written in Word, opened as it is](docs/screenshot.png)
 
