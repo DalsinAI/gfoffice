@@ -80,6 +80,7 @@ typedef struct {
     owf_buf scratch;
     int failed;
     int depth;
+    int fill_image;                  /* the picture read_look last read for a picture fill */
 } odp;
 
 /* ---- Small helpers ---- */
@@ -1475,6 +1476,68 @@ static int read_hatch_fill(odp *o, const gstyle *st, const char *element, owf_lo
     return 1;
 }
 
+/* draw:fill-image-width or -height: a length, or 0 (the picture's own size) for a percentage */
+static int tile_length(odp *o, const char *v)
+{
+    int twips;
+    if (!v)
+        return 0;
+    if (strchr(v, '%')) {
+        if (atoi(v) != 100)
+            owf_report_add(o->report, OWF_NOTE_APPROX, "Picture tiles sized in percent are drawn at the picture's own size");
+        return 0;
+    }
+    return parse_len(v, &twips) && twips > 0 ? twips : 0;
+}
+
+/* A bitmap fill: the draw:fill-image the style names into *image, laid by style:repeat (stretch, or
+ * repeat at draw:fill-image-width by -height; no-repeat drawn stretched). 0 when it can't be had. */
+static int read_picture_fill(odp *o, const gstyle *st, const char *element, owf_look *look, int *image)
+{
+    const char *name = prop(o, st, element, NS_DRAW, "fill-image-name");
+    const char *repeat = prop(o, st, element, NS_STYLE, "repeat");
+    const owf_xml_node *c;
+    int index = -1;
+    if (!name)
+        return 0;
+    for (c = o->common ? o->common->first : NULL; c; c = c->next)
+        if (is(c, NS_DRAW, "fill-image") && same(attr(c, NS_DRAW, "name"), name)) {
+            index = load_picture(o, c, o->deck->width, o->deck->height, NULL);
+            break;
+        }
+    if (index < 0)
+        return 0;
+    *image = index;
+    look->tile_width = look->tile_height = 0;
+    if (repeat && !strcmp(repeat, "repeat")) {
+        look->picture = OWF_PICTURE_TILE;
+        look->tile_width = tile_length(o, prop(o, st, element, NS_DRAW, "fill-image-width"));
+        look->tile_height = tile_length(o, prop(o, st, element, NS_DRAW, "fill-image-height"));
+        if (!look->tile_width || !look->tile_height)
+            look->tile_width = look->tile_height = 0;
+    } else {
+        look->picture = OWF_PICTURE_STRETCH;
+        if (repeat && !strcmp(repeat, "no-repeat"))
+            owf_report_add(o->report, OWF_NOTE_APPROX, "Pictures that fill once are drawn stretched");
+    }
+    return 1;
+}
+
+/* After read_look: an object that can show a picture fill (keep) takes the picture it read; any
+ * other drops it, drawn in its fill colour. */
+static void take_picture_fill(odp *o, owf_obj *obj, int keep)
+{
+    if (obj->look.picture == OWF_PICTURE_NONE)
+        return;
+    if (keep) {
+        obj->image = o->fill_image;
+        return;
+    }
+    obj->look.picture = OWF_PICTURE_NONE;
+    obj->look.tile_width = obj->look.tile_height = 0;
+    owf_report_add(o->report, OWF_NOTE_APPROX, "Picture fills are drawn in one colour");
+}
+
 /* Fill, line, insets, alignment and fitting from the object's style. */
 static void read_look(odp *o, owf_obj *obj, const gstyle *st, int is_shape)
 {
@@ -1491,6 +1554,9 @@ static void read_look(odp *o, owf_obj *obj, const gstyle *st, int is_shape)
         ;
     else if (fill && !strcmp(fill, "hatch") && read_hatch_fill(o, st, "graphic-properties", &obj->look))
         ;
+    else if (fill && !strcmp(fill, "bitmap") &&
+             read_picture_fill(o, st, "graphic-properties", &obj->look, &o->fill_image))
+        obj->look.fill = shade(prop(o, st, "graphic-properties", NS_DRAW, "fill-color"));
     else if (fill && (!strcmp(fill, "gradient") || !strcmp(fill, "hatch") || !strcmp(fill, "bitmap"))) {
         obj->look.fill = shade(prop(o, st, "graphic-properties", NS_DRAW, "fill-color"));
         owf_report_add(o->report, OWF_NOTE_APPROX, "Picture fills are drawn in one colour");
@@ -2041,6 +2107,7 @@ static int read_object(odp *o, objctx *c, const owf_xml_node *n, int parent, int
         } else {
             obj->kind = OWF_OBJ_TEXT;
         }
+        take_picture_fill(o, obj, obj->kind == OWF_OBJ_TEXT);
     } else if (is(n, NS_DRAW, "rect") || is(n, NS_DRAW, "ellipse") || is(n, NS_DRAW, "circle") ||
                is(n, NS_DRAW, "line") || is(n, NS_DRAW, "polygon") || is(n, NS_DRAW, "custom-shape")) {
         const char *kind = attr(n, NS_DRAW, "kind");
@@ -2103,6 +2170,8 @@ static int read_object(odp *o, objctx *c, const owf_xml_node *n, int parent, int
             }
         }
         read_look(o, obj, st, obj->shape != OWF_SHAPE_LINE);
+        take_picture_fill(o, obj, obj->kind == OWF_OBJ_SHAPE &&
+                                  (obj->shape == OWF_SHAPE_RECT || obj->shape == OWF_SHAPE_ROUNDRECT));
         if (obj->shape == OWF_SHAPE_LINE)
             obj->look.fill = 0;
         read_text(o, obj, n, n, st, c->m, c->which);
@@ -2138,6 +2207,7 @@ static int read_object(odp *o, objctx *c, const owf_xml_node *n, int parent, int
     } else {
         obj->kind = OWF_OBJ_OTHER;
         read_look(o, obj, st, 1);
+        take_picture_fill(o, obj, 0);
         what = is(n, NS_DRAW, "connector") ? "Connectors"
              : is(n, NS_DRAW, "polyline") || is(n, NS_DRAW, "path") ? "Freeform lines and curves"
              : "Objects GFOpenPresentation doesn't draw yet";
@@ -2179,13 +2249,8 @@ static void read_background(odp *o, const gstyle *st, owf_look *bg, int *image)
         *bg = g;
         bg->fill = shade(prop(o, st, "drawing-page-properties", NS_DRAW, "fill-color"));
     } else if (!strcmp(fill, "bitmap")) {
-        const char *name = prop(o, st, "drawing-page-properties", NS_DRAW, "fill-image-name");
-        const owf_xml_node *c;
-        for (c = o->common ? o->common->first : NULL; c; c = c->next)
-            if (is(c, NS_DRAW, "fill-image") && same(attr(c, NS_DRAW, "name"), name)) {
-                *image = load_picture(o, c, o->deck->width, o->deck->height, NULL);
-                break;
-            }
+        if (read_picture_fill(o, st, "drawing-page-properties", &g, image))
+            *bg = g;
     } else if (!strcmp(fill, "gradient")) {
         if (read_gradient(o, prop(o, st, "drawing-page-properties", NS_DRAW, "fill-gradient-name"), &g)) {
             *bg = g;
