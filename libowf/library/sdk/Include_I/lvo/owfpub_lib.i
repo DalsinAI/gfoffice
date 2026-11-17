@@ -59,5 +59,12 @@ _LVOopp_template_info_at	EQU	-336
 _LVOopp_template_find	EQU	-342
 _LVOopp_template_new	EQU	-348
 _LVOowf_deck_free	EQU	-354
+_LVOowf_print_bleed	EQU	-360
+_LVOowf_print_mark_gap	EQU	-366
+_LVOowf_print_margin	EQU	-372
+_LVOowf_print_crop_lines	EQU	-378
+_LVOowf_print_bleed_colour	EQU	-384
+_LVOowf_print_booklet_sides	EQU	-390
+_LVOowf_print_booklet_side	EQU	-396
 
 	ENDC	; LVO_OWFPUB_LIB_I

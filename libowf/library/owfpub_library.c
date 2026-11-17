@@ -33,17 +33,22 @@
  * work on. The 37 calls before are as they were.
  * 3.9: owf_para.cell_revision (owfwrite.library 3.25, libowf 1.22; 3.8 is #16's), so owf_para is larger and a
  * program's size check refuses 3.8 and before. No call changes.
+ * 3.10: the print core (libowf/src/owf_print.c, owf_print.h), 7 new calls at the end: a printer's bleed and
+ * crop marks (their room round a page, the marks' lines, the colour that runs into the bleed) and a folded
+ * booklet's page order. opp_merge_load_file now refuses a data file over OW_MERGE_MAX_BYTES by its length,
+ * before reading it (owf_sys_file_size). The 55 calls before are as they were.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfpub.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 9
-#define OWF_LIB_VERS "3.9"
+#define OWF_LIB_REVISION 10
+#define OWF_LIB_VERS "3.10"
 #define OWF_LIB_DATE "17.11.2026"
 #define OWF_LIB_CALLS_H "owfpub_calls.h"
 #include "owf_deck.h"
 #include "ow_merge.h"
 #include "openpressmaster_merge.h"
 #include "openpressmaster_template.h"
+#include "owf_print.h"
 #include "owf_libbase.h"
