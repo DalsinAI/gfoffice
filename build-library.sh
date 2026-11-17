@@ -1,6 +1,6 @@
 #!/bin/sh
 # GFOffice's libraries (docs/suite/owf-libraries.md): libowf split along the
-# programs' lines into four shared libraries, and their tests, for AmigaOS
+# programs' lines into five shared libraries, and their tests, for AmigaOS
 # 3.x on a 68040 (no FPU needed), with the os32-gcc16 stove (GFOpenAmigaGCC 16).
 #
 #   build-library.sh [OUT_DIR]          (default build/library)
@@ -12,11 +12,14 @@
 #   OUT_DIR/owfpub.library       Publisher files, GFOpenPressmaster's
 #   OUT_DIR/owfpresent.library   presentations, GFOpenPresentation's: the deck
 #                                model, ODP and the page PDF writer
+#   OUT_DIR/owfdiag.library      diagrams, GFOpenDiag's: the diagram model and
+#                                its formats, and GFOpenDiag's editing core with
+#                                its ARexx commands
 #   OUT_DIR/<name>.library.map   each one's linker map
 #   OUT_DIR/owf.library          owf.library 2, the one library before the
 #                                split, until GFOpenUp ships the four
 #                                (OWF_LEGACY=no leaves it out)
-#   OUT_DIR/tests/OWFLibsTest    opens the four from LIBS: and runs their
+#   OUT_DIR/tests/OWFLibsTest    opens the five from LIBS: and runs their
 #                                calls, from two tasks at once
 #   OUT_DIR/tests/OWFLibTest     the same for owf.library 2
 #                                (tests/library), with their samples/ and
@@ -64,18 +67,18 @@ OUT=${1:-$HERE/build/library}
 SPECS="$HERE/specs/m68k-soft-m68040.specs"
 OWF="$HERE/libowf"
 LIB="$OWF/library"
-LIBS="owfwrite owfcalc owfpub owfpresent"
+LIBS="owfwrite owfcalc owfpub owfpresent owfdiag"
 mkdir -p "$OUT/tests"
 
 if [ -n "${OPENSDK_SRC:-}" ]; then
     # the headers are made from the SFDs; a stale one fails the build
     for sfd in "$LIB/owf_lib.sfd" "$OWF/amiga/z_lib.sfd" "$LIB/owfwrite_lib.sfd" "$LIB/owfcalc_lib.sfd" \
-               "$LIB/owfpub_lib.sfd" "$LIB/owfpresent_lib.sfd"; do
+               "$LIB/owfpub_lib.sfd" "$LIB/owfpresent_lib.sfd" "$LIB/owfdiag_lib.sfd"; do
         python3 "$OPENSDK_SRC/OpenNDK/tools/ndkgen.py" --check --out "$(dirname "$sfd")/sdk" "$sfd" ||
             { echo "build-library.sh: $(dirname "$sfd")/sdk is stale: run scripts/gen-sdk.sh" >&2; exit 1; }
     done
     python3 "$HERE/scripts/gen-lib-calls.py" --check "$LIB/owfwrite_lib.sfd" "$LIB/owfcalc_lib.sfd" \
-        "$LIB/owfpub_lib.sfd" "$LIB/owfpresent_lib.sfd" || exit 1
+        "$LIB/owfpub_lib.sfd" "$LIB/owfpresent_lib.sfd" "$LIB/owfdiag_lib.sfd" || exit 1
 fi
 
 INC="-I$OWF/include -I$OWF/src -I$OWF/calc -I$LIB -I$OWF/amiga/sdk/Include_H"
@@ -107,18 +110,29 @@ SRC="$SRC $LIB/owf_softdouble.c $OWF/amiga/owf_zlib_amiga.c"
 (cd "$OBJ" && "$CC" $LIBFLAGS $DEFS $INC -c $SRC)
 "$BIN/m68k-amigaos-ar" rcs "$OBJ/libowf.a" "$OBJ"/*.o
 
-# ---- the four libraries -----------------------------------------------------------------------------------------
+# ---- owfdiag.library's own files, into an archive of their own --------------------------------------------------
+# the diagram model and formats and GFOpenDiag's editing core (scripts/owfdiag-sources.sh)
+. "$HERE/scripts/owfdiag-sources.sh"
+DIAGINC="-I$HERE/include -I$HERE/src/deck"
+mkdir -p "$OBJ/diag"
+# shellcheck disable=SC2086
+(cd "$OBJ/diag" && "$CC" $LIBFLAGS $DEFS $INC $DIAGINC -c $OWFDIAG_SRC)
+"$BIN/m68k-amigaos-ar" rcs "$OBJ/libowfdiag.a" "$OBJ"/diag/*.o
+
+# ---- the libraries ----------------------------------------------------------------------------------------------
 for name in $LIBS; do
+    EXTRA=""
     case "$name" in
     owfwrite) KIND="-DOWF_KIND_NO_WORKBOOKS" ;;
     owfcalc) KIND="-DOWF_KIND_NO_DOCUMENTS" ;;
+    owfdiag) KIND="-DOWF_KIND_NO_DOCUMENTS -DOWF_KIND_NO_WORKBOOKS -DOWF_KIND_DIAGRAMS" EXTRA="$OBJ/libowfdiag.a" ;;
     *) KIND="-DOWF_KIND_NO_DOCUMENTS -DOWF_KIND_NO_WORKBOOKS" ;;
     esac
     # shellcheck disable=SC2086
     "$CC" $LIBFLAGS $DEFS $KIND $INC -c "$OWF/src/owf_kind.c" -o "$OBJ/owf_kind_$name.o"
     # the library's own file first: its start() is the first code
     # shellcheck disable=SC2086
-    "$CC" $LIBFLAGS $DEFS $INC "$LIB/${name}_library.c" "$OBJ/owf_kind_$name.o" "$OBJ/libowf.a" -lgcc \
+    "$CC" $LIBFLAGS $DEFS $INC $DIAGINC "$LIB/${name}_library.c" "$OBJ/owf_kind_$name.o" $EXTRA "$OBJ/libowf.a" -lgcc \
         -Wl,-Map,"$OUT/$name.library.map" -o "$OUT/$name.library"
     echo "$OUT/$name.library ($(wc -c < "$OUT/$name.library") bytes)"
     UNDEF=$("$BIN/m68k-amigaos-nm" -u "$OUT/$name.library" || true)
@@ -171,10 +185,10 @@ mkdir -p "$T"
 # workbook and .pub checks built for owfcalc.library and owfpub.library
 # shellcheck disable=SC2086
 "$CC" $TESTFLAGS -c "$HERE/tests/library/owf_libs_test.c" -o "$T/owf_libs_test.o"
-for name in write calc pub present; do
+for name in write calc pub present diag; do
     up=$(echo "$name" | tr a-z A-Z)
     # shellcheck disable=SC2086
-    "$CC" $TESTFLAGS -DOWF_USE_${up}_LIBRARY -c "$HERE/tests/library/owf_libs_$name.c" -o "$T/owf_libs_$name.o"
+    "$CC" $TESTFLAGS -I$HERE/include -DOWF_USE_${up}_LIBRARY -c "$HERE/tests/library/owf_libs_$name.c" -o "$T/owf_libs_$name.o"
 done
 # shellcheck disable=SC2086
 "$CC" $TESTFLAGS -DOWF_USE_CALC_LIBRARY -DOWF_LIB_CHECKS_PART=1 -c "$HERE/tests/library/owf_lib_checks.c" \

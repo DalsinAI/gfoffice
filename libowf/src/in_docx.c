@@ -672,8 +672,10 @@ static int special_field(const char *instr, owf_field *field, char *arg, size_t 
     /* its argument: a word, or a quoted name */
     n = 0;
     if (*instr == '"') {
-        for (++instr; *instr && *instr != '"' && n + 1 < arg_size; )
+        for (++instr; *instr && *instr != '"' && n + 1 < arg_size; ) {
+            if (*instr == '\\' && (instr[1] == '"' || instr[1] == '\\')) ++instr;   /* 1.19: Word's \" and \\ */
             arg[n++] = *instr++;
+        }
     } else if (*instr != '\\') {
         while (*instr && *instr != ' ' && n + 1 < arg_size)
             arg[n++] = *instr++;
@@ -697,6 +699,7 @@ static int special_field(const char *instr, owf_field *field, char *arg, size_t 
     else if (!strcmp(word, "MERGEFIELD") && *arg) *field = OWF_FIELD_MERGE;      /* 1.9 */
     else if (!strcmp(word, "XE") && *arg) *field = OWF_FIELD_INDEX;               /* 1.10 */
     else if (!strcmp(word, "SEQ") && *arg) *field = OWF_FIELD_SEQ;                /* 1.12.6: its switches go */
+    else if (!strcmp(word, "FILLIN")) *field = OWF_FIELD_FILLIN;   /* 1.19: its prompt; \d and \o go (the answer is shown) */
     else if (!strcmp(word, "IF")) {                  /* 1.16: conditional text, its form kept as it is */
         owf_if_form f;
         size_t len;
