@@ -59,7 +59,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenBase 0.16.0 (17.11.2026)"
+#define VERSION_TEXT "GFOpenBase 0.17.0 (17.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenBase, the database of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -5796,6 +5796,46 @@ static int rexx_rows(const char *command, char *out, size_t size)
     return rc;
 }
 
+/* QUERIES QUERYFIELDS COUNTQUERY QUERYROW RUNQUERY (ob_rexx_queries) on the
+ * project's saved queries; after a RUNQUERY the datasheet shows the table's
+ * rows as they now are. -1 when command isn't one of these. */
+static int rexx_queries(const char *command, char *out, size_t size)
+{
+    int changed = 0, rc = ob_rexx_queries(proj, command, out, size, &changed);
+    if (rc < 0) return -1;
+    if (changed) {
+        if (q_on) {
+            q_on = 0;
+            top_row = 0;
+            sel_row = -1;
+            left_col = 0;
+        }
+        load_page();
+    }
+    return rc;
+}
+
+/* FINDROW Field=Value [BACK] [FIRST] (ob_rexx_find): the next row of the
+ * table shown, in its sort and filter, that holds the value is chosen;
+ * RESULT its key, as NEXTROW gives. -1 when command isn't FINDROW. */
+static int rexx_find(const char *command, char *out, size_t size)
+{
+    ob_int pos = -1;
+    int rc;
+    if (!starts_word_ci(command, "FINDROW", NULL)) return -1;
+    if (q_on) { put_text(out, size, "A query's rows are shown: TABLE chooses a table"); return RX_NOW; }
+    if (proj && have_cur) load_page();
+    rc = ob_rexx_find(proj, proj && have_cur ? cur.name : NULL, &view, sel_row, command, out, size, &pos);
+    if (rc != 0) return rc;
+    sel_row = (int)pos;
+    if (sel_row < top_row) top_row = sel_row;
+    if (sel_row >= top_row + ds_rows) top_row = sel_row - ds_rows + 1;
+    load_page();
+    if (sel_row - top_row < 0 || sel_row - top_row >= page_n) { put_text(out, size, "The row couldn't be read"); return RX_ERROR; }
+    snprintf(out, size, "%lld", (long long)page_keys[sel_row - top_row]);
+    return RX_OK;
+}
+
 static int rexx_do_command(const char *command, char **result_out)
 {
     const char *arg = "";
@@ -5810,7 +5850,8 @@ static int rexx_do_command(const char *command, char **result_out)
     else if (starts_word_ci(command, "LASTERROR", &arg)) put_text(result_text, sizeof result_text, rexx_lasterror);
     else if (starts_word_ci(command, "HELP", &arg))
         put_text(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE "
-                 "OPEN TABLES TABLE FORMS SPELL ROW FIRSTROW NEXTROW PREVROW LASTROW COUNTROWS GETFIELDS GETROW ADDROW CHANGEROW DELETEROW QUIT");
+                 "OPEN TABLES TABLE FORMS SPELL ROW FIRSTROW NEXTROW PREVROW LASTROW COUNTROWS FINDROW GETFIELDS GETROW ADDROW CHANGEROW DELETEROW "
+                 "QUERIES QUERYFIELDS COUNTQUERY QUERYROW RUNQUERY QUIT");
     else if (starts_word_ci(command, "DEACTIVATE", &arg)) {
         rc = RX_NOW; put_text(result_text, sizeof result_text, "DEACTIVATE: GFOpenBase has no icon to go to");
     } else if (starts_word_ci(command, "SPELL", &arg)) {   /* the saved forms' words (openbase_spell.h) */
@@ -5870,6 +5911,10 @@ static int rexx_do_command(const char *command, char **result_out)
                || starts_word_ci(command, "NEXTROW", NULL) || starts_word_ci(command, "PREVROW", NULL)
                || starts_word_ci(command, "COUNTROWS", NULL)) {
         rc = rexx_walk(command, result_text, sizeof result_text);
+    } else if ((r = rexx_queries(command, result_text, sizeof result_text)) >= 0) {
+        rc = r;
+    } else if ((r = rexx_find(command, result_text, sizeof result_text)) >= 0) {
+        rc = r;
     } else if ((r = rexx_rows(command, result_text, sizeof result_text)) >= 0) {
         rc = r;
     } else { rc = RX_UNKNOWN; put_text(result_text, sizeof result_text, "Unknown GFOpenBase ARexx command; HELP lists them"); }

@@ -73,6 +73,18 @@ CALL want 'ADDROW Nosuch=1', 10
 CALL want 'LASTERROR', 0
 SAY '     LASTERROR:' res
 CALL want 'GETROW KEY 99999', 5
+/* finding rows and saved queries (0.17.0): no requesters */
+CALL want 'FINDROW "Name=ARexx Test" FIRST', 0
+CALL same 'FINDROW', res, added
+CALL want 'FINDROW "Name=ARexx Test"', 5          /* no later row has it */
+CALL want 'FINDROW', 10
+CALL want 'FINDROW Nosuch=1', 10
+CALL want 'QUERIES', 0
+SAY '     QUERIES:' res
+CALL want 'COUNTQUERY "no such query"', 10
+CALL want 'QUERYROW', 10
+CALL want 'RUNQUERY', 10
+CALL want 'RUNQUERY "no such query"', 10
 CALL want 'ROW 1', 0                               /* every row, key order */
 CALL want 'COUNTROWS', 0
 rows = res

@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.17.0"
+#define OB_CORE_VERSION "0.18.0"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -280,9 +280,44 @@ int ob_rows_at(ob_project *p, const char *table, ob_int first, int max, ob_row_f
 int ob_rexx_rows(ob_project *p, const char *table, ob_int current, const char *command,
                  char *out, size_t size, ob_int *row);
 
+/* ---- ARexx query commands (core 0.18.0, src/base/ob_rexx.c) ----
+ * One of these on the project's saved queries:
+ *   QUERIES                       the saved queries' names, each in quotes
+ *   QUERYFIELDS name              a reading query's headings, each in quotes
+ *   COUNTQUERY name [ANSWER a]... the rows a Select or Union gives, or the
+ *                                 rows an Update, Append or Delete would
+ *                                 change (counted, nothing kept)
+ *   QUERYROW name ROW n [FIELD h] [ANSWER a]...
+ *                                 row n (from 1) of a Select or Union: the
+ *                                 column's value, or every value with a tab
+ *                                 between
+ *   RUNQUERY name [ANSWER a]...   runs an Update, Append or Delete, all or
+ *                                 none, with no requester: RESULT the rows
+ *                                 changed, one step on the Undo list as
+ *                                 ob_query_run makes it
+ * A name with spaces goes in quotes. Each [question] the query asks gets an
+ * ANSWER, in the order ob_query_params gives; too few or too many is
+ * refused with the first question named. The answer, or the reason, goes in
+ * out; the return is ARexx's code (0 OK, 5 no such row or no project, 10 a
+ * bad command, name or value, 20 out of memory), or -1 when command isn't
+ * one of these. *changed (if not NULL) is 1 when rows were changed. */
+int ob_rexx_queries(ob_project *p, const char *command, char *out, size_t size, int *changed);
+
+/* FINDROW Field=Value [BACK] [FIRST] (core 0.18.0): the next row of table,
+ * in the sort and filter of view (NULL: key order), whose field holds the
+ * value as ob_view_find finds it (text contains, any case; other fields
+ * equal). It looks after the row at position current (BACK: before it);
+ * FIRST, or current < 0, from the first row (BACK: the last). out gets the
+ * row's number from 1 and *pos its position from 0; 5 with "No later row
+ * has ..." when none, 10 for a bad command, field or value, -1 when command
+ * isn't FINDROW. */
+struct ob_view;
+int ob_rexx_find(ob_project *p, const char *table, const struct ob_view *view, ob_int current, const char *command,
+                 char *out, size_t size, ob_int *pos);
+
 /* 1 when command must be refused while a form window is open (core 0.14.3):
  * OPEN, QUIT, TABLE t, ROW n, FIRSTROW NEXTROW PREVROW LASTROW, ADDROW,
- * CHANGEROW and DELETEROW. TABLE and ROW on their own, COUNTROWS, GETROW,
+ * CHANGEROW and DELETEROW; RUNQUERY and FINDROW too (core 0.18.0). TABLE and ROW on their own, COUNTROWS, GETROW,
  * GETFIELDS and the rest only read, so they still answer. */
 int ob_rexx_form_refuses(const char *command);
 
