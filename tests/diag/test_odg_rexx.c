@@ -676,7 +676,7 @@ static unsigned char *fake_picture(void *user, const owf_dnum box[4], int width,
     pic_w = width;
     pic_h = height;
     if (pic_fail) return NULL;
-    rgb = (unsigned char *)malloc((size_t)width * (size_t)height * 3);
+    rgb = (unsigned char *)owf_malloc((size_t)width * (size_t)height * 3);
     if (!rgb) return NULL;
     for (y = 0; y < height; y++)
         for (x = 0; x < width; x++) {
