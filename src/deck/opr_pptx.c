@@ -681,6 +681,8 @@ static void put_table(owf_buf *b, const owf_deck *d, const owf_obj *o, const owf
     owf_buf_puts(b, "</a:tbl></a:graphicData></a:graphic></p:graphicFrame>");
 }
 
+static int put_blip(pptxw *w, owf_buf *b, const owf_look *l, int image, rels *r, int first_rid);
+
 static void put_object(pptxw *w, owf_buf *b, const owf_obj *o, const owf_obj *box, int id, rels *r, int first_rid,
                        int on_master)
 {
@@ -734,12 +736,14 @@ static void put_object(pptxw *w, owf_buf *b, const owf_obj *o, const owf_obj *bo
     put_xfrm(b, "a", box);
     if (o->kind == OWF_OBJ_SHAPE) {
         owf_buf_printf(b, "<a:prstGeom prst=\"%s\"><a:avLst/></a:prstGeom>", preset(o));
-        if (OWF_LOOK_FILLED(&o->look) && o->shape != OWF_SHAPE_LINE) put_fill(b, &o->look);
-        else owf_buf_puts(b, "<a:noFill/>");
+        if (o->shape == OWF_SHAPE_LINE || !put_blip(w, b, &o->look, o->image, r, first_rid)) {
+            if (OWF_LOOK_FILLED(&o->look) && o->shape != OWF_SHAPE_LINE) put_fill(b, &o->look);
+            else owf_buf_puts(b, "<a:noFill/>");
+        }
         put_line(b, &o->look);
     } else {
         owf_buf_puts(b, "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>");
-        put_fill(b, &o->look);
+        if (!put_blip(w, b, &o->look, o->image, r, first_rid)) put_fill(b, &o->look);
         if (OWF_SHADE_SET(o->look.line)) put_line(b, &o->look);
     }
     put_shadow(b, &o->look);
@@ -749,18 +753,43 @@ static void put_object(pptxw *w, owf_buf *b, const owf_obj *o, const owf_obj *bo
     owf_buf_puts(b, "</p:sp>");
 }
 
+/* a picture fill (a:blipFill) of image, stretched or tiled (a:tile's sx and sy scale the picture's own
+ * size to the tile), see-through as alphaModFix: 1 when written */
+static int put_blip(pptxw *w, owf_buf *b, const owf_look *l, int image, rels *r, int first_rid)
+{
+    int media, rid, pw, ph;
+    if (image < 0 || l->picture == OWF_PICTURE_NONE || (media = media_of(w, image)) <= 0 ||
+        (rid = rel_of(r, media, first_rid)) < 0)
+        return 0;
+    owf_buf_printf(b, "<a:blipFill rotWithShape=\"1\"><a:blip r:embed=\"rId%d\"", rid);
+    if (l->transparency > 0)
+        owf_buf_printf(b, "><a:alphaModFix amt=\"%d\"/></a:blip>",
+                       (100 - (l->transparency > 100 ? 100 : l->transparency)) * 1000);
+    else
+        owf_buf_puts(b, "/>");
+    if (l->picture == OWF_PICTURE_TILE) {
+        long long sx = 100000, sy = 100000;
+        if (l->tile_width > 0 && l->tile_height > 0 &&
+            owf_deck_image_size(&w->deck->res->images[image], &pw, &ph)) {
+            sx = (long long)l->tile_width * 100000 / pw;
+            sy = (long long)l->tile_height * 100000 / ph;
+        }
+        owf_buf_printf(b, "<a:srcRect/><a:tile tx=\"0\" ty=\"0\" sx=\"%ld\" sy=\"%ld\" flip=\"none\" algn=\"tl\"/>",
+                       (long)sx, (long)sy);
+    } else {
+        owf_buf_puts(b, "<a:srcRect/><a:stretch><a:fillRect/></a:stretch>");
+    }
+    owf_buf_puts(b, "</a:blipFill>");
+    return 1;
+}
+
 /* a page's background: its picture (image into res->images, or -1), else its look bg */
 static void put_background(pptxw *w, owf_buf *b, const owf_look *bg, int image, rels *r, int first_rid)
 {
-    int media, rid;
-    if (image >= 0 && (media = media_of(w, image)) > 0 && (rid = rel_of(r, media, first_rid)) >= 0) {
-        owf_buf_printf(b, "<p:bg><p:bgPr><a:blipFill><a:blip r:embed=\"rId%d\"", rid);
-        if (bg->transparency > 0)
-            owf_buf_printf(b, "><a:alphaModFix amt=\"%d\"/></a:blip>",
-                           (100 - (bg->transparency > 100 ? 100 : bg->transparency)) * 1000);
-        else
-            owf_buf_puts(b, "/>");
-        owf_buf_puts(b, "<a:stretch><a:fillRect/></a:stretch></a:blipFill><a:effectLst/></p:bgPr></p:bg>");
+    if (image >= 0 && bg->picture != OWF_PICTURE_NONE && media_of(w, image) > 0) {
+        owf_buf_puts(b, "<p:bg><p:bgPr>");
+        put_blip(w, b, bg, image, r, first_rid);
+        owf_buf_puts(b, "<a:effectLst/></p:bgPr></p:bg>");
         return;
     }
     if (OWF_SHADE_SET(bg->fill)) {

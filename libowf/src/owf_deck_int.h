@@ -39,10 +39,6 @@ int owf_table_set_row_height(owf_obj *obj, int row, int twips);
 long owf_deck_sin(int tenths);
 long owf_deck_cos(int tenths);
 
-/* A picture's own size in twips, from its PNG or JPEG header (its
- * resolution, else 96 dots an inch); 0 when it is not known. */
-int owf_deck_image_size(const owf_image *image, int *width, int *height);
-
 /* base64, for pictures in flat XML. */
 void owf_deck_base64(owf_buf *out, const unsigned char *data, size_t length);
 

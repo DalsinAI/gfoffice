@@ -787,12 +787,27 @@ static void put_hatches_of(owf_buf *out, const owf_obj *objs, int n, char (*seen
 }
 
 /* The fill attributes of a look (an object's graphic-properties or a page's drawing-page-properties):
- * a hatch over its colour (fill-hatch-solid) or on its own, a gradient, a colour, or none when
- * none_too; then how much shows through (draw:opacity). */
-static void put_fill_attrs(owf_buf *out, const owf_look *l, int none_too)
+ * its picture (image into res->images, or -1) stretched or tiled, a hatch over its colour
+ * (fill-hatch-solid) or on its own, a gradient, a colour, or none when none_too; then how much shows
+ * through (draw:opacity). */
+static void put_fill_attrs(owf_buf *out, const owf_look *l, int image, int none_too)
 {
     int filled = 1;
-    if (l->hatch != OWF_HATCH_NONE) {
+    if (image >= 0 && l->picture != OWF_PICTURE_NONE) {
+        owf_buf_printf(out, " draw:fill=\"bitmap\" draw:fill-image-name=\"op-bg%d\" style:repeat=\"%s\"", image + 1,
+                       l->picture == OWF_PICTURE_TILE ? "repeat" : "stretch");
+        if (l->picture == OWF_PICTURE_TILE) {
+            owf_buf_puts(out, " draw:fill-image-ref-point=\"top-left\"");
+            if (l->tile_width > 0 && l->tile_height > 0) {
+                len_attr(out, "draw:fill-image-width", l->tile_width);
+                len_attr(out, "draw:fill-image-height", l->tile_height);
+            } else {
+                owf_buf_puts(out, " draw:fill-image-width=\"100%\" draw:fill-image-height=\"100%\"");
+            }
+        }
+        if (OWF_SHADE_SET(l->fill))
+            owf_buf_printf(out, " draw:fill-color=\"#%06lx\"", OWF_SHADE_RGB(l->fill));
+    } else if (l->hatch != OWF_HATCH_NONE) {
         char hname[48];
         hatch_name(l, hname, sizeof hname);
         owf_buf_printf(out, " draw:fill=\"hatch\" draw:fill-hatch-name=\"%s\"", hname);
@@ -855,6 +870,22 @@ static void put_gradients(owf_buf *out, const owf_deck *d)
     }
 }
 
+/* The picture a text box or shape is filled with, or -1 */
+static int picture_fill_of(const owf_deck *d, const owf_obj *o)
+{
+    return (o->kind == OWF_OBJ_TEXT || o->kind == OWF_OBJ_SHAPE) && o->look.picture != OWF_PICTURE_NONE &&
+           o->image >= 0 && o->image < d->res->nimages ? o->image : -1;
+}
+
+static int objs_fill_with(const owf_deck *d, const owf_obj *objs, int n, int image)
+{
+    int i;
+    for (i = 0; i < n; i++)
+        if (picture_fill_of(d, &objs[i]) == image)
+            return 1;
+    return 0;
+}
+
 /* The object's graphic style: fill, line, insets, alignment, fitting. */
 static void graphic_style(odpw *w, const owf_obj *o, char *name, int text_frame)
 {
@@ -865,7 +896,7 @@ static void graphic_style(odpw *w, const owf_obj *o, char *name, int text_frame)
 
     owf_buf_init(&body);
     owf_buf_puts(&body, "<style:graphic-properties");
-    put_fill_attrs(&body, &o->look, 1);
+    put_fill_attrs(&body, &o->look, picture_fill_of(w->deck, o), 1);
     put_shadow_attrs(&body, &o->look);
     if (OWF_SHADE_SET(o->look.line)) {
         int dashed = o->look.line_style == OWF_LINE_DASHED || o->look.line_style == OWF_LINE_DOTTED ||
@@ -1370,12 +1401,12 @@ static void put_objects(odpw *w, owf_buf *out, const owf_obj *objs, int n, int p
 /* A page's background (bg: its look; image: its picture into res->images, or -1) */
 static void put_background(owf_buf *out, const owf_deck *d, const owf_look *bg, int image, int master)
 {
-    if (image >= 0 && image < d->res->nimages) {
-        owf_buf_printf(out, " draw:fill=\"bitmap\" draw:fill-image-name=\"op-bg%d\" style:repeat=\"stretch\"", image + 1);
-        if (bg->transparency > 0)
-            owf_buf_printf(out, " draw:opacity=\"%d%%\"", 100 - (bg->transparency > 100 ? 100 : bg->transparency));
+    if (image >= 0 && image < d->res->nimages && bg->picture != OWF_PICTURE_NONE) {
+        owf_look laid = *bg;
+        laid.fill = 0;           /* a picture background has no colour under it */
+        put_fill_attrs(out, &laid, image, 0);
     } else if (OWF_LOOK_FILLED(bg))
-        put_fill_attrs(out, bg, 0);
+        put_fill_attrs(out, bg, -1, 0);
     else if (master)
         owf_buf_puts(out, " draw:fill=\"none\"");
 }
@@ -1887,13 +1918,13 @@ static int build_styles(odpw *w, owf_buf *out)
     owf_buf_puts(out, "<draw:marker draw:name=\"op-arrow\" svg:viewBox=\"0 0 20 30\" svg:d=\"M10 0l-10 30h20z\"/>");
     owf_buf_puts(out, "<draw:stroke-dash draw:name=\"op-dash\" draw:style=\"rect\" draw:dots1=\"1\" draw:dots1-length=\"200%\""
                       " draw:distance=\"100%\"/>");
-    /* background pictures */
+    /* background pictures and picture fills */
     for (i = 0; i < d->res->nimages; i++) {
         int used = 0, k;
         for (k = 0; k < d->nslides && !used; k++)
-            used = d->slides[k].background_image == i;
+            used = d->slides[k].background_image == i || objs_fill_with(d, d->slides[k].objs, d->slides[k].nobjs, i);
         for (k = 0; k < d->nmasters && !used; k++)
-            used = d->masters[k].background_image == i;
+            used = d->masters[k].background_image == i || objs_fill_with(d, d->masters[k].objs, d->masters[k].nobjs, i);
         if (!used)
             continue;
         {
