@@ -821,7 +821,7 @@ static int add_table(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node 
     for (i = first; i < end; ++i) {
         const owf_para *p = &story->paras[i];
         int c = p->table_col < 0 ? 0 : (p->table_col >= cols ? cols - 1 : p->table_col);
-        /* (2.0.52: or a tracked cell by itself, its column put in or deleted: the same, the cell alone) */
+        /* (2.0.53: or a tracked cell by itself, its column put in or deleted: the same, the cell alone) */
         int rnum = p->row_revision ? p->row_revision : p->cell_revision;
         const owf_revision *rv = OWF_DOC_REVISION(doc, rnum);
         /* 2.0.38: a tracked row: edged in its author's colour, or (the final view) a deleted one left out */

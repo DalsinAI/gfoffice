@@ -324,7 +324,7 @@ static void finish_story(owf_doc *doc, owf_story *s)
         if (p->row_revision < 0 || p->row_revision > doc->nrevisions || p->table_id < 0)
             p->row_revision = 0;                     /* 1.12 */
         if (p->cell_revision < 0 || p->cell_revision > doc->nrevisions || p->table_id < 0)
-            p->cell_revision = 0;                    /* 1.21 */
+            p->cell_revision = 0;                    /* 1.22 */
     }
     if (s->nparas)                                   /* the story's last end is no paragraph mark */
         s->paras[s->nparas - 1].mark_revision = 0;
@@ -416,7 +416,7 @@ int owf_doc_has_row_changes(const owf_doc *doc)
         if (doc->body.paras[i].table_id >= 0 && ((doc->body.paras[i].row_revision > 0 &&
             doc->body.paras[i].row_revision <= doc->nrevisions) || (doc->body.paras[i].cell_revision > 0 &&
             doc->body.paras[i].cell_revision <= doc->nrevisions)))
-            return 1;                                /* (1.21: a cell's too) */
+            return 1;                                /* (1.22: a cell's too) */
     return 0;
 }
 
@@ -460,7 +460,7 @@ static int accept_story(const owf_doc *doc, const owf_story *src, owf_story *dst
         if (sp->table_id >= 0 && rev_kind(doc, sp->row_revision) == OWF_REV_DELETE)
             continue;                                /* 1.12: a deleted row's cell: gone */
         if (sp->table_id >= 0 && !sp->row_revision && rev_kind(doc, sp->cell_revision) == OWF_REV_DELETE)
-            continue;                                /* 1.21: a deleted cell: gone (owf_cells_renumber after) */
+            continue;                                /* 1.22: a deleted cell: gone (owf_cells_renumber after) */
         if (joined) {
             dp = &dst->paras[dst->nparas - 1];
         } else {
@@ -488,7 +488,7 @@ static int accept_story(const owf_doc *doc, const owf_story *src, owf_story *dst
             }
         }
     }
-    {   /* 1.21: a deleted cell gone: its table's cells numbered again */
+    {   /* 1.22: a deleted cell gone: its table's cells numbered again */
         int k, last = -1;
         for (k = 0; k < src->nparas; ++k)
             if (src->paras[k].table_id >= 0 && src->paras[k].table_id != last && !src->paras[k].row_revision &&

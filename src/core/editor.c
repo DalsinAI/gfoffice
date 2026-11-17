@@ -160,7 +160,7 @@ static int clone_story(owf_story *dst, const owf_story *src)
         dp->section_break = sp->section_break;
         dp->mark_revision = sp->mark_revision;       /* 2.1.0 */
         dp->row_revision = sp->row_revision;         /* 2.0.38 */
-        dp->cell_revision = sp->cell_revision;       /* 2.0.52 */
+        dp->cell_revision = sp->cell_revision;       /* 2.0.53 */
         dp->style = NULL;                            /* 2.0.12: its style and bookmarks too */
         dp->bookmarks = NULL;
         if (sp->style && !(dp->style = copy_bytes(sp->style, strlen(sp->style)))) return 0;
@@ -1370,7 +1370,7 @@ static int hidden_para(ow_editor *editor, int i)
         return 1;
     if (!editor->final_view || i < 0 || i >= story->nparas || story->paras[i].table_id < 0) return 0;
     r = OWF_DOC_REVISION(editor->doc, story->paras[i].row_revision ? story->paras[i].row_revision
-                                                                     : story->paras[i].cell_revision);   /* (2.0.52: or cell) */
+                                                                     : story->paras[i].cell_revision);   /* (2.0.53: or cell) */
     return r && r->kind == OWF_REV_DELETE;
 }
 
@@ -2155,7 +2155,7 @@ static int walk_changes(const owf_story *story, change_fn fn, void *userdata)
             it.para = i;
             if (j < 0) {
                 if (p->table_id < 0) continue;
-                it.run = -2;                         /* 2.0.38: its row (2.0.52: or the cell by itself) */
+                it.run = -2;                         /* 2.0.38: its row (2.0.53: or the cell by itself) */
                 rev = p->row_revision ? p->row_revision : p->cell_revision;
                 if (!rev && cur) continue;           /* a row with no change is no gap in its cells' text */
             } else if (j < p->nruns) {
@@ -2473,7 +2473,7 @@ static void remove_para_at(owf_story *story, int index);
  * paragraph moves under it; the tables' rows are numbered again last. */
 static int resolve_rows(ow_editor *editor, owf_story *story, const ow_change_item *items, int n, int accept)
 {
-    /* (2.0.52: and a cell changed by itself, col >= 0: kept, or gone with its row's later cells moved left) */
+    /* (2.0.53: and a cell changed by itself, col >= 0: kept, or gone with its row's later cells moved left) */
     typedef struct { int id, row, col, gone; } row_pick;
     row_pick *rp;
     int k, i, m = 0, changed = 0;
@@ -5200,7 +5200,7 @@ int ow_editor_table_delete_row(ow_editor *editor)
 
 int ow_editor_table_insert_column(ow_editor *editor)
 {
-    /* 2.0.38: columns were not recorded as changes; 2.0.52: recording, each new cell is an insertion of its own
+    /* 2.0.38: columns were not recorded as changes; 2.0.53: recording, each new cell is an insertion of its own
      * (cell_revision, DOCX w:cellIns) */
     int id,col,cols,i,maxrow=-1,r,ins;
     owf_story *story;
@@ -5231,7 +5231,7 @@ int ow_editor_table_insert_column(ow_editor *editor)
 
 int ow_editor_table_delete_column(ow_editor *editor)
 {
-    /* 2.0.38: columns were not recorded as changes; 2.0.52: recording, each of the column's cells is marked
+    /* 2.0.38: columns were not recorded as changes; 2.0.53: recording, each of the column's cells is marked
      * deleted (cell_revision, DOCX w:cellDel) and stays till that is accepted; the author's own inserted ones
      * go (and the cells after them move left) */
     int id,col,cols,i,del=0,removed=0;
