@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.20.0"
+#define OWF_VERSION "1.21.0"
 
 /* Any of GFOffice's libraries is a library (owf_open.h, owf_proto.h; owfdiag.library's calls come through
  * opendiag_proto.h). */
