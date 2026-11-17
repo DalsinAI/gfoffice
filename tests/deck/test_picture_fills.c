@@ -283,6 +283,63 @@ static void test_layout_and_pdf(const owf_deck *deck)
     free(pdf);
 }
 
+/* Kill Crazy's case on #19: a file may give any tile size above 0, so a tile 2000 in wide and 0.001 in
+ * high (2,880,000 by 1 twips), and the other way round, and one as large as an int: laid out, it ends,
+ * with fewer than 32 tiles a row and a column, none past the box */
+static void test_extreme_tiles(owf_deck *deck)
+{
+    static const int sizes[][2] = {{2880000, 1}, {1, 2880000}, {0x7FFFFFFF, 1}, {1, 1}};
+    owf_obj *o = &deck->slides[0].objs[1];
+    int k, keep_w = o->look.tile_width, keep_h = o->look.tile_height;
+    for (k = 0; k < 4; k++) {
+        opr_slide *laid;
+        char what[96];
+        o->look.tile_width = sizes[k][0];
+        o->look.tile_height = sizes[k][1];
+        laid = opr_slide_layout(deck, 0, NULL, NULL, "1 January 2026");
+        snprintf(what, sizeof what, "a %d by %d twip tile: laid out, at most 32 by 32 tiles", sizes[k][0], sizes[k][1]);
+        if (laid) {
+            int cropped, last, n = images_in(laid, fill_frame_of(laid, o), &cropped, &last);
+            CHECK(n >= 1 && n <= 32 * 32, what);
+            opr_slide_free(laid);
+        } else {
+            CHECK(0, what);
+        }
+    }
+    o->look.tile_width = keep_w;
+    o->look.tile_height = keep_h;
+    {
+        /* and read so from the file: the text box's tiles 2000in by 0.001in */
+        static const char from[] = "draw:fill-image-width=\"1cm\" draw:fill-image-height=\"0.5cm\"",
+                          to[] = "draw:fill-image-width=\"2000in\" draw:fill-image-height=\"0.001in\"";
+        const char *at = strstr(FODP, from);
+        char *odp = malloc(sizeof FODP + sizeof to);
+        owf_deck *wide = NULL;
+        CHECK(at && odp, "the extreme file made");
+        if (at && odp) {
+            size_t head = (size_t)(at - FODP);
+            memcpy(odp, FODP, head);
+            strcpy(odp + head, to);
+            strcat(odp, at + sizeof from - 1);
+            CHECK(owf_import_deck_memory((const unsigned char *)odp, strlen(odp), "fodp", &wide, NULL, NULL) == OWF_OK &&
+                  wide && wide->nslides == 1 && wide->slides[0].nobjs == 4, "read: a tile 2000 in by 0.001 in");
+            if (wide && wide->nslides == 1 && wide->slides[0].nobjs == 4) {
+                const owf_look *l = &wide->slides[0].objs[1].look;
+                char what[96];
+                snprintf(what, sizeof what, "read as a tile %d by %d twips", l->tile_width, l->tile_height);
+                CHECK(l->picture == OWF_PICTURE_TILE && l->tile_width > 1000000, what);
+            }
+            if (wide) {
+                opr_slide *laid = opr_slide_layout(wide, 0, NULL, NULL, "1 January 2026");
+                CHECK(laid != NULL, "and it lays out (it hung)");
+                opr_slide_free(laid);
+            }
+        }
+        owf_deck_free(wide);
+        free(odp);
+    }
+}
+
 int main(void)
 {
     owf_deck *deck = NULL;
@@ -291,6 +348,7 @@ int main(void)
         test_pptx(deck);
         test_clip(deck);
         test_layout_and_pdf(deck);
+        test_extreme_tiles(deck);
     }
     owf_deck_free(deck);
     printf("picture-fills: %d checks, %d failed\n", checks, failures);

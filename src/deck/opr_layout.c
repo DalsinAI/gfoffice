@@ -1065,26 +1065,29 @@ static int add_fill_piece(builder *b, ol_node *n, int image, int x, int y, int w
  * cropped to the box. */
 static int add_picture_fill(builder *b, ol_node *n, int image, const owf_look *l, int x, int y, int w, int h)
 {
-    int tw = l->tile_width, th = l->tile_height, i, j;
+    int tw = l->tile_width, th = l->tile_height;
+    long long i, j;                   /* a tile can be as large as an int: i + tw must not overflow */
     if (l->picture != OWF_PICTURE_TILE || w <= 0 || h <= 0)
         return add_fill_piece(b, n, image, x, y, w, h, NULL);
     if ((tw <= 0 || th <= 0) && !owf_deck_image_size(&b->deck->res->images[image], &tw, &th))
         return add_fill_piece(b, n, image, x, y, w, h, NULL);
     if (tw <= 0 || th <= 0)
         return add_fill_piece(b, n, image, x, y, w, h, NULL);
+    /* each side doubles only while it is at most half its box, then is the box (or stays larger), so
+     * a very wide and very thin tile from the file cannot overflow: the other side goes on doubling */
     while (w / tw >= 32 || h / th >= 32) {
-        tw *= 2;
-        th *= 2;
+        tw = tw <= w / 2 ? tw * 2 : tw > w ? tw : w;
+        th = th <= h / 2 ? th * 2 : th > h ? th : h;
     }
     for (j = 0; j < h; j += th)
         for (i = 0; i < w; i += tw) {
-            int pw = w - i < tw ? w - i : tw, ph = h - j < th ? h - j : th, crop[4];
+            int pw = w - i < tw ? (int)(w - i) : tw, ph = h - j < th ? (int)(h - j) : th, crop[4];
             crop[0] = crop[1] = 0;
             crop[2] = (int)((long long)(tw - pw) * OL_SHAPE_COORDS / tw);
             crop[3] = (int)((long long)(th - ph) * OL_SHAPE_COORDS / th);
             if (crop[2] >= OL_SHAPE_COORDS || crop[3] >= OL_SHAPE_COORDS)
                 continue;
-            if (!add_fill_piece(b, n, image, x + i, y + j, pw, ph, crop))
+            if (!add_fill_piece(b, n, image, x + (int)i, y + (int)j, pw, ph, crop))
                 return 0;
         }
     return 1;
