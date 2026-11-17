@@ -184,6 +184,28 @@ static void test_files(void)
         CHECK(fgets(line, sizeof line, f) && strncmp(line, "%PDF-", 5) == 0);
         fclose(f);
     }
+    /* VIEW chooses the view the PDF is of; a PDF only; Resource Usage needs a resource. */
+    ok("EXPORT build/host/rexx-view.pdf VIEW NETWORK");
+    f = fopen("build/host/rexx-view.pdf", "rb");
+    CHECK(f != NULL);
+    if (f) {
+        CHECK(fgets(line, sizeof line, f) && strncmp(line, "%PDF-", 5) == 0);
+        fclose(f);
+    }
+    ok("EXPORT build/host/rexx-view.out FORMAT PDF VIEW=taskusage");
+    ok("EXPORT build/host/rexx-view.pdf VIEW GANTT");
+    CHECK_N(rx_do("EXPORT build/host/rexx-view.pdf VIEW GRAPH"), OPJ_RX_ERROR);
+    CHECK_S(rx.lasterror, "EXPORT: VIEW is GANTT, USAGE, TASKUSAGE or NETWORK, not GRAPH");
+    CHECK_N(rx_do("EXPORT build/host/rexx-view.xml VIEW NETWORK"), OPJ_RX_ERROR);
+    CHECK_S(rx.lasterror, "EXPORT: VIEW goes with a PDF only");
+    if (!rx.doc->plan->nresources) {
+        CHECK_N(rx_do("EXPORT build/host/rexx-view.pdf VIEW USAGE"), OPJ_RX_NOW);
+        CHECK_S(rx.lasterror, "The plan has no resources to print");
+    } else {
+        ok("EXPORT build/host/rexx-view.pdf VIEW USAGE");
+    }
+    remove("build/host/rexx-view.pdf");
+    remove("build/host/rexx-view.out");
     CHECK_N(rx_do("SAVEAS build/host/rexx-test-saved.pdf"), OPJ_RX_OK);  /* SAVEAS never writes a PDF */
     f = fopen("build/host/rexx-test-saved.pdf", "rb");
     CHECK(f != NULL);
@@ -257,6 +279,8 @@ static void test_files(void)
     CHECK_N(rx.doc->plan->start, AT(23, 8, 0));                            /* the plan's start kept */
     CHECK_N(rx_do("DELETETASK 1"), OPJ_RX_ERROR);                          /* nothing there */
     CHECK_N(rx_do("EXPORT build/host/rexx-empty.pdf"), OPJ_RX_NOW);         /* no tasks: nothing to print */
+    CHECK_S(rx.lasterror, "The plan has no tasks to print");
+    CHECK_N(rx_do("EXPORT build/host/rexx-empty.pdf VIEW NETWORK"), OPJ_RX_NOW);
     CHECK_S(rx.lasterror, "The plan has no tasks to print");
 }
 
