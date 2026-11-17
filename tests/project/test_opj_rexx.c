@@ -734,6 +734,20 @@ static void test_report(void)
     CHECK_S(ok("LASTERROR"), "REPORT: can't save a report as build/host/c.zzz");
     CHECK_N(rx_do("REPORT critical build/host/c.pdf FORMAT frob"), OPJ_RX_ERROR);
     CHECK(strstr(ok("HELP REPORT"), "NAME/A,FILE/A,FORMAT/K") != NULL);
+    /* SAVESHEET: the task and resource sheets */
+    CHECK_S(ok("SAVESHEET Tasks build/host/tasks.odt"), "");
+    data = read_all("build/host/tasks.odt", &len);
+    CHECK(data && len > 200 && !memcmp(data, "PK", 2));
+    free(data);
+    ok("SAVESHEET \"Resource Sheet\" build/host/res.out FORMAT text");
+    data = read_all("build/host/res.out", &len);
+    CHECK(data && !strncmp(data, "Resource Sheet\nID\tResource Name\t", 32) && strstr(data, "\n1\tDale\tWork\t"));
+    free(data);
+    CHECK_N(rx_do("SAVESHEET gantt build/host/g.pdf"), OPJ_RX_ERROR);
+    CHECK_S(ok("LASTERROR"), "SAVESHEET: SHEET is Tasks or Resources, not gantt");
+    CHECK_N(rx_do("SAVESHEET tasks build/host/t.zzz"), OPJ_RX_ERROR);
+    remove("build/host/tasks.odt");
+    remove("build/host/res.out");
     remove("build/host/summary.pdf");
     remove("build/host/who.out");
 }
