@@ -97,6 +97,16 @@ static void test_lines(void)
     CHECK(ok, "at 90 degrees: lines down");
     n = opr_hatch_lines(square, 4, 0, 0, OPR_HATCH_SINGLE, 450, 100, out, 64);
     CHECK(n >= 13 && n <= 15, "at 45 degrees: the diagonal's 1414 across, 100 apart");
+    /* the sine is libowf's one (owf_fill_sin16k: 30 degrees is 8192, its cosine 14189, of 16384): each line
+     * runs along (cos, -sin), y down, to within the rounding of its two ends */
+    n = opr_hatch_lines(square, 4, 0, 0, OPR_HATCH_SINGLE, 300, 100, out, 64);
+    for (k = 0, ok = n >= 12 && n <= 15; ok && k < n; k++) {
+        long dx = out[k * 4 + 2] - out[k * 4], dy = out[k * 4 + 3] - out[k * 4 + 1];
+        long off = dy * 14189 + dx * 8192;
+        if (off < 0) off = -off;
+        if ((!dx && !dy) || off > 4 * (14189 + 8192)) ok = 0;
+    }
+    CHECK(ok, "at 30 degrees: every line on the one sine's slope");
 }
 
 static const ol_shape_style *shape_at(const opr_slide *laid, int frame)
