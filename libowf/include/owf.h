@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.22.1"
+#define OWF_VERSION "1.23.1"
 
 /* Any of GFOffice's libraries is a library (owf_open.h, owf_proto.h; owfdiag.library's calls come through
  * opendiag_proto.h). */
@@ -368,7 +368,7 @@ typedef struct {
     char *date;              /* ISO 8601, "2026-11-11T14:03:00"; NULL: unknown */
 } owf_revision;
 
-/* 1.11: a tracked format change (DOCX's w:rPrChange; 1.22.1: ODT's text:format-change, the format before in
+/* 1.11: a tracked format change (DOCX's w:rPrChange; 1.23.1: ODT's text:format-change, the format before in
  * GFOffice's gfo:before-style): who made it, when, and the run's format before it.
  * Accepting it keeps the run's format; rejecting it gives the run this one back. Its size never changes
  * (owf_struct_size doesn't list it). */
@@ -378,7 +378,7 @@ typedef struct owf_format_change {
     owf_charfmt before;
 } owf_format_change;
 
-/* 1.21: a tracked paragraph format change (DOCX's w:pPrChange; 1.22.1: ODT's text:format-change round the
+/* 1.21: a tracked paragraph format change (DOCX's w:pPrChange; 1.23.1: ODT's text:format-change round the
  * paragraph's text, the format before in gfo:before-paragraph-style): who made it, when, and the paragraph's format
  * and style before it. Accepting it keeps the paragraph's format; rejecting it gives the paragraph this one
  * back. Its size never changes (owf_struct_size doesn't list it). */

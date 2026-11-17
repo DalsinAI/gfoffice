@@ -34,7 +34,7 @@
 #define NS_DRAW "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
 #define NS_DC "http://purl.org/dc/elements/1.1/"
 #define NS_META "urn:oasis:names:tc:opendocument:xmlns:meta:1.0"
-/* 1.22.1: GFOffice's own attributes: the format before a tracked format change (out_odt.c) */
+/* 1.23.1: GFOffice's own attributes: the format before a tracked format change (out_odt.c) */
 #define NS_GFO "urn:org:amigachrome:names:experimental:gfoffice:xmlns:text:1.0"
 
 #define MAX_FACES 128
@@ -78,7 +78,7 @@ typedef struct {
     int rev, in_deletion;
     struct { int para, run, rev; } *splits;
     int nsplits, capsplits;
-    /* 1.22.1: tracked format changes (text:format-change): the run format change open (from its change-start to
+    /* 1.23.1: tracked format changes (text:format-change): the run format change open (from its change-start to
      * its change-end: its region's id, change and the text format where it began), and the paragraph format
      * change the paragraph being read gets */
     owf_format_span fspan;
@@ -943,7 +943,7 @@ static int region_change(odt *o, const owf_xml_node *region, const owf_xml_node 
     int rev;
     *what = w;
     if (!w)
-        return 0;                                    /* 1.22.1: a format change is odt_format_change's */
+        return 0;                                    /* 1.23.1: a format change is odt_format_change's */
     info = owf_xml_child(w, NS_OFFICE, "change-info");
     owf_buf_init(&author);
     owf_buf_init(&date);
@@ -956,7 +956,7 @@ static int region_change(odt *o, const owf_xml_node *region, const owf_xml_node 
     return rev;
 }
 
-/* 1.22.1: a tracked format change's start or end (text:format-change in its region). A paragraph's
+/* 1.23.1: a tracked format change's start or end (text:format-change in its region). A paragraph's
  * (gfo:before-paragraph-style) goes to the paragraph its start is in; a run's names the runs from its start to
  * its end, one at a time (a format change inside another is the outer one's). ODF keeps no format before: a
  * file from elsewhere gives the changed text's own (rejecting it keeps the format), and the report says so. */
@@ -1031,7 +1031,7 @@ static void odt_format_change(odt *o, const owf_xml_node *c, const owf_xml_node 
     owf_buf_free(&date);
 }
 
-/* 1.22.1: the paragraph just made gets the paragraph format change begun in it */
+/* 1.23.1: the paragraph just made gets the paragraph format change begun in it */
 static void odt_para_format_done(odt *o)
 {
     owf_story *st = o->b->story;
@@ -1278,7 +1278,7 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
         int rev = region && !chg && !o->in_deletion ? region_change(o, region, &what) : 0;
         if (chg) {
             if (!o->in_deletion)
-                odt_format_change(o, c, chg, fmt);  /* 1.22.1 */
+                odt_format_change(o, c, chg, fmt);  /* 1.23.1 */
         } else if (!rev || !what) {
             /* a format change, or a change we don't know: nothing */
         } else if (owf_xml_is(c, NS_TEXT, "change-start") && owf_xml_is(what, NS_TEXT, "insertion")) {
@@ -1403,11 +1403,11 @@ static void paragraph(odt *o, const owf_xml_node *p, const char *prefix, int lis
         owf_builder_text(o->b, prefix, strlen(prefix));
         owf_builder_special(o->b, OWF_RUN_TAB, OWF_FIELD_PAGE);
     }
-    o->para_fc = 0;                                  /* 1.22.1 */
+    o->para_fc = 0;                                  /* 1.23.1 */
     inline_children(o, p, &cf);
     owf_builder_end_para(o->b);
     odt_para_bookmarks(o);                           /* 1.4 */
-    odt_para_format_done(o);                         /* 1.22.1 */
+    odt_para_format_done(o);                         /* 1.23.1 */
 }
 
 static void blocks(odt *o, const owf_xml_node *n, int list_level, const char *list_name);

@@ -410,7 +410,7 @@ static void test_odf_form(void)
     owf_doc_free(doc);
 }
 
-/* 1.22.1: another program's tracked format change (LibreOffice's: ODF's text:format-change, who and when only,
+/* 1.23.1: another program's tracked format change (LibreOffice's: ODF's text:format-change, who and when only,
  * across a paragraph end): the text keeps its format, the change names it with the format before the text's own,
  * the report says so once; a region's text:change point and a change-end with no start are nothing */
 static void test_odf_format_change(void)
@@ -564,7 +564,7 @@ static void test_format_changes(void)
     }
     CHECK(!kept, "the runs' format changes are kept, not reported");
 
-    /* 1.22.1: ODT keeps them too (text:format-change, the format before in gfo:before-style), with nothing to
+    /* 1.23.1: ODT keeps them too (text:format-change, the format before in gfo:before-style), with nothing to
      * report, and the same again from its own file */
     {
         owf_report *op = owf_report_new(), *ip = owf_report_new();
@@ -1357,7 +1357,7 @@ static void test_para_format_changes(void)
     }
     CHECK(!kept, "the paragraphs' format changes are kept, not reported");
 
-    /* 1.22.1: ODT keeps them too (text:format-change round the paragraph's text, the format before in
+    /* 1.23.1: ODT keeps them too (text:format-change round the paragraph's text, the format before in
      * gfo:before-paragraph-style), and the same again from its own file */
     {
         owf_report *op = owf_report_new();

@@ -184,9 +184,12 @@ int opp_merge_load_file(const char *path, ow_merge_table **table)
     if (!table) return OWF_ERR_FORMAT;
     *table = NULL;
     if (!path) return OWF_ERR_IO;
-    /* libowf's file reading (owf_sys.c, or AmigaDOS's in the libraries), as owf_pub_read_file */
+    /* libowf's files (owf_sys.c, or AmigaDOS's in the libraries), as owf_pub_read_file: a file too big for
+     * a merge table is refused by its length, before any of it is read */
+    if ((result = owf_sys_file_size(path, &size)) != OWF_OK) return result;
+    if (size > OW_MERGE_MAX_BYTES) return OWF_ERR_UNSUPPORTED;
     if ((result = owf_sys_read_file(path, &data, &size)) != OWF_OK) return result;
-    if (size > OW_MERGE_MAX_BYTES) { free(data); return OWF_ERR_UNSUPPORTED; }
+    if (size > OW_MERGE_MAX_BYTES) { free(data); return OWF_ERR_UNSUPPORTED; }   /* it grew since */
     *table = ow_merge_table_from_text((const char *)data, size, &memory);
     free(data);
     if (!*table) return memory ? OWF_ERR_MEMORY : OWF_ERR_FORMAT;

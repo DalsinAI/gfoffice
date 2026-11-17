@@ -87,6 +87,7 @@ for f in $OWFSRC; do
     */owf_booknum.c | */owf_xlformula.c | */in_xlsx.c | */out_xlsx.c | */in_ods.c | */out_ods.c | */in_csv.c) ;;
     */owf_deck.c | */in_odp.c | */out_odp.c | */in_pptx.c | */in_ppt.c | */owf_pdf.c | */owf_pdffonts.c) ;;
     */owf_fill.c | */owf_picture.c) ;;   # the shared fills and picture writers: the drawing programs' (below)
+    */owf_print.c) ;;   # the print core: it reads the page model (owf_deck.c), so the page programs' (below)
     */in_pub.c) ;;   # GFOpenPressmaster's .pub reader: it needs owf_cfb.c
     */owf_cfbw.c | */out_pub.c) ;;   # GFOpenPressmaster's .pub save and its compound file writer
     */owf_kind.c) ;;   # owf_file_kind: it reads the workbook and .pub detectors
@@ -123,7 +124,8 @@ if [ "$OWF" = library ]; then
         "$CC" $OWCFLAGS -DOWF_USE_CALC_LIBRARY -c "$HERE/tools/owc_book.c" &&
         "$CC" $OWCFLAGS -DOWF_USE_PUB_LIBRARY -c "$HERE/tools/owc_pub.c" &&
         "$CC" $OWCFLAGS -DOWF_USE_PRESENT_LIBRARY $OWC_DECK -c "$HERE/tools/owc_deck.c" $OWC_PDF \
-            "$HERE/libowf/src/owf_fill.c")   # opr_gradient.c's fills: the drawing programs', not a library's
+            "$HERE/libowf/src/owf_fill.c" "$HERE/libowf/src/owf_print.c")   # opr_gradient.c's fills and opr_pdf.c's
+                                                    # print core: the drawing programs', not owfpresent.library's
     # shellcheck disable=SC2086
     "$CC" $OWCFLAGS "$HERE/tools/owconvert.c" "$OWC_OBJ"/*.o -lm -o "$OUT/OWConvert"
 else
@@ -200,7 +202,8 @@ OWFSRC_DECK="$OWFSRC_DOCS"
 # owf_chart.c: a slide's charts are read and written as chart parts (Presentation gap 2); owf_booknum.c reads
 # and writes their numbers
 # owf_fill.c and owf_picture.c: the fills and picture writers every drawing program shares (owf_fill.h, owf_picture.h)
-for f in owf_deck.c in_odp.c out_odp.c in_pptx.c in_ppt.c owf_pdf.c owf_pdffonts.c owf_fill.c owf_picture.c \
+# owf_print.c: the print core (owf_print.h), opr_pdf.c's bleed, crop marks and booklet order
+for f in owf_deck.c in_odp.c out_odp.c in_pptx.c in_ppt.c owf_pdf.c owf_pdffonts.c owf_fill.c owf_picture.c owf_print.c \
     owf_chart.c owf_chartodf.c owf_booknum.c; do
     OWFSRC_DECK="$OWFSRC_DECK $HERE/libowf/src/$f"
 done

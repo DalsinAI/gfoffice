@@ -26,6 +26,7 @@
 
 #include "owf_deck.h"
 #include "owf_spell.h"
+#include "owf_print.h"                  /* the print core: OPR_PDF_MAX_BLEED and the marks are its */
 #include "gfopenlayout.h"
 
 #ifdef __cplusplus
@@ -96,9 +97,10 @@ typedef struct {
     int crop_marks;
 } opr_pdf_options;
 
-#define OPR_PDF_MAX_BLEED 1440
-#define OPR_PDF_MARK_LENGTH 360  /* a crop mark, twips */
-#define OPR_PDF_MARK_GAP 120     /* the least room between a mark and the trimmed edge, twips */
+/* libowf's print core's (owf_print.h), by their first names */
+#define OPR_PDF_MAX_BLEED OWF_PRINT_MAX_BLEED
+#define OPR_PDF_MARK_LENGTH OWF_PRINT_MARK_LENGTH  /* a crop mark, twips */
+#define OPR_PDF_MARK_GAP OWF_PRINT_MARK_GAP        /* the least room between a mark and the trimmed edge, twips */
 /* The room round each page for options' bleed and crop marks, twips (0: none). */
 int opr_pdf_margin(const opr_pdf_options *options);
 

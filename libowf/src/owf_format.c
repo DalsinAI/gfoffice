@@ -230,7 +230,7 @@ int owf_import_file(const char *path, const char *format, owf_doc **doc,
     return result;
 }
 
-/* 1.22.1: whether a header's or footer's run or paragraph has a tracked format change (ODT keeps the body's only:
+/* 1.23.1: whether a header's or footer's run or paragraph has a tracked format change (ODT keeps the body's only:
  * styles.xml is written with every change accepted) */
 static int odt_header_format_changes(const owf_doc *doc)
 {
@@ -274,7 +274,7 @@ int owf_export_file(const owf_doc *doc, const char *path, const char *format, ow
         result = f->export(view, &data, &length, report);
         owf_doc_accepted_free(view);
     } else {
-        if (f == &owf_format_odt && odt_header_format_changes(doc))    /* 1.22.1: ODT keeps the body's */
+        if (f == &owf_format_odt && odt_header_format_changes(doc))    /* 1.23.1: ODT keeps the body's */
             owf_report_add(report, OWF_NOTE_APPROX,
                            "Tracked format changes in headers and footers were saved accepted (as the format is now) in %s",
                            f->description);
