@@ -1184,6 +1184,12 @@ static void as_build(int task)
     }
 }
 
+/* Resource r's name for the Assign window's info line; "" for none or out of range. */
+static const char *res_name(int r)
+{
+    return r >= 0 && r < DOC->plan->nresources && DOC->plan->resources[r].name ? DOC->plan->resources[r].name : "";
+}
+
 static void assign_window(void)
 {
     enum { A_LIST = 1, A_UNITS, A_ASSIGN, A_REMOVE, A_REPLACE, A_ADD, A_CLOSE };
@@ -1279,14 +1285,14 @@ static void assign_window(void)
             case A_ASSIGN:
                 if (sel < 0) break;
                 rc = opj_assign_resource(DOC, task, sel, units ? (const char *)units : "");
-                if (rc == OWF_OK) snprintf(info, sizeof info, "%.40s assigned", DOC->plan->resources[sel].name);
+                if (rc == OWF_OK) snprintf(info, sizeof info, "%.40s assigned", res_name(sel));
                 changed = 1;
                 break;
             case A_REMOVE:
                 if (sel < 0) break;
                 what = "Remove";
                 rc = opj_remove_resource(DOC, task, sel);
-                if (rc == OWF_OK) snprintf(info, sizeof info, "%.40s removed", DOC->plan->resources[sel].name);
+                if (rc == OWF_OK) snprintf(info, sizeof info, "%.40s removed", res_name(sel));
                 changed = 1;
                 break;
             case A_REPLACE: {
@@ -1304,7 +1310,7 @@ static void assign_window(void)
                 rc = opj_replace_resource(DOC, task, sel, to, units ? (const char *)units : "");
                 if (rc == OWF_OK) {
                     snprintf(info, sizeof info, kind && !(units && *units) ? "%.30s replaced: one unit, as it is another kind"
-                                                                           : "%.30s replaced", DOC->plan->resources[sel].name);
+                                                                           : "%.30s replaced", res_name(sel));
                     sel = to;
                 }
                 changed = 1;
@@ -1323,6 +1329,7 @@ static void assign_window(void)
             }
             if (rc != OWF_OK) {
                 struct Window *keep = win;
+                info[0] = 0;                          /* not the last success under the error */
                 win = aw;
                 edit_failed(rc, what);
                 win = keep;
