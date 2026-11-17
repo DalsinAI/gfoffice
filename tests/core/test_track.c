@@ -1078,6 +1078,97 @@ static void test_format_nav(void)
     owf_doc_free(doc);
 }
 
+/* 2.0.52: document compare: the revised text as tracked changes by an author; one undo; the same: nothing */
+static const char *plain(const owf_doc *doc)
+{
+    static char buf[8192];
+    size_t used = 0;
+    int i, j;
+    buf[0] = 0;
+    for (i = 0; i < doc->body.nparas; ++i) {
+        const owf_para *p = &doc->body.paras[i];
+        for (j = 0; j < p->nruns; ++j)
+            if (p->runs[j].kind == OWF_RUN_TEXT && p->runs[j].text && used + strlen(p->runs[j].text) + 2 < sizeof buf) {
+                memcpy(buf + used, p->runs[j].text, strlen(p->runs[j].text) + 1);
+                used += strlen(p->runs[j].text);
+            }
+        if (i + 1 < doc->body.nparas && used + 2 < sizeof buf) { buf[used++] = '|'; buf[used] = 0; }
+    }
+    return buf;
+}
+
+static void test_compare(void)
+{
+    static const char *const before[] = { "The quick brown fox", "Second line", "Third" };
+    static const char *const after[] = { "The slow brown fox jumps", "Third", "New last" };
+    static const char *const first[] = { "Opening", "The quick brown fox", "Second line", "Third" };
+    owf_doc *doc = doc_of(before, 3), *rev = doc_of(after, 3), *rev2 = doc_of(first, 4), *same = doc_of(before, 3);
+    ow_editor *ed;
+    int n, i, ok;
+    if (!doc || !rev || !rev2 || !same) { CHECK(0, "compare docs"); return; }
+    ed = ow_editor_new(doc);
+    ow_editor_set_review_author(ed, "Ann");
+    n = ow_editor_compare(ed, rev, "Reviewer");
+    CHECK(n == 4, "compare: two word changes, a paragraph deleted, one added");
+    CHECK(!strcmp(dump(doc), "The [-quick-]{+slow+} brown fox{+ jumps+}|[-Second line-]|-Third|+{+New last+}"),
+          "compare: the changes tracked");
+    if (strcmp(dump(doc), "The [-quick-]{+slow+} brown fox{+ jumps+}|[-Second line-]|-Third|+{+New last+}"))
+        printf("  got %s\n", dump(doc));
+    for (i = 0, ok = doc->nrevisions > 0; i < doc->nrevisions; ++i)
+        if (!doc->revisions[i].author || strcmp(doc->revisions[i].author, "Reviewer")) ok = 0;
+    CHECK(ok, "compare: the changes are the author's");
+    CHECK(!strcmp(ow_editor_review_author(ed), "Ann"), "compare: the review author is put back");
+    CHECK(ow_editor_accept_all_changes(ed, 1) >= 0 && !strcmp(plain(doc), "The slow brown fox jumps|Third|New last"),
+          "compare: all accepted is the revised document");
+    ow_editor_undo(ed);
+    CHECK(ow_editor_undo(ed) > 0 && !ow_editor_can_undo(ed) && !strcmp(dump(doc), "The quick brown fox|Second line|Third"),
+          "compare: one undo takes it all back");
+    CHECK(ow_editor_compare(ed, same, NULL) == 0 && !strcmp(dump(doc), "The quick brown fox|Second line|Third"),
+          "compare: the same document changes nothing");
+    n = ow_editor_compare(ed, rev2, NULL);
+    CHECK(n == 1 && !strcmp(dump(doc), "{+Opening+}|+The quick brown fox|Second line|Third"),
+          "compare: a paragraph added at the start");
+    if (n != 1) printf("  got %d %s\n", n, dump(doc));
+    CHECK(ow_editor_accept_all_changes(ed, 0) >= 0 && !strcmp(plain(doc), "The quick brown fox|Second line|Third"),
+          "compare: all rejected is the original");
+    ow_editor_free(ed);
+    owf_doc_free(doc); owf_doc_free(rev); owf_doc_free(rev2); owf_doc_free(same);
+
+    {   /* Agnus on #4: a table's paragraph in the revised one is skipped, and the next goes where it belongs */
+        static const char *const ab[] = { "A", "B" }, *const atnb[] = { "A", "T", "N", "B" };
+        doc = doc_of(ab, 2);
+        rev = doc_of(atnb, 4);
+        if (!doc || !rev) { CHECK(0, "compare table docs"); owf_doc_free(doc); owf_doc_free(rev); return; }
+        rev->body.paras[1].table_id = 0;
+        rev->body.paras[1].table_row = rev->body.paras[1].table_col = 0;
+        rev->body.paras[1].table_cols = 1;
+        ed = ow_editor_new(doc);
+        CHECK(ow_editor_compare(ed, rev, "R") == 1, "compare: one paragraph added past the table's");
+        CHECK(!strcmp(plain(doc), "A|N|B"), "compare: N between A and B");
+        if (strcmp(plain(doc), "A|N|B")) printf("  got %s\n", plain(doc));
+        ow_editor_free(ed);
+        owf_doc_free(doc); owf_doc_free(rev);
+    }
+
+    {                                                /* too long to match word by word: replaced whole */
+        static char x[6000], y[6000];
+        const char *xs[1], *ys[1];
+        size_t ux = 0, uy = 0;
+        for (i = 0; i < 700; ++i) {
+            ux += (size_t)sprintf(x + ux, "%sa%d", i ? " " : "", i);
+            uy += (size_t)sprintf(y + uy, "%sb%d", i ? " " : "", i);
+        }
+        xs[0] = x; ys[0] = y;
+        doc = doc_of(xs, 1); rev = doc_of(ys, 1);
+        if (!doc || !rev) { CHECK(0, "compare long docs"); owf_doc_free(doc); owf_doc_free(rev); return; }
+        ed = ow_editor_new(doc);
+        CHECK(ow_editor_compare(ed, rev, "R") == 1, "compare: a long paragraph replaced in one change");
+        CHECK(ow_editor_accept_all_changes(ed, 1) >= 0 && !strcmp(plain(doc), y), "compare: the long one accepted");
+        ow_editor_free(ed);
+        owf_doc_free(doc); owf_doc_free(rev);
+    }
+}
+
 int main(void)
 {
     test_recording();
@@ -1094,6 +1185,7 @@ int main(void)
     test_rows();
     test_format_accept();
     test_format_nav();
+    test_compare();
     printf("track changes: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }
