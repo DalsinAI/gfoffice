@@ -111,7 +111,7 @@ done
 # owfwrite.library, owc_book.c owfcalc, owc_pub.c owfpub, owc_deck.c and the deck's PDF owfpresent), so a
 # conversion opens only the libraries it needs.
 OWC_DECK="-DOWC_DECK_PDF -I$HERE/include -I$OPENLAYOUT_SRC/include"
-OWC_PDF="$HERE/src/deck/opr_layout.c $HERE/src/deck/opr_pdf.c $HERE/src/core/ow_layout.c $OL_C"
+OWC_PDF="$HERE/src/deck/opr_layout.c $HERE/src/deck/opr_pdf.c $HERE/src/deck/opr_gradient.c $HERE/src/core/ow_layout.c $OL_C"
 OWCFLAGS="$CFLAGS_COMMON -m68040 -specs=$SPECS -Os $OWFFLAGS -I$HERE/tools"
 if [ "$OWF" = library ]; then
     OWC_OBJ="$OUT/obj-owconvert"
@@ -122,7 +122,8 @@ if [ "$OWF" = library ]; then
         "$CC" $OWCFLAGS -DOWF_USE_WRITE_LIBRARY -c "$HERE/tools/owc_doc.c" &&
         "$CC" $OWCFLAGS -DOWF_USE_CALC_LIBRARY -c "$HERE/tools/owc_book.c" &&
         "$CC" $OWCFLAGS -DOWF_USE_PUB_LIBRARY -c "$HERE/tools/owc_pub.c" &&
-        "$CC" $OWCFLAGS -DOWF_USE_PRESENT_LIBRARY $OWC_DECK -c "$HERE/tools/owc_deck.c" $OWC_PDF)
+        "$CC" $OWCFLAGS -DOWF_USE_PRESENT_LIBRARY $OWC_DECK -c "$HERE/tools/owc_deck.c" $OWC_PDF \
+            "$HERE/libowf/src/owf_fill.c")   # opr_gradient.c's fills: the drawing programs', not a library's
     # shellcheck disable=SC2086
     "$CC" $OWCFLAGS "$HERE/tools/owconvert.c" "$OWC_OBJ"/*.o -lm -o "$OUT/OWConvert"
 else
@@ -169,11 +170,23 @@ else
     OCSRC="$OWFSRC $HERE/libowf/calc/*.c"
     OWF_CALC=""
 fi
+# External Data's databases (include/opencalc_extdb.h) need GFOpenBase's core and gfopensqlite's soft-float
+# SQLite, found as build.d/base.sh finds it (OPENSQLITE); without it GFOpenCalc's External Data reads web pages
+# only and says so for a database.
+OC_SQLITE=${OPENSQLITE:-$HERE/../gfopensqlite/out-soft-st}
+if [ -f "$OC_SQLITE/lib/libsqlite3.a" ] && [ -f "$OC_SQLITE/include/sqlite3.h" ]; then
+    OC_EXTDB="-DOC_EXTDATA_DATABASES -I$OC_SQLITE/include $HERE/src/calc/extdb/oc_extdb.c $HERE/src/base/ob_core.c"
+    OC_EXTDB_LIB="-L$OC_SQLITE/lib -lsqlite3"
+else
+    OC_EXTDB=""
+    OC_EXTDB_LIB=""
+    echo "build-os3.sh: no gfopensqlite build in $OC_SQLITE: GFOpenCalc's External Data reads web pages only"
+fi
 # shellcheck disable=SC2086
 "$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_CALC \
     -I"$HERE/include" -I"$HERE/app" -I"$HERE/src/calc" -I"$HERE/libowf/calc" -I"$HERE/third_party/opengadtools" \
-    $OCSRC "$HERE"/src/calc/*.c "$HERE/app/opencalc.c" "$HERE/app/ow_autosave.c" "$HERE/app/ow_stack.c" "$HERE/app/ow_fontwidths.c" \
-    "$HERE"/third_party/opengadtools/*.c -lamiga -lm \
+    $OCSRC "$HERE"/src/calc/*.c $OC_EXTDB "$HERE/app/opencalc.c" "$HERE/app/ow_autosave.c" "$HERE/app/ow_stack.c" \
+    "$HERE/app/ow_fontwidths.c" "$HERE"/third_party/opengadtools/*.c $OC_EXTDB_LIB -lamiga -lm \
     -o "$OUT/GFOpenCalc"
 echo "$OUT/GFOpenCalc ($(wc -c < "$OUT/GFOpenCalc") bytes)"
 

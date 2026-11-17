@@ -3264,7 +3264,7 @@ static int paste_object_resources(owf_obj *o, owf_doc *to, const owf_doc *from)
     int p, r, i, mapped;
     if (!o || !to || !from)
         return -2;
-    if (o->kind == OWF_OBJ_PICTURE && o->image >= 0) {
+    if (o->image >= 0) {         /* a picture, a replacement picture, or a picture fill */
         mapped = paste_image(to, from, o->image);
         if (mapped < 0) return mapped;
         o->image = mapped;

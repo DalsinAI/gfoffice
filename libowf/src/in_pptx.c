@@ -1747,6 +1747,8 @@ static int read_shadow(reader *x, const colours *cc, const owf_xml_node *effects
     return 1;
 }
 
+static int blip_fill_of(pptx *x, const rels *r, const owf_xml_node *bf, owf_look *g, int *image);
+
 static void read_look(objctx *c, owf_obj *obj, const owf_xml_node *shape, const owf_xml_node *lph,
                       const owf_xml_node *mph, int line_only)
 {
@@ -1762,6 +1764,17 @@ static void read_look(objctx *c, owf_obj *obj, const owf_xml_node *shape, const 
     from[0] = spPr;
     from[1] = lph ? sp_pr(lph) : NULL;
     from[2] = mph ? sp_pr(mph) : NULL;
+    /* its own picture fill: a text box's or a rectangle's is drawn, another shape's is its colour */
+    if (!line_only && spPr && achild(spPr, "blipFill") &&
+        (obj->kind == OWF_OBJ_TEXT || obj->kind == OWF_OBJ_SHAPE)) {
+        int image = -1;
+        if (obj->kind == OWF_OBJ_SHAPE && obj->shape != OWF_SHAPE_RECT && obj->shape != OWF_SHAPE_ROUNDRECT)
+            owf_report_add(c->x->r.report, OWF_NOTE_APPROX, "Picture fills are drawn in one colour");
+        else if (blip_fill_of(c->x, c->rels, achild(spPr, "blipFill"), &grad, &image)) {
+            obj->image = image;
+            has_fill = 1;
+        }
+    }
     for (i = 0; i < 3 && !has_fill && !line_only; i++)
         if (from[i])
             has_fill = fill_of(&c->x->r, &c->cc, from[i], &fill, &grad);
@@ -1784,6 +1797,11 @@ static void read_look(objctx *c, owf_obj *obj, const owf_xml_node *shape, const 
         obj->look.hatch_angle = grad.hatch_angle;
         obj->look.hatch_distance = grad.hatch_distance;
         obj->look.hatch_colour = grad.hatch_colour;
+    }
+    if (!line_only && grad.picture) {
+        obj->look.picture = grad.picture;
+        obj->look.tile_width = grad.tile_width;
+        obj->look.tile_height = grad.tile_height;
     }
     if (!line_only && OWF_LOOK_FILLED(&obj->look))
         obj->look.transparency = grad.transparency;
@@ -2376,6 +2394,49 @@ static void read_tree(objctx *c, const owf_xml_node *tree, int parent, int depth
 /* ---- Slides ---- */
 
 /* A p:cSld's p:bg onto *colour and *image; 0 when it has none. */
+/* An a:blipFill: its picture into *image, stretched or tiled (a:tile's sx and sy scale the picture's own
+ * size), see-through by alphaModFix, into g. 0 when it has no picture to be had. */
+static int blip_fill_of(pptx *x, const rels *r, const owf_xml_node *bf, owf_look *g, int *image)
+{
+    const owf_xml_node *blip = achild(bf, "blip"), *tile = achild(bf, "tile"), *amt = achild(blip, "alphaModFix");
+    long long v;
+    int index;
+    if (!blip)
+        return 0;
+    index = load_picture(x, r, ratt(blip, "embed"), x->deck->width, x->deck->height, NULL);
+    if (index < 0)
+        return 0;
+    *image = index;
+    if (amt && number_att(amt, "amt", &v) && v < 100000)
+        g->transparency = (unsigned char)(v <= 0 ? 100 : 100 - (v + 500) / 1000);
+    g->tile_width = g->tile_height = 0;
+    if (tile) {
+        long long sx = 100000, sy = 100000, tx = 0, ty = 0;
+        const char *flip = att(tile, "flip"), *algn = att(tile, "algn");
+        int w, h;
+        g->picture = OWF_PICTURE_TILE;
+        number_att(tile, "sx", &sx);
+        number_att(tile, "sy", &sy);
+        number_att(tile, "tx", &tx);
+        number_att(tile, "ty", &ty);
+        if (sx > 0 && sy > 0 && (sx != 100000 || sy != 100000) && sx <= 10000000 && sy <= 10000000 &&
+            owf_deck_image_size(&x->deck->res->images[index], &w, &h)) {
+            g->tile_width = (int)(w * sx / 100000);
+            g->tile_height = (int)(h * sy / 100000);
+            if (g->tile_width <= 0 || g->tile_height <= 0)
+                g->tile_width = g->tile_height = 0;
+        }
+        if (tx || ty || (flip && strcmp(flip, "none")) || (algn && strcmp(algn, "tl")))
+            owf_report_add(x->r.report, OWF_NOTE_APPROX, "Picture tiles are drawn from the top left, unflipped");
+    } else {
+        const owf_xml_node *src = achild(bf, "srcRect");
+        g->picture = OWF_PICTURE_STRETCH;
+        if (src && (att(src, "l") || att(src, "t") || att(src, "r") || att(src, "b")))
+            owf_report_add(x->r.report, OWF_NOTE_APPROX, "Cropped picture fills are drawn whole");
+    }
+    return 1;
+}
+
 static int read_background(pptx *x, const colours *cc, const rels *r, const owf_xml_node *cSld,
                            unsigned long *colour, int *image, owf_look *g)
 {
@@ -2384,13 +2445,11 @@ static int read_background(pptx *x, const colours *cc, const rels *r, const owf_
     if (!bg)
         return 0;
     if ((pr = pchild(bg, "bgPr"))) {
-        const owf_xml_node *blip = achild(achild(pr, "blipFill"), "blip");
-        if (blip) {
-            const owf_xml_node *amt = achild(blip, "alphaModFix");
-            long long v;
-            *image = load_picture(x, r, ratt(blip, "embed"), x->deck->width, x->deck->height, NULL);
-            if (g && amt && number_att(amt, "amt", &v) && v < 100000)
-                g->transparency = (unsigned char)(v <= 0 ? 100 : 100 - (v + 500) / 1000);
+        const owf_xml_node *bf = achild(pr, "blipFill");
+        if (achild(bf, "blip")) {
+            owf_look none;
+            memset(&none, 0, sizeof none);
+            blip_fill_of(x, r, bf, g ? g : &none, image);
             return 1;
         }
         if (fill_of(&x->r, cc, pr, &fill, g)) {
@@ -2573,6 +2632,9 @@ static int get_master(pptx *x, const char *name)
         x->deck->masters[index].background_hatch_angle = g.hatch_angle;
         x->deck->masters[index].background_hatch_distance = g.hatch_distance;
         x->deck->masters[index].background_hatch_colour = g.hatch_colour;
+        x->deck->masters[index].background_tile = g.picture == OWF_PICTURE_TILE;
+        x->deck->masters[index].background_tile_width = g.tile_width;
+        x->deck->masters[index].background_tile_height = g.tile_height;
     }
     m = &x->deck->masters[index];
     c.objs = &m->objs;
@@ -2780,6 +2842,9 @@ static void read_slide(pptx *x, const char *name)
         x->deck->slides[index].background_hatch_angle = g.hatch_angle;
         x->deck->slides[index].background_hatch_distance = g.hatch_distance;
         x->deck->slides[index].background_hatch_colour = g.hatch_colour;
+        x->deck->slides[index].background_tile = g.picture == OWF_PICTURE_TILE;
+        x->deck->slides[index].background_tile_width = g.tile_width;
+        x->deck->slides[index].background_tile_height = g.tile_height;
     }
     s = &x->deck->slides[index];
     c.objs = &s->objs;

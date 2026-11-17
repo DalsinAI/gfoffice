@@ -90,7 +90,7 @@ static int remap_obj(importer *im, owf_obj *o)
     if (o->list)
         for (i = 0; i < OWF_TEXT_LEVELS; i++)
             remap_level(im, &o->list[i]);
-    if (o->kind == OWF_OBJ_PICTURE && o->image >= 0) {
+    if (o->image >= 0) {         /* a picture, a replacement picture, or a picture fill */
         o->image = image_of(im, o->image);
         if (o->image < 0)
             return -1;

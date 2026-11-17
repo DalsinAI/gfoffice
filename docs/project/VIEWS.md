@@ -150,6 +150,24 @@ printed black on white; white fills are left out, as the paper is white already.
 and zoom are kept. The app's Project menu has Export PDF..., and ARexx has EXPORT with FORMAT PDF or a
 .pdf name.
 
+## Reports
+
+Project > Reports... picks one of MS Project's six reports: Project Summary, Critical Tasks,
+Milestones, Who Does What, Overallocated Resources or Cash Flow. Print sends it down the suite's print
+route (`app/ow_print.c`, as GFOpenWrite's): GFOpenPrint when it is on the disk, else printer.device.
+Save... writes it as PDF, ODT, DOCX, RTF, HTML or text by the name's extension, PDF when it has none.
+`owf_project_report` (libowf/project/owf_preport.c) builds each report as a libowf document, with
+headings, tables, the plan's title in the page header and "Page n of m" in the footer. libowf's own
+writers then print and save it, so GFOpenProject has no report writer of its own. Cash Flow puts each
+task's cost into weeks in proportion to its working time. ARexx's REPORT does the same as Save.
+`tests/project/test_preport.c` checks every report against figures worked out by hand.
+
+`opj_sheet_document` (src/project/opj_sheetdoc.c) builds the task sheet or the resource sheet as a
+document in the same way. The task sheet takes the view's shown columns in order and its lines (filter
+and groups, with a group's heading as a bold row); summaries are bold, and an over-allocated task's ID
+gets the sheet's "!". The resource sheet takes every column. Both print A4 landscape. ARexx's SAVESHEET
+saves them.
+
 ## Checked
 
 `tests/project/test_opj.c`: dates typed and shown; every edit, including the ones refused and the

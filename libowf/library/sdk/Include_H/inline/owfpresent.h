@@ -1548,4 +1548,39 @@ __owfpresent_owf_pdf_gradient(void *__base, owf_pdf *pdf, const int *xy, int npo
 #define owf_pdf_gradient(pdf, xy, npoints, x, y, w, h, kind, angle, from, to) __owfpresent_owf_pdf_gradient((OWFPRESENT_BASE_NAME), (owf_pdf *)(pdf), (const int *)(xy), (int)(npoints), (int)(x), (int)(y), (int)(w), (int)(h), (int)(kind), (int)(angle), (unsigned long)(from), (unsigned long)(to))
 #define __owf_pdf_gradient_base(__in_base, pdf, xy, npoints, x, y, w, h, kind, angle, from, to) __owfpresent_owf_pdf_gradient((__in_base), (owf_pdf *)(pdf), (const int *)(xy), (int)(npoints), (int)(x), (int)(y), (int)(w), (int)(h), (int)(kind), (int)(angle), (unsigned long)(from), (unsigned long)(to))
 
+static __inline__ void
+__owfpresent_owf_pdf_alpha(void *__base, owf_pdf *pdf, int opaque)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(pdf);
+	register ULONG _d0 __asm("d0") = (ULONG)(opaque);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -546(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	(void)_d0; (void)_d1; (void)_a0; (void)_a1;
+}
+#define owf_pdf_alpha(pdf, opaque) __owfpresent_owf_pdf_alpha((OWFPRESENT_BASE_NAME), (owf_pdf *)(pdf), (int)(opaque))
+#define __owf_pdf_alpha_base(__in_base, pdf, opaque) __owfpresent_owf_pdf_alpha((__in_base), (owf_pdf *)(pdf), (int)(opaque))
+
+static __inline__ int
+__owfpresent_owf_deck_image_size(void *__base, const owf_image *image, int *width, int *height)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(image);
+	register ULONG _a1 __asm("a1") = (ULONG)(width);
+	register ULONG _a2 __asm("a2") = (ULONG)(height);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -552(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_deck_image_size(image, width, height) __owfpresent_owf_deck_image_size((OWFPRESENT_BASE_NAME), (const owf_image *)(image), (int *)(width), (int *)(height))
+#define __owf_deck_image_size_base(__in_base, image, width, height) __owfpresent_owf_deck_image_size((__in_base), (const owf_image *)(image), (int *)(width), (int *)(height))
+
 #endif /* INLINE_OWFPRESENT_H */

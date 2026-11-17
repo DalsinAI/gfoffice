@@ -109,7 +109,7 @@ enum {
     M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK, M_SUBTOTALS,
     M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_PIVOT_DETAILS, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER, M_SCENARIOS, M_CONSOLIDATE, M_CONSOLIDATE_REFRESH, M_NAME_MANAGE, M_ADV_FILTER,
     M_TEXT_COLUMNS, M_REMOVE_DUPS,
-    M_PROTECT_SHEET, M_UNPROTECT_SHEET, M_CELL_PROTECT, M_PROTECT_BOOK, M_UNPROTECT_BOOK, M_EDIT_LINKS,
+    M_PROTECT_SHEET, M_UNPROTECT_SHEET, M_CELL_PROTECT, M_PROTECT_BOOK, M_UNPROTECT_BOOK, M_EDIT_LINKS, M_EXTDATA, M_EXTDATA_REFRESH,
     M_TRACK, M_CHANGES_MANAGE, M_CHANGES_ACCEPT_ALL, M_CHANGES_REJECT_ALL, M_CHANGES_AUTHOR
 };
 
@@ -268,6 +268,8 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Refresh Pivot Table", NULL, 0, 0, (APTR)M_PIVOT_REFRESH },
     { NM_ITEM, "Show Pivot Details", NULL, 0, 0, (APTR)M_PIVOT_DETAILS },
     { NM_ITEM, "Edit Links...", NULL, 0, 0, (APTR)M_EDIT_LINKS },
+    { NM_ITEM, "External Data...", NULL, 0, 0, (APTR)M_EXTDATA },
+    { NM_ITEM, "Refresh External Data", NULL, 0, 0, (APTR)M_EXTDATA_REFRESH },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Validity...", NULL, 0, 0, (APTR)M_VALIDITY },
     { NM_ITEM, "Clear Validity", NULL, 0, 0, (APTR)M_VALIDITY_CLEAR },
@@ -992,6 +994,8 @@ static const char *leaf(const char *path)
 static int result(int rc, const char *done);
 #define BOOK_LOCKED_TEXT "The workbook's structure is protected: its sheets stay as they are."
 static int ask_window(const char *title, const char *text, const char *buttons);
+static void extdata_opened(void);
+static int extdata_allowed;             /* this book may read its external data by itself (see extdata_opened) */
 
 /* A typed value its cell's rule refused: the rule's alert, as Excel shows it. Stop: Retry goes on typing,
  * Cancel puts the cell back. Warning ("Continue?"): Yes puts it in, No goes on typing, Cancel puts the cell
@@ -2195,6 +2199,7 @@ static void open_book(const char *path)
     snprintf(msg, sizeof msg, "%s opened.", leaf(path));
     sync_track_menu();
     set_status(msg);
+    extdata_opened();                   /* external data that refreshes on opening */
     show_report("Open workbook", report);
     owf_report_free(report);
 }
@@ -2329,6 +2334,7 @@ static void new_book(void)
     if (!confirm_discard_changes()) return;
     if (!result(oc_core_set_book(core, NULL), "New workbook.")) return;
     sync_track_menu();
+    extdata_allowed = 0;
     current_path[0] = 0;
     current_format[0] = 0;
 }
@@ -4759,6 +4765,424 @@ static void do_edit_links(void)
     }
 }
 
+
+/* ---- Data > External Data: web pages and databases ---- */
+
+/* GFOpenCalc reads databases when it is built with GFOpenBase's core and SQLite (OC_EXTDATA_DATABASES,
+ * build.d/calc-extdb.sh); without them a database source says it cannot be read. Web pages come from files
+ * (a page saved from a browser, or one on a share): reading them over the network is still to come. */
+#ifdef OC_EXTDATA_DATABASES
+#include "opencalc_extdb.h"
+#endif
+
+/* dst (size bytes) set to the Latin-1 text src made UTF-8, cut short to fit. */
+static void set_utf8(char *dst, size_t size, const char *src)
+{
+    char *u = from_latin1(src);
+    const char *from = u ? u : src;
+    size_t n = strlen(from);
+    if (n >= size) n = size - 1;
+    while (n && ((unsigned char)from[n] & 0xC0) == 0x80) n--;   /* not inside a character */
+    memcpy(dst, from, n);
+    dst[n] = 0;
+    owf_free(u);
+}
+
+static char extdata_base[512];
+static long extdata_last[OC_EXTDATA_MAX];       /* when each range was last read (seconds; 0: not since opening) */
+/* The user has let this book read its sources: cleared as a book opens; set by Read Now, or by anything the user
+ * asks to read (adding, changing or refreshing a range, by the window, the menu or ARexx). Until then nothing
+ * reads on its own, not even the ranges that refresh every n seconds. (extdata_allowed, declared above.) */
+
+static const oc_extdata_io *extdata_io(void)
+{
+    static oc_extdata_io io;
+    memset(&io, 0, sizeof io);
+    book_folder(extdata_base, sizeof extdata_base);
+    io.base = extdata_base;
+#ifdef OC_EXTDATA_DATABASES
+    io.query = oc_extdb_query;
+#endif
+    return &io;
+}
+
+static long extdata_now(void)
+{
+    struct DateStamp ds;
+    DateStamp(&ds);
+    return ds.ds_Days * 86400L + ds.ds_Minute * 60L + ds.ds_Tick / TICKS_PER_SECOND;
+}
+
+/* The book opened: those set to refresh on opening or every n seconds read nothing until the user says so (a
+ * book from elsewhere could read files and databases into its sheets, as LibreOffice asks before updating
+ * links); Read Now reads the ones set to refresh on opening and lets the clock run. The clock starts again.
+ * An ARexx OPEN reads none: EXTDATAREFRESH does. */
+static void extdata_opened(void)
+{
+    char text[1200], shown[200];
+    size_t at;
+    int i, n = oc_core_extdata_count(core), on_open = 0;
+    extdata_allowed = 0;
+    for (i = 0; i < OC_EXTDATA_MAX; i++)
+        extdata_last[i] = extdata_now();
+    at = (size_t)snprintf(text, sizeof text, "This workbook reads external data by itself, from:\n");
+    for (i = 0; i < n; i++) {
+        oc_extdata_spec spec;
+        if (oc_core_extdata(core, i, &spec, NULL, NULL) != OWF_OK || (!spec.refresh_on_open && !spec.refresh_seconds))
+            continue;
+        on_open++;
+        to_latin1(spec.source, strlen(spec.source), shown, sizeof shown);
+        if (at + 2 < sizeof text) at += (size_t)snprintf(text + at, sizeof text - at, "  %.150s\n", shown);
+    }
+    if (!on_open) return;
+    if (at + 2 < sizeof text)
+        snprintf(text + at, sizeof text - at, "\nRead it now? Only if you trust where the workbook came from.");
+    if (ask_window("External Data", text, "Read Now|Not Now") != 1) {
+        set_status("External data not read: Data > Refresh External Data reads it.");
+        return;
+    }
+    extdata_allowed = 1;
+    n = oc_core_extdata_refresh_on_open(core, extdata_io());
+    if (n) {
+        char msg[80];
+        snprintf(msg, sizeof msg, "%d external data range%s refreshed.", n, n == 1 ? "" : "s");
+        set_status(msg);
+    }
+}
+
+/* The ones that refresh on the clock, when their time has come (from the window's ticks, never while typing). */
+static int extdata_tick(void)
+{
+    static long checked;
+    long now;
+    int i, n, done = 0;
+    if (!core || !extdata_allowed || oc_core_editing(core))
+        return 0;                        /* not until the user lets this book read (extdata_allowed) */
+    now = extdata_now();
+    if (now == checked)
+        return 0;                        /* once a second is enough */
+    checked = now;
+    n = oc_core_extdata_count(core);
+    if (!n)
+        return 0;
+    for (i = 0; i < n && i < OC_EXTDATA_MAX; i++) {
+        oc_extdata_spec spec;
+        if (oc_core_extdata(core, i, &spec, NULL, NULL) != OWF_OK || !spec.refresh_seconds)
+            continue;
+        if (!extdata_last[i])
+            extdata_last[i] = now;
+        if (now - extdata_last[i] < (long)spec.refresh_seconds)
+            continue;
+        extdata_last[i] = now;
+        if (oc_core_extdata_refresh(core, i, extdata_io(), OC_EXTDATA_QUIET, NULL, 0) == OWF_OK)
+            done++;
+    }
+    return done;
+}
+
+/* An add, change or refresh's result in the status line: a block asks whether to write over the cells. */
+static int extdata_result(int rc, const char *err, const char *done)
+{
+    char msg[400], shown[300];
+    if (rc == OWF_OK || rc == OC_PROTECTED || rc == OWF_ERR_MEMORY)
+        return result(rc, done);
+    to_latin1(err ? err : "", strlen(err ? err : ""), shown, sizeof shown);
+    if (rc == OC_EXTDATA_BLOCKED)
+        snprintf(msg, sizeof msg, "The new data would write over cells beside the range that hold something.");
+    else
+        snprintf(msg, sizeof msg, "%s", shown[0] ? shown : owf_error_text(rc));
+    set_status(msg);
+    return 0;
+}
+
+static int extdata_overwrite_ok(void)
+{
+    return ask_window("External Data", "The new data needs more room, and cells beside the range hold "
+                      "something.\n\nWrite over them?", "Write Over|Cancel") == 1;
+}
+
+/* A web page's tables, for choosing one: "1. rates: Exchange rates (4 x 2)", a line each. */
+static void web_table_list(const char *path, char *out, size_t size)
+{
+    char *page = NULL, err[200];
+    size_t len = 0, at = 0;
+    oc_webtable_info info[24];
+    int n, i;
+    out[0] = 0;
+    if (oc_extdata_fetch_file(NULL, path, &page, &len, err, sizeof err) != OWF_OK) return;
+    n = oc_web_tables(page, len, info, 24);
+    owf_free(page);
+    if (n <= 0) { snprintf(out, size, "The page has no tables.\n"); return; }
+    for (i = 0; i < n && i < 24 && at + 2 < size; i++) {
+        char a[200], b[200];
+        to_latin1(info[i].id, strlen(info[i].id), a, sizeof a);
+        to_latin1(info[i].caption, strlen(info[i].caption), b, sizeof b);
+        at += (size_t)snprintf(out + at, size - at, "%*sHTML_%d%s%s%s%s (%u x %u)\n", info[i].depth * 2, "", info[i].number,
+                               a[0] ? " id " : "", a, b[0] ? ": " : "", b, info[i].rows, info[i].cols);
+    }
+    if (n > 24 && at + 2 < size) snprintf(out + at, size - at, "...and %d more\n", n - 24);
+}
+
+#ifdef OC_EXTDATA_DATABASES
+static void db_item_list(const char *path, char *out, size_t size, char *first, size_t fsize)
+{
+    oc_extdb_item items[24];
+    char err[200];
+    size_t at = 0;
+    int n = oc_extdb_items(path, items, 24, err, sizeof err), i;
+    static const char *const kinds[] = { "table", "view", "query" };
+    out[0] = 0;
+    if (n < 0) { to_latin1(err, strlen(err), out, size); return; }
+    if (n > 0) to_latin1(items[0].name, strlen(items[0].name), first, fsize);
+    for (i = 0; i < n && i < 24 && at + 2 < size; i++) {
+        char a[200];
+        to_latin1(items[i].name, strlen(items[i].name), a, sizeof a);
+        at += (size_t)snprintf(out + at, size - at, "%s (%s)\n", a, kinds[items[i].kind]);
+    }
+    if (n > 24 && at + 2 < size) snprintf(out + at, size - at, "...and %d more\n", n - 24);
+}
+#endif
+
+/* The rest of a range's settings asked for: where, the headers, the refreshing. 0 when cancelled. */
+static int extdata_ask_rest(oc_extdata_spec *spec, const char *where)
+{
+    char buf[OC_EXTDATA_REF];
+    int pick;
+    if (!text_requester("External Data", "Put it at (its top left cell)", where, buf, sizeof buf)) return 0;
+    set_utf8(spec->dest, sizeof spec->dest, buf);
+    if (spec->kind == OC_EXTDATA_DATABASE) {
+        pick = ask_window("External Data", "Put the field names in the first row?", "Yes|No|Cancel");
+        if (pick == 0 || pick == 3) return 0;
+        spec->headers = pick == 1;
+    }
+    snprintf(buf, sizeof buf, "%u", spec->refresh_seconds);
+    if (!text_requester("External Data", "Refresh every so many seconds (0: by hand)", buf, buf, sizeof buf)) return 0;
+    spec->refresh_seconds = (unsigned)strtoul(buf, NULL, 10);
+    pick = ask_window("External Data", "Refresh it each time the workbook is opened?",
+                      spec->refresh_on_open ? "Yes|No|Cancel" : "No|Yes|Cancel");
+    if (pick == 0 || pick == 3) return 0;
+    spec->refresh_on_open = spec->refresh_on_open ? pick == 1 : pick == 2;
+    return 1;
+}
+
+/* Data > External Data... > Add Web Page... or Add Database...: the source, the table, where, the refreshing. */
+static void extdata_add(int kind)
+{
+    oc_extdata_spec spec;
+    char path[512], list[1400], first[200], item[OC_EXTDATA_ITEM], here[16], err[300];
+    unsigned row, col;
+    int rc, index = -1;
+#ifndef OC_EXTDATA_DATABASES
+    if (kind == OC_EXTDATA_DATABASE) {
+        set_status("This GFOpenCalc was built without databases (GFOpenBase's core and SQLite).");
+        return;
+    }
+#endif
+    oc_extdata_init(&spec);
+    spec.kind = kind;
+    if (!ask_file(0, kind == OC_EXTDATA_WEB ? "Web page (a saved .html file)" : "Database (.oadb or SQLite)", "",
+                  path, sizeof path)) return;
+    set_utf8(spec.source, sizeof spec.source, path);
+    first[0] = 0;
+    if (kind == OC_EXTDATA_WEB) {
+        web_table_list(spec.source, list, sizeof list);
+        snprintf(first, sizeof first, "HTML_1");
+    }
+#ifdef OC_EXTDATA_DATABASES
+    else db_item_list(spec.source, list, sizeof list, first, sizeof first);
+#endif
+    if (list[0] && ask_window("External Data", list, "Choose...|Cancel") != 1) return;
+    if (!text_requester("External Data", kind == OC_EXTDATA_WEB ? "Table (HTML_1, a number, an id or a caption)"
+                        : "Table, view, query, or SELECT ...", first, item, sizeof item)) return;
+    set_utf8(spec.item, sizeof spec.item, item);
+    oc_core_active(core, &row, &col);
+    oc_cell_name(row, col, here);
+    if (!extdata_ask_rest(&spec, here)) return;
+    extdata_allowed = 1;
+    rc = oc_core_extdata_add(core, &spec, extdata_io(), 0, &index, err, sizeof err);
+    if (rc == OC_EXTDATA_BLOCKED && extdata_overwrite_ok())
+        rc = oc_core_extdata_add(core, &spec, extdata_io(), OC_EXTDATA_OVERWRITE, &index, err, sizeof err);
+    if (rc == OWF_OK && index >= 0 && index < OC_EXTDATA_MAX) extdata_last[index] = extdata_now();
+    extdata_result(rc, err, "External data put in.");
+}
+
+/* One refreshed (index -1: every one), asking before writing over cells beside it. */
+static void extdata_refresh(int index)
+{
+    char err[300], msg[80];
+    int rc;
+    extdata_allowed = 1;
+    rc = oc_core_extdata_refresh(core, index, extdata_io(), 0, err, sizeof err);
+    if (rc == OC_EXTDATA_BLOCKED && extdata_overwrite_ok())
+        rc = oc_core_extdata_refresh(core, index, extdata_io(), OC_EXTDATA_OVERWRITE, err, sizeof err);
+    if (index >= 0 && index < OC_EXTDATA_MAX) extdata_last[index] = extdata_now();
+    snprintf(msg, sizeof msg, index < 0 ? "External data refreshed." : "External data range %d refreshed.", index + 1);
+    extdata_result(rc, err, msg);
+}
+
+/* Data > Refresh External Data: the range the active cell is in, else every one. */
+static void do_extdata_refresh(void)
+{
+    unsigned row, col;
+    if (!oc_core_extdata_count(core)) { set_status("This workbook has no external data."); return; }
+    oc_core_active(core, &row, &col);
+    extdata_refresh(oc_core_extdata_at(core, oc_core_sheet(core), row, col));
+}
+
+/* Data > External Data...: the ranges, and Add, Change, Refresh and Remove. */
+static void do_extdata(void)
+{
+    char text[2000], number[16];
+    size_t at = 0;
+    int n = oc_core_extdata_count(core), i, pick;
+    if (!n)
+        at += (size_t)snprintf(text, sizeof text, "This workbook has no external data yet.\n\nA range can be filled "
+                               "from a table of a web page or from a database's table or query, and refreshed.\n");
+    else
+        at += (size_t)snprintf(text, sizeof text, "External data ranges:\n");
+    for (i = 0; i < n && at + 2 < sizeof text; i++) {
+        oc_extdata_spec spec;
+        owf_range r;
+        char a[300], b[200], c[80], end[16], every[40];
+        int sheet;
+        if (oc_core_extdata(core, i, &spec, &sheet, &r) != OWF_OK) continue;
+        to_latin1(spec.source, strlen(spec.source), a, sizeof a);
+        to_latin1(spec.item, strlen(spec.item), b, sizeof b);
+        to_latin1(spec.dest, strlen(spec.dest), c, sizeof c);
+        oc_cell_name(r.last_row, r.last_col, end);
+        every[0] = 0;
+        if (spec.refresh_seconds) snprintf(every, sizeof every, ", every %us", spec.refresh_seconds);
+        at += (size_t)snprintf(text + at, sizeof text - at, "%d. %s:%s  %.60s from %.120s%s%s\n", i + 1, c, end, b, a,
+                               spec.refresh_on_open ? ", on opening" : "", every);
+    }
+    pick = ask_window("External Data", text, n ? "Add Web Page...|Add Database...|Refresh All|Refresh One...|Change...|Remove...|Close"
+                                              : "Add Web Page...|Add Database...|Close");
+    if (pick == 1) extdata_add(OC_EXTDATA_WEB);
+    else if (pick == 2) extdata_add(OC_EXTDATA_DATABASE);
+    else if (n && pick == 3) extdata_refresh(-1);
+    else if (n && (pick == 4 || pick == 5 || pick == 6)) {
+        if (!text_requester("External Data", "Range number", "1", number, sizeof number)) return;
+        i = atoi(number) - 1;
+        if (i < 0 || i >= n) { set_status("There is no such external data range."); return; }
+        if (pick == 4) extdata_refresh(i);
+        else if (pick == 5) {
+            oc_extdata_spec spec;
+            char item[OC_EXTDATA_ITEM], shown[OC_EXTDATA_ITEM], err[300];
+            int rc;
+            oc_core_extdata(core, i, &spec, NULL, NULL);
+            to_latin1(spec.item, strlen(spec.item), shown, sizeof shown);
+            if (!text_requester("External Data", spec.kind == OC_EXTDATA_WEB ? "Table" : "Table, view, query, or SELECT ...",
+                                shown, item, sizeof item)) return;
+            set_utf8(spec.item, sizeof spec.item, item);
+            to_latin1(spec.dest, strlen(spec.dest), shown, sizeof shown);
+            if (!extdata_ask_rest(&spec, shown)) return;
+            extdata_allowed = 1;
+            rc = oc_core_extdata_change(core, i, &spec, extdata_io(), 0, err, sizeof err);
+            if (rc == OC_EXTDATA_BLOCKED && extdata_overwrite_ok())
+                rc = oc_core_extdata_change(core, i, &spec, extdata_io(), OC_EXTDATA_OVERWRITE, err, sizeof err);
+            extdata_result(rc, err, "External data changed.");
+        } else {
+            int k = ask_window("External Data", "Keep the range's values on the sheet, or empty it?",
+                               "Keep Values|Empty|Cancel");
+            if (k == 1 || k == 2) result(oc_core_extdata_remove(core, i, k == 2), "External data range removed.");
+        }
+    }
+}
+
+static const char *skip_space(const char *s);
+
+/* A word of an ARexx command, or a "quoted" or 'quoted' phrase (a doubled quote is one). */
+static const char *rexx_phrase(const char *p, char *out, size_t size)
+{
+    size_t k = 0;
+    p = skip_space(p);
+    if (*p == '"' || *p == '\'') {
+        char q = *p++;
+        while (*p) {
+            if (*p == q) {
+                if (p[1] == q) p++;
+                else { p++; break; }
+            }
+            if (k + 1 < size) out[k++] = *p;
+            p++;
+        }
+        out[k] = 0;
+        return p;
+    }
+    return rexx_word(p, out, size);
+}
+
+/* EXTDATAADD WEB|DATABASE source item [AT cell] [NOHEADERS] [ONOPEN] [EVERY seconds] [OVERWRITE]
+ * EXTDATACHANGE n with the same words after n. The result: the range's number, or why not. */
+static int rexx_extdata_add(const char *arg, int change, char *out, size_t size, int *now)
+{
+    oc_extdata_spec spec;
+    char word[OC_EXTDATA_ITEM], err[300];
+    int flags = 0, rc, index = -1;
+    *now = 0;
+    oc_extdata_init(&spec);
+    if (change) {
+        arg = rexx_word(arg, word, sizeof word);
+        index = atoi(word) - 1;
+        if (oc_core_extdata(core, index, &spec, NULL, NULL) != OWF_OK) { *now = 1; snprintf(out, size, "No such range"); return 0; }
+    }
+    arg = rexx_word(arg, word, sizeof word);
+    if (!strcasecmp(word, "WEB")) spec.kind = OC_EXTDATA_WEB;
+    else if (!strcasecmp(word, "DATABASE")) spec.kind = OC_EXTDATA_DATABASE;
+    else { snprintf(out, size, "WEB or DATABASE first"); return 0; }
+    arg = rexx_phrase(arg, word, sizeof word);
+    set_utf8(spec.source, sizeof spec.source, word);
+    arg = rexx_phrase(arg, word, sizeof word);
+    set_utf8(spec.item, sizeof spec.item, word);
+    if (!change) spec.dest[0] = 0;
+    for (arg = rexx_word(arg, word, sizeof word); word[0]; arg = rexx_word(arg, word, sizeof word)) {
+        if (!strcasecmp(word, "AT")) {
+            arg = rexx_phrase(arg, word, sizeof word);
+            set_utf8(spec.dest, sizeof spec.dest, word);
+        } else if (!strcasecmp(word, "NOHEADERS")) spec.headers = 0;
+        else if (!strcasecmp(word, "HEADERS")) spec.headers = 1;
+        else if (!strcasecmp(word, "ONOPEN")) spec.refresh_on_open = 1;
+        else if (!strcasecmp(word, "NOTONOPEN")) spec.refresh_on_open = 0;
+        else if (!strcasecmp(word, "EVERY")) { arg = rexx_word(arg, word, sizeof word); spec.refresh_seconds = (unsigned)strtoul(word, NULL, 10); }
+        else if (!strcasecmp(word, "OVERWRITE")) flags |= OC_EXTDATA_OVERWRITE;
+        else { snprintf(out, size, "Not a word EXTDATAADD knows: %.60s", word); return 0; }
+    }
+    extdata_allowed = 1;
+    rc = change ? oc_core_extdata_change(core, index, &spec, extdata_io(), flags, err, sizeof err)
+                : oc_core_extdata_add(core, &spec, extdata_io(), flags, &index, err, sizeof err);
+    if (rc != OWF_OK) {
+        to_latin1(err, strlen(err), out, size);
+        if (!out[0]) snprintf(out, size, "%s", rc == OC_EXTDATA_BLOCKED ? "Cells beside it hold something (OVERWRITE)"
+                                               : rc == OC_PROTECTED ? "The cells are protected" : owf_error_text(rc));
+        return 0;
+    }
+    if (index >= 0 && index < OC_EXTDATA_MAX) extdata_last[index] = extdata_now();
+    refresh();
+    snprintf(out, size, "%d", index + 1);
+    return 1;
+}
+
+/* EXTDATAINFO n: "kind|range|source|item|headers onopen seconds" (Latin-1). */
+static int rexx_extdata_info(const char *arg, char *out, size_t size)
+{
+    oc_extdata_spec spec;
+    owf_range r;
+    oc_sheet_info si;
+    char word[16], line[OC_EXTDATA_SOURCE + OC_EXTDATA_ITEM + 400], a[16], b[16], sname[200];
+    int sheet;
+    rexx_word(arg, word, sizeof word);
+    if (oc_core_extdata(core, atoi(word) - 1, &spec, &sheet, &r) != OWF_OK) return 0;
+    sname[0] = 0;
+    if (sheet != oc_core_sheet(core)) oc_core_sheet_info(core, sheet, &si, sname, sizeof sname);
+    oc_cell_name(r.first_row, r.first_col, a);
+    oc_cell_name(r.last_row, r.last_col, b);
+    snprintf(line, sizeof line, "%s|%s%s%s:%s|%s|%s|%d %d %u", spec.kind == OC_EXTDATA_WEB ? "WEB" : "DATABASE",
+             sname, sname[0] ? "!" : "",
+             a, b, spec.source, spec.item, spec.headers, spec.refresh_on_open, spec.refresh_seconds);
+    to_latin1(line, strlen(line), out, size);
+    return 1;
+}
+
 /* ---- Edit > Track Changes: recording, and the Manage Changes window ---- */
 
 static char track_author[64];                   /* Latin-1, as the requester shows it */
@@ -6360,6 +6784,8 @@ static void menu_action(ULONG id)
     case M_PROTECT_SHEET: do_protect_sheet(); break;
     case M_PROTECT_BOOK: do_protect_book(); break;
     case M_EDIT_LINKS: do_edit_links(); break;
+    case M_EXTDATA: do_extdata(); break;
+    case M_EXTDATA_REFRESH: do_extdata_refresh(); break;
     case M_TRACK: set_track(!oc_core_track_changes(core), 0); break;
     case M_CHANGES_MANAGE: do_manage_changes(); break;
     case M_CHANGES_ACCEPT_ALL: changes_all(1); break;
@@ -7011,7 +7437,7 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
                  "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK CHARTSELECT CHARTMOVE "
-                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO PIVOTDETAILS PIVOTSET SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER MULTIOP TEXTTOCOLUMNS REMOVEDUPS CONDFMT PROTECT UNPROTECT CELLPROTECT ISPROTECTED PROTECTBOOK UNPROTECTBOOK ISBOOKPROTECTED LINKS UPDATELINK TRACKCHANGES CHANGES CHANGE SHOWCHANGE ACCEPTCHANGE REJECTCHANGE CHANGEAUTHOR QUIT");
+                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO PIVOTDETAILS PIVOTSET SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER MULTIOP TEXTTOCOLUMNS REMOVEDUPS CONDFMT PROTECT UNPROTECT CELLPROTECT ISPROTECTED PROTECTBOOK UNPROTECTBOOK ISBOOKPROTECTED LINKS UPDATELINK EXTDATA EXTDATAINFO EXTDATAADD EXTDATACHANGE EXTDATAREFRESH EXTDATAREMOVE TRACKCHANGES CHANGES CHANGE SHOWCHANGE ACCEPTCHANGE REJECTCHANGE CHANGEAUTHOR QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {   /* a DOS error code's text, as every Open app's port */
         if (!*arg) { ok = 0; snprintf(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -7259,6 +7685,44 @@ static int rexx_do_command(const char *command, char **result_out)
             ok = rc == OWF_OK && sheets;
             if (rc == OWF_ERR_UNSUPPORTED && (atoi(which) < 1 || atoi(which) > n)) rc_fail = RX_NOW;
         }
+    } else if (starts_word_ci(command, "EXTDATAINFO", &arg)) {
+        if (!rexx_extdata_info(arg, result_text, sizeof result_text)) { ok = 0; rc_fail = RX_NOW; snprintf(result_text, sizeof result_text, "No such range"); }
+    } else if (starts_word_ci(command, "EXTDATAADD", &arg) || starts_word_ci(command, "EXTDATACHANGE", &arg)) {
+        int now = 0;
+        ok = rexx_extdata_add(arg, starts_word_ci(command, "EXTDATACHANGE", NULL), result_text, sizeof result_text, &now);
+        if (!ok && now) rc_fail = RX_NOW;
+    } else if (starts_word_ci(command, "EXTDATAREFRESH", &arg)) {
+        /* EXTDATAREFRESH n | ALL [OVERWRITE] */
+        char which[16], word[16], err[300];
+        const char *rest = rexx_word(arg, which, sizeof which);
+        int all = !strcasecmp(which, "ALL"), n = atoi(which), rc;
+        rexx_word(rest, word, sizeof word);
+        if (!all && (n < 1 || n > oc_core_extdata_count(core))) { ok = 0; rc_fail = RX_NOW; snprintf(result_text, sizeof result_text, "No such range"); }
+        else {
+            extdata_allowed = 1;
+            rc = oc_core_extdata_refresh(core, all ? -1 : n - 1, extdata_io(), !strcasecmp(word, "OVERWRITE") ? OC_EXTDATA_OVERWRITE : 0,
+                                         err, sizeof err);
+            ok = rc == OWF_OK;
+            if (ok) refresh();
+            else {
+                to_latin1(err, strlen(err), result_text, sizeof result_text);
+                if (!result_text[0]) snprintf(result_text, sizeof result_text, "%s", rc == OC_EXTDATA_BLOCKED
+                                              ? "Cells beside it hold something (OVERWRITE)" : owf_error_text(rc));
+            }
+        }
+    } else if (starts_word_ci(command, "EXTDATAREMOVE", &arg)) {
+        /* EXTDATAREMOVE n [CLEAR] */
+        char which[16], word[16];
+        const char *rest = rexx_word(arg, which, sizeof which);
+        int rc;
+        rexx_word(rest, word, sizeof word);
+        rc = oc_core_extdata_remove(core, atoi(which) - 1, !strcasecmp(word, "CLEAR"));
+        ok = rc == OWF_OK;
+        if (ok) refresh();
+        else { if (rc == OWF_ERR_UNSUPPORTED) rc_fail = RX_NOW; snprintf(result_text, sizeof result_text, "%s", rc == OWF_ERR_UNSUPPORTED ? "No such range" : owf_error_text(rc)); }
+    } else if (starts_word_ci(command, "EXTDATA", &arg)) {
+        /* EXTDATA: how many external data ranges the book has */
+        snprintf(result_text, sizeof result_text, "%d", oc_core_extdata_count(core));
     } else if (starts_word_ci(command, "ISBOOKPROTECTED", &arg)) {
         int has = 0, on = oc_core_book_protection(core, &has);
         snprintf(result_text, sizeof result_text, "%d %d", on, has);
@@ -8192,6 +8656,8 @@ static void events(void)
             } else if (core && !mouse_down && !resizing && !chart_drag &&
                        oc_core_auto_multiple_operations_step(core, OC_MULTIOP_STEP_TRIALS))
                 refresh();      /* a big book's Multiple Operations tables, a few at a time while idle */
+            else if (core && !mouse_down && !resizing && !chart_drag && extdata_tick())
+                refresh();      /* external data refreshed on its clock */
             break;
         case IDCMP_MOUSEBUTTONS:
             if (code == SELECTDOWN) {

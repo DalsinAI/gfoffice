@@ -124,6 +124,18 @@ int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigne
 int opr_gradient_band(const int *xy, int n, int x, int y, int w, int h, int kind, int angle, unsigned long from,
                       unsigned long to, int band, int bands, int *out, int cap, unsigned long *colour);
 
+/* Hatching as plain lines, for a screen that draws lines but can't clip (opr_gradient.c): the lines of
+ * kind (OPR_HATCH_SINGLE, _DOUBLE: and at right angles, _TRIPLE: and at 45 degrees between) inside the
+ * closed outline xy (n points), at angle (tenths anticlockwise, 0 left to right) and distance apart, the
+ * pattern running through (x, y), so it stays put as the shape moves with its box. Into out as x1, y1,
+ * x2, y2 for each line (at most cap lines); the count. When more lines would cross the outline than out
+ * holds, the lines are spaced twice as far apart (then four times, and so on) until they fit; -1 only when
+ * even that cannot fit them (out too small for one line of each set). */
+#define OPR_HATCH_SINGLE 1
+#define OPR_HATCH_DOUBLE 2
+#define OPR_HATCH_TRIPLE 3
+int opr_hatch_lines(const int *xy, int n, int x, int y, int kind, int angle, int distance, int *out, int cap);
+
 /* The deck as PowerPoint (PPTX, opr_pptx.c): its slides with their objects
  * where they are drawn, text with its look and levels, pictures, shapes,
  * backgrounds, hidden slides, transitions and speaker notes, a slide master

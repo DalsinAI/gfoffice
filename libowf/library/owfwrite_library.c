@@ -77,7 +77,7 @@
  * owfpresent.library 3.17).
  * 3.25: libowf 1.22 (3.24, libowf 1.21, is #2's: tracked paragraph formats), tracked table cells (owf_para.cell_revision): a column
  * put in or deleted while recording is a change cell by cell, DOCX w:tcPr/w:cellIns and w:cellDel in and
- * out, ODT saves them accepted. No new calls; owf_para grew, so owfpub (3.9) and owfpresent (3.19) go too.
+ * out, ODT saves them accepted. No new calls; owf_para grew, so owfpub (3.9) and owfpresent (3.20) go too.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
