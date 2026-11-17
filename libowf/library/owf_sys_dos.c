@@ -47,6 +47,26 @@ int owf_sys_read_file(const char *path, unsigned char **data, size_t *length)
     return OWF_OK;
 }
 
+int owf_sys_file_size(const char *path, size_t *length)
+{
+    BPTR fh;
+    LONG size;
+
+    if (!length)
+        return OWF_ERR_IO;
+    *length = 0;
+    if (!path || !(fh = Open((CONST_STRPTR)path, MODE_OLDFILE)))
+        return OWF_ERR_IO;
+    /* Seek answers the position it left: the end's, from the second call */
+    if (Seek(fh, 0, OFFSET_END) < 0 || (size = Seek(fh, 0, OFFSET_BEGINNING)) < 0) {
+        Close(fh);
+        return OWF_ERR_IO;
+    }
+    Close(fh);
+    *length = (size_t)size;
+    return OWF_OK;
+}
+
 /* The length of path's drawer, with its '/' or ':' (0 for a bare name). */
 static size_t drawer_length(const char *path)
 {

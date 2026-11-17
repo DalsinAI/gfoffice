@@ -18,6 +18,8 @@
 
 /* Reads a whole file; *data gets a NUL after the bytes (from malloc). */
 int owf_sys_read_file(const char *path, unsigned char **data, size_t *length);
+/* A file's length in bytes into *length, without reading it (so a caller can refuse a big file first). */
+int owf_sys_file_size(const char *path, size_t *length);
 /* Writes a whole file, replacing it. */
 int owf_sys_write_file(const char *path, const unsigned char *data, size_t length);
 typedef struct {

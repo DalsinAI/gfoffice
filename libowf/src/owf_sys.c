@@ -42,6 +42,25 @@ int owf_sys_read_file(const char *path, unsigned char **data, size_t *length)
     return OWF_OK;
 }
 
+int owf_sys_file_size(const char *path, size_t *length)
+{
+    FILE *fh;
+    long size;
+
+    if (!length)
+        return OWF_ERR_IO;
+    *length = 0;
+    if (!path || !(fh = fopen(path, "rb")))
+        return OWF_ERR_IO;
+    if (fseek(fh, 0, SEEK_END) != 0 || (size = ftell(fh)) < 0) {
+        fclose(fh);
+        return OWF_ERR_IO;
+    }
+    fclose(fh);
+    *length = (size_t)size;
+    return OWF_OK;
+}
+
 /* The length of path's drawer, with its '/' or ':' (0 for a bare name). */
 static size_t drawer_length(const char *path)
 {
