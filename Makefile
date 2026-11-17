@@ -9,9 +9,9 @@ CFLAGS ?= -O2
 WARN = -std=c99 -Wall -Wextra -Wpedantic -Wno-overlength-strings
 OWF_SRC = $(wildcard libowf/src/*.c)
 OUT = build/host
-# the tests' saves are stamped 14 November 2023 22:13:20 UTC, not the clock: saved twice, the same bytes
-# (owf_sys.c); an environment's own SOURCE_DATE_EPOCH wins
-export SOURCE_DATE_EPOCH ?= 1700000000
+# the tests' zips are stamped 14 November 2023 22:13:20 UTC, not the clock: saved twice, the same bytes
+# (owf_sys_zip_epoch); zips only, the clock (TODAY) stays real; an environment's own OWF_ZIP_EPOCH wins
+export OWF_ZIP_EPOCH ?= 1700000000
 
 all: $(OUT)/owconvert
 

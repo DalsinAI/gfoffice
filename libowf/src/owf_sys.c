@@ -126,25 +126,39 @@ done:
     return result;
 }
 
-/* The time now, or SOURCE_DATE_EPOCH's (seconds since 1970, UTC) when it is
- * set: reproducible saves, and make test's save-twice checks (Makefile). */
+/* OWF_ZIP_EPOCH's time (seconds since 1970, UTC) for zips' stamps only:
+ * make test sets it so saves twice are the same bytes. 0 when it is not set
+ * or not a number; owf_sys_now and Calc's TODAY never read it. */
+int owf_sys_zip_epoch(owf_time *t)
+{
+    const char *epoch = getenv("OWF_ZIP_EPOCH");
+    char *end;
+    long long v;
+    time_t when;
+    struct tm *tm;
+
+    if (!epoch || !*epoch)
+        return 0;
+    v = strtoll(epoch, &end, 10);
+    if (*end || v < 0)
+        return 0;
+    when = (time_t)v;
+    tm = gmtime(&when);
+    if (!tm)
+        return 0;
+    t->year = tm->tm_year + 1900;
+    t->month = tm->tm_mon + 1;
+    t->day = tm->tm_mday;
+    t->hour = tm->tm_hour;
+    t->minute = tm->tm_min;
+    t->second = tm->tm_sec;
+    return 1;
+}
+
 int owf_sys_now(owf_time *t)
 {
-    const char *epoch = getenv("SOURCE_DATE_EPOCH");
     time_t now = time(NULL);
-    struct tm *tm;
-    if (epoch && *epoch) {
-        char *end;
-        long long v = strtoll(epoch, &end, 10);
-        if (!*end && v >= 0) {
-            now = (time_t)v;
-            tm = gmtime(&now);
-        } else {
-            tm = localtime(&now);
-        }
-    } else {
-        tm = localtime(&now);
-    }
+    struct tm *tm = localtime(&now);
 
     if (!tm)
         return 0;

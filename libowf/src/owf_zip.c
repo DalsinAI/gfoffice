@@ -77,7 +77,8 @@ owf_zip *owf_zip_new(owf_buf *out)
 {
     owf_zip *zip = calloc(1, sizeof *zip);
     owf_time now;
-    const owf_time *t = zip_fixed_set ? &zip_fixed : owf_sys_now(&now) ? &now : NULL;
+    const owf_time *t = zip_fixed_set ? &zip_fixed
+                       : owf_sys_zip_epoch(&now) || owf_sys_now(&now) ? &now : NULL;
 
     if (!zip)
         return NULL;
