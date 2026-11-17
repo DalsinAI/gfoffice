@@ -177,6 +177,34 @@ static void undo_steps(void)
     bad = bg; bad.fill = 0x2000000UL;
     CHECK(opr_slide_set_background(u, d, 0, &bad) == -2, "a background with a bad shade refused");
     CHECK(opr_slide_set_background(u, d, 1, &bg) == -1, "a slide that is not there");
+
+    /* Kill Crazy's case on #20: a background tiled with a picture (#19) keeps its picture, tiling and
+     * tile size through Slide Background..., and an unchanged Apply is still no edit */
+    opr_undo_clear(u);
+    d->slides[0].background_image = 0;
+    d->slides[0].background_tile = 1;
+    d->slides[0].background_tile_width = 1440;
+    d->slides[0].background_tile_height = 720;
+    OWF_BACKGROUND_LOOK(&d->slides[0], &bg);          /* what the window starts from */
+    bg.picture = OWF_PICTURE_NONE;                    /* the window's look has none of these */
+    bg.tile_width = bg.tile_height = 0;
+    CHECK(!opr_slide_set_background(u, d, 0, &bg) && !opr_undo_can(u), "a tiled picture background: unchanged, no edit");
+    bg.fill = OWF_SHADE(0x336699);
+    CHECK(!opr_slide_set_background(u, d, 0, &bg) && opr_undo_can(u) && d->slides[0].background == OWF_SHADE(0x336699),
+          "a new colour under the tiled picture");
+    CHECK(d->slides[0].background_image == 0 && d->slides[0].background_tile == 1 &&
+          d->slides[0].background_tile_width == 1440 && d->slides[0].background_tile_height == 720,
+          "still tiled with the picture, at the same size");
+    CHECK(!opr_undo_undo(u, d, &slide, &obj) && d->slides[0].background == OWF_SHADE(0xeeeeee) &&
+          d->slides[0].background_tile == 1 && d->slides[0].background_tile_width == 1440, "undo keeps the tiling");
+    d->slides[0].background_tile = 0;                 /* stretched */
+    opr_undo_clear(u);
+    CHECK(!opr_slide_set_background(u, d, 0, &bg) && !d->slides[0].background_tile &&
+          d->slides[0].background_image == 0, "a stretched picture stays stretched");
+    bad = look; bad.picture = 3;
+    CHECK(opr_obj_set_look(u, d, 0, 0, &bad) == -2, "a look with an unknown picture fill refused");
+    bad = look; bad.tile_width = -1;
+    CHECK(opr_obj_set_look(u, d, 0, 0, &bad) == -2, "a look with a negative tile refused");
     opr_undo_free(u);
     owf_deck_free(d);
 }

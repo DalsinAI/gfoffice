@@ -2488,7 +2488,8 @@ static int valid_look(const owf_look *look)
            !(look->arrows & ~(OWF_ARROW_START | OWF_ARROW_END)) &&
            look->shadow <= 1 && look->shadow_transparency <= 100 && valid_shade(look->shadow_colour) &&
            look->shadow_dx >= -20000 && look->shadow_dx <= 20000 &&
-           look->shadow_dy >= -20000 && look->shadow_dy <= 20000;
+           look->shadow_dy >= -20000 && look->shadow_dy <= 20000 && look->picture <= OWF_PICTURE_TILE &&
+           look->tile_width >= 0 && look->tile_height >= 0;
 }
 
 static int tenths_of_turn(int angle)
@@ -2595,6 +2596,11 @@ int opr_slide_set_background(opr_undo *u, owf_deck *deck, int slide, const owf_l
     wanted.hatch_angle = background->hatch_angle;
     wanted.hatch_distance = background->hatch_distance;
     wanted.hatch_colour = background->hatch_colour;
+    /* the picture and how it is laid (#19) are not the window's: kept as they are, so a tiled picture
+     * stays tiled at its size, and an unchanged Apply is still no edit */
+    wanted.picture = now.picture;
+    wanted.tile_width = now.tile_width;
+    wanted.tile_height = now.tile_height;
     if (!memcmp(&now, &wanted, sizeof now))
         return 0;
     memset(&s, 0, sizeof s);
