@@ -370,10 +370,14 @@ int ob_rexx_queries(ob_project *p, const char *command, char *out, size_t size, 
             rc = 10;
             goto done;
         }
-        t = ob_query_run(p, q, na ? answers : NULL, NULL);
-        if (t < 0) { snprintf(out, size, "%s", ob_error(p)); rc = 10; goto done; }
-        if (changed) *changed = 1;
-        snprintf(out, size, "%lld", (long long)t);
+        {
+            int undoable = 0;
+            t = ob_query_run(p, q, na ? answers : NULL, &undoable);
+            if (t < 0) { snprintf(out, size, "%s", ob_error(p)); rc = 10; goto done; }
+            if (changed) *changed = 1;
+            /* the count; then the word when Undo can't take it back */
+            snprintf(out, size, undoable ? "%lld" : "%lld NOUNDO", (long long)t);
+        }
         goto done;
     }
     /* QUERYROW */
