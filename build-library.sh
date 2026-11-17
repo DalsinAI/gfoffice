@@ -111,8 +111,8 @@ SRC="$SRC $LIB/owf_softdouble.c $OWF/amiga/owf_zlib_amiga.c"
 "$BIN/m68k-amigaos-ar" rcs "$OBJ/libowf.a" "$OBJ"/*.o
 
 # ---- owfdiag.library's own files, into an archive of their own --------------------------------------------------
-# the diagram model and formats and GFOpenDiag's editing core (build.d/owfdiag-sources.sh)
-. "$HERE/build.d/owfdiag-sources.sh"
+# the diagram model and formats and GFOpenDiag's editing core (scripts/owfdiag-sources.sh)
+. "$HERE/scripts/owfdiag-sources.sh"
 DIAGINC="-I$HERE/include -I$HERE/src/deck"
 mkdir -p "$OBJ/diag"
 # shellcheck disable=SC2086

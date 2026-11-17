@@ -355,7 +355,7 @@ check: diagram-view-check
 endif
 
 # owfdiag.library (docs/suite/owf-libraries.md): OWFLibsTest's diagram checks (tests/library/owf_libs_diag.c) on
-# the PC with what the library holds linked in (build.d/owfdiag-sources.sh's files) and owf_kind.c built as the
+# the PC with what the library holds linked in (scripts/owfdiag-sources.sh's files) and owf_kind.c built as the
 # library's (OWF_KIND_DIAGRAMS: owf_struct_size answers the diagram structures' sizes from src/diag/odg_sizes.c).
 OWFDIAG_HOST_SRC = $(DIAG_SRC) $(filter-out src/diag/odg_view.c src/diag/odg_edit.c,$(wildcard src/diag/*.c)) \
 	src/deck/ow_picture.c

@@ -364,7 +364,7 @@ owfdiag.library is GFOpenDiag's.
 | --- | --- | --- | --- | --- |
 | `owfdiag.library` | `OWFDiagBase` | 1.0 | 145 | `<proto/owfdiag.h>` |
 
-**What it holds.** `build.d/owfdiag-sources.sh` lists the sources:
+**What it holds.** `scripts/owfdiag-sources.sh` lists the sources:
 
 - the diagram model and its formats (`libowf/diagram`): draw.io, SVG, PNG
   with the diagram inside, PDF, EPS, outlines, Mermaid, DOT, GraphML and
