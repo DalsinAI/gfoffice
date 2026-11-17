@@ -22,8 +22,8 @@ one document engine, and all free and open source under the MIT licence.
   files open in GFOpenPressmaster, and older Excel `.xls` workbooks open in
   GFOpenCalc.
 - **Built for the Amiga.** Real Amiga windows, menus and gadgets, Amiga
-  datatypes for pictures, the clipboard, printer.device, and an ARexx port in
-  every application for scripting and automation.
+  datatypes for pictures, the clipboard in most applications, and an ARexx
+  port in every application for scripting and automation.
 - **Light on hardware.** A 68040 is enough, no FPU is needed, and small
   documents are happy in 8 MB of Fast RAM. RTG screens are used when they are
   there, and AGA works too.
@@ -31,8 +31,9 @@ one document engine, and all free and open source under the MIT licence.
   document library, also available as four shared Amiga libraries
   (`owfwrite`, `owfcalc`, `owfpresent` and `owfpub`), so programs share code
   and memory instead of each carrying its own.
-- **Print and PDF everywhere.** Every application exports searchable PDF and
-  prints through GFOpenPrint.
+- **PDF from every program.** Every application exports PDF, and GFOpenWrite,
+  GFOpenCalc, GFOpenPresentation and GFOpenPressmaster also print through
+  GFOpenPrint.
 - **Clean room and open.** Written from the published file format
   specifications and real sample files, never from another suite's source.
   MIT licensed.
