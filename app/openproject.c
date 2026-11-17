@@ -1436,7 +1436,7 @@ static int reports_dialog(void)
 /* The chosen report printed or saved; the plan is kept scheduled by every edit, so its dates are current. */
 static void reports(void)
 {
-    char path[512], msg[160];
+    char path[512], msg[256];
     owf_doc *doc = NULL;
     int how, rc;
     if (rexx_busy) return;
