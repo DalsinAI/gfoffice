@@ -41,6 +41,7 @@ struct undo_step;
 struct ob_project {
     sqlite3 *db;
     char err[OB_ERR_MAX];
+    long step_limit, steps;     /* ob_set_step_limit: SQLite's progress calls allowed, and made so far */
     char title[OB_VALUE_MAX];
     int in_txn;
     int readonly;
@@ -110,6 +111,27 @@ static int ok(ob_project *p)
 {
     p->err[0] = 0;
     return 1;
+}
+
+/* SQLite's progress handler: non-zero stops the statement running once the limit is passed. */
+static int step_check(void *user)
+{
+    ob_project *p = user;
+    return ++p->steps > p->step_limit;
+}
+
+int ob_set_step_limit(ob_project *p, long limit)
+{
+    if (!p || !p->db) return 0;
+    p->steps = 0;
+    p->step_limit = limit;
+    sqlite3_progress_handler(p->db, limit > 0 ? OB_STEP_OPS : 0, limit > 0 ? step_check : NULL, p);
+    return 1;
+}
+
+int ob_step_limit_hit(const ob_project *p)
+{
+    return p && p->step_limit > 0 && p->steps > p->step_limit;
 }
 
 int ob_set_error(ob_project *p, const char *text)

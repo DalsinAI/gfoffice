@@ -665,4 +665,317 @@ __owfpub_owf_pub_free(void *__base, owf_pub *pub)
 #define owf_pub_free(pub) __owfpub_owf_pub_free((OWFPUB_BASE_NAME), (owf_pub *)(pub))
 #define __owf_pub_free_base(__in_base, pub) __owfpub_owf_pub_free((__in_base), (owf_pub *)(pub))
 
+static __inline__ ow_merge_table *
+__owfpub_ow_merge_table_parse(void *__base, const char *s, size_t n, int *memory)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(s);
+	register ULONG _d0 __asm("d0") = (ULONG)(n);
+	register ULONG _a1 __asm("a1") = (ULONG)(memory);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -252(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (ow_merge_table *)_d0;
+}
+#define ow_merge_table_parse(s, n, memory) __owfpub_ow_merge_table_parse((OWFPUB_BASE_NAME), (const char *)(s), (size_t)(n), (int *)(memory))
+#define __ow_merge_table_parse_base(__in_base, s, n, memory) __owfpub_ow_merge_table_parse((__in_base), (const char *)(s), (size_t)(n), (int *)(memory))
+
+static __inline__ ow_merge_table *
+__owfpub_ow_merge_table_from_text(void *__base, const char *data, size_t length, int *memory)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(data);
+	register ULONG _d0 __asm("d0") = (ULONG)(length);
+	register ULONG _a1 __asm("a1") = (ULONG)(memory);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -258(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (ow_merge_table *)_d0;
+}
+#define ow_merge_table_from_text(data, length, memory) __owfpub_ow_merge_table_from_text((OWFPUB_BASE_NAME), (const char *)(data), (size_t)(length), (int *)(memory))
+#define __ow_merge_table_from_text_base(__in_base, data, length, memory) __owfpub_ow_merge_table_from_text((__in_base), (const char *)(data), (size_t)(length), (int *)(memory))
+
+static __inline__ void
+__owfpub_ow_merge_table_free(void *__base, ow_merge_table *t)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(t);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -264(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	(void)_d0; (void)_d1; (void)_a0; (void)_a1;
+}
+#define ow_merge_table_free(t) __owfpub_ow_merge_table_free((OWFPUB_BASE_NAME), (ow_merge_table *)(t))
+#define __ow_merge_table_free_base(__in_base, t) __owfpub_ow_merge_table_free((__in_base), (ow_merge_table *)(t))
+
+static __inline__ int
+__owfpub_ow_merge_column(void *__base, const ow_merge_table *t, const char *name)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(t);
+	register ULONG _a1 __asm("a1") = (ULONG)(name);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -270(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define ow_merge_column(t, name) __owfpub_ow_merge_column((OWFPUB_BASE_NAME), (const ow_merge_table *)(t), (const char *)(name))
+#define __ow_merge_column_base(__in_base, t, name) __owfpub_ow_merge_column((__in_base), (const ow_merge_table *)(t), (const char *)(name))
+
+static __inline__ const char *
+__owfpub_ow_merge_value(void *__base, const ow_merge_table *t, int record, const char *column)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(t);
+	register ULONG _d0 __asm("d0") = (ULONG)(record);
+	register ULONG _a1 __asm("a1") = (ULONG)(column);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -276(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (const char *)_d0;
+}
+#define ow_merge_value(t, record, column) __owfpub_ow_merge_value((OWFPUB_BASE_NAME), (const ow_merge_table *)(t), (int)(record), (const char *)(column))
+#define __ow_merge_value_base(__in_base, t, record, column) __owfpub_ow_merge_value((__in_base), (const ow_merge_table *)(t), (int)(record), (const char *)(column))
+
+static __inline__ int
+__owfpub_opp_merge_insert_field(void *__base, owf_obj *obj, int para, const char *column, const owf_charfmt *fmt)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(obj);
+	register ULONG _d0 __asm("d0") = (ULONG)(para);
+	register ULONG _a1 __asm("a1") = (ULONG)(column);
+	register ULONG _a2 __asm("a2") = (ULONG)(fmt);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -282(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define opp_merge_insert_field(obj, para, column, fmt) __owfpub_opp_merge_insert_field((OWFPUB_BASE_NAME), (owf_obj *)(obj), (int)(para), (const char *)(column), (const owf_charfmt *)(fmt))
+#define __opp_merge_insert_field_base(__in_base, obj, para, column, fmt) __owfpub_opp_merge_insert_field((__in_base), (owf_obj *)(obj), (int)(para), (const char *)(column), (const owf_charfmt *)(fmt))
+
+static __inline__ int
+__owfpub_opp_merge_insert_field_at(void *__base, owf_obj *obj, int para, size_t offset, const char *column)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(obj);
+	register ULONG _d0 __asm("d0") = (ULONG)(para);
+	register ULONG _d1 __asm("d1") = (ULONG)(offset);
+	register ULONG _a1 __asm("a1") = (ULONG)(column);
+	register void *_a6 __asm("a6") = __base;
+	__asm__ __volatile__ ("jsr -288(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define opp_merge_insert_field_at(obj, para, offset, column) __owfpub_opp_merge_insert_field_at((OWFPUB_BASE_NAME), (owf_obj *)(obj), (int)(para), (size_t)(offset), (const char *)(column))
+#define __opp_merge_insert_field_at_base(__in_base, obj, para, offset, column) __owfpub_opp_merge_insert_field_at((__in_base), (owf_obj *)(obj), (int)(para), (size_t)(offset), (const char *)(column))
+
+static __inline__ int
+__owfpub_opp_insert_page_field_at(void *__base, owf_obj *obj, int para, size_t offset, owf_field which)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(obj);
+	register ULONG _d0 __asm("d0") = (ULONG)(para);
+	register ULONG _d1 __asm("d1") = (ULONG)(offset);
+	register ULONG _d2 __asm("d2") = (ULONG)(which);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -294(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6), "r" (_d2)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define opp_insert_page_field_at(obj, para, offset, which) __owfpub_opp_insert_page_field_at((OWFPUB_BASE_NAME), (owf_obj *)(obj), (int)(para), (size_t)(offset), (owf_field)(which))
+#define __opp_insert_page_field_at_base(__in_base, obj, para, offset, which) __owfpub_opp_insert_page_field_at((__in_base), (owf_obj *)(obj), (int)(para), (size_t)(offset), (owf_field)(which))
+
+static __inline__ int
+__owfpub_opp_merge_load_file(void *__base, const char *path, ow_merge_table **table)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(path);
+	register ULONG _a1 __asm("a1") = (ULONG)(table);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -300(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define opp_merge_load_file(path, table) __owfpub_opp_merge_load_file((OWFPUB_BASE_NAME), (const char *)(path), (ow_merge_table **)(table))
+#define __opp_merge_load_file_base(__in_base, path, table) __owfpub_opp_merge_load_file((__in_base), (const char *)(path), (ow_merge_table **)(table))
+
+static __inline__ int
+__owfpub_opp_merge_fields(void *__base, const owf_deck *deck, const ow_merge_table *t, int *missing)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(deck);
+	register ULONG _a1 __asm("a1") = (ULONG)(t);
+	register ULONG _a2 __asm("a2") = (ULONG)(missing);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -306(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define opp_merge_fields(deck, t, missing) __owfpub_opp_merge_fields((OWFPUB_BASE_NAME), (const owf_deck *)(deck), (const ow_merge_table *)(t), (int *)(missing))
+#define __opp_merge_fields_base(__in_base, deck, t, missing) __owfpub_opp_merge_fields((__in_base), (const owf_deck *)(deck), (const ow_merge_table *)(t), (int *)(missing))
+
+static __inline__ int
+__owfpub_opp_merge_show(void *__base, owf_deck *deck, const ow_merge_table *t, int record, int *set)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(deck);
+	register ULONG _a1 __asm("a1") = (ULONG)(t);
+	register ULONG _d0 __asm("d0") = (ULONG)(record);
+	register ULONG _a2 __asm("a2") = (ULONG)(set);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	__asm__ __volatile__ ("jsr -312(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define opp_merge_show(deck, t, record, set) __owfpub_opp_merge_show((OWFPUB_BASE_NAME), (owf_deck *)(deck), (const ow_merge_table *)(t), (int)(record), (int *)(set))
+#define __opp_merge_show_base(__in_base, deck, t, record, set) __owfpub_opp_merge_show((__in_base), (owf_deck *)(deck), (const ow_merge_table *)(t), (int)(record), (int *)(set))
+
+static __inline__ int
+__owfpub_opp_merge_pages(void *__base, owf_deck *deck, const ow_merge_table *t, int first, int last)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(deck);
+	register ULONG _a1 __asm("a1") = (ULONG)(t);
+	register ULONG _d0 __asm("d0") = (ULONG)(first);
+	register ULONG _d1 __asm("d1") = (ULONG)(last);
+	register void *_a6 __asm("a6") = __base;
+	__asm__ __volatile__ ("jsr -318(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define opp_merge_pages(deck, t, first, last) __owfpub_opp_merge_pages((OWFPUB_BASE_NAME), (owf_deck *)(deck), (const ow_merge_table *)(t), (int)(first), (int)(last))
+#define __opp_merge_pages_base(__in_base, deck, t, first, last) __owfpub_opp_merge_pages((__in_base), (owf_deck *)(deck), (const ow_merge_table *)(t), (int)(first), (int)(last))
+
+static __inline__ int
+__owfpub_opp_merge_catalog(void *__base, owf_deck *deck, const ow_merge_table *t, int page, const opp_catalog *cat, int first, int last, int *made)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(deck);
+	register ULONG _a1 __asm("a1") = (ULONG)(t);
+	register ULONG _d0 __asm("d0") = (ULONG)(page);
+	register ULONG _a2 __asm("a2") = (ULONG)(cat);
+	register ULONG _d1 __asm("d1") = (ULONG)(first);
+	register ULONG _d2 __asm("d2") = (ULONG)(last);
+	register ULONG _a3 __asm("a3") = (ULONG)(made);
+	register void *_a6 __asm("a6") = __base;
+	__asm__ __volatile__ ("jsr -324(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a3), "r" (_a6), "r" (_d2)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define opp_merge_catalog(deck, t, page, cat, first, last, made) __owfpub_opp_merge_catalog((OWFPUB_BASE_NAME), (owf_deck *)(deck), (const ow_merge_table *)(t), (int)(page), (const opp_catalog *)(cat), (int)(first), (int)(last), (int *)(made))
+#define __opp_merge_catalog_base(__in_base, deck, t, page, cat, first, last, made) __owfpub_opp_merge_catalog((__in_base), (owf_deck *)(deck), (const ow_merge_table *)(t), (int)(page), (const opp_catalog *)(cat), (int)(first), (int)(last), (int *)(made))
+
+static __inline__ int
+__owfpub_opp_template_count(void *__base)
+{
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a0 __asm("a0");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -330(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "=r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define opp_template_count() __owfpub_opp_template_count((OWFPUB_BASE_NAME))
+#define __opp_template_count_base(__in_base) __owfpub_opp_template_count((__in_base))
+
+static __inline__ const opp_template_info *
+__owfpub_opp_template_info_at(void *__base, int i)
+{
+	register ULONG _d0 __asm("d0") = (ULONG)(i);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a0 __asm("a0");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -336(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "=r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (const opp_template_info *)_d0;
+}
+#define opp_template_info_at(i) __owfpub_opp_template_info_at((OWFPUB_BASE_NAME), (int)(i))
+#define __opp_template_info_at_base(__in_base, i) __owfpub_opp_template_info_at((__in_base), (int)(i))
+
+static __inline__ int
+__owfpub_opp_template_find(void *__base, const char *name)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(name);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -342(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define opp_template_find(name) __owfpub_opp_template_find((OWFPUB_BASE_NAME), (const char *)(name))
+#define __opp_template_find_base(__in_base, name) __owfpub_opp_template_find((__in_base), (const char *)(name))
+
+static __inline__ int
+__owfpub_opp_template_new(void *__base, int i, owf_deck **deck)
+{
+	register ULONG _d0 __asm("d0") = (ULONG)(i);
+	register ULONG _a0 __asm("a0") = (ULONG)(deck);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -348(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define opp_template_new(i, deck) __owfpub_opp_template_new((OWFPUB_BASE_NAME), (int)(i), (owf_deck **)(deck))
+#define __opp_template_new_base(__in_base, i, deck) __owfpub_opp_template_new((__in_base), (int)(i), (owf_deck **)(deck))
+
+static __inline__ void
+__owfpub_owf_deck_free(void *__base, owf_deck *deck)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(deck);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d0 __asm("d0");
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -354(%/a6)"
+		: "=r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	(void)_d0; (void)_d1; (void)_a0; (void)_a1;
+}
+#define owf_deck_free(deck) __owfpub_owf_deck_free((OWFPUB_BASE_NAME), (owf_deck *)(deck))
+#define __owf_deck_free_base(__in_base, deck) __owfpub_owf_deck_free((__in_base), (owf_deck *)(deck))
+
 #endif /* INLINE_OWFPUB_H */

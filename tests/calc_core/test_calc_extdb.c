@@ -167,6 +167,11 @@ static void test_project(void)
     oc_exttable_free(&t);
 
     CHECK(oc_extdb_query(NULL, SHOP, "Ask", 1, &t, err, sizeof err) == OWF_ERR_FORMAT && strstr(err, "value"));
+    CHECK(oc_extdb_query(NULL, SHOP, "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) "
+                         "SELECT count(*) FROM n", 0, &t, err, sizeof err) == OWF_ERR_FORMAT);
+    CHECK(strstr(err, "too much work") != NULL);
+    CHECK(oc_extdb_query(NULL, SHOP, "Count", 0, &t, err, sizeof err) == OWF_OK);   /* the next one runs */
+    oc_exttable_free(&t);
     CHECK(!t.cells && !t.rows);
     CHECK(oc_extdb_query(NULL, SHOP, "Nothing", 1, &t, err, sizeof err) == OWF_ERR_FORMAT && strstr(err, "Nothing"));
     CHECK(oc_extdb_query(NULL, SHOP, "DELETE FROM Products", 1, &t, err, sizeof err) == OWF_ERR_FORMAT);
@@ -225,6 +230,12 @@ static void test_plain(void)
     CHECK(oc_extdb_query(NULL, PLAIN, "SELECT a FROM t; DROP TABLE t", 0, &t, err, sizeof err) == OWF_ERR_FORMAT);
     CHECK(strstr(err, "one query") != NULL);
     CHECK(oc_extdb_query(NULL, PLAIN, "SELECT ?1", 0, &t, err, sizeof err) == OWF_ERR_FORMAT);
+    /* a query that would run without end gives no rows to count: stopped by the work it does */
+    CHECK(oc_extdb_query(NULL, PLAIN, "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) "
+                         "SELECT count(*) FROM n", 0, &t, err, sizeof err) == OWF_ERR_FORMAT);
+    CHECK(strstr(err, "too much work") != NULL);
+    CHECK(oc_extdb_query(NULL, PLAIN, "SELECT count(*) FROM t", 0, &t, err, sizeof err) == OWF_OK);
+    oc_exttable_free(&t);
     CHECK(oc_extdb_query(NULL, PLAIN, "sqlite_schema", 0, &t, err, sizeof err) == OWF_ERR_FORMAT);
     CHECK(oc_extdb_query(NULL, PLAIN, "missing", 0, &t, err, sizeof err) == OWF_ERR_FORMAT && strstr(err, "missing"));
     CHECK(oc_extdb_items(PLAIN, items, 4, err, sizeof err) == 2);

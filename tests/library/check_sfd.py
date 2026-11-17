@@ -37,7 +37,8 @@ import sys
 REPO = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 LIB = os.path.join(REPO, "libowf", "library")
 HEADERS = [os.path.join(REPO, "libowf", "include", h)
-           for h in ("owf.h", "owf_calc.h", "owf_pub.h", "owf_zip.h", "owf_deck.h", "owf_pdf.h", "owf_diagram.h", "owf_spell.h")]
+           for h in ("owf.h", "owf_calc.h", "owf_pub.h", "owf_zip.h", "owf_deck.h", "owf_pdf.h", "owf_diagram.h", "owf_spell.h",
+                     "ow_merge.h", "openpressmaster_merge.h", "openpressmaster_template.h")]
 HEADERS += [os.path.join(REPO, "include", "opendiag_%s.h" % h)
             for h in ("core", "clip", "order", "align", "mind", "style", "stencil", "rexx")]
 FOUR = ("owfwrite", "owfcalc", "owfpub", "owfpresent", "owfdiag")   # the split's libraries (five, with owfdiag)

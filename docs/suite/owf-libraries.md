@@ -20,7 +20,7 @@ stay where they are: no file moves (section 6).
 | --- | --- | --- |
 | `owfwrite.library` | GFOpenWrite | The document model (`owf_doc.c`) and its formats (`owf_format.c`'s table): DOCX and ODT in and out, flat ODT, Final Writer, Wordworth, ProWrite, IFF FTXT, ANSI, text, HTML out, and PDF out (`out_pdf.c`). RTF has no reader in libowf yet; when it gets one, it goes here. |
 | `owfcalc.library` | GFOpenCalc | The workbook model (`owf_book.c`, `owf_booknum.c`), XLSX, ODS, flat ODS, XLS and CSV (with `owf_xlformula.c` and `owf_xlfunc.c`), charts (`owf_chart.c`), the formula engine (`libowf/calc`), and the library's own doubles and maths (`owf_softdouble.c`, `owf_libm.c`). |
-| `owfpub.library` | GFOpenPressmaster | The `.pub` reader (`in_pub.c`) and its compound-file reader (`owf_cfb.c`), with the document model its stories use. |
+| `owfpub.library` | GFOpenPressmaster | The `.pub` reader (`in_pub.c`) and its compound-file reader (`owf_cfb.c`), with the document model its stories use. From 3.8 also the publication core in `libowf/pub`: the merge table, Mail Merge, Catalog Merge and the built-in templates. |
 | `owfpresent.library` | GFOpenPresentation | The deck model (`owf_deck.c`), ODP and flat ODP (`in_odp.c`, `out_odp.c`, and W138's coming `in_pptx.c`), and the page PDF writer (`owf_pdf.c`, `owf_pdffonts.c`), with the document model its text frames use. |
 
 These lists are not kept anywhere. Each library is built from one small file
@@ -110,7 +110,7 @@ These changes are small, and they don't change behaviour:
 | --- | --- | --- | --- | --- |
 | `owfwrite.library` | `OWFWriteBase` | 3.3 | 40 | `<proto/owfwrite.h>` |
 | `owfcalc.library` | `OWFCalcBase` | 3.9 | 98 | `<proto/owfcalc.h>` |
-| `owfpub.library` | `OWFPubBase` | 3.2 | 37 | `<proto/owfpub.h>` |
+| `owfpub.library` | `OWFPubBase` | 3.8 | 55 | `<proto/owfpub.h>` |
 | `owfpresent.library` | `OWFPresentBase` | 3.17 | 81 | `<proto/owfpresent.h>` |
 
 **Version 3 for all four.** The four libraries continue owf.library 2, so
@@ -266,7 +266,8 @@ built together with no library at all.
     checks the library's own calls:
     - documents saved and read back;
     - the workbook fixtures and the formula engine;
-    - `Sample.pub` (made by `tools/pubgen/make_pub.py`);
+    - `Sample.pub` (made by `tools/pubgen/make_pub.py`), then the templates
+      and a Mail Merge of a Flyer from a two-record table;
     - an ODP saved and read back, a new deck, and a PDF page.
 
     It runs everything again from a second task at the same time.

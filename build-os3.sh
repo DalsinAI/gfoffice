@@ -86,6 +86,7 @@ for f in $OWFSRC; do
     */owf_book.c | */owf_cfb.c | */owf_xlfunc.c | */in_xls.c | */out_csv.c | */owf_chart.c | */owf_chartbook.c | */owf_chartodf.c) ;;
     */owf_booknum.c | */owf_xlformula.c | */in_xlsx.c | */out_xlsx.c | */in_ods.c | */out_ods.c | */in_csv.c) ;;
     */owf_deck.c | */in_odp.c | */out_odp.c | */in_pptx.c | */in_ppt.c | */owf_pdf.c | */owf_pdffonts.c) ;;
+    */owf_fill.c | */owf_picture.c) ;;   # the shared fills and picture writers: the drawing programs' (below)
     */in_pub.c) ;;   # GFOpenPressmaster's .pub reader: it needs owf_cfb.c
     */owf_cfbw.c | */out_pub.c) ;;   # GFOpenPressmaster's .pub save and its compound file writer
     */owf_kind.c) ;;   # owf_file_kind: it reads the workbook and .pub detectors
@@ -168,11 +169,23 @@ else
     OCSRC="$OWFSRC $HERE/libowf/calc/*.c"
     OWF_CALC=""
 fi
+# External Data's databases (include/opencalc_extdb.h) need GFOpenBase's core and gfopensqlite's soft-float
+# SQLite, found as build.d/base.sh finds it (OPENSQLITE); without it GFOpenCalc's External Data reads web pages
+# only and says so for a database.
+OC_SQLITE=${OPENSQLITE:-$HERE/../gfopensqlite/out-soft-st}
+if [ -f "$OC_SQLITE/lib/libsqlite3.a" ] && [ -f "$OC_SQLITE/include/sqlite3.h" ]; then
+    OC_EXTDB="-DOC_EXTDATA_DATABASES -I$OC_SQLITE/include $HERE/src/calc/extdb/oc_extdb.c $HERE/src/base/ob_core.c"
+    OC_EXTDB_LIB="-L$OC_SQLITE/lib -lsqlite3"
+else
+    OC_EXTDB=""
+    OC_EXTDB_LIB=""
+    echo "build-os3.sh: no gfopensqlite build in $OC_SQLITE: GFOpenCalc's External Data reads web pages only"
+fi
 # shellcheck disable=SC2086
 "$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_CALC \
     -I"$HERE/include" -I"$HERE/app" -I"$HERE/src/calc" -I"$HERE/libowf/calc" -I"$HERE/third_party/opengadtools" \
-    $OCSRC "$HERE"/src/calc/*.c "$HERE/app/opencalc.c" "$HERE/app/ow_autosave.c" "$HERE/app/ow_stack.c" "$HERE/app/ow_fontwidths.c" \
-    "$HERE"/third_party/opengadtools/*.c -lamiga -lm \
+    $OCSRC "$HERE"/src/calc/*.c $OC_EXTDB "$HERE/app/opencalc.c" "$HERE/app/ow_autosave.c" "$HERE/app/ow_stack.c" \
+    "$HERE/app/ow_fontwidths.c" "$HERE"/third_party/opengadtools/*.c $OC_EXTDB_LIB -lamiga -lm \
     -o "$OUT/GFOpenCalc"
 echo "$OUT/GFOpenCalc ($(wc -c < "$OUT/GFOpenCalc") bytes)"
 
@@ -185,7 +198,9 @@ else
 OWFSRC_DECK="$OWFSRC_DOCS"
 # owf_chart.c: a slide's charts are read and written as chart parts (Presentation gap 2); owf_booknum.c reads
 # and writes their numbers
-for f in owf_deck.c in_odp.c out_odp.c in_pptx.c in_ppt.c owf_pdf.c owf_pdffonts.c owf_chart.c owf_chartodf.c owf_booknum.c; do
+# owf_fill.c and owf_picture.c: the fills and picture writers every drawing program shares (owf_fill.h, owf_picture.h)
+for f in owf_deck.c in_odp.c out_odp.c in_pptx.c in_ppt.c owf_pdf.c owf_pdffonts.c owf_fill.c owf_picture.c \
+    owf_chart.c owf_chartodf.c owf_booknum.c; do
     OWFSRC_DECK="$OWFSRC_DECK $HERE/libowf/src/$f"
 done
 # The chart editor (Chart Data..., OPR_CHART_EDITOR; Presentation gap 2) is GFOpenCalc's core on a data sheet:
@@ -214,7 +229,7 @@ OWFSRC_PUB="$OWFSRC_DECK $HERE/libowf/src/owf_cfb.c $HERE/libowf/src/in_pub.c"
 # shellcheck disable=SC2086
 "$CC" $CFLAGS_COMMON -DOPENPRESSMASTER -DOW_CLIPBOARD_OBJECTS -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $SPELL \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
-    $OWFSRC_PUB "$HERE"/src/deck/*.c $SPELL_SRC "$HERE/src/pub/opp_import.c" "$HERE/src/pub/opp_merge.c" "$HERE/src/pub/opp_pagenum.c" "$HERE/src/pub/opp_template.c" "$HERE/src/core/ow_merge.c" "$HERE/src/core/ow_layout.c" $OL_C \
+    $OWFSRC_PUB "$HERE"/src/deck/*.c $SPELL_SRC "$HERE/src/pub/opp_import.c" "$HERE/libowf/pub/opp_merge.c" "$HERE/src/pub/opp_pagenum.c" "$HERE/libowf/pub/opp_template.c" "$HERE/src/core/ow_merge.c" "$HERE/src/core/ow_layout.c" $OL_C \
     "$HERE/app/openpresent.c" "$HERE/app/ow_stack.c" "$HERE/app/ow_clipboard.c" "$HERE"/third_party/opengadtools/*.c -lamiga \
     -o "$OUT/GFOpenPressmaster"
 echo "$OUT/GFOpenPressmaster ($(wc -c < "$OUT/GFOpenPressmaster") bytes)"

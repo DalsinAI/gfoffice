@@ -9,6 +9,10 @@
 #include <owf.h>
 #include <owf_pub.h>
 #include <owf_zip.h>
+#include <owf_deck.h>
+#include <ow_merge.h>
+#include <openpressmaster_merge.h>
+#include <openpressmaster_template.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -53,6 +57,24 @@ int owf_pub_detect(const unsigned char *data, size_t length);
 int owf_pub_read(const unsigned char *data, size_t length, owf_pub **pub, owf_report *report);
 int owf_pub_read_file(const char *path, owf_pub **pub, owf_report *report);
 void owf_pub_free(owf_pub *pub);
+ow_merge_table * ow_merge_table_parse(const char *s, size_t n, int *memory);
+ow_merge_table * ow_merge_table_from_text(const char *data, size_t length, int *memory);
+void ow_merge_table_free(ow_merge_table *t);
+int ow_merge_column(const ow_merge_table *t, const char *name);
+const char * ow_merge_value(const ow_merge_table *t, int record, const char *column);
+int opp_merge_insert_field(owf_obj *obj, int para, const char *column, const owf_charfmt *fmt);
+int opp_merge_insert_field_at(owf_obj *obj, int para, size_t offset, const char *column);
+int opp_insert_page_field_at(owf_obj *obj, int para, size_t offset, owf_field which);
+int opp_merge_load_file(const char *path, ow_merge_table **table);
+int opp_merge_fields(const owf_deck *deck, const ow_merge_table *t, int *missing);
+int opp_merge_show(owf_deck *deck, const ow_merge_table *t, int record, int *set);
+int opp_merge_pages(owf_deck *deck, const ow_merge_table *t, int first, int last);
+int opp_merge_catalog(owf_deck *deck, const ow_merge_table *t, int page, const opp_catalog *cat, int first, int last, int *made);
+int opp_template_count(VOID);
+const opp_template_info * opp_template_info_at(int i);
+int opp_template_find(const char *name);
+int opp_template_new(int i, owf_deck **deck);
+void owf_deck_free(owf_deck *deck);
 
 #ifdef __cplusplus
 }

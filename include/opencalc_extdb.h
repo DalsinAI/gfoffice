@@ -19,10 +19,14 @@ extern "C" {
 #endif
 
 #define OC_EXTDB_ROWS 65536U            /* rows read from one item, at most (more: an error) */
+/* The work one item's query may do: SQLite's steps, in thousands of thousands (more: stopped, an error), so a
+ * query that would run without end (WITH RECURSIVE without LIMIT, a count over a huge cross join) cannot hang
+ * GFOpenCalc as a book opens. About a minute's work on a 68040, a moment on a PC. */
+#define OC_EXTDB_STEPS 50000000L
 
 /* oc_extdata_io.query: user is not used. OWF_ERR_IO (the file cannot be opened or is not a database),
  * OWF_ERR_FORMAT (no such item, a query that does not run, one that asks for values or would change the
- * file), OWF_ERR_UNSUPPORTED (too many rows or cells), OWF_ERR_MEMORY; the reason in err. */
+ * file, one that did too much work: OC_EXTDB_STEPS), OWF_ERR_UNSUPPORTED (too many rows or cells), OWF_ERR_MEMORY; the reason in err. */
 int oc_extdb_query(void *user, const char *database, const char *item, int headers, oc_exttable *out, char *err,
                    size_t errsize);
 
