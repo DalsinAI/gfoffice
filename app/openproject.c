@@ -68,7 +68,7 @@ enum {
 #define M_FILTER 200                         /* View > Filter: M_FILTER + an OPJ_FILTER_ (All .. Unstarted) */
 #define M_GROUP 220                          /* View > Group By: M_GROUP + an index into group_cols */
 #define DATA_ITEM 20                         /* View's item number of Sort; Filter and Group By follow */
-#define PROGRESS_ITEM 8                      /* Tools' item number of Progress Lines */
+#define PROGRESS_ITEM 9                      /* Tools' item number of Progress Lines */
 #define NFILTER_ITEMS 7                      /* Filter's items 0 to 6: the filters, one ticked at a time */
 #define NGROUP_ITEMS 7                       /* Group By's items 0 to 6: No Group and six columns */
 static const int group_cols[NGROUP_ITEMS] = {
