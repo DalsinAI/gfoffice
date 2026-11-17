@@ -652,6 +652,18 @@ void opj_print_draw(oldraw *d, const opj_print *pr, const opj_doc *doc, int page
  * OWF_ERR_FORMAT when the plan has no tasks or a page is too small for it. */
 int opj_pdf_write(const opj_doc *doc, const opj_view *proto, unsigned char **data, size_t *length, int *pages);
 
+/* ---- The sheets as documents (opj_sheetdoc.c): printed and saved through libowf's writers ----
+ * OPJ_SHEET_TASKS: v's table, its shown columns in order and its lines (a group's heading a bold row), a
+ * summary's row bold, "!" after an over-allocated task's ID. OPJ_SHEET_RESOURCES: the resource sheet, every
+ * column (v may be NULL). A4 landscape, the plan's title in the header, "Page n of m" in the footer. */
+enum { OPJ_SHEET_TASKS, OPJ_SHEET_RESOURCES, OPJ_NSHEETS };
+/* "Task Sheet", "Resource Sheet"; NULL out of range. */
+const char *opj_sheet_name(int sheet);
+/* "Tasks", "Task Sheet", "Resources", "Resource Sheet" (any case, spaces optional); -1 else. */
+int opj_sheet_parse(const char *name);
+/* OWF_OK, OWF_ERR_FORMAT (sheet out of range, no doc, no view for the task sheet) or OWF_ERR_MEMORY. */
+int opj_sheet_document(const opj_doc *doc, const opj_view *v, int sheet, owf_doc **out);
+
 /* What is at a point. */
 enum { OPJ_HIT_NONE, OPJ_HIT_COLUMN_TITLE, OPJ_HIT_TIMESCALE, OPJ_HIT_CELL, OPJ_HIT_SPLIT, OPJ_HIT_BAR, OPJ_HIT_CHART,
        OPJ_HIT_HEADING };                /* HEADING: a group's heading line (row -1) */

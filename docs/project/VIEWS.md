@@ -162,6 +162,12 @@ writers then print and save it, so GFOpenProject has no report writer of its own
 task's cost into weeks in proportion to its working time. ARexx's REPORT does the same as Save.
 `tests/project/test_preport.c` checks every report against figures worked out by hand.
 
+`opj_sheet_document` (src/project/opj_sheetdoc.c) builds the task sheet or the resource sheet as a
+document in the same way. The task sheet takes the view's shown columns in order and its lines (filter
+and groups, with a group's heading as a bold row); summaries are bold, and an over-allocated task's ID
+gets the sheet's "!". The resource sheet takes every column. Both print A4 landscape. ARexx's SAVESHEET
+saves them.
+
 ## Checked
 
 `tests/project/test_opj.c`: dates typed and shown; every edit, including the ones refused and the

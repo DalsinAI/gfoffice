@@ -25,7 +25,7 @@ enum {
     C_HELP, C_LASTERROR, C_ISDIRTY, C_GETFILE, C_NEW, C_OPEN, C_SAVE, C_SAVEAS, C_EXPORT, C_TASKS, C_ADDTASK,
     C_DELETETASK, C_GETCELL, C_SETCELL, C_INDENT, C_OUTDENT, C_LINK, C_UNLINK, C_UNDO, C_REDO, C_BASELINE,
     C_RESOURCES, C_ADDRESOURCE, C_DELETERESOURCE, C_GETRESOURCE, C_SETRESOURCE, C_ASSIGN, C_USAGE, C_FINISH,
-    C_CRITICAL, C_COLUMN, C_CALENDARS, C_ADDCALENDAR, C_WORKTIME, C_SETCALENDAR, C_UPDATE, C_BASELINES, C_REPLACE, C_LEVEL, C_CLEARLEVELING, C_SORT, C_FIND, C_REPLACETEXT, C_FILTER, C_GROUP, C_LINES, C_LINE, C_UPDATETASK, C_PROGRESSLINES, C_REPORT, NCOMMANDS
+    C_CRITICAL, C_COLUMN, C_CALENDARS, C_ADDCALENDAR, C_WORKTIME, C_SETCALENDAR, C_UPDATE, C_BASELINES, C_REPLACE, C_LEVEL, C_CLEARLEVELING, C_SORT, C_FIND, C_REPLACETEXT, C_FILTER, C_GROUP, C_LINES, C_LINE, C_UPDATETASK, C_PROGRESSLINES, C_REPORT, C_SAVESHEET, NCOMMANDS
 };
 
 static const command commands[NCOMMANDS] = {
@@ -79,6 +79,7 @@ static const command commands[NCOMMANDS] = {
     { "UPDATETASK", "ROW/A/N,PERCENT/K,ACTUAL/K,REMAINING/K,START/K,FINISH/K" },
     { "PROGRESSLINES", "ON/S,OFF/S" },
     { "REPORT", "NAME/A,FILE/A,FORMAT/K" },
+    { "SAVESHEET", "SHEET/A,FILE/A,FORMAT/K" },
 };
 
 /* ---- Words ---- */
@@ -450,6 +451,44 @@ static int save_report(opj_rexx *rx, const char *name, const char *file, const c
     return OPJ_RX_OK;
 }
 
+/* SAVESHEET: the task sheet (the window's columns, filter and groups) or the resource sheet as a document
+ * (opj_sheetdoc.c), saved through libowf's writers as the name's extension or FORMAT says. */
+static int save_sheet(opj_rexx *rx, const char *name, const char *file, const char *format)
+{
+    char f[16];
+    owf_doc *sheet;
+    opj_view v;
+    int which = opj_sheet_parse(name), rc;
+    if (which < 0) {
+        snprintf(rx->lasterror, sizeof rx->lasterror, "SAVESHEET: SHEET is Tasks or Resources, not %s", name);
+        return OPJ_RX_ERROR;
+    }
+    if (!name_fits(rx, "SAVESHEET", file)) return OPJ_RX_ERROR;
+    if (format) squash(format, f, sizeof f);
+    if (rx->view) v = *rx->view;
+    else opj_view_init(&v, rx->doc, 0, 0, 16, OPJ_ZOOM_DAYS);
+    if (!v.lines && rx->lines) v.lines = rx->lines;
+    if (opj_sheet_document(rx->doc, &v, which, &sheet) != OWF_OK) {
+        put(rx->lasterror, sizeof rx->lasterror, "SAVESHEET: out of memory");
+        return OPJ_RX_FAIL;
+    }
+    rc = owf_export_file(sheet, file, format ? f : NULL, NULL);
+    owf_doc_free(sheet);
+    if (rc == OWF_ERR_FORMAT || rc == OWF_ERR_UNSUPPORTED) {
+        snprintf(rx->lasterror, sizeof rx->lasterror, "SAVESHEET: can't save a sheet as %s", format ? format : file);
+        return OPJ_RX_ERROR;
+    }
+    if (rc == OWF_ERR_MEMORY) {
+        snprintf(rx->lasterror, sizeof rx->lasterror, "Out of memory writing %s", file);
+        return OPJ_RX_FAIL;
+    }
+    if (rc != OWF_OK) {
+        snprintf(rx->lasterror, sizeof rx->lasterror, "Could not write %s", file);
+        return OPJ_RX_ERROR;
+    }
+    return OPJ_RX_OK;
+}
+
 /* ---- Calendars ---- */
 
 /* A weekday's name ("Mon", "monday") as 0 Sunday..6, or -1. */
@@ -804,6 +843,7 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
         return edit_rc(rx, opj_update_task(doc, (int)row, a->value[1], a->value[2], a->value[3], a->value[4], a->value[5]),
                        "UPDATETASK");
     case C_REPORT: return save_report(rx, a->value[0], a->value[1], a->value[2]);
+    case C_SAVESHEET: return save_sheet(rx, a->value[0], a->value[1], a->value[2]);
     case C_PROGRESSLINES:
         if (!rx->view) {
             put(rx->lasterror, sizeof rx->lasterror, "PROGRESSLINES: there is no window to draw them in");
