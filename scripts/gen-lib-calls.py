@@ -38,7 +38,8 @@ def split_args(text):
 
 
 def parse_arg(text):
-    """(type, name) of 'const char *name'."""
+    """(type, name) of 'const char *name'; an array argument ('const owf_dnum box[4]') is its pointer."""
+    text = re.sub(r"(\w+)\s*\[[^\]]*\]\s*$", r"*\1", text.strip())
     m = re.match(r"(.*?)(\w+)\s*$", text)
     if not m:
         raise ValueError("cannot read the argument %r" % text)

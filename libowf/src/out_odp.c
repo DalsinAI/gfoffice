@@ -1113,8 +1113,10 @@ static void put_table(odpw *w, owf_buf *out, const owf_obj *o)
     for (c = 0; c < o->text.nparas; c++)
         if (o->text.paras[c].table_cols > ncols)
             ncols = o->text.paras[c].table_cols;
-    if (ncols > 64)
+    if (ncols > 64) {
+        owf_report_add(w->report, OWF_NOTE_LOST, "A table's columns past the 64th were left out");
         ncols = 64;
+    }
     /* its design: the template's name and which of its parts are on */
     owf_buf_puts(out, "<table:table");
     if (o->table_style && *o->table_style) {

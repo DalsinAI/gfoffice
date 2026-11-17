@@ -135,6 +135,15 @@ typedef struct {
     size_t used;
 } args;
 
+/* A command's working room: its arguments, the ids it names and those it makes. About 4 KB, too much for an Amiga
+ * task's stack, so each command takes it from memory and gives it back: nothing is kept between commands, and
+ * two tasks can run commands at once, as a library's callers do. */
+typedef struct {
+    args a;
+    char idbuf[ARG_TEXT];
+    char made[MAX_IDS][ODG_CLIP_ID];     /* the ids PASTE, DUPLICATE and UNGROUP make (ODG_ORDER_ID is as long) */
+} work;
+
 static void parse_template(const char *t, args *a)
 {
     memset(a, 0, sizeof *a);
@@ -330,32 +339,16 @@ int odg_rexx_format(const char *file)
     return ODG_FILE_DRAWIO;
 }
 
+/* libowf's own files (owf_sys.c, or over dos.library on owfdiag.library: owf_sys_dos.c), so the commands use no
+ * C library stdio and the library links with none (scripts/check-library-libc.sh). */
+int owf_sys_read_file(const char *path, unsigned char **data, size_t *length);
+int owf_sys_write_file(const char *path, const unsigned char *data, size_t length);
+
+/* name's bytes into *data (owf_malloc'd): 1; 0 when it can't be read; -1 when there is no memory for it */
 static int read_file(const char *name, unsigned char **data, size_t *length)
 {
-    FILE *f = fopen(name, "rb");
-    unsigned char *buf = NULL;
-    size_t n = 0, cap = 0;
-    if (!f) return 0;
-    for (;;) {
-        size_t got;
-        if (n == cap) {
-            unsigned char *grown;
-            cap = cap ? cap * 2 : 65536;
-            if (cap > 64UL * 1024 * 1024 || !(grown = owf_realloc(buf, cap))) {
-                owf_free(buf);
-                fclose(f);
-                return -1;
-            }
-            buf = grown;
-        }
-        got = fread(buf + n, 1, cap - n, f);
-        n += got;
-        if (got == 0) break;
-    }
-    fclose(f);
-    *data = buf;
-    *length = n;
-    return 1;
+    int rc = owf_sys_read_file(name, data, length);
+    return rc == OWF_OK ? 1 : rc == OWF_ERR_MEMORY ? -1 : 0;
 }
 
 /* The page drawn by the app (rx->picture) as a PNG with the diagram inside, or as an IFF ILBM, into *data
@@ -396,7 +389,7 @@ static int picture_file(odg_rexx *rx, const char *name, int format, unsigned cha
     }
     pic = format == ODG_FILE_PNG ? opr_png_encode(rgb, (int)w, (int)h, (size_t)w * 3, &n)
                                  : opr_ilbm_encode(rgb, (int)w, (int)h, (size_t)w * 3, &n);
-    free(rgb);
+    owf_free(rgb);
     if (!pic) return OWF_ERR_MEMORY;
     if (format == ODG_FILE_PNG)
         rc = owf_dpng_embed(pic, n, &rx->d, data, length);
@@ -414,7 +407,6 @@ static int write_file(odg_rexx *rx, const char *name, int format, int compressed
 {
     unsigned char *data = NULL;
     size_t length = 0;
-    FILE *f;
     int rc, ok;
     if (format == ODG_FILE_PNG || format == ODG_FILE_ILBM) {
         rc = picture_file(rx, name, format, &data, &length);
@@ -437,9 +429,7 @@ static int write_file(odg_rexx *rx, const char *name, int format, int compressed
         snprintf(rx->lasterror, sizeof rx->lasterror, "Could not make %.200s", name);
         return ODG_RX_ERROR;
     }
-    f = fopen(name, "wb");
-    ok = f && fwrite(data, 1, length, f) == length;
-    if (f && fclose(f) != 0) ok = 0;
+    ok = owf_sys_write_file(name, data, length) == OWF_OK;
     owf_free(data);
     if (!ok) {
         snprintf(rx->lasterror, sizeof rx->lasterror, "Could not write %.200s", name);
@@ -605,10 +595,11 @@ static int way_arg(odg_rexx *rx, const char *what, const char *w, const char *co
     return -1;
 }
 
-static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
+static int run(odg_rexx *rx, int c, work *wk, char *result, size_t size)
 {
     odg_doc *doc = &rx->doc;
-    static char idbuf[ARG_TEXT];         /* off the Amiga's small stack, as args is */
+    args *a = &wk->a;
+    char *idbuf = wk->idbuf;
     char text[64];
     const char *ids[MAX_IDS];
     int rc, n;
@@ -793,13 +784,13 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
             put(result, size, text);
         return rc;
     case C_MOVE:
-        if ((n = split_ids(rx, "MOVE", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        if ((n = split_ids(rx, "MOVE", a->value[0], idbuf, sizeof wk->idbuf, ids)) < 0) return ODG_RX_ERROR;
         return edit_rc(rx, odg_move(doc, ids, n, a->num[1], a->num[2]), "MOVE", "no such shape or connector");
     case C_RESIZE:
         return edit_rc(rx, odg_resize(doc, a->value[0], a->num[1], a->num[2], a->num[3], a->num[4]), "RESIZE",
                        "not a shape, or the size is not above 0");
     case C_DELETE:
-        if ((n = split_ids(rx, "DELETE", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        if ((n = split_ids(rx, "DELETE", a->value[0], idbuf, sizeof wk->idbuf, ids)) < 0) return ODG_RX_ERROR;
         return edit_rc(rx, odg_delete(doc, ids, n), "DELETE", "no such cell (the page and its layers stay)");
     case C_SETVALUE:
         return edit_rc(rx, odg_set_value(doc, a->value[0], a->value[1]), "SETVALUE", "no such cell");
@@ -810,7 +801,7 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         return ODG_RX_OK;
     }
     case C_STYLE:
-        if ((n = split_ids(rx, "STYLE", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        if ((n = split_ids(rx, "STYLE", a->value[0], idbuf, sizeof wk->idbuf, ids)) < 0) return ODG_RX_ERROR;
         return edit_rc(rx, odg_set_style(doc, ids, n, a->value[1], a->value[2]), "STYLE", "no such cell");
     case C_GETSTYLE: {
         const owf_dcell *cell = find_cell(rx, "GETSTYLE", a->value[0]);
@@ -963,7 +954,6 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         }
         if (c == C_MAPEXPORT) {
             char *out = NULL;
-            FILE *f;
             int ok;
             if (!fmt) kind = owf_outline_guess(name, NULL, 0);
             rc = odg_mind_items(doc, a->value[0], &items, &n);
@@ -974,9 +964,7 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
                          : "MAPEXPORT: %.100s is not in a map (or its map loops back on itself)", a->value[0]);
                 return rc == OWF_ERR_MEMORY ? ODG_RX_FAIL : ODG_RX_ERROR;
             }
-            f = fopen(name, "wb");
-            ok = f && fwrite(out, 1, length, f) == length;
-            if (f && fclose(f) != 0) ok = 0;
+            ok = owf_sys_write_file(name, (const unsigned char *)out, length) == OWF_OK;
             owf_free(out);
             if (!ok) {
                 snprintf(rx->lasterror, sizeof rx->lasterror, "MAPEXPORT: could not write %.200s", name);
@@ -1065,10 +1053,10 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
     case C_COPY:
     case C_CUT:
     case C_DUPLICATE: {
-        static char made[MAX_IDS][ODG_CLIP_ID];
+        char (*made)[ODG_CLIP_ID] = wk->made;
         const char *what = commands[c].name;
         int count = 0;
-        if ((n = split_ids(rx, what, a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        if ((n = split_ids(rx, what, a->value[0], idbuf, sizeof wk->idbuf, ids)) < 0) return ODG_RX_ERROR;
         if (c == C_COPY) {
             rc = odg_copy(doc, ids, n, &rx->clip);
             if (rc == OWF_OK) return ODG_RX_OK;      /* the page doesn't change */
@@ -1083,7 +1071,7 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         return rc;
     }
     case C_PASTE: {
-        static char made[MAX_IDS][ODG_CLIP_ID];
+        char (*made)[ODG_CLIP_ID] = wk->made;
         int count = 0;
         if (odg_clip_empty(&rx->clip)) {
             snprintf(rx->lasterror, sizeof rx->lasterror, "PASTE: nothing has been copied");
@@ -1103,7 +1091,7 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         static const odg_order how[4] = { ODG_ORDER_FRONT, ODG_ORDER_BACK, ODG_ORDER_FORWARD, ODG_ORDER_BACKWARD };
         int w = way_arg(rx, "ORDER", a->value[1], ways, 4);
         if (w < 0) return ODG_RX_ERROR;
-        if ((n = split_ids(rx, "ORDER", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        if ((n = split_ids(rx, "ORDER", a->value[0], idbuf, sizeof wk->idbuf, ids)) < 0) return ODG_RX_ERROR;
         rc = odg_reorder(doc, ids, n, how[w]);
         if (rc == OWF_ERR_FORMAT) {
             snprintf(rx->lasterror, sizeof rx->lasterror, "ORDER: no shape or connector to move %s", ways[w]);
@@ -1112,14 +1100,14 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         return edit_rc(rx, rc, "ORDER", "not possible");
     }
     case C_GROUP:
-        if ((n = split_ids(rx, "GROUP", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        if ((n = split_ids(rx, "GROUP", a->value[0], idbuf, sizeof wk->idbuf, ids)) < 0) return ODG_RX_ERROR;
         rc = odg_group(doc, ids, n, text);
         if ((rc = edit_rc(rx, rc, "GROUP", "no shape or connector to group")) == ODG_RX_OK) put(result, size, text);
         return rc;
     case C_UNGROUP: {
-        static char made[MAX_IDS][ODG_ORDER_ID];
+        char (*made)[ODG_ORDER_ID] = wk->made;
         int count = 0;
-        if ((n = split_ids(rx, "UNGROUP", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        if ((n = split_ids(rx, "UNGROUP", a->value[0], idbuf, sizeof wk->idbuf, ids)) < 0) return ODG_RX_ERROR;
         rc = odg_ungroup(doc, ids, n, made, MAX_IDS, &count);
         if ((rc = edit_rc(rx, rc, "UNGROUP", "no group (or shape holding others) to take apart")) == ODG_RX_OK)
             put_made(result, size, made, count, MAX_IDS);
@@ -1130,7 +1118,7 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         int w;
         if (a->value[1] && word_at(a->value[1], "CENTER", 6, 0) && !a->value[1][6]) w = 1;
         else if ((w = way_arg(rx, "ALIGN", a->value[1], ways, 6)) < 0) return ODG_RX_ERROR;
-        if ((n = split_ids(rx, "ALIGN", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        if ((n = split_ids(rx, "ALIGN", a->value[0], idbuf, sizeof wk->idbuf, ids)) < 0) return ODG_RX_ERROR;
         rc = odg_align(doc, ids, n, (odg_align_how)w);
         if (rc == OWF_ERR_FORMAT) {
             snprintf(rx->lasterror, sizeof rx->lasterror, "ALIGN: needs two shapes or more, not lined up already");
@@ -1139,7 +1127,7 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
         return edit_rc(rx, rc, "ALIGN", "not possible");
     }
     case C_DISTRIBUTE:
-        if ((n = split_ids(rx, "DISTRIBUTE", a->value[0], idbuf, sizeof idbuf, ids)) < 0) return ODG_RX_ERROR;
+        if ((n = split_ids(rx, "DISTRIBUTE", a->value[0], idbuf, sizeof wk->idbuf, ids)) < 0) return ODG_RX_ERROR;
         rc = odg_distribute(doc, ids, n, a->value[1] == NULL);
         if (rc == OWF_ERR_FORMAT) {
             snprintf(rx->lasterror, sizeof rx->lasterror, "DISTRIBUTE: needs three shapes or more, not spread evenly already");
@@ -1161,7 +1149,7 @@ static int run(odg_rexx *rx, int c, args *a, char *result, size_t size)
 int odg_rexx_command(odg_rexx *rx, const char *line, char *result, size_t size)
 {
     char scratch[8];
-    static args a;                       /* 2 KB of argument text: off the Amiga's small stack */
+    work *wk;
     int i, rc;
     if (!result || !size) result = scratch, size = sizeof scratch;
     result[0] = 0;
@@ -1176,14 +1164,20 @@ int odg_rexx_command(odg_rexx *rx, const char *line, char *result, size_t size)
                  (int)n, line);
         return ODG_RX_FAIL;
     }
-    parse_template(commands[i].tmpl, &a);
-    if (!parse_args(line + strlen(commands[i].name), &a, rx->lasterror, sizeof rx->lasterror)) {
+    if (!(wk = (work *)owf_malloc(sizeof *wk))) {
+        snprintf(rx->lasterror, sizeof rx->lasterror, "%s: out of memory", commands[i].name);
+        return ODG_RX_FAIL;
+    }
+    parse_template(commands[i].tmpl, &wk->a);
+    if (!parse_args(line + strlen(commands[i].name), &wk->a, rx->lasterror, sizeof rx->lasterror)) {
         char why[sizeof rx->lasterror];
         memcpy(why, rx->lasterror, sizeof why);
         snprintf(rx->lasterror, sizeof rx->lasterror, "%s: %.200s", commands[i].name, why);
+        owf_free(wk);
         return ODG_RX_ERROR;
     }
-    rc = run(rx, i, &a, result, size);
+    rc = run(rx, i, wk, result, size);
+    owf_free(wk);
     if (rc != ODG_RX_OK) result[0] = 0;
     return rc;
 }

@@ -123,6 +123,6 @@ const char *owf_field_name(owf_field field)
 {
     static const char *const names[] = { "PAGE", "PAGES", "DATE", "TIME", "TITLE", "AUTHOR", "SUBJECT", "FILENAME",
                                          "WORDS", "CHAPTER", "USER", "REF", "REFPAGE", "MERGE", "INDEX", "SEQ",
-                                         "IF" };
+                                         "IF", "FILLIN", "HIDEPARA" };
     return (int)field >= 0 && (int)field <= OWF_FIELD_LAST ? names[field] : "";
 }
