@@ -33,7 +33,7 @@
 extern "C" {
 #endif
 
-#define OPR_CORE_VERSION "0.40.0"
+#define OPR_CORE_VERSION "0.41.0"
 
 /* One frame of a laid-out slide: the background (obj NULL), a master's
  * object, or the slide's. */
@@ -400,6 +400,42 @@ int opr_table_set_row_height(opr_undo *u, owf_deck *deck, int slide, int obj,
                              int row, int twips);
 int opr_table_set_design(opr_undo *u, owf_deck *deck, int slide, int obj,
                          unsigned design);
+/* Presentation tables part 4b: the table tools' words (opr_tabletool.c), for
+ * the window's Table menu and ARexx TABLE alike. row and column name a cell
+ * of the table (from 0). command is one of:
+ *
+ *   MERGE rows columns   from this cell ("2 3", "2x3", "2 by 3")
+ *   SPLIT                the merge this cell is in
+ *   ROWHEIGHT length     this row's least height: 1.5cm (cm when no unit),
+ *                        15mm, 0.5in, 36pt, or AUTO (as its text needs)
+ *   DESIGN parts         header total firstcolumn lastcolumn bandedrows
+ *                        bandedcolumns, or none; alone: said gets the parts on
+ *   INFO                 said gets "rows columns row column merge-rows
+ *                        merge-columns height design" (the merge's first cell,
+ *                        from 1; 1 1 when not merged; height as ROWHEIGHT's)
+ *
+ * said gets a sentence for the status line: what was done, or why not.
+ * 0 done (one Undo step, none when nothing changed), -2 refused, -1 memory. */
+int opr_table_tool(opr_undo *u, owf_deck *deck, int slide, int obj, int row, int column, const char *command,
+                   char *said, size_t size);
+typedef struct {
+    int rows, columns;                 /* the table's */
+    int merged;                        /* the cell is in a merge */
+    int merge_row, merge_column;       /* its first cell (the cell itself when not merged) */
+    int merge_rows, merge_columns;     /* 1, 1 when not merged */
+    int row_height;                    /* twips; 0: as its text needs */
+    unsigned design;                   /* OWF_TABLE_... */
+} opr_table_info;
+/* About a table's cell; 0 when obj is no table or has no such cell. */
+int opr_table_cell_info(const owf_deck *deck, int slide, int obj, int row, int column, opr_table_info *info);
+/* A design's parts as DESIGN's words ("header bandedrows", "none"), and back
+ * (0: a word it doesn't know, nothing, or none with a part). */
+void opr_table_design_text(unsigned design, char *out, size_t size);
+int opr_table_design_parse(const char *text, unsigned *design);
+/* A row height as ROWHEIGHT's length ("1.5cm", "auto"), and back (0: not a
+ * length, or past 31680 twips). */
+void opr_table_length_text(int twips, char *out, size_t size);
+int opr_table_length_parse(const char *text, int *twips);
 /* A new embedded picture. The resource bytes and metadata are copied into
  * deck->res; coordinates are slide twips and crop is thousandths cut from
  * left, top, right and bottom. */
