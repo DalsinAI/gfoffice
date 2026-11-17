@@ -425,7 +425,7 @@ static int tb_style = OGT_TB_ICONS;     /* icons only to start (the Team's rule,
 
 static owf_doc *doc;
 static ow_editor *editor;
-static ow_spell *spell;
+static owf_spell *spell;
 static ow_autosave *autosave;
 static struct MsgPort *rexx_port;
 #define REXX_PORT_NAME "GFOPENWRITE"
@@ -3391,10 +3391,10 @@ out:
 static int ensure_spell(void)
 {
     char msg[160];
-    static const char *paths[]={"PROGDIR:Dictionaries/en_GB.words","PROGDIR:Dictionaries/en_US.words","SYS:Dictionaries/en_GB.words",NULL};
-    int i;
     if(spell)return 1;
-    for(i=0;paths[i];++i){spell=ow_spell_open(paths[i],"PROGDIR:Dictionaries/user.words",msg,sizeof msg);if(spell){set_status(msg);return 1;}}
+    /* GFOffice's one spell checker, owfspell.library (libowf/include/owf_spell.h) */
+    if(!owf_spell_library()){tell("Spell Check","owfspell.library was not found. Install it in LIBS:.");return 0;}
+    if((spell=owf_spell_open_default(msg,sizeof msg))!=NULL){set_status(msg);return 1;}
     tell("Spell Check","No GFOpenWrite dictionary was found. Install Dictionaries/en_GB.words beside GFOpenWrite.");
     return 0;
 }
@@ -3409,11 +3409,11 @@ static void do_spell_check(void)
         if(rc<0){tell("Spell Check","The document could not be checked.");return;}
         if(!rc){set_status("Spell check complete: no more unknown words.");request_document_redraw();return;}
         request_document_redraw();
-        ns=ow_spell_suggest(spell,word,sug,4);
+        ns=owf_spell_suggest(spell, word, sug[0],4);
         repl[0]=0;mode=spell_requester(word,sug,ns,repl,sizeof repl);
         if(mode==0||mode==4){set_status("Spell check stopped.");request_document_redraw();return;}
         if(mode==1){if(editor_result(ow_editor_insert_utf8(editor,repl,strlen(repl)),"Spelling replaced.")){} }
-        else if(mode==3){if(!ow_spell_add(spell,word))tell("Spell Check","The word could not be added to the user dictionary.");}
+        else if(mode==3){if(!owf_spell_add(spell,word))tell("Spell Check","The word could not be added to the user dictionary.");}
         /* mode 2 ignore: selection focus already sits after the word */
     }
 }
@@ -6397,7 +6397,8 @@ out:
     ow_recovery_end(&recovery, editor && ow_editor_is_dirty(editor));   /* unsaved: the copy waits for the next start */
     rexx_close();
     close_window();
-    if (spell) { ow_spell_close(spell); spell = NULL; }
+    if (spell) { owf_spell_close(spell); spell = NULL; }
+    owf_spell_library_close();
     pages_free();
     if (editor) { ow_editor_free(editor); editor = NULL; }
     if (doc) { owf_doc_free(doc); doc = NULL; }
