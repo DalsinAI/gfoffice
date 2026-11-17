@@ -63,6 +63,9 @@
  * 3.21: libowf 1.16 (3.18 to 3.20, libowf 1.13 to 1.15, are #368's, #373's and #375's), conditional text
  * (OWF_FIELD_IF, owf_ifform.h): DOCX IF with its fields nested in its code, and ODT text:conditional-text,
  * in and out. No new calls and no structure grew, so owfpub and owfpresent stay.
+ * 3.22: libowf 1.19 (was 3.20 and libowf 1.15 before #376 and the presentation work merged first), input
+ * fields (OWF_FIELD_FILLIN): DOCX FILLIN and ODT text:text-input in and out. No new calls and no structure
+ * grew, so owfpub and owfpresent stay.
  * 3.23: libowf 1.20 (3.22, libowf 1.19, is the input fields'), hidden paragraphs (OWF_FIELD_HIDE_PARA,
  * owf_para_hidden) and hidden text: ODT text:hidden-paragraph and text:hidden-text in and out; a hidden
  * paragraph is left out of Markdown, HTML and PDF and is DOCX w:vanish while it holds. No new calls and no

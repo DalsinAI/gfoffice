@@ -472,6 +472,14 @@ int ow_editor_set_note_restart(ow_editor *editor, int endnote, int restart);
 int ow_editor_insert_field_arg(ow_editor *editor, owf_field field, const char *name);
 /* Fields worked out again and laid out: how many changed (0: none), or an OWF_ERR_ */
 int ow_editor_update_fields(ow_editor *editor);
+/* 2.0.50 (libowf 1.19): input fields (Word's FILLIN, ODF's text-input): a prompt, and the answer the field
+ * shows, which only the person gives (update_fields keeps it). insert_fill_in puts one at the caret (undoable)
+ * with a prompt and its answer; fill_in_count and fill_in_at list them (body, headers, footers, text boxes),
+ * the strings valid until the next edit; set_fill_in gives the index-th one a new answer (undoable). */
+int ow_editor_insert_fill_in(ow_editor *editor, const char *prompt, const char *answer);
+int ow_editor_fill_in_count(ow_editor *editor);
+int ow_editor_fill_in_at(ow_editor *editor, int index, const char **prompt, const char **answer);
+int ow_editor_set_fill_in(ow_editor *editor, int index, const char *answer);
 /* The document's file (for FILENAME; NULL: untitled) */
 void ow_editor_set_file_name(ow_editor *editor, const char *path);
 /* Where a body paragraph is: its page from 0, for page references (NULL: the editor's own pagination) */

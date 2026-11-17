@@ -160,7 +160,7 @@ static void put_run(owf_buf *out, const owf_doc *doc, const owf_run *run, owf_re
     case OWF_RUN_FIELD: {
         static const char *names[] = { "page", "pages", "date", "time", "title", "author", "subject", "filename",
                                        "words", "chapter", "user", "ref", "refpage", "merge", "index", "seq",
-                                       "if", "hidepara" };
+                                       "if", "fillin", "hidepara" };
         static const char *shown[] = { "#", "##", "date", "time" };
         if (run->field == OWF_FIELD_HIDE_PARA) break;   /* 1.20: it shows nothing */
         if (run->field > OWF_FIELD_TIME) {           /* 1.7: the value it showed */

@@ -371,6 +371,7 @@ typedef struct {
     int state;                   /* 0 visible, 1 hidden, 2 very hidden */
     char part[PART_NAME];
     int sheet;                   /* the book's, or -1 */
+    long id;                     /* its sheetId (revisions name sheets by it) */
 } xsheet;
 
 typedef struct {
@@ -2834,6 +2835,219 @@ static void read_book_protection(xlsx *x, const owf_xml_node *wp)
     }
 }
 
+/* ---- Tracked changes (a shared workbook's revision log: xl/revisions) ----
+ * Each header's log in turn: rcc (a cell's old and new content, as typed), rrc (rows or columns inserted or
+ * deleted, with what deleted ones held), ris (a sheet inserted), rsnm (one renamed), each with its header's
+ * author and time, where it was when made (the book says so: changes_as_made). Sheets by their sheetId. */
+static int sheet_by_id(const xlsx *x, const char *id)
+{
+    long v = xlong(id, -1, 0, 0x7FFFFFFFL);
+    int i;
+    for (i = 0; v >= 0 && i < x->nsheets; i++)
+        if (x->sheets[i].id == v)
+            return x->sheets[i].sheet;
+    return -1;
+}
+
+static void all_t_text(const owf_xml_node *n, owf_buf *b)
+{
+    const owf_xml_node *t;
+    for (t = n ? n->first : NULL; t; t = t->next)
+        if (t->type == OWF_XML_ELEMENT) {
+            if (main_is(t, "t")) {
+                const owf_xml_node *k;
+                for (k = t->first; k; k = k->next)
+                    if (k->type == OWF_XML_TEXT)
+                        owf_buf_put(b, k->name, k->length);
+            } else if (!main_is(t, "rPh"))
+                all_t_text(t, b);
+        }
+}
+
+/* An oc or nc element's content as typed ("" empty), and its place; NULL when memory runs out. */
+static char *rev_input(xlsx *x, const owf_xml_node *cell, unsigned long *row, unsigned long *col, int *placed)
+{
+    const char *ref = attr(cell, "r"), *t = attr(cell, "t"), *v;
+    const owf_xml_node *vn = main_child(cell, "v"), *fn = main_child(cell, "f");
+    owf_cell c;
+    owf_buf b;
+    char *input;
+    double d;
+    memset(&c, 0, sizeof c);
+    owf_buf_init(&b);
+    *placed = ref && parse_cell(&ref, row, col) && !*ref;
+    if (fn && fn->first) {
+        const char *f = node_text(fn, &b);
+        char *text = *f ? owf_xl_formula_from_file(f, x->books, x->nbooks) : NULL;
+        if (text) {
+            if (owf_cell_set_formula(&c, text) < 0)
+                x->failed = 1;
+            free(text);
+        }
+    }
+    if (!c.formula) {
+        if (t && !strcmp(t, "inlineStr")) {
+            b.length = 0;
+            all_t_text(main_child(cell, "is"), &b);
+            owf_buf_put(&b, "", 1);
+            if (!b.failed)
+                set_text(x, &c, (const char *)b.data, unescape_xstring((char *)b.data, b.length - 1));
+        } else if (vn) {
+            v = node_text(vn, &b);
+            if (t && !strcmp(t, "s")) {
+                long i = xlong(v, -1, 0, 0x7FFFFFFFL);
+                const char *st = i >= 0 && (unsigned long)i < x->nsst ? (const char *)x->sst.data + x->sst_at[i] : "";
+                set_text(x, &c, st, strlen(st));
+            } else if (t && !strcmp(t, "str")) {
+                set_text(x, &c, v, unescape_xstring((char *)b.data, strlen(v)));
+            } else if (t && !strcmp(t, "b")) {
+                owf_cell_set_bool(&c, xbool(v, 0));
+            } else if (t && !strcmp(t, "e")) {
+                int code = owf_xl_error_code(v, strlen(v));
+                owf_cell_set_error(&c, code < 0 ? OWF_ERROR_NA : code);
+            } else if (owf_number_parse(v, strlen(v), &d)) {
+                owf_cell_set_number(&c, d);
+            }
+        }
+    }
+    owf_buf_free(&b);
+    input = owf_scenario_input(&c);
+    free(c.text);
+    free(c.formula);
+    if (!input)
+        x->failed = 1;
+    return input;
+}
+
+static owf_change *rev_new(xlsx *x, int kind, int sheet, const owf_xml_node *n, const char *author, const char *date)
+{
+    owf_book *b = x->book;
+    owf_change *c;
+    if (!(c = grow(x, b->changes, b->nchanges, &b->capchanges, sizeof *c)))
+        return NULL;
+    b->changes = c;
+    c = &b->changes[b->nchanges++];
+    memset(c, 0, sizeof *c);
+    c->kind = kind;
+    c->sheet = sheet;
+    c->id = (int)xlong(attr(n, "rId"), 0, 0, 0x7FFFFFF0L);
+    if ((author && !(c->author = copy(x, author, strlen(author)))) || (date && !(c->date = copy(x, date, strlen(date)))))
+        x->failed = 1;
+    return c;
+}
+
+static char *none_if_empty(char *s)
+{
+    if (s && !*s) {
+        free(s);
+        return NULL;
+    }
+    return s;
+}
+
+static void read_revision(xlsx *x, const owf_xml_node *n, const char *author, const char *date, int *lost)
+{
+    owf_change *c;
+    unsigned long row = 0, col = 0;
+    int placed = 0, sheet = sheet_by_id(x, attr(n, "sId"));
+    if (main_is(n, "rcc")) {
+        const owf_xml_node *oc = main_child(n, "oc"), *nc = main_child(n, "nc");
+        char *before = oc ? rev_input(x, oc, &row, &col, &placed) : NULL, *after;
+        int p2 = 0;
+        after = nc ? rev_input(x, nc, &row, &col, &p2) : NULL;
+        if (sheet < 0 || !(placed || p2) || !(c = rev_new(x, OWF_CHANGE_CELL, sheet, n, author, date))) {
+            free(before);
+            free(after);
+            return;
+        }
+        c->row = (unsigned)row;
+        c->col = (unsigned)col;
+        c->before = none_if_empty(before);
+        c->after = none_if_empty(after);
+    } else if (main_is(n, "rrc")) {
+        const char *action = attr(n, "action");
+        owf_range r;
+        int cols, del;
+        const owf_xml_node *k;
+        if (!action || sheet < 0 || !parse_range(attr(n, "ref"), &r))
+            return;
+        cols = !strcmp(action, "insertCol") || !strcmp(action, "deleteCol");
+        del = !strcmp(action, "deleteRow") || !strcmp(action, "deleteCol");
+        if (!cols && strcmp(action, "insertRow") && strcmp(action, "deleteRow"))
+            return;
+        if (!(c = rev_new(x, del ? (cols ? OWF_CHANGE_DELETE_COLS : OWF_CHANGE_DELETE_ROWS)
+                                 : (cols ? OWF_CHANGE_INSERT_COLS : OWF_CHANGE_INSERT_ROWS), sheet, n, author, date)))
+            return;
+        c->row = cols ? 0 : r.first_row;
+        c->col = cols ? r.first_col : 0;
+        c->count = cols ? r.last_col - r.first_col + 1 : r.last_row - r.first_row + 1;
+        for (k = main_child(n, "rcc"); del && k && !x->failed; k = main_next(k, "rcc")) {
+            const owf_xml_node *cell = main_child(k, "nc") ? main_child(k, "nc") : main_child(k, "oc");
+            char *input = cell ? rev_input(x, cell, &row, &col, &placed) : NULL;
+            owf_changecell *cc;
+            unsigned p;
+            if (!input || !*input || !placed || (p = (unsigned)(cols ? col : row)) < (cols ? c->col : c->row) ||
+                p - (cols ? c->col : c->row) >= c->count ||
+                !(cc = realloc(c->cells, (size_t)(c->ncells + 1) * sizeof *cc))) {
+                free(input);
+                continue;
+            }
+            c->cells = cc;
+            cc = &c->cells[c->ncells++];
+            cc->row = (unsigned)(cols ? row : row - c->row);
+            cc->col = (unsigned)(cols ? col - c->col : col);
+            cc->input = input;
+        }
+    } else if (main_is(n, "ris")) {
+        const char *name = attr(n, "name");
+        if ((sheet = sheet_by_id(x, attr(n, "sheetId"))) >= 0 &&
+            (c = rev_new(x, OWF_CHANGE_INSERT_SHEET, sheet, n, author, date)) != NULL && name &&
+            !(c->after = copy(x, name, strlen(name))))
+            x->failed = 1;
+    } else if (main_is(n, "rsnm")) {
+        const char *was = attr(n, "oldName"), *now = attr(n, "newName");
+        if (sheet >= 0 && (c = rev_new(x, OWF_CHANGE_RENAME_SHEET, sheet, n, author, date)) != NULL &&
+            ((was && !(c->before = copy(x, was, strlen(was)))) || (now && !(c->after = copy(x, now, strlen(now))))))
+            x->failed = 1;
+    } else if (n->type == OWF_XML_ELEMENT)
+        *lost = 1;                                   /* moves, formats, names, comments... */
+}
+
+static void read_revisions(xlsx *x)
+{
+    char headers[PART_NAME], part[PART_NAME];
+    owf_xml *xml, *logxml;
+    const owf_xml_node *h, *n;
+    rels hr;
+    int lost = 0, i, made = 0;
+    if (!rel_part(&x->wb_rels, rel_by_type(&x->wb_rels, "/revisionHeaders"), headers, sizeof headers))
+        return;
+    if (!(xml = read_xml(x->zip, headers, NULL)))
+        return;
+    x->book->track_changes = 1;
+    x->book->changes_as_made = 1;
+    read_rels(x->zip, headers, &hr);
+    for (h = main_child(owf_xml_root(xml), "header"); h && !x->failed; h = main_next(h, "header")) {
+        if (!rel_part(&hr, rel_by_id(&hr, rel_attr(h, "id")), part, sizeof part) ||
+            !(logxml = read_xml(x->zip, part, NULL)))
+            continue;
+        for (n = owf_xml_root(logxml)->first; n && !x->failed; n = n->next)
+            if (n->type == OWF_XML_ELEMENT)
+                read_revision(x, n, attr(h, "userName"), attr(h, "dateTime"), &lost);
+        owf_xml_free(logxml);
+    }
+    free_rels(&hr);
+    owf_xml_free(xml);
+    for (i = 0; i < x->book->nchanges; i++)          /* numbers the log left out */
+        if (x->book->changes[i].id > made)
+            made = x->book->changes[i].id;
+    for (i = 0; i < x->book->nchanges; i++)
+        if (!x->book->changes[i].id)
+            x->book->changes[i].id = ++made;
+    if (lost)
+        owf_report_add(x->report, OWF_NOTE_LOST, "Some tracked changes (moves, formats, names, comments) are not read");
+}
+
 static int read_workbook(xlsx *x)
 {
     owf_xml *xml;
@@ -2883,6 +3097,7 @@ static int read_workbook(xlsx *x)
         const char *name = attr(n, "name"), *state = attr(n, "state");
         it = rel_by_id(&x->wb_rels, rel_attr(n, "id"));
         xs->sheet = -1;
+        xs->id = xlong(attr(n, "sheetId"), -1, 0, 0x7FFFFFFFL);
         xs->state = !state || !strcmp(state, "visible") ? 0 : !strcmp(state, "veryHidden") ? 2 : 1;
         xs->kind = !it ? 2 : type_is(it->type, "/worksheet") ? 0 : type_is(it->type, "/chartsheet") ? 1 : 2;
         x->nsheets++;
@@ -2926,6 +3141,8 @@ static int read_workbook(xlsx *x)
             read_worksheet(x, &x->sheets[i]);
     if (active < x->nsheets && x->sheets[active].sheet >= 0)
         x->book->active = x->sheets[active].sheet;
+    if (!x->failed)
+        read_revisions(x);
     if (x->pivots_kept || (pivot_caches && !x->pivots_read))
         owf_report_add(x->report, OWF_NOTE_LOST, "Pivot tables: some keep their cells only (GFOpenCalc reads one a sheet, "
                                                  "from a range of cells)");

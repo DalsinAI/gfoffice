@@ -505,7 +505,8 @@ static int odf_field(const owf_xml_node *c)
     if (owf_xml_is(c, NS_TEXT, "hidden-paragraph") && owf_xml_attr(c, NS_TEXT, "condition"))
         return OWF_FIELD_HIDE_PARA;                                                        /* 1.20 */
     if (owf_xml_is(c, NS_TEXT, "sequence") && owf_xml_attr(c, NS_TEXT, "name") &&
-        *owf_xml_attr(c, NS_TEXT, "name")) return OWF_FIELD_SEQ;                           /* 1.12.6 */
+        *owf_xml_attr(c, NS_TEXT, "name")) return OWF_FIELD_SEQ;
+    if (owf_xml_is(c, NS_TEXT, "text-input")) return OWF_FIELD_FILLIN;                     /* 1.19 */
     if ((owf_xml_is(c, NS_TEXT, "bookmark-ref") || owf_xml_is(c, NS_TEXT, "reference-ref")) &&
         owf_xml_attr(c, NS_TEXT, "ref-name")) {
         form = owf_xml_attr(c, NS_TEXT, "reference-format");
@@ -1069,6 +1070,7 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
                   : hidden ? "" : owf_xml_attr(c, NS_TEXT, "string-value") ? owf_xml_attr(c, NS_TEXT, "string-value") : "";
         }
         if (field == OWF_FIELD_USER || field == OWF_FIELD_SEQ) arg = owf_xml_attr(c, NS_TEXT, "name");
+        else if (field == OWF_FIELD_FILLIN) arg = owf_xml_attr(c, NS_TEXT, "description");   /* 1.19: its prompt */
         else if (field == OWF_FIELD_IF || field == OWF_FIELD_HIDE_PARA) {   /* 1.16: as Word's form, or its text alone */
             if (!odf_if_form(o->b->doc, c, form, sizeof form)) {
                 owf_buf_init(&shown);

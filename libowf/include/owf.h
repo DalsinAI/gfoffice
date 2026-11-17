@@ -99,10 +99,14 @@ typedef enum { OWF_FIELD_PAGE, OWF_FIELD_PAGES, OWF_FIELD_DATE, OWF_FIELD_TIME,
                 * texts ({DOCVARIABLE Gender} = "F" "Ms" "Mr"; owf_ifform.h), text the one last shown (DOCX IF,
                 * ODF text:conditional-text) */
                OWF_FIELD_IF,
+               /* 1.19: an input field: href is its prompt, text the answer last given (kept, never worked out
+                * again: GFOpenWrite asks for it). DOCX FILLIN, ODF text:text-input */
+               OWF_FIELD_FILLIN,
                /* 1.20: a hidden paragraph: href is an IF's form whose texts are "1" and "" (its condition, as
                 * {DOCVARIABLE Draft} = "yes" "1" ""), text "1" while it holds: then its paragraph isn't shown
                 * (owf_para_hidden), unless the view shows hidden text. The field itself shows nothing. ODF
-                * text:hidden-paragraph; DOCX has none (the paragraph's text is written w:vanish while it holds). */
+                * text:hidden-paragraph; DOCX has none (the paragraph's text is written w:vanish while it holds).
+                * A table cell's paragraph is never hidden (the cell would go). */
                OWF_FIELD_HIDE_PARA } owf_field;
 #define OWF_FIELD_LAST OWF_FIELD_HIDE_PARA
 

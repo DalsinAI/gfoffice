@@ -532,9 +532,9 @@ static void put_shape(owf_buf *b, const char *style, const owf_dshape *sh)
     }
 }
 
-static void put_vertex(owf_buf *b, const owf_dpage *p, const owf_dcell *c)
+/* sh: the writer's room for a shape's outline (1.5 KB, off the Amiga's small stack). */
+static void put_vertex(owf_buf *b, const owf_dpage *p, const owf_dcell *c, owf_dshape *sh)
 {
-    static owf_dshape sh;                /* 1.5 KB: off the Amiga's small stack; one writer runs at a time */
     owf_dnum box[4], header = 0;
     char buf[40];
     const char *style = c->style;
@@ -544,8 +544,8 @@ static void put_vertex(owf_buf *b, const owf_dpage *p, const owf_dcell *c)
         return;
     if (bare)
         ;
-    else if (owf_dshape_outline(style, box, &sh))
-        put_shape(b, style, &sh);
+    else if (owf_dshape_outline(style, box, sh))
+        put_shape(b, style, sh);
     else if (owf_dstyle_is(style, "ellipse")) {
         owf_buf_puts(b, "<ellipse");
         put_attr_num(b, "cx", box[0] + box[2] / 2);
@@ -680,14 +680,19 @@ int owf_dsvg_write(const owf_diagram *d, int page, unsigned char **data, size_t 
     unsigned char *mx = NULL;
     size_t mxn = 0;
     owf_buf b;
+    owf_dshape *sh;                      /* the writer's own: a library keeps nothing between calls */
     int i, r;
 
     if (page < 0 || page >= d->npages)
         return OWF_ERR_FORMAT;
     p = &d->pages[page];
+    if (!(sh = (owf_dshape *)owf_malloc(sizeof *sh)))
+        return OWF_ERR_MEMORY;
     r = owf_drawio_write(d, 0, &mx, &mxn);
-    if (r != OWF_OK)
+    if (r != OWF_OK) {
+        owf_free(sh);
         return r;
+    }
     owf_dpage_bounds(p, box);
     box[0] -= 100;                       /* a pixel round it, for the lines' width */
     box[1] -= 100;
@@ -719,8 +724,9 @@ int owf_dsvg_write(const owf_diagram *d, int page, unsigned char **data, size_t 
         if (c->kind == OWF_DCELL_EDGE)
             put_edge(&b, p, c);
         else if (c->kind == OWF_DCELL_VERTEX && !(parent && parent->kind == OWF_DCELL_EDGE))
-            put_vertex(&b, p, c);
+            put_vertex(&b, p, c, sh);
     }
+    owf_free(sh);
     owf_buf_puts(&b, "</g>\n</svg>\n");
     return owf_buf_take(&b, data, length);
 }
