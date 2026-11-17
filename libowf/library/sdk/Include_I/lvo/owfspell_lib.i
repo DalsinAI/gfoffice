@@ -14,5 +14,6 @@ _LVOowf_spell_word_ok	EQU	-66
 _LVOowf_spell_scan	EQU	-72
 _LVOowf_spell_words	EQU	-78
 _LVOowf_spell_count	EQU	-84
+_LVOowf_spell_command	EQU	-90
 
 	ENDC	; LVO_OWFSPELL_LIB_I

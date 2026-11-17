@@ -13,4 +13,5 @@ owf_spell_word_ok(spell,word,length)(a0,a1,d0)
 owf_spell_scan(spell,text,from,to,start,end)(a0,a1,d0,d1,a2,a3)
 owf_spell_words(spell,text,length,ranges,max_ranges)(a0,a1,d0,a2,d1)
 owf_spell_count(spell)(a0)
+owf_spell_command(spell,args,out,size)(a0,a1,a2,d0)
 ##end
