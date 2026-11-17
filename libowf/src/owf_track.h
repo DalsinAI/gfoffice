@@ -16,7 +16,7 @@ int owf_track_add(owf_doc *doc, int kind, const char *author, const char *date);
  * author and date may be NULL; before is the runs' format before the change. */
 int owf_track_format_add(owf_doc *doc, const char *author, const char *date, const owf_charfmt *before);
 
-/* 1.13: a paragraph format change for the document's list (owf_para.para_format_change's number), 0 when
+/* 1.21: a paragraph format change for the document's list (owf_para.para_format_change's number), 0 when
  * memory runs out. author, date and style may be NULL; before is the paragraph's format before the change. */
 int owf_track_para_format_add(owf_doc *doc, const char *author, const char *date, const char *style,
                               const owf_parafmt *before);
@@ -63,7 +63,7 @@ int owf_doc_has_changes(const owf_doc *doc);
 int owf_doc_has_format_changes(const owf_doc *doc);
 /* 1.12: whether a frame's run (a text box or a placed picture) anywhere is a tracked change */
 int owf_doc_has_frame_changes(const owf_doc *doc);
-/* 1.12: whether a body table's row is a tracked change (owf_para.row_revision) */
+/* 1.12: whether a body table's row is a tracked change (owf_para.row_revision; 1.21: or a cell, cell_revision) */
 int owf_doc_has_row_changes(const owf_doc *doc);
 
 /* The document as it is with every change accepted: inserted text kept, deleted text gone, paragraphs

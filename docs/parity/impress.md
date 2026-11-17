@@ -20,28 +20,43 @@ docs/gfoffice/Impress-Parity.md.
 | 12 Nov 2026 | 0.6.31 | 83% | P8: slides on the clipboard, Insert Slides from File |
 | 12 Nov 2026 | 0.6.32 | 84% | P9: Export as Pictures (PNG, IFF ILBM); Phase 2 done |
 | 16 Nov 2026 | 0.6.32 | 85% | WMF and EMF pictures drawn on the slide and in the PDF (#232, #267, #278, #279): charts' and objects' replacement pictures and clip art from PPTX and ODP show as drawn, not left out |
+| 16 Nov 2026 (2) | 0.6.33 | 88% | Spelling: Tools > Spelling..., underlining as you type and ARexx SPELL (#337, #342, #344, #352); slide charts kept as charts with their data, saved to PPTX and ODP, with an editing core and Undo (#348, #354, #355, #356, #358); the show on a screen of its own (#281) |
+| 16 Nov 2026 (3) | 0.6.34 | 89% | Gradient fills (linear and radial) read, saved, printed and shown (gap 2.8) |
+| 16 Nov 2026 (4) | 0.6.35 | 89% | Gradient slide and master backgrounds (gap 2.8) |
 
 Phase 1 target: 76% after P1 to P5. Phase 2 (P6 to P9) aims at 84%.
 
-Re-scored 16 Nov 2026 against main 72b77cb, counting only what is merged.
-The program is still 0.6.32; the step comes from libowf, which Presentation
-shares with Publisher. A WMF or EMF picture (lines, shapes, text, arcs,
-chords, pies and ArcTo) is drawn on screen through `owf_metafile_render`
-and as vectors in the PDF. PowerPoint and Impress often keep a chart's or
-an embedded object's look as such a picture, so those now show as drawn.
+Re-scored 16 Nov 2026 at 12:25 against main 3569cf3, counting only what
+is merged. The first 16 Nov row (main 72b77cb) came from WMF and EMF
+pictures in libowf. This one adds:
 
-**Waiting to merge, not scored:** #291 (clipping in WMF and EMF pictures),
-#248 > #253 > #262 (gradient fills from ODP and PPTX, in the PDF, on screen,
-and gradient slide backgrounds; #248 waits for gfopenlayout #66), #281
-(the show on a screen of its own).
+- **Spelling** (#337, #342, #344, #352): the deck's text and notes are
+  checked with GFOpenWrite's dictionary. Tools > Spelling... has Ignore,
+  Ignore All, Add, Change and suggestions, and each change is one Undo
+  step. Tools > Spelling as You Type puts a wavy line under misspelt words.
+  ARexx SPELL counts, lists, checks, suggests, adds and ignores.
+- **Charts kept as charts** (#348, #354, #355, #356, #358): a chart read
+  from PPTX or ODP keeps its type, series, data, titles and legend. It is
+  saved back to PPTX (chart part plus its embedded workbook, so
+  PowerPoint's Edit Data works) and to ODP and .fodp as a chart document.
+  The editor's core (on GFOpenCalc's) and putting an edited chart back
+  with Undo are in. The chart window is not, so charts are not yet edited
+  or drawn as charts in the program: the slide shows their box, or their
+  picture when the file has one.
+- **The show on a screen of its own** (#281): on AGA, or a small or
+  low-colour Workbench, the show opens its own screen in the slide's
+  shape. Show > Show On picks Automatic, Its Own Screen or the Workbench.
+
+**Waiting to merge, not scored:** #291 (clipping in WMF and EMF pictures)
+and the chart editor window.
 
 **Largest gaps, workflow-weighted:**
-1. Fills: gradient, hatching, bitmap and transparency on objects and
-   backgrounds, and shadows (gradients are in the chain above).
-2. Charts and embedded objects: kept and drawn as their picture, not
-   edited.
-3. Spelling: Presentation has no spell check yet; tables also lack merged
-   cells, row heights and designs.
+1. Fills: hatching, bitmap and transparency on objects and backgrounds,
+   and shadows (gradients done).
+2. Charts: a window to edit them, and drawing them as charts on the slide
+   and in the PDF; OLE objects other than charts are still kept only.
+3. Tables: merged cells, row heights, designs and banding. Also no
+   PowerPoint 97-2003 (.ppt).
 
 ## Phase 1 deliverables
 

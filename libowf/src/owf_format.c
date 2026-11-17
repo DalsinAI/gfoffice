@@ -230,7 +230,7 @@ int owf_import_file(const char *path, const char *format, owf_doc **doc,
     return result;
 }
 
-/* 1.13: whether any run has a tracked format change (ODT keeps the paragraphs' only) */
+/* 1.22.1: whether any run has a tracked format change (ODT keeps the paragraphs' only) */
 static int run_format_changes(const owf_doc *doc)
 {
     const owf_story *st;
@@ -268,12 +268,12 @@ int owf_export_file(const owf_doc *doc, const char *path, const char *format, ow
         result = f->export(view, &data, &length, report);
         owf_doc_accepted_free(view);
     } else {
-        if (f == &owf_format_odt && run_format_changes(doc))   /* 1.11: DOCX keeps them; ODT not yet (1.13: the
+        if (f == &owf_format_odt && run_format_changes(doc))   /* 1.11: DOCX keeps them; ODT not yet (1.22.1: the
                                                                   * paragraphs' it keeps) */
             owf_report_add(report, OWF_NOTE_APPROX, "Tracked format changes were saved accepted (as the format is now) in %s",
                            f->description);
         if (f == &owf_format_odt && owf_doc_has_row_changes(doc))      /* 1.12: DOCX keeps them; ODT not yet */
-            owf_report_add(report, OWF_NOTE_APPROX, "Tracked table row changes were saved accepted in %s",
+            owf_report_add(report, OWF_NOTE_APPROX, "Tracked table row and cell changes were saved accepted in %s",
                            f->description);
         if (f == &owf_format_odt && owf_doc_has_frame_changes(doc))    /* 1.12: DOCX keeps them; ODT not yet */
             owf_report_add(report, OWF_NOTE_APPROX, "Tracked text box and frame changes were saved accepted in %s",

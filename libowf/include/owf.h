@@ -23,11 +23,12 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.13.1"
+#define OWF_VERSION "1.22.1"
 
-/* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
+/* Any of GFOffice's libraries is a library (owf_open.h, owf_proto.h; owfdiag.library's calls come through
+ * opendiag_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
-    defined(OWF_USE_PRESENT_LIBRARY)
+    defined(OWF_USE_PRESENT_LIBRARY) || defined(OWF_USE_DIAG_LIBRARY)
 #ifndef OWF_USE_LIBRARY
 #define OWF_USE_LIBRARY
 #endif
@@ -56,7 +57,11 @@ enum {
     OWF_UNDERLINE = 1 << 2,
     OWF_STRIKE = 1 << 3,
     OWF_SUPER = 1 << 4,
-    OWF_SUB = 1 << 5
+    OWF_SUB = 1 << 5,
+    /* 1.14: hidden text (DOCX w:vanish, ODF text:display="none", RTF \v): kept and saved; GFOpenWrite's
+     * layout leaves it out unless the view shows it (OW_LAYOUT_SHOW_HIDDEN); PDF and Markdown leave it out,
+     * HTML keeps it with display: none */
+    OWF_HIDDEN = 1 << 6
 };
 
 #define OWF_COLOUR_AUTO 0xFFFFFFFFUL
@@ -90,8 +95,21 @@ typedef enum { OWF_FIELD_PAGE, OWF_FIELD_PAGES, OWF_FIELD_DATE, OWF_FIELD_TIME,
                OWF_FIELD_INDEX,
                /* 1.12.6: a number range: href is its name ("Figure", "Table"), text the number last shown, the
                 * count of its name's fields up to it (DOCX SEQ, ODF text:sequence) */
-               OWF_FIELD_SEQ } owf_field;
-#define OWF_FIELD_LAST OWF_FIELD_SEQ
+               OWF_FIELD_SEQ,
+               /* 1.16: conditional text: href is Word's form after IF, two operands, an operator and the two
+                * texts ({DOCVARIABLE Gender} = "F" "Ms" "Mr"; owf_ifform.h), text the one last shown (DOCX IF,
+                * ODF text:conditional-text) */
+               OWF_FIELD_IF,
+               /* 1.19: an input field: href is its prompt, text the answer last given (kept, never worked out
+                * again: GFOpenWrite asks for it). DOCX FILLIN, ODF text:text-input */
+               OWF_FIELD_FILLIN,
+               /* 1.20: a hidden paragraph: href is an IF's form whose texts are "1" and "" (its condition, as
+                * {DOCVARIABLE Draft} = "yes" "1" ""), text "1" while it holds: then its paragraph isn't shown
+                * (owf_para_hidden), unless the view shows hidden text. The field itself shows nothing. ODF
+                * text:hidden-paragraph; DOCX has none (the paragraph's text is written w:vanish while it holds).
+                * A table cell's paragraph is never hidden (the cell would go). */
+               OWF_FIELD_HIDE_PARA } owf_field;
+#define OWF_FIELD_LAST OWF_FIELD_HIDE_PARA
 
 typedef struct {
     owf_run_kind kind;
@@ -197,10 +215,26 @@ typedef struct {
      * the same on every cell of the row. Inserted: the row was put in; deleted: accepting it takes the row
      * away. 0: none. */
     int row_revision;
-    /* 1.13: the paragraph's format is a tracked change (DOCX w:pPrChange): fmt is its format now, and its format
+    /* 1.21: the paragraph's format is a tracked change (DOCX w:pPrChange): fmt is its format now, and its format
      * before is doc->para_format_changes' (1 + the index there). Apart from mark_revision. 0: none */
     int para_format_change;
+    /* 1.22: a table cell by itself is a tracked change (its column put in or deleted while recording; DOCX
+     * w:tcPr/w:cellIns, w:cellDel): 1 + its index in doc->revisions. Inserted: the cell was put in; deleted:
+     * accepting it takes the cell away and the cells after it in its row move left. A row's change (above)
+     * comes first. 0: none. */
+    int cell_revision;
 } owf_para;
+
+/* 1.20: whether a hidden-paragraph field (OWF_FIELD_HIDE_PARA) hides the paragraph now. Header-only. */
+static inline int owf_para_hidden(const owf_para *p)
+{
+    int j;
+    for (j = 0; p && j < p->nruns; ++j)
+        if (p->runs[j].kind == OWF_RUN_FIELD && p->runs[j].field == OWF_FIELD_HIDE_PARA && p->runs[j].text &&
+            *p->runs[j].text)
+            return 1;
+    return 0;
+}
 
 typedef enum {
     OWF_SECTION_CONTINUOUS, OWF_SECTION_NEW_PAGE, OWF_SECTION_ODD_PAGE,
@@ -212,6 +246,22 @@ typedef struct {
     int nparas, capparas;
     owf_para *paras;
 } owf_story;
+
+/* 1.22: a table's cells numbered again after one went (a deleted cell accepted, an inserted one rejected): in
+ * each row 0, 1, 2 ... in the order they come, and every cell's table_cols the most a row has. Header-only. */
+static inline void owf_table_renumber_cells(owf_story *story, int table_id)
+{
+    int i, row = -1, col = 0, most = 0;
+    for (i = 0; story && i < story->nparas; ++i) {
+        owf_para *p = &story->paras[i];
+        if (p->table_id != table_id) continue;
+        if (p->table_row != row) { row = p->table_row; col = 0; }
+        p->table_col = col++;
+        if (col > most) most = col;
+    }
+    for (i = 0; story && i < story->nparas; ++i)
+        if (story->paras[i].table_id == table_id) story->paras[i].table_cols = most;
+}
 
 /* ---- Fonts and the page ---- */
 
@@ -327,7 +377,7 @@ typedef struct owf_format_change {
     owf_charfmt before;
 } owf_format_change;
 
-/* 1.13: a tracked paragraph format change (DOCX's w:pPrChange): who made it, when, and the paragraph's format
+/* 1.21: a tracked paragraph format change (DOCX's w:pPrChange): who made it, when, and the paragraph's format
  * and style before it. Accepting it keeps the paragraph's format; rejecting it gives the paragraph this one
  * back. Its size never changes (owf_struct_size doesn't list it). */
 typedef struct owf_para_format_change {
@@ -420,7 +470,7 @@ typedef struct owf_doc {
      * The list is as long as the last note with formats needs, never longer than nnotes. */
     int nnote_stories;
     owf_story *note_stories;
-    /* 1.13: tracked paragraph format changes (owf_para_format_change), named by their paragraphs
+    /* 1.21: tracked paragraph format changes (owf_para_format_change), named by their paragraphs
      * (owf_para.para_format_change); the list only grows, as the run format changes' does */
     int npara_format_changes, cappara_format_changes;
     struct owf_para_format_change *para_format_changes;
@@ -470,7 +520,7 @@ int owf_doc_set_title(owf_doc *doc, const char *utf8);
 #define OWF_DOC_FORMAT_CHANGE(doc, number)                                                                 \
     ((number) > 0 && (number) <= (doc)->nformat_changes ? &(doc)->format_changes[(number) - 1]             \
                                                          : (owf_format_change *)0)
-/* 1.13: the paragraph format change a paragraph names (owf_para.para_format_change), NULL for 0 or one the
+/* 1.21: the paragraph format change a paragraph names (owf_para.para_format_change), NULL for 0 or one the
  * document doesn't have */
 #define OWF_DOC_PARA_FORMAT_CHANGE(doc, number)                                                            \
     ((number) > 0 && (number) <= (doc)->npara_format_changes ? &(doc)->para_format_changes[(number) - 1]   \
@@ -749,6 +799,34 @@ typedef struct {
     owf_sheet *sheets;
 } owf_extbook;
 
+/* owf.library 2.7: a book's tracked changes (GFOpenCalc's Edit > Track Changes; ODF's table:tracked-changes, Excel's
+ * revision log), oldest first. Places are where things are in the book now: a cell's row and column; rows or
+ * columns inserted, from row (col) for count; rows or columns deleted, where they would come back (before row or
+ * col) and how many. A change's text is UTF-8 from malloc: author and date (ISO 8601, "2026-11-16T06:30:00") may
+ * be NULL; a cell's before and after are its content as typed ("=A1*2", "'0123", "5"), NULL when empty; a sheet
+ * renamed has its old and new names there, a sheet inserted its name as after. A deletion keeps what it took:
+ * cells (their row or column counted from the first deleted one) and the changes there were in it (the same). */
+enum {
+    OWF_CHANGE_CELL, OWF_CHANGE_INSERT_ROWS, OWF_CHANGE_INSERT_COLS, OWF_CHANGE_DELETE_ROWS, OWF_CHANGE_DELETE_COLS,
+    OWF_CHANGE_INSERT_SHEET, OWF_CHANGE_RENAME_SHEET
+};
+typedef struct {
+    unsigned row, col;
+    char *input;                 /* as typed, never NULL */
+} owf_changecell;
+typedef struct owf_change {
+    int kind;                    /* OWF_CHANGE_... */
+    int id;                      /* 1, 2...: its number, kept in the file */
+    int sheet;
+    unsigned row, col, count;
+    char *author, *date;
+    char *before, *after;
+    int ncells;
+    owf_changecell *cells;
+    int nchildren;
+    struct owf_change *children;
+} owf_change;
+
 typedef struct owf_book {
     int nsheets, capsheets;
     owf_sheet *sheets;
@@ -773,6 +851,13 @@ typedef struct owf_book {
                                     table:protection-key; or NULL */
     int nextbooks, capextbooks;  /* the other books the formulas refer to, and their values last seen */
     owf_extbook *extbooks;
+    /* owf.library 2.7: changes are being recorded (ODF's table:track-changes, a shared Excel workbook), and the
+       ones not yet accepted or rejected (owf_change) */
+    int track_changes;
+    int nchanges, capchanges;
+    owf_change *changes;
+    int changes_as_made;         /* a reader's: the changes' places are as each was made (Excel's log), not the
+                                    book's now; the program works them out (GFOpenCalc on opening) */
 } owf_book;
 
 owf_book *owf_book_new(void);

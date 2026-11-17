@@ -7,11 +7,12 @@
  * are text:tracked-changes: insertions between text:change-start and
  * text:change-end, deletions a text:change with their text in the changed
  * region; a deleted paragraph end joins the two paragraphs, as ODF has it.
- * 1.13: a paragraph's tracked format change is a text:format-change region
+ * 1.22.1: a paragraph's tracked format change is a text:format-change region
  * from the paragraph's start to its end; ODF keeps no format before, so
  * gfo:para-style-before names an automatic style (P1, P2...) that has it.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
+#include "owf_ifform.h"
 #include "owf_internal.h"
 #include "owf_comment.h"
 #include "owf_note.h"
@@ -38,8 +39,8 @@
 typedef struct {
     int rev;                     /* the document's change number */
     owf_buf content;             /* a deletion's paragraphs */
-    int para_format_change;      /* 1.13: a paragraph format change's number (rev 0), else 0 */
-    int before_style;            /* 1.13: its format before, as automatic style P<n> */
+    int para_format_change;      /* 1.22.1: a paragraph format change's number (rev 0), else 0 */
+    int before_style;            /* 1.22.1: its format before, as automatic style P<n> */
 } odt_region;
 
 typedef struct {
@@ -48,7 +49,7 @@ typedef struct {
     int nregions, capregions;
     int ins, del;                /* the region open: insertion's or deletion's, 1 + its index; 0: none */
     int del_space;               /* the deletion's text ended with a space (put_text) */
-    int para_format;             /* 1.13: the paragraph format change's region open, 1 + its index; 0: none */
+    int para_format;             /* 1.22.1: the paragraph format change's region open, 1 + its index; 0: none */
     int failed;
 } odt_track;
 
@@ -217,6 +218,8 @@ static void put_text_props(owf_buf *out, const owf_doc *doc, const owf_charfmt *
                           " style:text-underline-color=\"font-color\"");
     if (f->flags & OWF_STRIKE)
         owf_buf_puts(out, " style:text-line-through-style=\"solid\"");
+    if (f->flags & OWF_HIDDEN)
+        owf_buf_puts(out, " text:display=\"none\"");   /* 1.14 */
     if (f->flags & OWF_SUPER)
         owf_buf_puts(out, " style:text-position=\"super 58%\"");
     else if (f->flags & OWF_SUB)
@@ -616,14 +619,121 @@ static void put_sequence_decls(owf_buf *out, const owf_doc *doc)
     free((void *)seen);
 }
 
+/* 1.16: an IF operand in an ODF condition: a document variable as its user field's name, a number as it is,
+ * text quoted; 0 for one ODF can't name (a merge field, a reference) */
+static int odf_operand(owf_buf *out, const char *v, int field)
+{
+    int cmp;
+    if (field) {
+        const char *name = v;
+        size_t n;
+        if (strncmp(name, "DOCVARIABLE", 11) || (name[11] != ' ' && name[11] != '"')) return 0;
+        name += 11;
+        while (*name == ' ') ++name;
+        n = strlen(name);
+        if (*name == '"') { ++name; n = strcspn(name, "\""); }
+        else n = strcspn(name, " ");
+        if (!n || memchr(name, ' ', n)) return 0;    /* ODF's variable names have no spaces */
+        owf_buf_put_xml(out, name, n);
+        return 1;
+    }
+    if (owf_if_numbers(v, "0", &cmp)) { owf_buf_puts_xml(out, v); return 1; }   /* a number as it is */
+    owf_buf_puts(out, "&quot;");
+    owf_buf_puts_xml(out, v);
+    owf_buf_puts(out, "&quot;");
+    return 1;
+}
+
+/* 1.16: conditional text as text:conditional-text, its condition in ODF's form; its shown text alone when
+ * ODF can't say the condition */
+/* An IF's (or a hidden paragraph's) condition in ODF's form into cond (initialised); 0 when ODF can't say it */
+static int odf_condition(const owf_run *run, owf_if_form *f, owf_buf *cond)
+{
+    int ok = owf_if_parse(run->href, f);
+    if (ok) {
+        owf_buf_puts(cond, "ooow:");
+        ok = odf_operand(cond, f->a, f->a_field);
+        owf_buf_puts(cond, !strcmp(f->op, "=") ? " == " : !strcmp(f->op, "<>") ? " != " : " ");
+        if (strcmp(f->op, "=") && strcmp(f->op, "<>")) { owf_buf_puts_xml(cond, f->op); owf_buf_puts(cond, " "); }
+        ok = ok && odf_operand(cond, f->b, f->b_field) && !cond->failed;
+    }
+    return ok;
+}
+
+/* 1.20: a note for each kind of condition ODF can't say: a hidden paragraph's goes (the paragraph is shown),
+ * conditional text keeps only the text it shows */
+static void note_conditions(const owf_story *st, owf_report *report)
+{
+    int i, j;
+    for (i = 0; report && i < st->nparas; ++i)
+        for (j = 0; j < st->paras[i].nruns; ++j) {
+            const owf_run *r = &st->paras[i].runs[j];
+            owf_if_form f;
+            owf_buf cond;
+            if (r->kind != OWF_RUN_FIELD || (r->field != OWF_FIELD_IF && r->field != OWF_FIELD_HIDE_PARA)) continue;
+            owf_buf_init(&cond);
+            if (!odf_condition(r, &f, &cond))
+                owf_report_add(report, OWF_NOTE_LOST, r->field == OWF_FIELD_HIDE_PARA
+                               ? "A hidden paragraph's condition ODF can't write is left out (the paragraph is shown)"
+                               : "Conditional text whose condition ODF can't write is saved as the text it shows");
+            owf_buf_free(&cond);
+        }
+}
+
+static void put_conditional(owf_buf *out, const owf_run *run)
+{
+    owf_if_form f;
+    owf_buf cond;
+    const char *shown = run->text ? run->text : "";
+    int ok;
+    owf_buf_init(&cond);
+    ok = odf_condition(run, &f, &cond);
+    if (!ok) {
+        if (run->field != OWF_FIELD_HIDE_PARA) owf_buf_puts_xml(out, shown);
+        owf_buf_free(&cond);
+        return;
+    }
+    if (run->field == OWF_FIELD_HIDE_PARA || (!f.yes[0] && f.no[0])) {
+        /* 1.20: a hidden paragraph, or text hidden while it holds (an IF whose first text is ""), as ODF's own */
+        int para = run->field == OWF_FIELD_HIDE_PARA;
+        owf_buf_puts(out, para ? "<text:hidden-paragraph text:condition=\"" : "<text:hidden-text text:condition=\"");
+        owf_buf_put(out, (const char *)cond.data, cond.length);
+        if (!para) {
+            owf_buf_puts(out, "\" text:string-value=\"");
+            owf_buf_puts_xml(out, f.no);
+        }
+        owf_buf_printf(out, "\" text:is-hidden=\"%s\"", (para ? *shown : !*shown) ? "true" : "false");
+        if (para) owf_buf_puts(out, "/>");
+        else {
+            owf_buf_puts(out, ">");
+            owf_buf_puts_xml(out, f.no);
+            owf_buf_puts(out, "</text:hidden-text>");
+        }
+        owf_buf_free(&cond);
+        return;
+    }
+    owf_buf_puts(out, "<text:conditional-text text:condition=\"");
+    owf_buf_put(out, (const char *)cond.data, cond.length);
+    owf_buf_puts(out, "\" text:string-value-if-true=\"");
+    owf_buf_puts_xml(out, f.yes);
+    owf_buf_puts(out, "\" text:string-value-if-false=\"");
+    owf_buf_puts_xml(out, f.no);
+    owf_buf_printf(out, "\" text:current-value=\"%s\">", strcmp(shown, f.yes) ? "false" : "true");
+    owf_buf_puts_xml(out, shown);
+    owf_buf_puts(out, "</text:conditional-text>");
+    owf_buf_free(&cond);
+}
+
 /* 1.7: a field with a shown value, as its ODF element */
 static void put_field(owf_buf *out, const owf_doc *doc, const owf_run *run)
 {
     static const char *const names[] = { "title", "initial-creator", "subject", "file-name", "word-count",
                                          "chapter", "user-field-get", "bookmark-ref", "bookmark-ref",
-                                         "database-display", "alphabetical-index-mark", "sequence" };
+                                         "database-display", "alphabetical-index-mark", "sequence", NULL,
+                                         "text-input", NULL };
     const char *name = run->field >= OWF_FIELD_TITLE && run->field <= OWF_FIELD_LAST
                      ? names[run->field - OWF_FIELD_TITLE] : NULL;
+    if (run->field == OWF_FIELD_IF || run->field == OWF_FIELD_HIDE_PARA) { put_conditional(out, run); return; }   /* 1.16, 1.20 */
     if (!name) return;
     if (run->field == OWF_FIELD_INDEX) {             /* 1.10: a point mark, Main:Sub as key1 and its value */
         const char *e = run->href ? run->href : "", *colon = strchr(e, ':');
@@ -656,6 +766,11 @@ static void put_field(owf_buf *out, const owf_doc *doc, const owf_run *run)
                     owf_buf_putc(out, '_');
         }
         owf_buf_puts(out, "+1\" style:num-format=\"1\"");
+    }
+    if (run->field == OWF_FIELD_FILLIN && run->href && *run->href) {   /* 1.19: its prompt */
+        owf_buf_puts(out, " text:description=\"");
+        owf_buf_puts_xml(out, run->href);
+        owf_buf_puts(out, "\"");
     }
     if (run->field == OWF_FIELD_USER) {
         owf_buf_puts(out, " text:name=\"");
@@ -814,7 +929,7 @@ static void put_para_part(owf_buf *out, const owf_doc *doc, const owf_para *para
     if(open){
         if(heading)owf_buf_printf(out,"<text:h text:style-name=\"P%d\" text:outline-level=\"%d\">",pstyle,para->fmt.heading);
         else owf_buf_printf(out,"<text:p text:style-name=\"P%d\">",pstyle);
-        /* 1.13: its format change, a region round the paragraph's content, the format before a style */
+        /* 1.22.1: its format change, a region round the paragraph's content, the format before a style */
         const owf_para_format_change *fc =
             tk && !tk->para_format ? OWF_DOC_PARA_FORMAT_CHANGE(doc, para->para_format_change) : NULL;
         if (fc) {
@@ -917,7 +1032,7 @@ static void put_para_part(owf_buf *out, const owf_doc *doc, const owf_para *para
             end_insertion(out, tk);
         if (!(kind == OWF_REV_DELETE && !close))
             end_deletion(tk);
-        if (close && tk->para_format) {             /* 1.13 */
+        if (close && tk->para_format) {             /* 1.22.1 */
             owf_buf_printf(out, "<text:change-end text:change-id=\"ct%d\"/>", tk->para_format);
             tk->para_format = 0;
         }
@@ -956,6 +1071,7 @@ static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, 
         }else if(p->table_id>=0){int id=p->table_id,row=-1;owf_buf_printf(out,"<table:table table:name=\"Table%d\">",id+1);
             while(i<story->nparas&&story->paras[i].table_id==id){p=&story->paras[i];
                 if(change_kind(doc,p->row_revision)==OWF_REV_DELETE){++i;continue;}   /* 1.12: saved accepted */
+                if(!p->row_revision&&change_kind(doc,p->cell_revision)==OWF_REV_DELETE){++i;continue;}   /* 1.22: so too a deleted cell */
                 if(p->table_row!=row){if(row>=0)owf_buf_puts(out,"</table:table-row>");owf_buf_puts(out,"<table:table-row>");row=p->table_row;}if(OWF_SHADE_SET(p->cell_shading))owf_buf_printf(out,"<table:table-cell table:style-name=\"Cell%06lX\" office:value-type=\"string\">",OWF_SHADE_RGB(p->cell_shading));else owf_buf_puts(out,"<table:table-cell office:value-type=\"string\">");put_para_odt(out,doc,p,s);owf_buf_puts(out,"</table:table-cell>");++i;}
             if(row>=0)owf_buf_puts(out,"</table:table-row>");
             owf_buf_puts(out,"</table:table>");
@@ -1109,7 +1225,7 @@ static void put_tracked_changes(owf_buf *out, const owf_doc *doc, const odt_trac
         const odt_region *r = &tk->regions[i];
         const owf_revision *rv = OWF_DOC_REVISION(doc, r->rev);
         int del = rv && rv->kind == OWF_REV_DELETE;
-        if (r->para_format_change) {                 /* 1.13 */
+        if (r->para_format_change) {                 /* 1.22.1 */
             const owf_para_format_change *fc = OWF_DOC_PARA_FORMAT_CHANGE(doc, r->para_format_change);
             owf_buf_printf(out, "<text:changed-region xml:id=\"ct%d\" text:id=\"ct%d\">"
                                 "<text:format-change gfo:para-style-before=\"P%d\"><office:change-info><dc:creator>",
@@ -1145,6 +1261,7 @@ static int build_content_xml(const owf_doc *doc, owf_buf *out, owf_report *repor
 
     memset(&s, 0, sizeof s);
     memset(&tk, 0, sizeof tk);
+    note_conditions(&doc->body, report);             /* 1.20 */
     tk.doc = doc;
     s.track = &tk;
     owf_buf_init(&body);

@@ -165,6 +165,8 @@ typedef struct {
     int *pic_used;                   /* per res image: written as Pictures/ (1) */
     const owf_master *master;        /* the master of what is being written */
     int on_master;
+    owf_buf *charts;                 /* the charts written: GFChart<n>/content.xml, n from 1 */
+    int ncharts, capcharts;
     int failed;
 } odpw;
 
@@ -705,6 +707,185 @@ static void put_image(odpw *w, owf_buf *out, const char *element, const char *ex
     owf_buf_puts(out, "\" xlink:type=\"simple\" xlink:show=\"embed\" xlink:actuate=\"onLoad\"/>");
 }
 
+/* a gradient look's draw:gradient name, "op-gr-l2700-0000ff-ff0000" (linear, our angle, from, to) or
+ * "op-gr-r-..." (radial, centre, corners): the same gradient, the same name */
+static void gradient_name(const owf_look *l, char *name, size_t size)
+{
+    if (l->gradient == OWF_GRADIENT_RADIAL)
+        snprintf(name, size, "op-gr-r-%06lx-%06lx", OWF_SHADE_RGB(l->fill), OWF_SHADE_RGB(l->fill2));
+    else
+        snprintf(name, size, "op-gr-l%d-%06lx-%06lx", ((l->gradient_angle % 3600) + 3600) % 3600,
+                 OWF_SHADE_RGB(l->fill), OWF_SHADE_RGB(l->fill2));
+}
+
+static int look_has_gradient(const owf_look *l)
+{
+    return OWF_SHADE_SET(l->fill) && OWF_SHADE_SET(l->fill2) &&
+           (l->gradient == OWF_GRADIENT_LINEAR || l->gradient == OWF_GRADIENT_RADIAL);
+}
+
+/* draw:gradient for each different gradient the objects use, once: ODF's linear angle 0 runs top to
+ * bottom (ours 2700); a radial one's start-color is its edge, end-color its centre */
+static void put_gradients_of(owf_buf *out, const owf_obj *objs, int n, char (*seen)[48], int *nseen, int cap)
+{
+    int i, k;
+    char name[48];
+    for (i = 0; i < n; i++) {
+        const owf_look *l = &objs[i].look;
+        if (!look_has_gradient(l))
+            continue;
+        gradient_name(l, name, sizeof name);
+        for (k = 0; k < *nseen && strcmp(seen[k], name); k++)
+            ;
+        if (k < *nseen)
+            continue;
+        if (*nseen < cap)
+            strcpy(seen[(*nseen)++], name);
+        if (l->gradient == OWF_GRADIENT_RADIAL)
+            owf_buf_printf(out, "<draw:gradient draw:name=\"%s\" draw:style=\"radial\" draw:cx=\"50%%\" draw:cy=\"50%%\""
+                                " draw:start-color=\"#%06lx\" draw:end-color=\"#%06lx\" draw:border=\"0%%\"/>",
+                           name, OWF_SHADE_RGB(l->fill2), OWF_SHADE_RGB(l->fill));
+        else
+            owf_buf_printf(out, "<draw:gradient draw:name=\"%s\" draw:style=\"linear\" draw:angle=\"%d\""
+                                " draw:start-color=\"#%06lx\" draw:end-color=\"#%06lx\" draw:border=\"0%%\"/>",
+                           name, ((l->gradient_angle - 2700) % 3600 + 3600) % 3600, OWF_SHADE_RGB(l->fill),
+                           OWF_SHADE_RGB(l->fill2));
+    }
+}
+
+/* a hatch look's draw:hatch name, "op-ha-d450-114-ff0000" (single, double or triple, our angle, the
+ * distance in twips, the colour): the same hatching, the same name */
+static void hatch_name(const owf_look *l, char *name, size_t size)
+{
+    static const char kinds[] = "ssdt";
+    snprintf(name, size, "op-ha-%c%d-%d-%06lx", kinds[l->hatch & 3], ((l->hatch_angle % 3600) + 3600) % 3600,
+             l->hatch_distance > 0 ? l->hatch_distance : OWF_HATCH_DISTANCE, OWF_SHADE_RGB(l->hatch_colour));
+}
+
+/* draw:hatch for each different hatching the objects use, once (seen and nseen as put_gradients_of's) */
+static void put_hatches_of(owf_buf *out, const owf_obj *objs, int n, char (*seen)[48], int *nseen, int cap)
+{
+    static const char *const styles[] = { "single", "single", "double", "triple" };
+    int i, k;
+    char name[48];
+    for (i = 0; i < n; i++) {
+        const owf_look *l = &objs[i].look;
+        if (l->hatch == OWF_HATCH_NONE)
+            continue;
+        hatch_name(l, name, sizeof name);
+        for (k = 0; k < *nseen && strcmp(seen[k], name); k++)
+            ;
+        if (k < *nseen)
+            continue;
+        if (*nseen < cap)
+            strcpy(seen[(*nseen)++], name);
+        owf_buf_printf(out, "<draw:hatch draw:name=\"%s\" draw:style=\"%s\" draw:color=\"#%06lx\"", name,
+                       styles[l->hatch & 3], OWF_SHADE_RGB(l->hatch_colour));
+        len_attr(out, "draw:distance", l->hatch_distance > 0 ? l->hatch_distance : OWF_HATCH_DISTANCE);
+        owf_buf_printf(out, " draw:rotation=\"%d\"/>", ((l->hatch_angle % 3600) + 3600) % 3600);
+    }
+}
+
+/* The fill attributes of a look (an object's graphic-properties or a page's drawing-page-properties):
+ * its picture (image into res->images, or -1) stretched or tiled, a hatch over its colour
+ * (fill-hatch-solid) or on its own, a gradient, a colour, or none when none_too; then how much shows
+ * through (draw:opacity). */
+static void put_fill_attrs(owf_buf *out, const owf_look *l, int image, int none_too)
+{
+    int filled = 1;
+    if (image >= 0 && l->picture != OWF_PICTURE_NONE) {
+        owf_buf_printf(out, " draw:fill=\"bitmap\" draw:fill-image-name=\"op-bg%d\" style:repeat=\"%s\"", image + 1,
+                       l->picture == OWF_PICTURE_TILE ? "repeat" : "stretch");
+        if (l->picture == OWF_PICTURE_TILE) {
+            owf_buf_puts(out, " draw:fill-image-ref-point=\"top-left\"");
+            if (l->tile_width > 0 && l->tile_height > 0) {
+                len_attr(out, "draw:fill-image-width", l->tile_width);
+                len_attr(out, "draw:fill-image-height", l->tile_height);
+            } else {
+                owf_buf_puts(out, " draw:fill-image-width=\"100%\" draw:fill-image-height=\"100%\"");
+            }
+        }
+        if (OWF_SHADE_SET(l->fill))
+            owf_buf_printf(out, " draw:fill-color=\"#%06lx\"", OWF_SHADE_RGB(l->fill));
+    } else if (l->hatch != OWF_HATCH_NONE) {
+        char hname[48];
+        hatch_name(l, hname, sizeof hname);
+        owf_buf_printf(out, " draw:fill=\"hatch\" draw:fill-hatch-name=\"%s\"", hname);
+        if (OWF_SHADE_SET(l->fill))
+            owf_buf_printf(out, " draw:fill-hatch-solid=\"true\" draw:fill-color=\"#%06lx\"", OWF_SHADE_RGB(l->fill));
+        else
+            owf_buf_puts(out, " draw:fill-hatch-solid=\"false\"");
+    } else if (look_has_gradient(l)) {
+        char gname[48];
+        gradient_name(l, gname, sizeof gname);
+        /* fill-color too: what a reader without gradients draws */
+        owf_buf_printf(out, " draw:fill=\"gradient\" draw:fill-gradient-name=\"%s\" draw:fill-color=\"#%06lx\"", gname,
+                       OWF_SHADE_RGB(l->fill));
+    } else if (OWF_SHADE_SET(l->fill)) {
+        owf_buf_printf(out, " draw:fill=\"solid\" draw:fill-color=\"#%06lx\"", OWF_SHADE_RGB(l->fill));
+    } else {
+        filled = 0;
+        if (none_too)
+            owf_buf_puts(out, " draw:fill=\"none\"");
+    }
+    if (filled && l->transparency > 0)
+        owf_buf_printf(out, " draw:opacity=\"%d%%\"", 100 - (l->transparency > 100 ? 100 : l->transparency));
+}
+
+/* An object's shadow: draw:shadow, its offset, colour and opacity */
+static void put_shadow_attrs(owf_buf *out, const owf_look *l)
+{
+    if (!l->shadow)
+        return;
+    owf_buf_puts(out, " draw:shadow=\"visible\"");
+    len_attr(out, "draw:shadow-offset-x", l->shadow_dx);
+    len_attr(out, "draw:shadow-offset-y", l->shadow_dy);
+    owf_buf_printf(out, " draw:shadow-color=\"#%06lx\" draw:shadow-opacity=\"%d%%\"",
+                   OWF_SHADE_SET(l->shadow_colour) ? OWF_SHADE_RGB(l->shadow_colour) : OWF_SHADOW_COLOUR,
+                   100 - (l->shadow_transparency > 100 ? 100 : l->shadow_transparency));
+}
+
+/* draw:gradient and draw:hatch for each different one the pages and objects use, once */
+static void put_gradients(owf_buf *out, const owf_deck *d)
+{
+    char seen[64][48];
+    int nseen = 0, i;
+    owf_obj bg;
+    memset(&bg, 0, sizeof bg);
+    for (i = 0; i < d->nmasters; i++) {
+        const owf_master *m = &d->masters[i];
+        OWF_BACKGROUND_LOOK(m, &bg.look);
+        put_gradients_of(out, &bg, 1, seen, &nseen, 64);
+        put_hatches_of(out, &bg, 1, seen, &nseen, 64);
+        put_gradients_of(out, m->objs, m->nobjs, seen, &nseen, 64);
+        put_hatches_of(out, m->objs, m->nobjs, seen, &nseen, 64);
+    }
+    for (i = 0; i < d->nslides; i++) {
+        const owf_slide *s = &d->slides[i];
+        OWF_BACKGROUND_LOOK(s, &bg.look);
+        put_gradients_of(out, &bg, 1, seen, &nseen, 64);
+        put_hatches_of(out, &bg, 1, seen, &nseen, 64);
+        put_gradients_of(out, s->objs, s->nobjs, seen, &nseen, 64);
+        put_hatches_of(out, s->objs, s->nobjs, seen, &nseen, 64);
+    }
+}
+
+/* The picture a text box or shape is filled with, or -1 */
+static int picture_fill_of(const owf_deck *d, const owf_obj *o)
+{
+    return (o->kind == OWF_OBJ_TEXT || o->kind == OWF_OBJ_SHAPE) && o->look.picture != OWF_PICTURE_NONE &&
+           o->image >= 0 && o->image < d->res->nimages ? o->image : -1;
+}
+
+static int objs_fill_with(const owf_deck *d, const owf_obj *objs, int n, int image)
+{
+    int i;
+    for (i = 0; i < n; i++)
+        if (picture_fill_of(d, &objs[i]) == image)
+            return 1;
+    return 0;
+}
+
 /* The object's graphic style: fill, line, insets, alignment, fitting. */
 static void graphic_style(odpw *w, const owf_obj *o, char *name, int text_frame)
 {
@@ -715,10 +896,8 @@ static void graphic_style(odpw *w, const owf_obj *o, char *name, int text_frame)
 
     owf_buf_init(&body);
     owf_buf_puts(&body, "<style:graphic-properties");
-    if (OWF_SHADE_SET(o->look.fill))
-        owf_buf_printf(&body, " draw:fill=\"solid\" draw:fill-color=\"#%06lx\"", OWF_SHADE_RGB(o->look.fill));
-    else
-        owf_buf_puts(&body, " draw:fill=\"none\"");
+    put_fill_attrs(&body, &o->look, picture_fill_of(w->deck, o), 1);
+    put_shadow_attrs(&body, &o->look);
     if (OWF_SHADE_SET(o->look.line)) {
         int dashed = o->look.line_style == OWF_LINE_DASHED || o->look.line_style == OWF_LINE_DOTTED ||
                      o->look.line_style == OWF_LINE_MEDIUM_DASHED || o->look.line_style == OWF_LINE_DASH_DOT;
@@ -898,8 +1077,34 @@ static void put_alt(owf_buf *out, const owf_obj *o)
     }
 }
 
+/* The merge whose first cell is row, col; or (cover) the one that covers it otherwise. */
+static const owf_table_merge *table_merge_at(const owf_obj *o, int row, int col, int cover)
+{
+    int i;
+    for (i = 0; o->merges && i < o->nmerges; i++) {
+        const owf_table_merge *m = &o->merges[i];
+        int first = m->row == row && m->col == col;
+        if (cover ? !first && row >= m->row && row < m->row + m->rows && col >= m->col && col < m->col + m->cols
+                  : first)
+            return m;
+    }
+    return NULL;
+}
+
+/* A cell with nothing in it: covered by a merge, or empty. */
+static void put_empty_cell(owf_buf *out, const owf_obj *o, int row, int col)
+{
+    owf_buf_puts(out, table_merge_at(o, row, col, 1) ? "<table:covered-table-cell/>" : "<table:table-cell/>");
+}
+
 static void put_table(odpw *w, owf_buf *out, const owf_obj *o)
 {
+    static const struct { const char *attr; unsigned flag; } design[] = {
+        { "table:use-first-row-styles", OWF_TABLE_FIRST_ROW }, { "table:use-last-row-styles", OWF_TABLE_LAST_ROW },
+        { "table:use-first-column-styles", OWF_TABLE_FIRST_COL }, { "table:use-last-column-styles", OWF_TABLE_LAST_COL },
+        { "table:use-banding-rows-styles", OWF_TABLE_BANDED_ROWS },
+        { "table:use-banding-columns-styles", OWF_TABLE_BANDED_COLS },
+    };
     int ncols = o->ncols > 0 ? o->ncols : 1, i = 0, c, row;
     char name[32];
     owf_buf body;
@@ -908,9 +1113,21 @@ static void put_table(odpw *w, owf_buf *out, const owf_obj *o)
     for (c = 0; c < o->text.nparas; c++)
         if (o->text.paras[c].table_cols > ncols)
             ncols = o->text.paras[c].table_cols;
-    if (ncols > 64)
+    if (ncols > 64) {
+        owf_report_add(w->report, OWF_NOTE_LOST, "A table's columns past the 64th were left out");
         ncols = 64;
-    owf_buf_puts(out, "<table:table>");
+    }
+    /* its design: the template's name and which of its parts are on */
+    owf_buf_puts(out, "<table:table");
+    if (o->table_style && *o->table_style) {
+        owf_buf_puts(out, " table:template-name=\"");
+        owf_buf_put_xml(out, o->table_style, strlen(o->table_style));
+        owf_buf_putc(out, '"');
+    }
+    for (c = 0; c < (int)(sizeof design / sizeof design[0]); c++)
+        if (o->table_design & design[c].flag)
+            owf_buf_printf(out, " %s=\"true\"", design[c].attr);
+    owf_buf_putc(out, '>');
     for (c = 0; c < ncols; c++) {
         int width = o->col_widths && c < o->ncols ? o->col_widths[c] : o->width / ncols;
         body.length = 0;
@@ -922,16 +1139,46 @@ static void put_table(odpw *w, owf_buf *out, const owf_obj *o)
     }
     while (i < o->text.nparas) {
         int col = 0;
+        const owf_table_merge *m;
         row = o->text.paras[i].table_row;
-        owf_buf_puts(out, "<table:table-row>");
+        owf_buf_puts(out, "<table:table-row");
+        if (o->row_heights && row >= 0 && row < o->nrows && o->row_heights[row] > 0) {
+            /* its height: the least it is (Impress's row height) */
+            body.length = 0;
+            owf_buf_puts(&body, "<style:table-row-properties");
+            len_attr(&body, "style:row-height", o->row_heights[row]);
+            owf_buf_puts(&body, "/>");
+            reg_style(w->reg, EL_STYLE, "table-row", "ro", NULL, &body, name);
+            owf_buf_printf(out, " table:style-name=\"%s\"", name);
+        }
+        owf_buf_putc(out, '>');
         while (i < o->text.nparas && o->text.paras[i].table_row == row) {
             const owf_para *p = &o->text.paras[i];
             int target = p->table_col < ncols ? p->table_col : ncols - 1;
             while (col < target) {
-                owf_buf_puts(out, "<table:table-cell/>");
+                put_empty_cell(out, o, row, col);
                 col++;
             }
+            if (table_merge_at(o, row, col, 1)) {
+                /* covered: its text, if any, is not shown, as in Impress */
+                owf_buf_puts(out, "<table:covered-table-cell/>");
+                while (i < o->text.nparas && o->text.paras[i].table_row == row && o->text.paras[i].table_col == p->table_col)
+                    i++;
+                col++;
+                if (col >= ncols)
+                    while (i < o->text.nparas && o->text.paras[i].table_row == row)
+                        i++;
+                continue;
+            }
             owf_buf_puts(out, "<table:table-cell office:value-type=\"string\"");
+            if ((m = table_merge_at(o, row, col, 0)) != NULL) {
+                /* no wider than the columns written (the 64-column cap) */
+                int span = m->cols < ncols - col ? m->cols : ncols - col;
+                if (span > 1)
+                    owf_buf_printf(out, " table:number-columns-spanned=\"%d\"", span);
+                if (m->rows > 1)
+                    owf_buf_printf(out, " table:number-rows-spanned=\"%d\"", m->rows);
+            }
             if (OWF_SHADE_SET(p->cell_shading)) {
                 body.length = 0;
                 owf_buf_printf(&body, "<style:graphic-properties draw:fill=\"solid\" draw:fill-color=\"#%06lx\"/>"
@@ -953,7 +1200,7 @@ static void put_table(odpw *w, owf_buf *out, const owf_obj *o)
                     i++;
         }
         while (col < ncols) {
-            owf_buf_puts(out, "<table:table-cell/>");
+            put_empty_cell(out, o, row, col);
             col++;
         }
         owf_buf_puts(out, "</table:table-row>");
@@ -998,6 +1245,44 @@ static void put_custom_geometry(owf_buf *out, const owf_obj *o)
     owf_buf_printf(out, " draw:enhanced-path=\"%s\"/>", path);
 }
 
+/* A chart with its data (Presentation gap 2): its object, written as its own chart document with its data in its
+ * local table, and its picture to show where a program can't draw it. */
+static void put_chart_object(odpw *w, owf_buf *out, const owf_obj *o)
+{
+    owf_buf *b;
+    if (w->flat) {                   /* one file: the chart document inside its object */
+        owf_buf_puts(out, "<draw:object>");
+        if (owf_chart_odf_xml(o->chart, o->width, o->height, 1, out) != OWF_OK)
+            w->failed = 1;
+        owf_buf_puts(out, "</draw:object>");
+        if (o->image >= 0)
+            put_image(w, out, "draw:image", NULL, o->image);
+        return;
+    }
+    if (w->ncharts == w->capcharts) {
+        int want = w->capcharts ? w->capcharts * 2 : 4;
+        owf_buf *c = realloc(w->charts, (size_t)want * sizeof *c);
+        if (!c) {
+            w->failed = 1;
+            return;
+        }
+        w->charts = c;
+        w->capcharts = want;
+    }
+    b = &w->charts[w->ncharts];
+    owf_buf_init(b);
+    if (owf_chart_odf_xml(o->chart, o->width, o->height, 0, b) != OWF_OK) {
+        owf_buf_free(b);
+        w->failed = 1;
+        return;
+    }
+    w->ncharts++;
+    owf_buf_printf(out, "<draw:object xlink:href=\"./GFChart%d\" xlink:type=\"simple\" xlink:show=\"embed\" "
+                        "xlink:actuate=\"onLoad\"/>", w->ncharts);
+    if (o->image >= 0)
+        put_image(w, out, "draw:image", NULL, o->image);
+}
+
 static void put_object(odpw *w, owf_buf *out, const owf_obj *objs, int n, int index, int depth)
 {
     const owf_obj *o = &objs[index];
@@ -1007,7 +1292,7 @@ static void put_object(odpw *w, owf_buf *out, const owf_obj *objs, int n, int in
 
     if (depth > OWF_DECK_MAX_DEPTH)
         return;
-    if (o->kind == OWF_OBJ_OTHER || o->kind == OWF_OBJ_CHART) {
+    if (o->kind == OWF_OBJ_OTHER || (o->kind == OWF_OBJ_CHART && !o->chart)) {
         if (o->keep >= 0 && o->keep < w->deck->nkept && w->deck->kept[o->keep].kind == OWF_KEPT_OBJECT)
             owf_buf_puts(out, w->deck->kept[o->keep].xml);
         else
@@ -1092,6 +1377,8 @@ static void put_object(odpw *w, owf_buf *out, const owf_obj *objs, int n, int in
             owf_buf_puts(out, "<draw:text-box/>");
     } else if (o->kind == OWF_OBJ_TABLE) {
         put_table(w, out, o);
+    } else if (o->kind == OWF_OBJ_CHART) {
+        put_chart_object(w, out, o);
     } else {
         owf_buf_puts(out, "<draw:text-box>");
         if ((flow_total < 2 || flow_ordinal == 0) &&
@@ -1113,12 +1400,15 @@ static void put_objects(odpw *w, owf_buf *out, const owf_obj *objs, int n, int p
 
 /* ---- Pages ---- */
 
-static void put_background(owf_buf *out, const owf_deck *d, unsigned long colour, int image, int master)
+/* A page's background (bg: its look; image: its picture into res->images, or -1) */
+static void put_background(owf_buf *out, const owf_deck *d, const owf_look *bg, int image, int master)
 {
-    if (image >= 0 && image < d->res->nimages)
-        owf_buf_printf(out, " draw:fill=\"bitmap\" draw:fill-image-name=\"op-bg%d\" style:repeat=\"stretch\"", image + 1);
-    else if (OWF_SHADE_SET(colour))
-        owf_buf_printf(out, " draw:fill=\"solid\" draw:fill-color=\"#%06lx\"", OWF_SHADE_RGB(colour));
+    if (image >= 0 && image < d->res->nimages && bg->picture != OWF_PICTURE_NONE) {
+        owf_look laid = *bg;
+        laid.fill = 0;           /* a picture background has no colour under it */
+        put_fill_attrs(out, &laid, image, 0);
+    } else if (OWF_LOOK_FILLED(bg))
+        put_fill_attrs(out, bg, -1, 0);
     else if (master)
         owf_buf_puts(out, " draw:fill=\"none\"");
 }
@@ -1423,7 +1713,11 @@ static int build_content(odpw *w, owf_buf *out)
         /* the page's style: background, fields, transition */
         body.length = 0;
         owf_buf_puts(&body, "<style:drawing-page-properties");
-        put_background(&body, d, s->background, s->background_image, 0);
+        {
+            owf_look bg;
+            OWF_BACKGROUND_LOOK(s, &bg);
+            put_background(&body, d, &bg, s->background_image, 0);
+        }
         owf_buf_printf(&body, " presentation:display-footer=\"%s\" presentation:display-page-number=\"%s\""
                               " presentation:display-date-time=\"%s\"",
                        s->show & OWF_SHOW_FOOTER ? "true" : "false", s->show & OWF_SHOW_NUMBER ? "true" : "false",
@@ -1579,7 +1873,11 @@ static int build_styles(odpw *w, owf_buf *out)
         w->master = m;
         body.length = 0;
         owf_buf_puts(&body, "<style:drawing-page-properties draw:background-size=\"full\"");
-        put_background(&body, d, m->background, m->background_image, 1);
+        {
+            owf_look bg;
+            OWF_BACKGROUND_LOOK(m, &bg);
+            put_background(&body, d, &bg, m->background_image, 1);
+        }
         owf_buf_puts(&body, "/>");
         reg_style(w->reg, EL_STYLE, "drawing-page", "dp", NULL, &body, style);
         owf_buf_puts(&masters, "<style:master-page");
@@ -1622,13 +1920,13 @@ static int build_styles(odpw *w, owf_buf *out)
     owf_buf_puts(out, "<draw:marker draw:name=\"op-arrow\" svg:viewBox=\"0 0 20 30\" svg:d=\"M10 0l-10 30h20z\"/>");
     owf_buf_puts(out, "<draw:stroke-dash draw:name=\"op-dash\" draw:style=\"rect\" draw:dots1=\"1\" draw:dots1-length=\"200%\""
                       " draw:distance=\"100%\"/>");
-    /* background pictures */
+    /* background pictures and picture fills */
     for (i = 0; i < d->res->nimages; i++) {
         int used = 0, k;
         for (k = 0; k < d->nslides && !used; k++)
-            used = d->slides[k].background_image == i;
+            used = d->slides[k].background_image == i || objs_fill_with(d, d->slides[k].objs, d->slides[k].nobjs, i);
         for (k = 0; k < d->nmasters && !used; k++)
-            used = d->masters[k].background_image == i;
+            used = d->masters[k].background_image == i || objs_fill_with(d, d->masters[k].objs, d->masters[k].nobjs, i);
         if (!used)
             continue;
         {
@@ -1637,6 +1935,7 @@ static int build_styles(odpw *w, owf_buf *out)
             put_image(w, out, "draw:fill-image", extra, i);
         }
     }
+    put_gradients(out, d);
     for (i = 0; i < d->nkept; i++)
         if (d->kept[i].kind == OWF_KEPT_DEFINITION)
             owf_buf_puts(out, d->kept[i].xml);
@@ -1691,6 +1990,10 @@ static odpw *new_writer(const owf_deck *deck, owf_report *report, int flat)
 
 static void free_writer(odpw *w)
 {
+    int i;
+    for (i = 0; i < w->ncharts; i++)
+        owf_buf_free(&w->charts[i]);
+    free(w->charts);
     reg_free(&w->autos_styles);
     reg_free(&w->autos_content);
     free(w->pic_used);
@@ -1766,6 +2069,11 @@ static int export_package(const owf_deck *deck, unsigned char **data, size_t *le
             result = owf_zip_add(zip, deck->parts[i].name, deck->parts[i].data, deck->parts[i].length, 1);
         else if (deck->parts[i].name[0] && deck->parts[i].name[strlen(deck->parts[i].name) - 1] != '/')
             result = owf_zip_add(zip, deck->parts[i].name, "", 0, 0);
+    for (i = 0; i < w->ncharts && result == OWF_OK; i++) {
+        char name[48];
+        snprintf(name, sizeof name, "GFChart%d/content.xml", i + 1);
+        result = owf_zip_add(zip, name, w->charts[i].data, w->charts[i].length, 1);
+    }
 
     part.length = 0;
     owf_buf_printf(&part, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -1792,6 +2100,11 @@ static int export_package(const owf_deck *deck, unsigned char **data, size_t *le
         owf_buf_puts_xml(&part, deck->parts[i].mime ? deck->parts[i].mime : "");
         owf_buf_puts(&part, "\"/>");
     }
+    for (i = 0; i < w->ncharts; i++)
+        owf_buf_printf(&part, "<manifest:file-entry manifest:full-path=\"GFChart%d/\" manifest:version=\"1.2\" "
+                              "manifest:media-type=\"application/vnd.oasis.opendocument.chart\"/>"
+                              "<manifest:file-entry manifest:full-path=\"GFChart%d/content.xml\" "
+                              "manifest:media-type=\"text/xml\"/>", i + 1, i + 1);
     owf_buf_puts(&part, "</manifest:manifest>\n");
     if (result == OWF_OK)
         result = part.failed ? OWF_ERR_MEMORY : owf_zip_add(zip, "META-INF/manifest.xml", part.data, part.length, 1);

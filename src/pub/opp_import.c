@@ -1,5 +1,5 @@
-/* GFOpenPublisher P1a: .pub pages onto the suite's shared deck/page model. */
-#include "openpublisher_core.h"
+/* GFOpenPressmaster P1a: .pub pages onto the suite's shared deck/page model. */
+#include "openpressmaster_core.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -192,9 +192,23 @@ int opp_pub_to_deck(const owf_pub *pub, owf_deck **out, owf_report *report)
         s->master = p->master >= 0 && p->master < masters ? p->master : 0;
         if (fill_objects(add_slide_object, s, p, pub) < 0) goto memory;
     }
-    if (report)
+    if (report) {
+        int wordart = 0, shapes = 0, k, j;
+        for (k = 0; k < pub->nmasters + pub->npages; k++) {
+            const owf_pub_page *p = k < pub->nmasters ? &pub->masters[k] : &pub->pages[k - pub->nmasters];
+            for (j = 0; j < p->nframes; j++) {
+                if (p->frames[j].wordart) wordart++;
+                else if (p->frames[j].kind == OWF_PUB_SHAPE && p->frames[j].shape_type > 1) shapes++;
+            }
+        }
         owf_report_add(report, OWF_NOTE_APPROX,
                        "Publisher frames use plain styling until the formatting records are decoded");
+        /* the page model has no WordArt or shape numbers yet: saved again (opp_export.c), these stay so */
+        if (wordart)
+            owf_report_add(report, OWF_NOTE_APPROX, "%d WordArt object(s) are shown, and saved, as shapes with text", wordart);
+        if (shapes)
+            owf_report_add(report, OWF_NOTE_APPROX, "%d shape(s) are shown, and saved, as rectangles", shapes);
+    }
     *out = deck;
     return OWF_OK;
 memory:

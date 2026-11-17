@@ -1,15 +1,15 @@
 /*
- * OWFLibsTest: GFOffice's four libraries from LIBS:, as programs use them
+ * OWFLibsTest: GFOffice's five libraries from LIBS:, as programs use them
  * (docs/suite/owf-libraries.md): owfwrite.library, owfcalc.library,
- * owfpub.library and owfpresent.library, opened together.
+ * owfpub.library, owfpresent.library and owfdiag.library, opened together.
  *
- *   OWFLibsTest [SAMPLES=dir] [FIXTURES=dir] [ONLY=write|calc|pub|present]
+ *   OWFLibsTest [SAMPLES=dir] [FIXTURES=dir] [ONLY=write|calc|pub|present|diag]
  *               (default PROGDIR:samples and PROGDIR:fixtures, as
  *               build-library.sh lays them out)
  *
  * For each library: the 17 calls all four share (memory, reports, what
  * files are, zip and inflate, the structures' sizes) through that library,
- * then its own (owf_libs_write.c, _calc.c, _pub.c, _present.c, each built
+ * then its own (owf_libs_write.c, _calc.c, _pub.c, _present.c, _diag.c, each built
  * for its library). Then it all again from a second task at the same time.
  * Prints one line per check (the second task's as one line) and
  * "OWFLibsTest: N passed, M failed". With ONLY it opens and checks that
@@ -31,7 +31,8 @@
 #include <stdio.h>
 #include <string.h>
 
-static const owf_libs_unit *const units[] = { &owf_libs_write, &owf_libs_calc, &owf_libs_pub, &owf_libs_present };
+static const owf_libs_unit *const units[] = { &owf_libs_write, &owf_libs_calc, &owf_libs_pub, &owf_libs_present,
+                                              &owf_libs_diag };
 #define NUNITS ((int)(sizeof units / sizeof units[0]))
 static int use[NUNITS];
 

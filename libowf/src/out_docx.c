@@ -56,6 +56,8 @@ static void put_rpr_props(owf_buf *out, const owf_doc *doc, const owf_charfmt *f
         owf_buf_puts(out, "<w:i/>");
     if (f->flags & OWF_STRIKE)
         owf_buf_puts(out, "<w:strike/>");
+    if (f->flags & OWF_HIDDEN)
+        owf_buf_puts(out, "<w:vanish/>");             /* 1.14 */
     if (f->colour != OWF_COLOUR_AUTO)
         owf_buf_printf(out, "<w:color w:val=\"%06lX\"/>", f->colour & 0xFFFFFFUL);
     if (f->size)
@@ -207,7 +209,7 @@ static void put_ppr_props(owf_buf *out, const owf_parafmt *f, const char *style)
         owf_buf_printf(out, "<w:jc w:val=\"%s\"/>", jc[f->align]);
 }
 
-/* 1.13: fc is the paragraph's tracked format change (w:pPrChange, last, the format before in its own w:pPr),
+/* 1.21: fc is the paragraph's tracked format change (w:pPrChange, last, the format before in its own w:pPr),
  * style_before the style it names there */
 static void put_ppr(owf_buf *out, const owf_doc *doc, const owf_parafmt *f, const char *style,
                     int section_end, const owf_para *section, int next_break,
@@ -711,7 +713,7 @@ static void build_comments_extended(owf_buf *out, const owf_doc *doc)
 static void field_instr(const owf_run *run, char *out, size_t size)
 {
     static const char *const word[] = { "PAGE", "NUMPAGES", "DATE", "TIME", "TITLE", "AUTHOR", "SUBJECT", "FILENAME",
-                                         "NUMWORDS", "STYLEREF", "DOCVARIABLE", "REF", "PAGEREF", "MERGEFIELD", "XE", "SEQ" };
+                                         "NUMWORDS", "STYLEREF", "DOCVARIABLE", "REF", "PAGEREF", "MERGEFIELD", "XE", "SEQ", "IF", "FILLIN", "IF" };
     const char *arg = run->href ? run->href : "";
     int f = (int)run->field >= 0 && (int)run->field <= OWF_FIELD_LAST ? (int)run->field : 0;
     if (f == OWF_FIELD_CHAPTER) snprintf(out, size, " STYLEREF 1 ");
@@ -721,8 +723,50 @@ static void field_instr(const owf_run *run, char *out, size_t size)
     else if (f == OWF_FIELD_MERGE) snprintf(out, size, " MERGEFIELD %s ", arg);
     else if (f == OWF_FIELD_INDEX) snprintf(out, size, " XE \"%s\" ", arg);      /* 1.10 */
     else if (f == OWF_FIELD_SEQ && strchr(arg, ' ')) snprintf(out, size, " SEQ \"%s\" \\* ARABIC ", arg);   /* 1.12.6 */
+    else if (f == OWF_FIELD_FILLIN) {                /* 1.19: its prompt quoted, a quote in it as Word's \" */
+        size_t n = 0;
+        const char *c;
+        n += (size_t)snprintf(out, size, " FILLIN \"");
+        for (c = arg; *c && n + 3 < size; ++c) {
+            if (*c == '"' || *c == '\\') out[n++] = '\\';
+            out[n++] = *c;
+        }
+        snprintf(out + n, size > n ? size - n : 0, "\" ");
+    }
     else if (f == OWF_FIELD_SEQ) snprintf(out, size, " SEQ %s \\* ARABIC ", arg);
+    else if (f == OWF_FIELD_IF) snprintf(out, size, " IF %s ", arg);   /* 1.16: its fields in braces (put_if_code) */
     else snprintf(out, size, " %s ", word[f]);
+}
+
+/* 1.16: an IF's code, each field in braces in it a complex field of its own (with no result: Word works it
+ * out), as Word writes them */
+static void put_if_code(owf_buf *out, const owf_doc *doc, const owf_charfmt *fmt, const char *code, owf_report *report)
+{
+    const char *p = code;
+    while (*p) {
+        const char *open = strchr(p, '{'), *close;
+        size_t n = open ? (size_t)(open - p) : strlen(p);
+        if (n) {
+            owf_buf_puts(out, "<w:r>");
+            put_rpr(out, doc, fmt, report);
+            owf_buf_puts(out, "<w:instrText xml:space=\"preserve\">");
+            owf_buf_put_xml(out, p, n);
+            owf_buf_puts(out, "</w:instrText></w:r>");
+        }
+        if (!open) break;
+        close = strchr(open, '}');
+        if (!close) close = open + strlen(open);
+        owf_buf_puts(out, "<w:r>");
+        put_rpr(out, doc, fmt, report);
+        owf_buf_puts(out, "<w:fldChar w:fldCharType=\"begin\"/></w:r><w:r>");
+        put_rpr(out, doc, fmt, report);
+        owf_buf_puts(out, "<w:instrText xml:space=\"preserve\"> ");
+        owf_buf_put_xml(out, open + 1, (size_t)(close - open - 1));
+        owf_buf_puts(out, " </w:instrText></w:r><w:r>");
+        put_rpr(out, doc, fmt, report);
+        owf_buf_puts(out, "<w:fldChar w:fldCharType=\"end\"/></w:r>");
+        p = *close ? close + 1 : close;
+    }
 }
 
 static const char *field_shown(const owf_run *run)
@@ -735,13 +779,13 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
                       const owf_para *para, owf_report *report,
                       int section_end, const owf_para *section, int next_break)
 {
-    char instr[160];
+    char instr[320];
     char style[16], ostyle[16];
     const char *pstyle = NULL, *opstyle = NULL;
-    const owf_para_format_change *pfc = OWF_DOC_PARA_FORMAT_CHANGE(doc, para->para_format_change);   /* 1.13 */
+    const owf_para_format_change *pfc = OWF_DOC_PARA_FORMAT_CHANGE(doc, para->para_format_change);   /* 1.21 */
     docx_marks mk;
     size_t at = 0;
-    int j;
+    int j, hidden_para = para->table_id < 0 && owf_para_hidden(para);   /* 1.20 (a table's cell is never hidden) */
     if (para->fmt.heading >= 1 && para->fmt.heading <= 6) {
         snprintf(style, sizeof style, "Heading%d", para->fmt.heading); pstyle = style;
     } else if (own_style(para->style)) {
@@ -764,7 +808,16 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
     }
     for (j = 0; j < para->nruns; ++j) {
         const owf_run *run=&para->runs[j];
-        int link = run->kind == OWF_RUN_TEXT && run->href && story == &doc->body;
+        owf_run vanished;
+        int link;
+        if (run->kind == OWF_RUN_FIELD && run->field == OWF_FIELD_HIDE_PARA) {
+            /* 1.20: Word has no hidden paragraph: its condition goes (noted), its text is written w:vanish while
+             * it holds */
+            owf_report_add(report, OWF_NOTE_APPROX, "A hidden paragraph is saved as hidden text, without its condition");
+            continue;
+        }
+        if (hidden_para) { vanished = *run; vanished.fmt.flags |= OWF_HIDDEN; run = &vanished; }
+        link = run->kind == OWF_RUN_TEXT && run->href && story == &doc->body;
         if (run->comment) {                          /* 1.6 */
             put_comment_mark(out, doc, run->comment);
             continue;
@@ -792,6 +845,15 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
             owf_buf_puts(out,"<w:r>");put_rpr(out,doc,&run->fmt,report);owf_buf_puts(out,del?"<w:delText xml:space=\"preserve\">":"<w:t xml:space=\"preserve\">");owf_buf_puts_xml(out,field_shown(run));owf_buf_puts(out,del?"</w:delText></w:r>":"</w:t></w:r>");
             owf_buf_puts(out,"<w:r>");put_rpr(out,doc,&run->fmt,report);owf_buf_puts(out,"<w:fldChar w:fldCharType=\"end\"/></w:r>");
             owf_buf_puts(out,close_chg);
+            continue;
+        }
+        if(run->kind==OWF_RUN_FIELD&&run->field==OWF_FIELD_IF){
+            /* 1.16: conditional text as Word's complex field, its own fields nested in its code */
+            owf_buf_puts(out,"<w:r>");put_rpr(out,doc,&run->fmt,report);owf_buf_puts(out,"<w:fldChar w:fldCharType=\"begin\"/></w:r>");
+            put_if_code(out,doc,&run->fmt,instr,report);
+            owf_buf_puts(out,"<w:r>");put_rpr(out,doc,&run->fmt,report);owf_buf_puts(out,"<w:fldChar w:fldCharType=\"separate\"/></w:r>");
+            owf_buf_puts(out,"<w:r>");put_rpr_change(out,doc,&run->fmt,fc,change_id(doc,story,para,j)+4,report);owf_buf_puts(out,"<w:t xml:space=\"preserve\">");owf_buf_puts_xml(out,field_shown(run));owf_buf_puts(out,"</w:t></w:r>");
+            owf_buf_puts(out,"<w:r>");put_rpr(out,doc,&run->fmt,report);owf_buf_puts(out,"<w:fldChar w:fldCharType=\"end\"/></w:r>");
             continue;
         }
         if(run->kind==OWF_RUN_FIELD){owf_buf_puts(out,"<w:fldSimple w:instr=\"");owf_buf_puts_xml(out,instr);owf_buf_puts(out,"\"><w:r>");put_rpr_change(out,doc,&run->fmt,fc,change_id(doc,story,para,j)+4,report);owf_buf_puts(out,"<w:t xml:space=\"preserve\">");owf_buf_puts_xml(out,field_shown(run));owf_buf_puts(out,"</w:t></w:r></w:fldSimple>");continue;}
@@ -875,6 +937,11 @@ static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, 
                 }
                 owf_buf_puts(out,"<w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"auto\"/>");
                 if(OWF_SHADE_SET(p->cell_shading))owf_buf_printf(out,"<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"%06lX\"/>",OWF_SHADE_RGB(p->cell_shading));
+                if(!p->row_revision&&run_change(doc,p->cell_revision)){   /* 1.22: the cell a tracked change by itself */
+                    const owf_revision *cc=run_change(doc,p->cell_revision);
+                    owf_buf_puts(out,cc->kind==OWF_REV_DELETE?"<w:cellDel":"<w:cellIns");
+                    put_change_attrs(out,cc,4500000L+(long)i);owf_buf_puts(out,"/>");
+                }
                 owf_buf_puts(out,"</w:tcPr>");put_para(out,doc,story,p,report,0,NULL,0);owf_buf_puts(out,"</w:tc>");++i;
             }
             if(row>=0)owf_buf_puts(out,"</w:tr>");

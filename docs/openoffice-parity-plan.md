@@ -24,7 +24,7 @@ needs Dale's "yes with review" first.
 
 Percentages are the workflow-weighted estimates from the 9 November gap
 analysis: an ordinary user finishing OpenOffice's documented workflow, with
-editing, save, reload and Undo working. GFOpenPublisher is compared with
+editing, save, reload and Undo working. GFOpenPressmaster is compared with
 Microsoft Publisher, not OpenOffice, and is outside this plan.
 
 ## 2. Gap matrix
@@ -57,7 +57,7 @@ Status: **Done** = edits, saves, reloads and undoes; **Part** = some of it
 | Form controls in documents | Gap | 3 | |
 | Master documents | Gap | 3 | |
 | Embedded Calc sheets/charts (OLE-style objects) | Gap | 3 | Needs Calc chart renderer as a library call |
-| Document compare | Gap | 3 | Reuses track changes |
+| Document compare | Done (2.0.52) | 3 | Reuses track changes |
 
 ### Calc (GFOpenCalc)
 
@@ -225,7 +225,7 @@ manager plus advanced filter; C6 automatic data-table recalc.
 
 ### P: Impress authoring (GFOpenPresentation)
 
-Owns: `app/openpresent.c` (shared with GFOpenPublisher: keep Publisher
+Owns: `app/openpresent.c` (shared with GFOpenPressmaster: keep Publisher
 building and its 67 adapter checks green), `src/deck/`,
 `include/openpresentation_core.h`, `libowf/include/owf_deck.h`,
 `libowf/src/owf_deck.c`, `owf_deck_int.h`, `in_odp.c`, `out_odp.c`,

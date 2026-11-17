@@ -72,16 +72,21 @@
 #include <clib/alib_protos.h>
 
 #include "openpresentation_core.h"
-#include "ow_spell_dict.h"
+#include "owf_spell.h"
 #include "ow_clipboard.h"
-#ifdef OPENPUBLISHER
-#include "openpublisher_core.h"
-#include "openpublisher_merge.h"
+#ifdef OPENPRESSMASTER
+#include "openpressmaster_core.h"
+#include "openpressmaster_merge.h"
+#include "openpressmaster_template.h"
+#include "openpressmaster_pagenum.h"
 #endif
 #include "ow_layout.h"
 #include "owf_pdf.h"
 #include "owf_metafile.h"
 #include "ow_stack.h"
+#ifdef OPR_CHART_EDITOR
+#include "opr_chartwin.h"         /* a slide chart's data and look, on GFOpenCalc's core */
+#endif
 #include "lastdir.h"
 #include "ogt_theme.h"
 #include "ogt_draw.h"
@@ -97,10 +102,11 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL, *DiskfontBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#ifdef OPENPUBLISHER
-#define PROGRAM "GFOpenPublisher"
-#define VERSION_TEXT "GFOpenPublisher 0.3.30 (15.11.2026)"
-#define REXX_PORT_NAME "GFOPENPUBLISHER"
+#ifdef OPENPRESSMASTER
+#define PROGRAM "GFOpenPressmaster"
+#define VERSION_TEXT "GFOpenPressmaster 0.3.36 (16.11.2026)"
+#define REXX_PORT_NAME "GFOPENPRESSMASTER"
+#define REXX_OLD_PORT_NAME "GFOPENPUBLISHER"         /* the name before 16 Nov 2026, kept so old scripts run */
 #define UNIT "Page"
 #define UNIT_UPPER "PAGE"
 #define UNIT_LOWER "page"
@@ -110,7 +116,7 @@ struct RxsLib *RexxSysBase = NULL;
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.33 (15.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.35 (16.11.2026)"
 #define REXX_PORT_NAME "GFOPENPRESENTATION"
 #define UNIT "Slide"
 #define UNIT_UPPER "SLIDE"
@@ -141,13 +147,14 @@ enum {
     M_ALIGN_LEFT, M_ALIGN_CENTRE, M_ALIGN_RIGHT,
     M_ALIGN_TOP, M_ALIGN_MIDDLE, M_ALIGN_BOTTOM,
     M_DISTRIBUTE_ACROSS, M_DISTRIBUTE_DOWN, M_GROUP, M_UNGROUP,
-    M_POSITION_SIZE, M_APPEARANCE, M_PICTURE_CROP,
+    M_POSITION_SIZE, M_APPEARANCE, M_AREA, M_PICTURE_CROP, M_CHART_DATA,
     M_TABLE_INSERT_ROW, M_TABLE_DELETE_ROW, M_TABLE_INSERT_COLUMN, M_TABLE_DELETE_COLUMN,
     M_TABLE_STYLE,
     M_DUPLICATE_OBJECT, M_DELETE_OBJECT,
     M_WRAP_NONE, M_WRAP_SQUARE, M_WRAP_TIGHT, M_WRAP_TOP_BOTTOM, M_WRAP_DISTANCE,
     M_LINK_TEXT_NEXT, M_UNLINK_TEXT,
     M_NEW_SLIDE, M_DUPLICATE_SLIDE, M_RENAME_SLIDE, M_DELETE_SLIDE, M_HIDE_SLIDE, M_SHOW_SLIDE, M_TRANSITION,
+    M_BACKGROUND,
     M_CUSTOM_ANIMATION,
     M_MOVE_SLIDE_UP, M_MOVE_SLIDE_DOWN,
     M_FIRST, M_PREV, M_NEXT, M_LAST, M_SHOW_GRID, M_SNAP_GRID, M_SHOW_GUIDES, M_SNAP_GUIDES,
@@ -157,20 +164,27 @@ enum {
     M_VIEW_NORMAL, M_VIEW_SORTER, M_VIEW_NOTES, M_VIEW_OUTLINE,
     M_VIEW_MASTER, M_SLIDE_DESIGN, M_INSERT_FILE, M_PICTURES,
     M_SPELL_AS_YOU_TYPE, M_SPELLING,
-    M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_PAGES
+    M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_PAGES, M_MERGE_CATALOG,
+    M_NEW_TEMPLATE, M_PDF_PRINTER, M_PAGE_NUMBER, M_PAGE_COUNT
 };
 
 static struct NewMenu menus[] = {
     { NM_TITLE, "Project", NULL, 0, 0, NULL },
     { NM_ITEM, "New", "N", 0, 0, (APTR)M_NEW },
+#ifdef OPENPRESSMASTER
+    { NM_ITEM, "New from Template...", NULL, 0, 0, (APTR)M_NEW_TEMPLATE },
+#endif
     { NM_ITEM, "Open...", "O", 0, 0, (APTR)M_OPEN },
     { NM_ITEM, "Save", "S", 0, 0, (APTR)M_SAVE },
     { NM_ITEM, "Save As...", NULL, 0, 0, (APTR)M_SAVE_AS },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Print...", "P", 0, 0, (APTR)M_PRINT },
     { NM_ITEM, "Export PDF...", NULL, 0, 0, (APTR)M_PDF },
+#ifdef OPENPRESSMASTER
+    { NM_ITEM, "Export PDF for a Printer...", NULL, 0, 0, (APTR)M_PDF_PRINTER },
+#endif
     { NM_ITEM, "Export as Pictures...", NULL, 0, 0, (APTR)M_PICTURES },
-#ifndef OPENPUBLISHER
+#ifndef OPENPRESSMASTER
     { NM_ITEM, "Export Handouts...", NULL, 0, 0, (APTR)M_HANDOUTS },
 #endif
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -217,6 +231,10 @@ static struct NewMenu menus[] = {
 
     { NM_TITLE, "Insert", NULL, 0, 0, NULL },
     { NM_ITEM, "Text Box", NULL, 0, 0, (APTR)M_INSERT_TEXTBOX },
+#ifdef OPENPRESSMASTER
+    { NM_ITEM, "Page Number", NULL, 0, 0, (APTR)M_PAGE_NUMBER },
+    { NM_ITEM, "Number of Pages", NULL, 0, 0, (APTR)M_PAGE_COUNT },
+#endif
     { NM_ITEM, "Table...", NULL, 0, 0, (APTR)M_INSERT_TABLE },
     { NM_ITEM, "Picture...", NULL, 0, 0, (APTR)M_INSERT_PICTURE },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -251,7 +269,11 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Position and Size...", NULL, 0, 0, (APTR)M_POSITION_SIZE },
     { NM_ITEM, "Appearance...", NULL, 0, 0, (APTR)M_APPEARANCE },
+    { NM_ITEM, "Area...", NULL, 0, 0, (APTR)M_AREA },
     { NM_ITEM, "Picture Crop...", NULL, 0, 0, (APTR)M_PICTURE_CROP },
+#ifdef OPR_CHART_EDITOR
+    { NM_ITEM, "Chart Data...", NULL, 0, 0, (APTR)M_CHART_DATA },
+#endif
     { NM_ITEM, "Table Rows", NULL, 0, 0, NULL },
     { NM_SUB, "Insert Row Below", NULL, 0, 0, (APTR)M_TABLE_INSERT_ROW },
     { NM_SUB, "Delete Current Row", NULL, 0, 0, (APTR)M_TABLE_DELETE_ROW },
@@ -259,7 +281,7 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Insert Column Right", NULL, 0, 0, (APTR)M_TABLE_INSERT_COLUMN },
     { NM_SUB, "Delete Current Column", NULL, 0, 0, (APTR)M_TABLE_DELETE_COLUMN },
     { NM_ITEM, "Table Cell Style...", NULL, 0, 0, (APTR)M_TABLE_STYLE },
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Text Wrapping", NULL, 0, 0, NULL },
     { NM_SUB, "None", NULL, 0, 0, (APTR)M_WRAP_NONE },
@@ -281,9 +303,12 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Hide " UNIT, NULL, 0, 0, (APTR)M_HIDE_SLIDE },
     { NM_ITEM, "Show " UNIT, NULL, 0, 0, (APTR)M_SHOW_SLIDE },
     { NM_ITEM, UNIT " Transition...", NULL, 0, 0, (APTR)M_TRANSITION },
-#ifndef OPENPUBLISHER
+    { NM_ITEM, UNIT " Background...", NULL, 0, 0, (APTR)M_BACKGROUND },
+#ifndef OPENPRESSMASTER
     { NM_ITEM, "Custom Animation...", NULL, 0, 0, (APTR)M_CUSTOM_ANIMATION },
+#endif
     { NM_ITEM, UNIT " Design...", NULL, 0, 0, (APTR)M_SLIDE_DESIGN },
+#ifndef OPENPRESSMASTER
     { NM_ITEM, "Insert " UNIT "s from File...", NULL, 0, 0, (APTR)M_INSERT_FILE },
 #endif
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
@@ -295,9 +320,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Outline", NULL, CHECKIT, ~8 & 15, (APTR)M_VIEW_OUTLINE },
     { NM_ITEM, UNIT " Sorter", NULL, CHECKIT, ~2 & 15, (APTR)M_VIEW_SORTER },
     { NM_ITEM, "Notes", NULL, CHECKIT, ~4 & 15, (APTR)M_VIEW_NOTES },
-#ifndef OPENPUBLISHER
     { NM_ITEM, "Master " UNIT "s", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)M_VIEW_MASTER },
-#endif
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "First " UNIT, NULL, 0, 0, (APTR)M_FIRST },
     { NM_ITEM, "Previous " UNIT, "[", 0, 0, (APTR)M_PREV },
@@ -332,7 +355,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Spelling...", "L", 0, 0, (APTR)M_SPELLING },
     { NM_ITEM, "Spelling as You Type", NULL, CHECKIT | MENUTOGGLE | CHECKED, 0, (APTR)M_SPELL_AS_YOU_TYPE },
 
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     { NM_TITLE, "Mailings", NULL, 0, 0, NULL },
     { NM_ITEM, "Data Source...", NULL, 0, 0, (APTR)M_MERGE_SOURCE },
     { NM_ITEM, "Insert Merge Field...", NULL, 0, 0, (APTR)M_MERGE_FIELD },
@@ -342,6 +365,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Show Field Names", NULL, 0, 0, (APTR)M_MERGE_NAMES },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Merge to New Publication", NULL, 0, 0, (APTR)M_MERGE_PAGES },
+    { NM_ITEM, "Catalog Merge...", NULL, 0, 0, (APTR)M_MERGE_CATALOG },
 
 #endif
     { NM_TITLE, "Help", NULL, 0, 0, NULL },
@@ -391,6 +415,9 @@ static int quit_now;
 static int rexx_busy, rexx_noted;
 static char rexx_noting[300], rexx_lasterror[300];
 static struct MsgPort *rexx_port;
+#ifdef REXX_OLD_PORT_NAME
+static struct MsgPort *rexx_old_port;               /* the old name, sharing rexx_port's signal */
+#endif
 static char rexx_name[24];                           /* GFOPENPRESENTATION, or .2 for a second copy */
 
 /* src into dst (n bytes), cut short to fit */
@@ -458,7 +485,7 @@ static int edit_obj = -1;
 /* Spelling (GFOpenWrite's dictionary, PROGDIR:Dictionaries/): opened the
  * first time it is wanted; misspelt words in the text being typed get a
  * wavy underline while spell_as_you_type is on. */
-static ow_spell *spell;
+static owf_spell *spell;
 static int spell_tried, spell_as_you_type = 1;
 static opr_pos caret;
 static opr_selection text_selection;
@@ -1067,7 +1094,7 @@ out:
     return ok;
 }
 
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
 static int wrap_distance_requester(int gap[4])
 {
     struct Gadget *list = NULL, *last, *gtop, *gright, *gbottom, *gleft, *gok, *gcancel;
@@ -1322,6 +1349,149 @@ out:
     if (list) FreeGadgets(list);
     if (invalid)
         tell("Object Appearance", "Colours must be six hexadecimal digits (RRGGBB). Line width must be 0 to 10000 twips.");
+    return ok;
+}
+
+/* Area: transparency and hatching (left), and a shadow or, for a background, its colour (right), through
+ * opr_area_get/opr_area_put. background: the slide's own colour, or the master's, instead of a shadow. */
+static int area_requester(owf_look *look, int background)
+{
+    static STRPTR hatch_labels[] = {
+        (STRPTR)"None", (STRPTR)"Lines", (STRPTR)"Crossed", (STRPTR)"Triple", NULL
+    };
+    struct Gadget *list = NULL, *last, *g[12];
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    opr_area area;
+    char hatch_text[7], right_text[7];
+    STRPTR value = NULL;
+    LONG v;
+    unsigned long shade;
+    int done = 0, ok = 0, invalid = 0, ww = 600, wh = 184, i, n = background ? 7 : 10;
+    if (!look || !scr || !vi) return 0;
+    opr_area_get(look, &area);
+    snprintf(hatch_text, sizeof hatch_text, "%06lx", area.hatch_colour);
+    if (background) shade_text(look->fill, right_text);
+    else snprintf(right_text, sizeof right_text, "%06lx", area.shadow_colour);
+    memset(g, 0, sizeof g);
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr;
+    ng.ng_VisualInfo = vi;
+    last = CreateContext(&list);
+
+    ng.ng_Flags = PLACETEXT_LEFT; ng.ng_LeftEdge = 190; ng.ng_Width = 90; ng.ng_Height = 18;
+    ng.ng_TopEdge = 14; ng.ng_GadgetText = (STRPTR)"Transparency (%)"; ng.ng_GadgetID = 0;
+    last = g[0] = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)area.transparency,
+                               GTIN_MaxChars, 3, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge = 40; ng.ng_Width = 120; ng.ng_GadgetText = (STRPTR)"Hatching"; ng.ng_GadgetID = 1;
+    last = g[1] = CreateGadget(CYCLE_KIND, last, &ng, GTCY_Labels, (ULONG)hatch_labels,
+                               GTCY_Active, (ULONG)(area.hatch & 3), TAG_DONE);
+    ng.ng_TopEdge = 66; ng.ng_Width = 90; ng.ng_GadgetText = (STRPTR)"Hatch colour (RRGGBB)"; ng.ng_GadgetID = 2;
+    last = g[2] = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)hatch_text,
+                               GTST_MaxChars, 6, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge = 92; ng.ng_GadgetText = (STRPTR)"Hatch angle (degrees)"; ng.ng_GadgetID = 3;
+    last = g[3] = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)area.hatch_degrees,
+                               GTIN_MaxChars, 3, GA_TabCycle, TRUE, TAG_DONE);
+    ng.ng_TopEdge = 118; ng.ng_GadgetText = (STRPTR)"Hatch spacing (twips)"; ng.ng_GadgetID = 4;
+    last = g[4] = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)area.hatch_spacing,
+                               GTIN_MaxChars, 5, GA_TabCycle, TRUE, TAG_DONE);
+
+    ng.ng_LeftEdge = 500;
+    if (background) {
+        ng.ng_TopEdge = 14; ng.ng_GadgetText = (STRPTR)"Colour (RRGGBB)"; ng.ng_GadgetID = 5;
+        last = g[5] = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)right_text,
+                                   GTST_MaxChars, 6, GA_TabCycle, TRUE, TAG_DONE);
+        ng.ng_TopEdge = 42; ng.ng_Width = 22; ng.ng_Height = 14; ng.ng_GadgetText = (STRPTR)"The master's colour";
+        ng.ng_GadgetID = 6;
+        last = g[6] = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, !OWF_SHADE_SET(look->fill), TAG_DONE);
+    } else {
+        ng.ng_TopEdge = 16; ng.ng_Width = 22; ng.ng_Height = 14; ng.ng_GadgetText = (STRPTR)"Shadow";
+        ng.ng_GadgetID = 5;
+        last = g[5] = CreateGadget(CHECKBOX_KIND, last, &ng, GTCB_Checked, area.shadow, TAG_DONE);
+        ng.ng_Width = 90; ng.ng_Height = 18;
+        ng.ng_TopEdge = 40; ng.ng_GadgetText = (STRPTR)"Colour (RRGGBB)"; ng.ng_GadgetID = 6;
+        last = g[6] = CreateGadget(STRING_KIND, last, &ng, GTST_String, (ULONG)right_text,
+                                   GTST_MaxChars, 6, GA_TabCycle, TRUE, TAG_DONE);
+        ng.ng_TopEdge = 66; ng.ng_GadgetText = (STRPTR)"Right (twips)"; ng.ng_GadgetID = 7;
+        last = g[7] = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)area.shadow_dx,
+                                   GTIN_MaxChars, 6, GA_TabCycle, TRUE, TAG_DONE);
+        ng.ng_TopEdge = 92; ng.ng_GadgetText = (STRPTR)"Down (twips)"; ng.ng_GadgetID = 8;
+        last = g[8] = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)area.shadow_dy,
+                                   GTIN_MaxChars, 6, GA_TabCycle, TRUE, TAG_DONE);
+        ng.ng_TopEdge = 118; ng.ng_GadgetText = (STRPTR)"Transparency (%)"; ng.ng_GadgetID = 9;
+        last = g[9] = CreateGadget(INTEGER_KIND, last, &ng, GTIN_Number, (LONG)area.shadow_transparency,
+                                   GTIN_MaxChars, 3, GA_TabCycle, TRUE, TAG_DONE);
+    }
+    ng.ng_Flags = 0; ng.ng_TopEdge = 152; ng.ng_Height = 20; ng.ng_Width = 78; ng.ng_LeftEdge = ww - 172;
+    ng.ng_GadgetText = (STRPTR)"Apply"; ng.ng_GadgetID = 10;
+    last = g[10] = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = ww - 88; ng.ng_GadgetText = (STRPTR)"Cancel"; ng.ng_GadgetID = 11;
+    g[11] = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    for (i = 0; i < 12; ++i)
+        if ((i < n || i >= 10) && !g[i]) goto out;
+    rw = OpenWindowTags(NULL, WA_Title, (ULONG)(background ? UNIT " Background" : "Object Area"),
+        WA_PubScreen, (ULONG)scr, WA_InnerWidth, ww, WA_InnerHeight, wh,
+        WA_Left, scr->Width > ww ? (scr->Width - ww) / 2 : 0, WA_Top, scr->Height > wh ? (scr->Height - wh) / 2 : 0,
+        WA_Gadgets, (ULONG)list, WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE,
+        WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | BUTTONIDCMP | STRINGIDCMP |
+                  INTEGERIDCMP | CYCLEIDCMP | CHECKBOXIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((m = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = m->Class;
+            UWORD id = m->IAddress ? ((struct Gadget *)m->IAddress)->GadgetID : 0;
+            GT_ReplyIMsg(m);
+            if (cls == IDCMP_CLOSEWINDOW) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); }
+            else if (cls == IDCMP_GADGETUP) {
+                if (id == 10) { ok = 1; done = 1; }
+                else if (id == 11) done = 1;
+            }
+        }
+    }
+    if (ok) {
+        owf_look edited = *look;
+        GT_GetGadgetAttrs(g[0], rw, NULL, GTIN_Number, (ULONG)&v, TAG_DONE); area.transparency = (int)v;
+        GT_GetGadgetAttrs(g[1], rw, NULL, GTCY_Active, (ULONG)&v, TAG_DONE); area.hatch = (int)(v & 3);
+        GT_GetGadgetAttrs(g[2], rw, NULL, GTST_String, (ULONG)&value, TAG_DONE);
+        if (shade_from_text((char *)value, &shade)) area.hatch_colour = OWF_SHADE_RGB(shade);
+        else if (area.hatch) invalid = 1;
+        GT_GetGadgetAttrs(g[3], rw, NULL, GTIN_Number, (ULONG)&v, TAG_DONE); area.hatch_degrees = (int)v;
+        GT_GetGadgetAttrs(g[4], rw, NULL, GTIN_Number, (ULONG)&v, TAG_DONE); area.hatch_spacing = (int)v;
+        if (background) {
+            area.shadow = 0;
+            GT_GetGadgetAttrs(g[6], rw, NULL, GTCB_Checked, (ULONG)&v, TAG_DONE);
+            if (v) edited.fill = 0;
+            else {
+                GT_GetGadgetAttrs(g[5], rw, NULL, GTST_String, (ULONG)&value, TAG_DONE);
+                if (shade_from_text((char *)value, &shade)) edited.fill = shade;
+                else invalid = 1;
+            }
+        } else {
+            GT_GetGadgetAttrs(g[5], rw, NULL, GTCB_Checked, (ULONG)&v, TAG_DONE); area.shadow = v != 0;
+            GT_GetGadgetAttrs(g[6], rw, NULL, GTST_String, (ULONG)&value, TAG_DONE);
+            if (shade_from_text((char *)value, &shade)) area.shadow_colour = OWF_SHADE_RGB(shade);
+            else if (area.shadow) invalid = 1;
+            GT_GetGadgetAttrs(g[7], rw, NULL, GTIN_Number, (ULONG)&v, TAG_DONE); area.shadow_dx = (int)v;
+            GT_GetGadgetAttrs(g[8], rw, NULL, GTIN_Number, (ULONG)&v, TAG_DONE); area.shadow_dy = (int)v;
+            GT_GetGadgetAttrs(g[9], rw, NULL, GTIN_Number, (ULONG)&v, TAG_DONE); area.shadow_transparency = (int)v;
+        }
+        if (!invalid && opr_area_put(&edited, &area) < 0) invalid = 1;
+        if (invalid) ok = 0;
+        else *look = edited;
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (list) FreeGadgets(list);
+    if (invalid)
+        tell(background ? UNIT " Background" : "Object Area",
+             "Colours are six hexadecimal digits (RRGGBB). Transparency is 0 to 100 percent, the hatch angle "
+             "0 to 359 degrees, its spacing 10 to 10000 twips, and a shadow at most 10000 twips away.");
     return ok;
 }
 
@@ -1836,6 +2006,53 @@ static void arrowhead(struct RastPort *rp, LONG pen, int x1, int y1, int x2, int
     ogt_fill_poly(rp, pen, pts, 3);
 }
 
+/* A see-through colour on screen: its alpha mixed with white (the PDF and print show what is behind) */
+static uint32_t over_white_argb(uint32_t argb)
+{
+    uint32_t a = argb >> 24, out = 0xFF000000u;
+    int shift;
+    for (shift = 0; shift <= 16; shift += 8) {
+        uint32_t c = argb >> shift & 255u;
+        out |= ((c * a + 255u * (255u - a) + 127u) / 255u) << shift;
+    }
+    return out;
+}
+
+/* GFOpenLayout 0.22's shadow and hatching on screen: the shadow (the outline moved, in its colour) before
+ * the shape, the hatch lines (one pixel, cut to the outline by opr_hatch_lines) after its fill */
+static void draw_shadow(const painter *p, const ol_shape_style *s, const int *xy, int n, int closed, int width,
+                        int dx, int dy)
+{
+    int moved[2 * OL_MAX_SHAPE_POINTS], k;
+    LONG pen;
+    if (!OL_SHAPE_STYLE_HAS_HATCH(s) || !(s->shadow_argb >> 24) || n < 2) return;
+    pen = argb_pen(over_white_argb(s->shadow_argb));
+    for (k = 0; k < n; ++k) {
+        moved[k * 2] = xy[k * 2] + dx;
+        moved[k * 2 + 1] = xy[k * 2 + 1] + dy;
+    }
+    if (closed && n >= 3 && ((s->fill_argb >> 24) || s->hatch != OL_HATCH_NONE)) ogt_fill_poly(p->rp, pen, moved, n);
+    else if ((s->stroke_argb >> 24) && s->stroke_width > 0) outline(p->rp, pen, moved, n, width, closed, OL_STROKE_SOLID);
+}
+
+static void draw_hatch(const painter *p, const ol_shape_style *s, const int *xy, int n, int closed, int x, int y,
+                       int distance)
+{
+    static int lines[4 * 1024];
+    int k, m;
+    LONG pen;
+    if (!OL_SHAPE_STYLE_HAS_HATCH(s) || s->hatch == OL_HATCH_NONE || !closed || n < 3) return;
+    if (distance < 2) distance = 2;            /* closer than that is a solid colour on screen */
+    m = opr_hatch_lines(xy, n, x, y, (int)s->hatch, s->hatch_angle_tenths + s->rotation_tenths, distance, lines, 1024);
+    if (m <= 0) return;
+    pen = exact_pen(argb_pen(over_white_argb(s->hatch_argb)));
+    SetAPen(p->rp, pen);
+    for (k = 0; k < m; ++k) {
+        Move(p->rp, lines[k * 4], lines[k * 4 + 1]);
+        Draw(p->rp, lines[k * 4 + 2], lines[k * 4 + 3]);
+    }
+}
+
 /* The same normalized OpenLayout geometry that the PDF renderer consumes. */
 static void draw_shape(const painter *p, const ol_device_op *d)
 {
@@ -1849,7 +2066,7 @@ static void draw_shape(const painter *p, const ol_device_op *d)
     LONG fill, line;
     if (!g || g->shape.type == OL_SHAPE_NONE) return;
     s = &g->shape;
-    fill = (s->fill_argb >> 24) ? argb_pen(s->fill_argb) : -1;
+    fill = (s->fill_argb >> 24) ? argb_pen(over_white_argb(s->fill_argb)) : -1;
     line = (s->stroke_argb >> 24) && s->stroke_width > 0 ? argb_pen(s->stroke_argb) : -1;
     if (w < 1 && h < 1) return;
     bounds.x = x;
@@ -1863,7 +2080,33 @@ static void draw_shape(const painter *p, const ol_device_op *d)
         xy[k * 2] = path[k].x;
         xy[k * 2 + 1] = path[k].y;
     }
-    if (fill >= 0 && closed && n >= 3) ogt_fill_poly(p->rp, fill, xy, n);
+    if (OL_SHAPE_STYLE_HAS_HATCH(s) && (s->shadow_argb >> 24)) {
+        /* the offset in pixels, keeping its sign */
+        int dx, dy;
+        dx = (int)ol_scale_x(&p->scale, s->shadow_dx) - (int)ol_scale_x(&p->scale, 0);
+        dy = (int)ol_scale_y(&p->scale, s->shadow_dy) - (int)ol_scale_y(&p->scale, 0);
+        draw_shadow(p, s, xy, n, closed, width, dx, dy);
+    }
+    if (fill >= 0 && closed && n >= 3 && OL_SHAPE_STYLE_HAS_GRADIENT(s) && s->gradient != OL_GRADIENT_NONE &&
+        (s->fill2_argb >> 24)) {
+        /* a gradient as bands, each the outline cut to the band (opr_gradient_band): 16 on screen, a
+           pen each; a thumbnail's 8 */
+        int bands = p->thumb ? 8 : 16, band, m;
+        int pts[2 * OPR_GRADIENT_MAX_POINTS];
+        unsigned long rgb;
+        for (band = 0; band < bands; ++band) {
+            m = opr_gradient_band(xy, n, x, y, w, h,
+                                  s->gradient == OL_GRADIENT_RADIAL ? OPR_GRADIENT_RADIAL : OPR_GRADIENT_LINEAR,
+                                  s->gradient_angle_tenths + s->rotation_tenths, s->fill_argb & 0xFFFFFFu,
+                                  s->fill2_argb & 0xFFFFFFu, band, bands, pts, OPR_GRADIENT_MAX_POINTS, &rgb);
+            if (m >= 3) ogt_fill_poly(p->rp, argb_pen(over_white_argb((s->fill_argb & 0xFF000000u) | (uint32_t)rgb)), pts, m);
+        }
+    } else if (fill >= 0 && closed && n >= 3) {
+        ogt_fill_poly(p->rp, fill, xy, n);
+    }
+    if (OL_SHAPE_STYLE_HAS_HATCH(s) && s->hatch != OL_HATCH_NONE)
+        draw_hatch(p, s, xy, n, closed, x, y,
+                   (int)ol_scale_length(&p->scale, s->hatch_distance));
     if (line >= 0) outline(p->rp, line, xy, n, width, closed, s->stroke_style);
     if (line >= 0 && n >= 2 && (s->flags & OL_SHAPE_ARROW_END))
         arrowhead(p->rp, line, xy[(n - 2) * 2], xy[(n - 2) * 2 + 1], xy[(n - 1) * 2], xy[(n - 1) * 2 + 1],
@@ -2726,18 +2969,19 @@ static void draw_text_selection(const opr_slide *s, const ol_scale *sc)
 /* The dictionary, opened once; loud says why when there is none. */
 static int spell_ready(int loud)
 {
-    static const char *const paths[] = { "PROGDIR:Dictionaries/en_GB.words", "PROGDIR:Dictionaries/en_US.words",
-                                         "SYS:Dictionaries/en_GB.words", NULL };
     char msg[160];
-    int i;
     if (spell) return 1;
     if (spell_tried && !loud) return 0;
     spell_tried = 1;
     /* the word list is about a megabyte: say why the pause */
     set_status("Opening the dictionary...");
     draw_status();
-    for (i = 0; paths[i]; i++)
-        if ((spell = ow_spell_open(paths[i], "PROGDIR:Dictionaries/user.words", msg, sizeof msg)) != NULL) return 1;
+    /* GFOffice's one spell checker, owfspell.library (libowf/include/owf_spell.h) */
+    if (!owf_spell_library()) {
+        if (loud) set_status("No spelling: owfspell.library goes in LIBS:.");
+        return 0;
+    }
+    if ((spell = owf_spell_open_default(msg, sizeof msg)) != NULL) return 1;
     if (loud) set_status("No dictionary: GFOpenWrite's en_GB.words goes in PROGDIR:Dictionaries/.");
     return 0;
 }
@@ -3173,7 +3417,7 @@ static void edit_current_transition(void)
 static const char *anim_start_words[] = { "CLICK", "WITH", "AFTER" };
 static const char *anim_dir_words[] = { "LEFT", "RIGHT", "TOP", "BOTTOM" };
 
-#ifndef OPENPUBLISHER
+#ifndef OPENPRESSMASTER
 /* An object's name in lists: its own, else its kind and number ("3 Title", "5 Shape"). */
 static void anim_obj_label(const owf_slide *sl, int k, char *out, size_t cap)
 {
@@ -3219,7 +3463,7 @@ static void anim_label(const owf_deck *d, int slide, int i, char *out, size_t ca
     snprintf(out, cap, "%d. %s: %s, %s", i + 1, obj, label ? label : (a->preset ? a->preset : "Kept effect"),
              starts[a->start <= OWF_START_AFTER ? a->start : 0]);
 }
-#endif /* OPENPUBLISHER */
+#endif /* OPENPRESSMASTER */
 
 static void anim_changed(const char *message)
 {
@@ -3230,7 +3474,7 @@ static void anim_changed(const char *message)
     update_edit_tools();
 }
 
-#ifndef OPENPUBLISHER
+#ifndef OPENPRESSMASTER
 #define ANIM_LIST_MAX 64
 
 static void custom_animation_window(void)
@@ -3416,7 +3660,7 @@ out:
     if (changed) draw_all();
 }
 
-#endif /* OPENPUBLISHER */
+#endif /* OPENPRESSMASTER */
 
 /* ---- The slide sorter's commands: on every picked slide, each one Undo step ---- */
 
@@ -3914,7 +4158,7 @@ static int slides_paste(void)
     return 0;
 }
 
-#ifndef OPENPUBLISHER
+#ifndef OPENPRESSMASTER
 static int ask_file(int save, const char *title, const char *initial, char *out, size_t out_size);
 
 /* Slide > Insert Slides from File...: every slide of another ODP or PPTX
@@ -5364,7 +5608,7 @@ static void spell_dialog(void)
             break;
         }
         spell_show(&found);
-        nsugg = ow_spell_suggest(spell, word, sugg, 8);
+        nsugg = owf_spell_suggest(spell, word, sugg[0], 8);
         GT_SetGadgetAttrs(glv, rw, NULL, GTLV_Labels, (ULONG)~0, TAG_DONE);
         labels.lh_Head = (struct Node *)&labels.lh_Tail;
         labels.lh_TailPred = (struct Node *)&labels.lh_Head;
@@ -5417,10 +5661,10 @@ static void spell_dialog(void)
             set_status("Spelling stopped.");
             break;
         case G_IGNORE_ALL:
-            ow_spell_ignore(spell, word);
+            owf_spell_ignore(spell, word);
             break;
         case G_ADD:
-            if (!ow_spell_add(spell, word)) set_status("The word could not be saved in PROGDIR:Dictionaries/user.words.");
+            if (!owf_spell_add(spell, word)) set_status("The word could not be saved in PROGDIR:Dictionaries/user.words.");
             break;
         case G_DO_CHANGE: {
             STRPTR v = NULL;
@@ -6471,7 +6715,7 @@ static void edit_selected_text_frame(void)
     draw_status();
 }
 
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
 static void set_selected_wrap(owf_frame_wrap wrap)
 {
     owf_obj *o;
@@ -7138,6 +7382,142 @@ static void edit_selected_appearance(void)
     draw_status();
 }
 
+static void edit_selected_area(void)
+{
+    owf_look before, edited;
+    owf_obj *o;
+    int rc;
+    if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
+        set_status("Select a text box or shape to give it hatching, transparency or a shadow.");
+        draw_status();
+        return;
+    }
+    o = &deck->slides[current].objs[selected_obj];
+    if (o->parent >= 0 || (o->kind != OWF_OBJ_TEXT && o->kind != OWF_OBJ_SHAPE)) {
+        set_status("Area editing currently supports top-level text boxes and shapes.");
+        draw_status();
+        return;
+    }
+    before = edited = o->look;
+    if (!area_requester(&edited, 0)) return;
+    rc = opr_obj_set_look(undo, deck, current, selected_obj, &edited);
+    if (rc < 0) {
+        set_status(rc == -2 ? "That area is not valid for this object." : "The object's area could not be changed.");
+        draw_status();
+        return;
+    }
+    if (!memcmp(&before, &edited, sizeof before)) {
+        set_status("The object's area is unchanged.");
+        draw_status();
+        return;
+    }
+    stop_typing();
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status("Object area changed.");
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+
+static void edit_current_background(void)
+{
+    owf_look before, edited;
+    owf_slide *sl;
+    int rc;
+    if (!deck || current < 0 || current >= deck->nslides) return;
+    sl = &deck->slides[current];
+    OWF_BACKGROUND_LOOK(sl, &before);
+    edited = before;
+    if (!area_requester(&edited, 1)) return;
+    rc = opr_slide_set_background(undo, deck, current, &edited);
+    if (rc < 0) {
+        set_status(rc == -2 ? "That background is not valid." : "The background could not be changed.");
+        draw_status();
+        return;
+    }
+    if (!memcmp(&before, &edited, sizeof before)) {
+        set_status("The background is unchanged.");
+        draw_status();
+        return;
+    }
+    stop_typing();
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status(sl->background_image >= 0 ? UNIT " background changed; its picture still covers it."
+                                          : UNIT " background changed.");
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    draw_status();
+}
+
+#ifdef OPR_CHART_EDITOR
+static LONG chart_pen(unsigned long rgb)
+{
+    return ogt_pen_rgb(&ctx, (ogt_rgb){ (UBYTE)(rgb >> 16), (UBYTE)(rgb >> 8), (UBYTE)rgb });
+}
+
+/* Chart Data... (or a double click on a chart): the selected chart in the chart editor, its result put on the
+ * slide as one undo step (opr_obj_set_chart). */
+static void edit_selected_chart(void)
+{
+    opr_cwin_env cenv;
+    owf_chart edited;
+    const owf_obj *o;
+    int rc;
+    if (!deck || selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
+        set_status("Select a chart to edit its data.");
+        draw_status();
+        return;
+    }
+    o = &deck->slides[current].objs[selected_obj];
+    if (o->parent >= 0 || o->kind != OWF_OBJ_CHART) {
+        set_status("Chart Data edits one chart that is not in a group.");
+        draw_status();
+        return;
+    }
+    if (!o->chart) {
+        tell("Chart Data", "This chart's data was not kept when the file was read, so it can only be moved and sized.");
+        return;
+    }
+    stop_typing();
+    memset(&cenv, 0, sizeof cenv);
+    cenv.scr = scr;
+    cenv.vi = vi;
+    cenv.font = font;
+    cenv.ta = &font_attr;
+    cenv.parent = win;
+    cenv.pen = chart_pen;
+    memset(&edited, 0, sizeof edited);
+    if (!opr_chart_window(&cenv, o->chart, &edited)) {
+        draw_slide();
+        draw_status();
+        return;
+    }
+    rc = opr_obj_set_chart(undo, deck, current, selected_obj, &edited);
+    owf_chart_clear(&edited);
+    if (rc < 0) {
+        set_status("The chart could not be changed: there is not enough memory.");
+        draw_slide();
+        draw_status();
+        return;
+    }
+    slide_changed(current);
+    dirty = 1;
+    update_window_title();
+    set_status("Chart changed.");
+    draw_slide();
+    if (strip) ogt_list_draw_row(strip, current);
+    update_edit_tools();
+    ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    draw_status();
+}
+#endif
+
 static void edit_selected_picture_crop(void)
 {
     owf_obj *o;
@@ -7447,21 +7827,21 @@ static void open_deck(const char *path)
     master_view_leave();
     owf_deck *d = NULL;
     owf_report *report = owf_report_new();
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     int version = OWF_PUB_UNKNOWN;
 #else
     const owf_deck_format *used = NULL;
 #endif
     char msg[600];
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     int rc = opp_import_pub_file(path, &d, report, &version);
 #else
     int rc = owf_import_deck_file(path, NULL, &d, report, &used);
 #endif
     if (rc != OWF_OK || !d) {
         snprintf(msg, sizeof msg, PROGRAM " could not open %.200s.\n\n%.200s", leaf(path),
-#ifdef OPENPUBLISHER
-                 rc == OWF_ERR_FORMAT ? "It is not a Microsoft Publisher file GFOpenPublisher reads." : owf_error_text(rc));
+#ifdef OPENPRESSMASTER
+                 rc == OWF_ERR_FORMAT ? "It is not a Microsoft Publisher file GFOpenPressmaster reads." : owf_error_text(rc));
 #else
                  rc == OWF_ERR_FORMAT ? "It is not a presentation GFOpenPresentation reads (ODP or PPTX)." : owf_error_text(rc));
 #endif
@@ -7469,7 +7849,7 @@ static void open_deck(const char *path)
         owf_report_free(report);
         return;
     }
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     set_deck(d, path, "PUB");
     snprintf(msg, sizeof msg, "%s, %d page%s%s.", owf_pub_version_name(version), d->nslides,
              d->nslides == 1 ? "" : "s", owf_report_count(report) ? "; some parts shown simpler" : "");
@@ -7482,8 +7862,45 @@ static void open_deck(const char *path)
     owf_report_free(report);
 }
 
-#ifdef OPENPUBLISHER
-/* ---- Mailings: mail merge (src/pub/opp_merge.c) ----
+#ifdef OPENPRESSMASTER
+/* ---- Insert > Page Number and Number of Pages (src/pub/opp_pagenum.c) ----
+ * Typing in a text box: the field goes at the caret. Otherwise a small box holding it is put near the foot of
+ * the page, or of the master in the Master view, where every page of the master shows its own number. */
+static void insert_page_field(owf_field which)
+{
+    box b;
+    int sel = -1, rc;
+    if (!deck || current < 0 || current >= deck->nslides) return;
+    if (edit_obj >= 0 && edit_obj < deck->slides[current].nobjs) {
+        before_change(&b);
+        rc = opp_insert_page_field_at(&deck->slides[current].objs[edit_obj], caret.para, caret.offset, which);
+        if (rc != OWF_OK) { tell(PROGRAM, owf_error_text(rc)); return; }
+        edit_grouped = 0;                            /* the field is a step of its own */
+        laid_clear();
+        text_changed(NULL);
+    } else {
+        rc = opp_page_number_box(undo, deck, current, which, &sel);
+        if (rc < 0) {
+            set_status(rc == -2 ? "The " UNIT_LOWER " is too small for a page number." : "The page number could not be inserted.");
+            draw_status();
+            return;
+        }
+        stop_typing();
+        selected_obj = sel;
+        slide_changed(current);
+        dirty = 1;
+        update_window_title();
+        draw_slide();
+        if (strip) ogt_list_draw_row(strip, current);
+        update_edit_tools();
+        ogt_toolbar_draw(&tb, &ctx, win->RPort, "window");
+    }
+    set_status(mview ? "On the master: every " UNIT_LOWER " of it shows its own number."
+               : which == OWF_FIELD_PAGE ? "Page number inserted." : "Number of pages inserted.");
+    draw_status();
+}
+
+/* ---- Mailings: mail merge (libowf/pub/opp_merge.c) ----
  * The data source is a CSV file whose first line names the columns. Merge fields show the column's name in
  * guillemets, or the values of the record shown; Merge to New Publication makes the pages once for each record
  * in this window, as a new untitled publication (the publication's own file is left as it is). */
@@ -7567,8 +7984,7 @@ static const char *merge_error(int rc)
            rc == OWF_ERR_UNSUPPORTED ? "The data source is too big (4 MB at most)." : owf_error_text(rc);
 }
 
-/* The merge fields show record at (-1: their names): 1, or 0 with the user told */
-/* Shows record at (-1: the field names) with no requester: OWF_OK or the error */
+/* The merge fields show record at (-1: their names) with no requester: OWF_OK or the error */
 static int merge_show_rc(int at)
 {
     int rc = opp_merge_show(deck, merge_table, at, NULL);
@@ -7578,6 +7994,7 @@ static int merge_show_rc(int at)
     return OWF_OK;
 }
 
+/* The same: 1, or 0 with the user told */
 static int merge_show(int at)
 {
     int rc = merge_show_rc(at);
@@ -7618,6 +8035,26 @@ static int merge_pages_now(void)
     update_window_title();
     relayout();
     snprintf(msg, sizeof msg, "%d records merged: %d %s.", n, deck->nslides, deck->nslides == 1 ? UNIT_LOWER : UNITS_LOWER);
+    set_status(msg);
+    return OWF_OK;
+}
+
+/* Catalog merge of the page shown: OWF_OK or the error; *made the pages made */
+static int merge_catalog_now(const opp_catalog *cat, int *made)
+{
+    char msg[120];
+    int rc, n = merge_table ? merge_table->nrows : 0, page = current;
+    stop_typing();
+    if ((rc = opp_merge_catalog(deck, merge_table, page, cat, -1, -1, made)) != OWF_OK) return rc;
+    if (undo) opr_undo_clear(undo);
+    laid_clear();
+    clear_object_selection();
+    current_path[0] = 0;
+    dirty = 1;
+    update_window_title();
+    show_slide(page);
+    relayout();
+    snprintf(msg, sizeof msg, "%d records in a catalog: %d %s.", n, *made, *made == 1 ? UNIT_LOWER : UNITS_LOWER);
     set_status(msg);
     return OWF_OK;
 }
@@ -7681,6 +8118,32 @@ static void do_merge(int what)
         if (ask("Merge to New Publication", msg, "Merge|Cancel") != 1) return;
         if ((rc = merge_pages_now()) != OWF_OK) { tell("Mail Merge", owf_error_text(rc)); return; }
         break;
+    case M_MERGE_CATALOG: {                          /* the selected object is the item; it repeats to fill the page */
+        opp_catalog cat;
+        const owf_obj *o;
+        int made = 0;
+        n = merge_table ? merge_table->nrows : 0;
+        if (!n) { tell("Mail Merge", "The data source has no records, or there is none."); return; }
+        if (selected_obj < 0 || selected_obj >= deck->slides[current].nobjs) {
+            tell("Catalog Merge", "Select the first item (a group or a frame with merge fields), then merge.");
+            return;
+        }
+        o = &deck->slides[current].objs[selected_obj];
+        if (o->width <= 0 || o->height <= 0) { tell("Catalog Merge", "The item has no size."); return; }
+        cat.x = o->x; cat.y = o->y; cat.width = o->width; cat.height = o->height;
+        cat.across = o->x + o->width <= deck->width ? (deck->width - o->x) / o->width : 1;
+        cat.down = o->y + o->height <= deck->height ? (deck->height - o->y) / o->height : 1;
+        if (cat.across > OPP_CATALOG_MAX) cat.across = OPP_CATALOG_MAX;
+        if (cat.down > OPP_CATALOG_MAX) cat.down = OPP_CATALOG_MAX;
+        snprintf(msg, sizeof msg, "The selected item repeats %d across and %d down this page, one record each: "
+                 "%d records make %d %s, as a new untitled publication.\n\n%s", cat.across, cat.down, n,
+                 (n + cat.across * cat.down - 1) / (cat.across * cat.down), UNITS_LOWER,
+                 dirty ? "The changes to this publication that are not saved are lost." :
+                         "The publication's own file is left as it is.");
+        if (ask("Catalog Merge", msg, "Merge|Cancel") != 1) return;
+        if ((rc = merge_catalog_now(&cat, &made)) != OWF_OK) { tell("Catalog Merge", owf_error_text(rc)); return; }
+        break;
+    }
     }
     draw_status();
 }
@@ -7692,7 +8155,7 @@ static void new_deck(void)
     owf_deck *d;
     if (!confirm_discard()) return;
     d = owf_deck_new(
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
                      11906, 16838
 #else
                      OWF_DECK_16_9_WIDTH, OWF_DECK_16_9_HEIGHT
@@ -7707,6 +8170,40 @@ static void new_deck(void)
     set_status("A new " DOCUMENT_LOWER ": click a box to type in it.");
     relayout();
 }
+
+#ifdef OPENPRESSMASTER
+/* A new publication from built-in template i: OWF_OK or the error */
+static int template_now(int i)
+{
+    owf_deck *d = NULL;
+    char msg[120];
+    const opp_template_info *t = opp_template_info_at(i);
+    int rc = opp_template_new(i, &d);
+    if (rc != OWF_OK) return rc;
+    master_view_leave();
+    set_deck(d, "", "ODP");
+    snprintf(msg, sizeof msg, "A new %s: click a box to type in it.", t ? t->name : "publication");
+    set_status(msg);
+    relayout();
+    return OWF_OK;
+}
+
+static void new_from_template(void)
+{
+    char (*names)[72];
+    int k, n = opp_template_count(), rc;
+    if (!confirm_discard()) return;
+    if (!(names = (char (*)[72])calloc((size_t)n, sizeof *names))) return;
+    for (k = 0; k < n; ++k) {
+        const opp_template_info *t = opp_template_info_at(k);
+        snprintf(names[k], sizeof names[k], "%s", t ? t->name : "");
+    }
+    k = pick_requester("New from Template", "Template", "New", names, n);
+    free(names);
+    if (k < 0) return;
+    if ((rc = template_now(k)) != OWF_OK) tell(PROGRAM, owf_error_text(rc));
+}
+#endif
 
 static void do_open(void)
 {
@@ -7727,7 +8224,7 @@ static int has_extension(const char *path, const char *ext)
 /* The format a name saves as: PPTX for ".pptx" (GFOpenPresentation), ODP otherwise. */
 static const char *format_for(const char *path)
 {
-#ifndef OPENPUBLISHER
+#ifndef OPENPRESSMASTER
     if (has_extension(path, ".pptx")) return "PPTX";
 #endif
     (void)path;
@@ -7748,7 +8245,7 @@ static int save_to(const char *path)
     const char *format = format_for(path);
     char msg[600];
     int rc, simpler;
-#ifndef OPENPUBLISHER
+#ifndef OPENPRESSMASTER
     if (!strcmp(format, "PPTX")) {
         unsigned char *data = NULL;
         size_t length = 0;
@@ -7790,7 +8287,7 @@ static void do_save_as(void)
     if (!deck) return;
     with_extension(current_path, ext, name, sizeof name);
     if (ask_file(1, "Save the " DOCUMENT_LOWER " (.odp"
-#ifndef OPENPUBLISHER
+#ifndef OPENPRESSMASTER
                  " or .pptx"
 #endif
                  ")", name, path, sizeof path)) {
@@ -7814,6 +8311,8 @@ static void do_save(void)
 /* What a PDF holds: the slides, notes pages (Notes view, or EXPORT NOTES) or handouts. */
 static opr_pdf_pages pdf_pages = OPR_PDF_SLIDES;
 static int pdf_handout_slides = 6;
+static int pdf_bleed, pdf_marks;                     /* for a printer: twips past the trimmed edge, crop marks */
+#define PRINTER_BLEED 170                            /* 3 mm, what most printers ask for */
 
 static int write_pdf(const char *path)
 {
@@ -7827,6 +8326,8 @@ static int write_pdf(const char *path)
     memset(&options, 0, sizeof options);
     options.pages = pdf_pages;
     options.handout_slides = pdf_handout_slides;
+    options.bleed = pdf_bleed;
+    options.crop_marks = pdf_marks;
     rc = opr_export_pdf(deck, &options, &data, &length, report);
     owf_report_free(report);
     if (rc == OWF_OK && (f = Open((STRPTR)path, MODE_NEWFILE))) {
@@ -7852,6 +8353,25 @@ static void do_export_pdf(void)
     set_status(msg);
     draw_status();
 }
+
+#ifdef OPENPRESSMASTER
+/* Project > Export PDF for a Printer...: crop marks and a 3 mm bleed round every page */
+static void do_export_pdf_printer(void)
+{
+    char path[512], name[128], msg[600];
+    if (!deck) return;
+    with_extension(current_path, "pdf", name, sizeof name);
+    if (!ask_file(1, "Export the " UNITS_LOWER " as PDF for a printer", name, path, sizeof path)) return;
+    pdf_pages = OPR_PDF_SLIDES;
+    pdf_bleed = PRINTER_BLEED;
+    pdf_marks = 1;
+    if (write_pdf(path)) snprintf(msg, sizeof msg, "%.200s written with crop marks and a 3 mm bleed.", leaf(path));
+    else snprintf(msg, sizeof msg, "%.200s could not be written.", leaf(path));
+    pdf_bleed = pdf_marks = 0;
+    set_status(msg);
+    draw_status();
+}
+#endif
 
 /* ---- File > Export as Pictures... (P9) ----
  * A slide painted as the show paints it, into a bitmap of its own, read back
@@ -8012,10 +8532,10 @@ static int do_print(void)
 static void about(void)
 {
     char text[400];
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     snprintf(text, sizeof text,
              VERSION_TEXT "\nThe GFOffice Suite's desktop publisher.\n\nOpens Microsoft Publisher files as positioned pages,\n"
-             "saves ODP, exports PDF and prints through GFOpenPrint.\n\nPublisher core %s, presentation core %s, libowf %s, GFOpenLayout %s.\n"
+             "saves ODP, exports PDF and prints through GFOpenPrint.\n\nPressmaster core %s, presentation core %s, libowf %s, GFOpenLayout %s.\n"
              "MIT, Copyright (c) 2026 AmiCradle Team.",
              OPP_CORE_VERSION, OPR_CORE_VERSION, OWF_VERSION, OL_VERSION);
 #else
@@ -8140,18 +8660,24 @@ static void menu_action(ULONG id)
     case M_VIEW_NORMAL: master_view_leave(); set_view(0); break;
     case M_VIEW_MASTER: if (mview) master_view_leave(); else master_view_enter(); break;
     case M_SLIDE_DESIGN: slide_design(); break;
-#ifndef OPENPUBLISHER
+#ifndef OPENPRESSMASTER
     case M_INSERT_FILE: insert_from_file(NULL); break;
 #endif
     case M_VIEW_SORTER: set_view(1); break;
     case M_VIEW_NOTES: set_view(2); break;
     case M_VIEW_OUTLINE: set_view(3); break;
     case M_NEW: new_deck(); break;
+#ifdef OPENPRESSMASTER
+    case M_NEW_TEMPLATE: new_from_template(); break;
+#endif
     case M_OPEN: do_open(); break;
     case M_SAVE: do_save(); break;
     case M_SAVE_AS: do_save_as(); break;
     case M_PRINT: pdf_pages = notes_view ? OPR_PDF_NOTES : OPR_PDF_SLIDES; do_print(); pdf_pages = OPR_PDF_SLIDES; break;
     case M_PDF: do_export_pdf(); break;
+#ifdef OPENPRESSMASTER
+    case M_PDF_PRINTER: do_export_pdf_printer(); break;
+#endif
     case M_PICTURES: export_pictures(NULL, 0, 0); break;
     case M_HANDOUTS: do_export_handouts(); break;
     case M_ABOUT: about(); break;
@@ -8190,6 +8716,10 @@ static void menu_action(ULONG id)
     case M_TEXT_COLUMNS_3: set_selected_text_columns(3); break;
     case M_TEXT_FRAME: edit_selected_text_frame(); break;
     case M_INSERT_TEXTBOX: insert_textbox(); break;
+#ifdef OPENPRESSMASTER
+    case M_PAGE_NUMBER: insert_page_field(OWF_FIELD_PAGE); break;
+    case M_PAGE_COUNT: insert_page_field(OWF_FIELD_PAGES); break;
+#endif
     case M_INSERT_TABLE: insert_table(); break;
     case M_INSERT_PICTURE: insert_picture(); break;
     case M_INSERT_RECT: insert_shape(OWF_SHAPE_RECT); break;
@@ -8217,22 +8747,26 @@ static void menu_action(ULONG id)
     case M_UNGROUP: ungroup_selected(); break;
     case M_POSITION_SIZE: edit_selected_geometry(); break;
     case M_APPEARANCE: edit_selected_appearance(); break;
+    case M_AREA: edit_selected_area(); break;
     case M_PICTURE_CROP: edit_selected_picture_crop(); break;
+#ifdef OPR_CHART_EDITOR
+    case M_CHART_DATA: edit_selected_chart(); break;
+#endif
     case M_TABLE_INSERT_ROW: edit_table_row(0); break;
     case M_TABLE_DELETE_ROW: edit_table_row(1); break;
     case M_TABLE_INSERT_COLUMN: edit_table_column(0); break;
     case M_TABLE_DELETE_COLUMN: edit_table_column(1); break;
     case M_TABLE_STYLE: edit_table_style(); break;
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     case M_WRAP_NONE: set_selected_wrap(OWF_WRAP_NONE); break;
     case M_WRAP_SQUARE: set_selected_wrap(OWF_WRAP_SQUARE); break;
     case M_WRAP_TIGHT: set_selected_wrap(OWF_WRAP_TIGHT); break;
     case M_WRAP_TOP_BOTTOM: set_selected_wrap(OWF_WRAP_TOP_BOTTOM); break;
     case M_WRAP_DISTANCE: edit_selected_wrap_distance(); break;
     case M_LINK_TEXT_NEXT: link_selected_text_frame(); break;
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     case M_MERGE_SOURCE: case M_MERGE_FIELD: case M_MERGE_NEXT: case M_MERGE_PREV: case M_MERGE_NAMES:
-    case M_MERGE_PAGES: do_merge((int)id); break;
+    case M_MERGE_PAGES: case M_MERGE_CATALOG: do_merge((int)id); break;
 #endif
     case M_UNLINK_TEXT: unlink_selected_text_frame(); break;
 #endif
@@ -8245,7 +8779,8 @@ static void menu_action(ULONG id)
     case M_HIDE_SLIDE: set_current_hidden(1); break;
     case M_SHOW_SLIDE: set_current_hidden(0); break;
     case M_TRANSITION: edit_current_transition(); break;
-#ifndef OPENPUBLISHER
+    case M_BACKGROUND: edit_current_background(); break;
+#ifndef OPENPRESSMASTER
     case M_CUSTOM_ANIMATION: custom_animation_window(); break;
 #endif
     case M_MOVE_SLIDE_UP: move_slide(-1); break;
@@ -8400,7 +8935,29 @@ static void events(void)
             }
             if (outline_view) break;
             mouse_qual = qual;
+#ifdef OPR_CHART_EDITOR
+            if (code == SELECTDOWN) {
+                /* a double click on a chart opens its data (the first click selected it) */
+                static ULONG chart_click_secs, chart_click_micros;
+                static int chart_click_obj = -1;
+                int was = selected_obj;
+                slide_mouse_down(mx, my);
+                if (deck && selected_obj >= 0 && selected_obj == was && selected_obj == chart_click_obj &&
+                    selected_obj < deck->slides[current].nobjs &&
+                    deck->slides[current].objs[selected_obj].kind == OWF_OBJ_CHART &&
+                    DoubleClick(chart_click_secs, chart_click_micros, secs, micros)) {
+                    memset(&object_drag, 0, sizeof object_drag);
+                    chart_click_obj = -1;
+                    edit_selected_chart();
+                    break;
+                }
+                chart_click_obj = selected_obj;
+                chart_click_secs = secs;
+                chart_click_micros = micros;
+            }
+#else
             if (code == SELECTDOWN) slide_mouse_down(mx, my);
+#endif
             else if (code == SELECTUP) {
                 if (text_selecting) {
                     drag_text_selection(mx, my);
@@ -8519,7 +9076,7 @@ static void events(void)
 
 /* The part of the screen a window may have: below the title bar, less GFOpenDock's strip when it publishes
  * one (ENV:GFOpenDock/Free), as GFOpenWrite's free_area. */
-/* ---- ARexx: the GFOPENPRESENTATION port (GFOPENPUBLISHER in GFOpenPublisher) ---- */
+/* ---- ARexx: the GFOPENPRESENTATION port (GFOPENPRESSMASTER in GFOpenPressmaster) ---- */
 
 static const char *skip_space(const char *s)
 {
@@ -8569,8 +9126,8 @@ static int rexx_do_command(const char *command, char **result_out)
                   "SAVEAS EXPORT PRINT " UNIT_UPPER "S " UNIT_UPPER " NEW" UNIT_UPPER " DELETE" UNIT_UPPER " VIEW OUTLINE GETNOTES SETNOTES PICK PICKED MOVEPICKED COPYPICKED DELETEPICKED HIDEPICKED "
                   "SHOWPICKED OBJECTS PICKOBJECTS PICKEDOBJECTS OBJECTBOX MOVEOBJECTS ALIGN DISTRIBUTE GROUP UNGROUP DELETEOBJECTS GETTEXT "
                   "SETTEXT SPELL UNDO REDO QUIT"
-#ifdef OPENPUBLISHER
-                  " MERGESOURCE MERGEFIELD MERGEFIELDS MERGERECORD MERGEPAGES"
+#ifdef OPENPRESSMASTER
+                  " MERGESOURCE MERGEFIELD MERGEFIELDS MERGERECORD MERGEPAGES MERGECATALOG NEWTEMPLATE"
 #endif
                   );
     else if (starts_word_ci(command, "FAULT", &arg)) {
@@ -8600,11 +9157,24 @@ static int rexx_do_command(const char *command, char **result_out)
             rexx_copy(result_text, sizeof result_text, status);
         } else { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Needs SAVEAS"); }
     } else if (starts_word_ci(command, "EXPORT", &arg) || starts_word_ci(command, "PRINT", &arg)) {
-        /* EXPORT [NOTES | HANDOUTS [n]] path, PRINT [NOTES | HANDOUTS [n]]: the slides, notes pages or handouts */
+        /* EXPORT [NOTES | HANDOUTS [n] | MARKS | BLEED n ...] path, PRINT [NOTES | HANDOUTS [n]]: the slides, notes
+           pages or handouts; MARKS (crop marks) and BLEED n (twips, at most an inch) for a printer, slides only */
         int printing = !strncasecmp(command, "PRINT", 5), per = 6, bad = 0;
         const char *rest;
         pdf_pages = OPR_PDF_SLIDES;
-        if (starts_word_ci(arg, "NOTES", &rest)) { pdf_pages = OPR_PDF_NOTES; arg = rest; }
+        pdf_bleed = pdf_marks = 0;
+        while (!printing && !bad) {
+            if (starts_word_ci(arg, "MARKS", &rest)) { pdf_marks = 1; arg = rest; }
+            else if (starts_word_ci(arg, "BLEED", &rest)) {
+                arg = rest;
+                if (*arg < '0' || *arg > '9') bad = 2;
+                pdf_bleed = 0;
+                while (*arg >= '0' && *arg <= '9' && pdf_bleed <= OPR_PDF_MAX_BLEED) pdf_bleed = pdf_bleed * 10 + (*arg++ - '0');
+                if (pdf_bleed > OPR_PDF_MAX_BLEED || (*arg && *arg != ' ')) bad = 2;
+                while (*arg == ' ') arg++;
+            } else break;
+        }
+        if (!bad && starts_word_ci(arg, "NOTES", &rest)) { pdf_pages = OPR_PDF_NOTES; arg = rest; }
         else if (starts_word_ci(arg, "HANDOUTS", &rest)) {
             pdf_pages = OPR_PDF_HANDOUTS;
             arg = rest;
@@ -8616,7 +9186,11 @@ static int rexx_do_command(const char *command, char **result_out)
             }
         }
         pdf_handout_slides = per;
-        if (bad) { ok = 0; rc_fail = RX_ERROR; rexx_copy(result_text, sizeof result_text, "HANDOUTS takes 1, 2, 3, 4, 6 or 9"); }
+        if (bad == 2) { ok = 0; rc_fail = RX_ERROR; rexx_copy(result_text, sizeof result_text, "BLEED takes 0 to 1440 twips"); }
+        else if (bad) { ok = 0; rc_fail = RX_ERROR; rexx_copy(result_text, sizeof result_text, "HANDOUTS takes 1, 2, 3, 4, 6 or 9"); }
+        else if ((pdf_marks || pdf_bleed) && pdf_pages != OPR_PDF_SLIDES) {
+            ok = 0; rc_fail = RX_ERROR; rexx_copy(result_text, sizeof result_text, "MARKS and BLEED are for the " UNITS_LOWER " only");
+        }
         else if (printing) {
             int r = do_print();
             ok = r > 0;
@@ -8625,6 +9199,7 @@ static int rexx_do_command(const char *command, char **result_out)
         } else if (!*arg) { ok = 0; rexx_copy(result_text, sizeof result_text, "Missing path"); }
         else { ok = write_pdf(arg); rexx_copy(result_text, sizeof result_text, ok ? "Exported" : "Export failed"); }
         pdf_pages = OPR_PDF_SLIDES;
+        pdf_bleed = pdf_marks = 0;
     } else if (starts_word_ci(command, UNIT_UPPER "S", &arg)) {
         snprintf(result_text, sizeof result_text, "%d", deck ? deck->nslides : 0);
     } else if (starts_word_ci(command, UNIT_UPPER, &arg)) {   /* n: go to it; none given: which */
@@ -8654,7 +9229,7 @@ static int rexx_do_command(const char *command, char **result_out)
                                                               : notes_view ? "NOTES" : outline_view ? "OUTLINE"
                                                               : mview ? "MASTER" : "NORMAL");
         else if (!strcasecmp(arg, "MASTER")) {
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
             ok = 0; rexx_copy(result_text, sizeof result_text, "No Master view here");
 #else
             master_view_enter(); ok = mview != NULL;
@@ -8692,7 +9267,7 @@ static int rexx_do_command(const char *command, char **result_out)
         ok = slides_paste() == 0;
         if (ok) snprintf(result_text, sizeof result_text, "%d", current + 1);
         else rexx_copy(result_text, sizeof result_text, "Nothing to paste");
-#ifndef OPENPUBLISHER
+#ifndef OPENPRESSMASTER
     } else if (starts_word_ci(command, "INSERTFILE", &arg)) {    /* INSERTFILE path: its slides after this one */
         int n = *arg ? insert_from_file(arg) : -1;
         ok = n >= 0;
@@ -9085,7 +9660,7 @@ static int rexx_do_command(const char *command, char **result_out)
             }
             rexx_copy(result_text, sizeof result_text, ok ? "OK" : "Out of memory");
         }
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
     } else if (starts_word_ci(command, "MERGESOURCE", &arg)) {   /* MERGESOURCE path: a CSV data source */
         char msg[240];
         int rc;
@@ -9147,6 +9722,38 @@ static int rexx_do_command(const char *command, char **result_out)
         else if (dirty && strcasecmp(arg, "FORCE")) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Unsaved changes"); }
         else if ((rc = merge_pages_now()) != OWF_OK) { ok = 0; rexx_copy(result_text, sizeof result_text, owf_error_text(rc)); }
         else { draw_status(); snprintf(result_text, sizeof result_text, "%d", deck->nslides); }
+    } else if (starts_word_ci(command, "NEWTEMPLATE", &arg)) {   /* NEWTEMPLATE [name [FORCE]]: the names, or a new publication */
+        char name[64] = "";
+        int k, force = 0, rc;
+        size_t len = strlen(arg);
+        if (len >= 6 && !strcasecmp(arg + len - 5, "FORCE") && arg[len - 6] == ' ') { force = 1; len -= 6; }
+        while (len && arg[len - 1] == ' ') --len;
+        if (len >= sizeof name) len = sizeof name - 1;
+        memcpy(name, arg, len);
+        name[len] = 0;
+        if (*name == '"' && len >= 2 && name[len - 1] == '"') { memmove(name, name + 1, len - 2); name[len - 2] = 0; }
+        if (!*name) {                                /* the template names, one per line */
+            size_t at = 0;
+            result_text[0] = 0;
+            for (k = 0; k < opp_template_count() && at + 2 < sizeof result_text; ++k)
+                at += (size_t)snprintf(result_text + at, sizeof result_text - at, "%s%s", k ? "\n" : "", opp_template_info_at(k)->name);
+        } else if ((k = opp_template_find(name)) < 0) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No such template"); }
+        else if (dirty && !force) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Unsaved changes"); }
+        else if ((rc = template_now(k)) != OWF_OK) { ok = 0; rexx_copy(result_text, sizeof result_text, owf_error_text(rc)); }
+        else snprintf(result_text, sizeof result_text, "%d", deck->nslides);
+    } else if (starts_word_ci(command, "MERGECATALOG", &arg)) {  /* MERGECATALOG x y width height across down [FORCE] */
+        opp_catalog cat;
+        char force[8] = "";
+        int rc, made = 0, got = sscanf(arg, "%d %d %d %d %d %d %7s", &cat.x, &cat.y, &cat.width, &cat.height,
+                                       &cat.across, &cat.down, force);
+        if (got < 6) { ok = 0; rexx_copy(result_text, sizeof result_text, "MERGECATALOG needs x y width height across down"); }
+        else if (!merge_table || !merge_table->nrows) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "No records"); }
+        else if (dirty && strcasecmp(force, "FORCE")) { ok = 0; rc_fail = RX_NOW; rexx_copy(result_text, sizeof result_text, "Unsaved changes"); }
+        else if ((rc = merge_catalog_now(&cat, &made)) != OWF_OK) {
+            ok = 0;
+            if (rc == OWF_ERR_FORMAT) rc_fail = RX_NOW;  /* nothing inside the box */
+            rexx_copy(result_text, sizeof result_text, rc == OWF_ERR_FORMAT ? "No item in the area" : owf_error_text(rc));
+        } else { draw_status(); snprintf(result_text, sizeof result_text, "%d %d", made, deck->nslides); }
 #endif
     } else if (starts_word_ci(command, "UNDO", &arg) || starts_word_ci(command, "REDO", &arg)) {
         int redo = toupper((unsigned char)command[0]) == 'R';
@@ -9166,10 +9773,20 @@ static int rexx_do_command(const char *command, char **result_out)
     return ok ? RX_OK : rc_fail;
 }
 
+/* the next message on the port, or on the old-name port */
+static struct RexxMsg *rexx_next(void)
+{
+    struct RexxMsg *rm = rexx_port ? (struct RexxMsg *)GetMsg(rexx_port) : NULL;
+#ifdef REXX_OLD_PORT_NAME
+    if (!rm && rexx_old_port) rm = (struct RexxMsg *)GetMsg(rexx_old_port);
+#endif
+    return rm;
+}
+
 static void rexx_messages(void)
 {
     struct RexxMsg *rm;
-    while (rexx_port && (rm = (struct RexxMsg *)GetMsg(rexx_port)) != NULL) {
+    while ((rm = rexx_next()) != NULL) {
         char *res = NULL;
         int rc;
         rexx_busy = 1;
@@ -9201,6 +9818,22 @@ static void rexx_open(void)
     if (n == 10) { Permit(); DeleteMsgPort(p); return; }
     p->mp_Node.ln_Name = rexx_name;
     AddPort(p);
+#ifdef REXX_OLD_PORT_NAME
+    /* the first copy also answers to the old name; the port signals the same bit, so one Wait covers both */
+    if (n == 1 && !FindPort((STRPTR)REXX_OLD_PORT_NAME)) {
+        struct MsgPort *o = (struct MsgPort *)AllocVec(sizeof *o, MEMF_PUBLIC | MEMF_CLEAR);
+        if (o) {
+            o->mp_Node.ln_Type = NT_MSGPORT;
+            o->mp_Node.ln_Name = (char *)REXX_OLD_PORT_NAME;
+            o->mp_Flags = PA_SIGNAL;
+            o->mp_SigBit = p->mp_SigBit;
+            o->mp_SigTask = FindTask(NULL);
+            NewList(&o->mp_MsgList);
+            AddPort(o);
+            rexx_old_port = o;
+        }
+    }
+#endif
     Permit();
     rexx_port = p;
 }
@@ -9210,13 +9843,20 @@ static void rexx_close(void)
     struct RexxMsg *rm;
     if (!rexx_port) return;
     RemPort(rexx_port);
-    while ((rm = (struct RexxMsg *)GetMsg(rexx_port)) != NULL) {
+#ifdef REXX_OLD_PORT_NAME
+    if (rexx_old_port) RemPort(rexx_old_port);
+#endif
+    while ((rm = rexx_next()) != NULL) {
         rm->rm_Result1 = RC_FATAL;
         rm->rm_Result2 = 0;
         ReplyMsg((struct Message *)rm);
     }
     DeleteMsgPort(rexx_port);
     rexx_port = NULL;
+#ifdef REXX_OLD_PORT_NAME
+    if (rexx_old_port) FreeVec(rexx_old_port);       /* its signal bit is rexx_port's, freed above */
+    rexx_old_port = NULL;
+#endif
 }
 
 static void free_area(int *l, int *t, int *w, int *h)
@@ -9329,7 +9969,7 @@ static int window_main(int argc, char **argv)
     }
     {
         owf_deck *d = owf_deck_new(
-#ifdef OPENPUBLISHER
+#ifdef OPENPRESSMASTER
                                       11906, 16838
 #else
                                       OWF_DECK_16_9_WIDTH, OWF_DECK_16_9_HEIGHT
@@ -9372,7 +10012,8 @@ out:
     opr_clip_free(slide_clip);
     if (deck) owf_deck_free(deck);
     opr_undo_free(undo);
-    ow_spell_close(spell);
+    if (spell) owf_spell_close(spell);   /* through owfspell.library, open only once spelling was used */
+    owf_spell_library_close();
     if (theme.text) ogt_theme_free(&theme);
     if (LayersBase) CloseLibrary(LayersBase);
     if (OpenFontTextBase) CloseLibrary(OpenFontTextBase);

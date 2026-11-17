@@ -321,12 +321,14 @@ static void pdf_story_para(owf_buf *out, const owf_doc *doc, const owf_para *p,
         for (j = 0; j < p->nruns; ++j) {
             const owf_run *r = &p->runs[j];
             char field[32]; const char *text = NULL; size_t n = 0;
+            if (r->fmt.flags & OWF_HIDDEN) continue;   /* 1.14: hidden text is not printed */
             int size = r->fmt.size ? pdf_points(r->fmt.size) : 9;
             if (r->kind == OWF_RUN_TEXT && r->text) { text = r->text; n = strlen(text); }
             else if (r->kind == OWF_RUN_TAB) { text = "    "; n = 4; }
             else if (r->kind == OWF_RUN_FIELD) {
                 if (r->field == OWF_FIELD_PAGE) snprintf(field,sizeof field,"%d",page_num);
                 else if (r->field == OWF_FIELD_PAGES) snprintf(field,sizeof field,"%d",total_pages);
+                else if (r->field == OWF_FIELD_HIDE_PARA) field[0] = 0;   /* 1.20: it shows nothing */
                 else if (r->field > OWF_FIELD_TIME) snprintf(field,sizeof field,"%s",r->text?r->text:"");
                 else snprintf(field,sizeof field,"%s",r->field==OWF_FIELD_DATE?"date":"time");
                 text=field;n=strlen(field);
@@ -515,6 +517,7 @@ static int pdf_layout_para(pdf_layout *l, const owf_para *p, int i)
         pdf_line_reset(&line);
         for(j=0;j<p->nruns;++j){
             const owf_run *r=&p->runs[j];
+            if((r->fmt.flags&OWF_HIDDEN)&&r->note<=0&&!r->comment)continue;   /* 1.14: hidden text is not printed */
             if(r->kind==OWF_RUN_TEXT&&r->note>0&&r->note<=l->doc->nnotes&&l->note_marks){
                 /* 1.8: a note's mark, raised; the notes follow the text */
                 owf_run fake=*r;fake.text=l->note_marks[r->note-1];fake.fmt.flags|=OWF_SUPER;
@@ -537,7 +540,7 @@ static int pdf_layout_para(pdf_layout *l, const owf_para *p, int i)
                 /* 1.3: a frame's picture where it is anchored, as before frames were read */
                 if(line.n){if(!pdf_flush_line(l,p,&line,first))return 0;first=0;}
                 if(!pdf_place_image(l,p,l->doc->frames[r->image].image))return 0;}
-            else if(r->kind==OWF_RUN_FIELD){owf_run fake=*r;fake.kind=OWF_RUN_TEXT;fake.text=(char *)(r->field>OWF_FIELD_TIME?(r->text?r->text:""):"#");   /* a literal: the line keeps the pointer until it is flushed, after this block */
+            else if(r->kind==OWF_RUN_FIELD){owf_run fake=*r;fake.kind=OWF_RUN_TEXT;fake.text=(char *)(r->field==OWF_FIELD_HIDE_PARA?"":r->field>OWF_FIELD_TIME?(r->text?r->text:""):"#");   /* a literal: the line keeps the pointer until it is flushed, after this block */
                 if(!pdf_layout_text_run(l,p,&fake,&line,&first))return 0;}
         }
         if(line.n || !p->nruns){if(!pdf_flush_line(l,p,&line,first))return 0;}
@@ -713,7 +716,8 @@ static int pdf_layout_document(pdf_layout *l)
     int i;
     if(!pdf_new_page(l))return 0;
     for(i=0;i<l->doc->body.nparas;++i)
-        if(!pdf_layout_para(l,&l->doc->body.paras[i],i))return 0;
+        if((l->doc->body.paras[i].table_id>=0||!owf_para_hidden(&l->doc->body.paras[i]))&&   /* 1.20: a hidden paragraph isn't printed */
+           !pdf_layout_para(l,&l->doc->body.paras[i],i))return 0;
     if(l->note_marks&&(!pdf_layout_notes(l,0)||!pdf_layout_notes(l,1)))return 0;
     if(l->strip&&l->comment_marks){                  /* 1.12.1: those with no mark in the body: listed */
         for(i=0;i<l->doc->ncomments;++i)l->listed[i]=1;

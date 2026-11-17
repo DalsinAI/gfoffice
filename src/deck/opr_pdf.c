@@ -60,8 +60,80 @@ static int dashed(const ol_shape_style *s)
     return s->stroke_style != OL_STROKE_SOLID;
 }
 
+/* percent opaque from an ARGB colour's alpha */
+static int opaque_of(uint32_t argb)
+{
+    return (int)(((argb >> 24) * 100 + 127) / 255);
+}
+
+/* a length in units (OpenLayout's) on the page, keeping its sign */
+static int page_len(const ol_scale *scale, ol_unit v)
+{
+    return (int)(ol_scale_x(scale, v) - ol_scale_x(scale, 0));
+}
+
+/* GFOpenLayout 0.22's shadow, see-through fill and hatching (Presentation gap 1): the shadow (the outline
+ * moved, filled and lined with its colour) behind, then the fill (see-through as its alpha says) and the
+ * hatch lines inside the outline; the caller draws the outline itself after. 1 when it drew the fill, so
+ * the caller leaves it out, 0 when there was nothing of these to draw, -1 when memory ran out. */
+static int draw_area_more(owf_pdf *pdf, const ol_device_op *dop, const ol_scale *scale, const int *xy, int count,
+                          int closed)
+{
+    const ol_shape_style *s = &dop->op->graphic->shape;
+    int x = dop->box.x, y = dop->box.y, w = dop->box.width, h = dop->box.height, k, filled;
+    int see = (s->fill_argb >> 24) && (s->fill_argb >> 24) < 255;
+    unsigned long fill = shade_of(s->fill_argb), line = shade_of(s->stroke_argb);
+    if (!OL_SHAPE_STYLE_HAS_HATCH(s) || count < 2 || !scale)
+        return 0;
+    if (!(s->shadow_argb >> 24) && !see && s->hatch == OL_HATCH_NONE)
+        return 0;
+    filled = closed && count >= 3 && ((s->fill_argb >> 24) || s->hatch != OL_HATCH_NONE);
+    if (s->shadow_argb >> 24) {
+        int moved[OL_MAX_SHAPE_POINTS * 2], dx = page_len(scale, s->shadow_dx), dy = page_len(scale, s->shadow_dy);
+        unsigned long shadow = OWF_SHADE(s->shadow_argb & 0xFFFFFFu);
+        for (k = 0; k < count; k++) {
+            moved[k * 2] = xy[k * 2] + dx;
+            moved[k * 2 + 1] = xy[k * 2 + 1] + dy;
+        }
+        owf_pdf_alpha(pdf, opaque_of(s->shadow_argb));
+        if ((filled || OWF_SHADE_SET(line)) &&
+            owf_pdf_path(pdf, moved, count, closed, filled ? shadow : 0, OWF_SHADE_SET(line) ? shadow : 0,
+                         dop->thickness) < 0)
+            return -1;
+        owf_pdf_alpha(pdf, 100);
+    }
+    if (OWF_SHADE_SET(fill) && closed && count >= 3) {
+        owf_pdf_alpha(pdf, opaque_of(s->fill_argb));
+        if (OL_SHAPE_STYLE_HAS_GRADIENT(s) && s->gradient != OL_GRADIENT_NONE && (s->fill2_argb >> 24)) {
+            if (owf_pdf_gradient(pdf, xy, count, x, y, w, h,
+                                 s->gradient == OL_GRADIENT_RADIAL ? OWF_PDF_GRADIENT_RADIAL : OWF_PDF_GRADIENT_LINEAR,
+                                 s->gradient_angle_tenths + s->rotation_tenths, fill, shade_of(s->fill2_argb)) < 0)
+                return -1;
+        } else if (owf_pdf_path(pdf, xy, count, 1, fill, 0, 0) < 0) {
+            return -1;
+        }
+        owf_pdf_alpha(pdf, 100);
+    }
+    if (s->hatch != OL_HATCH_NONE && closed && count >= 3) {
+        /* the lines through the box's top left, so they move with the shape; a hairline each */
+        static int lines[4 * 2048];
+        int distance = page_len(scale, s->hatch_distance), hair = page_len(scale, 10 * OL_UNITS_PER_TWIP), n;
+        unsigned long colour = OWF_SHADE(s->hatch_argb & 0xFFFFFFu);
+        if (distance < 1) distance = 1;
+        if (hair < 1) hair = 1;
+        n = opr_hatch_lines(xy, count, x, y, (int)s->hatch, s->hatch_angle_tenths + s->rotation_tenths, distance, lines,
+                            2048);
+        owf_pdf_alpha(pdf, opaque_of(s->hatch_argb));
+        for (k = 0; k < n; k++)
+            if (owf_pdf_path(pdf, &lines[k * 4], 2, 0, 0, colour, hair) < 0)
+                return -1;
+        owf_pdf_alpha(pdf, 100);
+    }
+    return OWF_SHADE_SET(fill) && closed && count >= 3 ? 1 : 0;
+}
+
 /* Draw the normalized OpenLayout shape into a PDF page. */
-static int draw_shape(owf_pdf *pdf, const ol_device_op *dop)
+static int draw_shape(owf_pdf *pdf, const ol_device_op *dop, const ol_scale *scale)
 {
     const ol_graphic *g = dop->op->graphic;
     const ol_shape_style *s;
@@ -75,7 +147,45 @@ static int draw_shape(owf_pdf *pdf, const ol_device_op *dop)
     s = &g->shape;
     fill = shade_of(s->fill_argb);
     line = shade_of(s->stroke_argb);
+    if (OL_SHAPE_STYLE_HAS_HATCH(s) && ((s->shadow_argb >> 24) || s->hatch != OL_HATCH_NONE ||
+                                        ((s->fill_argb >> 24) && (s->fill_argb >> 24) < 255))) {
+        int more;
+        bounds.x = x;
+        bounds.y = y;
+        bounds.width = w;
+        bounds.height = h;
+        count = ol_shape_path(g, &bounds, path, OL_MAX_SHAPE_POINTS, &closed);
+        for (k = 0; k < count; k++) {
+            xy[k * 2] = path[k].x;
+            xy[k * 2 + 1] = path[k].y;
+        }
+        owf_pdf_dash(pdf, 0);
+        more = draw_area_more(pdf, dop, scale, xy, count, closed);
+        if (more < 0)
+            return -1;
+        if (more)
+            fill = 0;                /* drawn: only the outline is left */
+    }
     owf_pdf_dash(pdf, dashed(s));
+    if (OWF_SHADE_SET(fill) && OL_SHAPE_STYLE_HAS_GRADIENT(s) && s->gradient != OL_GRADIENT_NONE &&
+        (s->fill2_argb >> 24)) {
+        /* a gradient inside the outline, then the outline alone; the gradient turns with the shape */
+        bounds.x = x;
+        bounds.y = y;
+        bounds.width = w;
+        bounds.height = h;
+        count = ol_shape_path(g, &bounds, path, OL_MAX_SHAPE_POINTS, &closed);
+        for (k = 0; k < count; k++) {
+            xy[k * 2] = path[k].x;
+            xy[k * 2 + 1] = path[k].y;
+        }
+        if (count >= 3 && closed &&
+            owf_pdf_gradient(pdf, xy, count, x, y, w, h,
+                             s->gradient == OL_GRADIENT_RADIAL ? OWF_PDF_GRADIENT_RADIAL : OWF_PDF_GRADIENT_LINEAR,
+                             s->gradient_angle_tenths + s->rotation_tenths, fill, shade_of(s->fill2_argb)) < 0)
+            return -1;
+        fill = 0;
+    }
     if (!s->rotation_tenths) {
         if (s->type == OL_SHAPE_RECT) {
             rc = owf_pdf_rect(pdf, x, y, w, h, fill, line, dop->thickness);
@@ -127,6 +237,7 @@ typedef struct {
     owf_pdf *pdf;
     const opr_slide *slide;
     const owf_deck *deck;
+    const ol_scale *scale;       /* units to the page: shadow offsets and hatch spacing */
     int scaled;                  /* drawn smaller than its page: text at the scale's size */
     int failed;
 } drawing;
@@ -209,7 +320,7 @@ static void draw_op(void *userdata, const ol_device_op *dop)
         break;
     }
     case OL_OP_SHAPE:
-        if (draw_shape(d->pdf, dop) < 0)
+        if (draw_shape(d->pdf, dop, d->scale) < 0)
             d->failed = 1;
         break;
     default:
@@ -225,6 +336,7 @@ static int draw_laid(owf_pdf *pdf, const owf_deck *deck, const opr_slide *laid, 
     d.pdf = pdf;
     d.slide = laid;
     d.deck = deck;
+    d.scale = scale;
     d.scaled = scaled;
     ol_draw_page(laid->doc, 0, scale, NULL, draw_op, &d);
     return d.failed ? -1 : 0;
@@ -251,6 +363,77 @@ static int draw_slide_in(owf_pdf *pdf, const owf_deck *deck, int slide, const in
     return rc;
 }
 
+static int bleed_of(const opr_pdf_options *o)
+{
+    if (!o || o->pages != OPR_PDF_SLIDES || o->bleed <= 0) return 0;
+    return o->bleed > OPR_PDF_MAX_BLEED ? OPR_PDF_MAX_BLEED : o->bleed;
+}
+
+/* The gap between the trimmed edge and a crop mark: past the bleed */
+static int mark_gap(const opr_pdf_options *o)
+{
+    int b = bleed_of(o);
+    return b > OPR_PDF_MARK_GAP ? b : OPR_PDF_MARK_GAP;
+}
+
+/* A slide's background colour as opr_layout.c fills it (the slide's, else its master's), or 0 for white or
+ * none: the bleed is left white then */
+static unsigned long bleed_colour(const owf_deck *deck, int slide)
+{
+    const owf_master *m = owf_deck_slide_master(deck, slide);
+    unsigned long bg = deck->slides[slide].background;
+    if (!OWF_SHADE_SET(bg) && deck->slides[slide].background_image < 0 && m) bg = m->background;
+    if (!OWF_SHADE_SET(bg) || OWF_SHADE_RGB(bg) == 0xFFFFFFUL) return 0;
+    return bg;
+}
+
+int opr_pdf_margin(const opr_pdf_options *o)
+{
+    if (!o || o->pages != OPR_PDF_SLIDES) return 0;
+    if (o->crop_marks) return mark_gap(o) + OPR_PDF_MARK_LENGTH + 60;
+    return bleed_of(o);
+}
+
+/* Crop marks at the corners of the trimmed page (at m, m, w x h): two short hairlines at each, outside the bleed */
+static int crop_marks(owf_pdf *pdf, int m, int w, int h, int gap)
+{
+    int corner, xy[4];
+    for (corner = 0; corner < 4; corner++) {
+        int x = m + (corner & 1 ? w : 0), y = m + (corner & 2 ? h : 0);
+        int sx = corner & 1 ? 1 : -1, sy = corner & 2 ? 1 : -1;
+        xy[0] = x + sx * gap; xy[1] = y;                             /* across, level with the edge */
+        xy[2] = x + sx * (gap + OPR_PDF_MARK_LENGTH); xy[3] = y;
+        if (owf_pdf_path(pdf, xy, 2, 0, 0, OWF_SHADE(0x000000), 5) < 0) return -1;
+        xy[0] = x; xy[1] = y + sy * gap;                             /* down, in line with the edge */
+        xy[2] = x; xy[3] = y + sy * (gap + OPR_PDF_MARK_LENGTH);
+        if (owf_pdf_path(pdf, xy, 2, 0, 0, OWF_SHADE(0x000000), 5) < 0) return -1;
+    }
+    return 0;
+}
+
+int opr_booklet_side(int n, int k, int *left, int *right)
+{
+    int total = (n + 3) / 4 * 4, sheet = k / 2, l, r;
+    if (n <= 0 || k < 0 || k >= total / 2) return -1;
+    if (k % 2 == 0) { l = total - 1 - 2 * sheet; r = 2 * sheet; }          /* the front: the last page and the first */
+    else { l = 2 * sheet + 1; r = total - 2 - 2 * sheet; }                 /* the back: the second and the next to last */
+    *left = l < n ? l : -1;
+    *right = r < n ? r : -1;
+    return 0;
+}
+
+/* The pages a PDF shows: the slides but the hidden ones (unless with_hidden), into *out (malloc'd); how many,
+ * or -1 */
+static int shown_slides(const owf_deck *deck, const opr_pdf_options *options, int **out)
+{
+    int i, n = 0;
+    *out = (int *)malloc(sizeof **out * (size_t)(deck->nslides ? deck->nslides : 1));
+    if (!*out) return -1;
+    for (i = 0; i < deck->nslides; i++)
+        if (!deck->slides[i].hidden || (options && options->with_hidden)) (*out)[n++] = i;
+    return n;
+}
+
 int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigned char **data, size_t *length,
                    owf_report *report)
 {
@@ -268,7 +451,35 @@ int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigne
     /* the display list in twips: a unit is a quarter of one */
     memset(&scale, 0, sizeof scale);
     ol_scale_set(&scale, 1, OL_UNITS_PER_TWIP);
-    if (options && options->pages == OPR_PDF_HANDOUTS) {
+    if (options && options->pages == OPR_PDF_BOOKLET) {
+        int *order = NULL, n = shown_slides(deck, options, &order), k, sides;
+        if (n < 0)
+            goto memory;
+        sides = (n + 3) / 4 * 2;
+        for (k = 0; k < sides; k++) {
+            int lr[2], j;
+            opr_booklet_side(n, k, &lr[0], &lr[1]);
+            if (owf_pdf_page(pdf, deck->width * 2, deck->height) < 0) {
+                free(order);
+                goto memory;
+            }
+            for (j = 0; j < 2; j++) {
+                opr_slide *laid;
+                if (lr[j] < 0)
+                    continue;                        /* a blank page */
+                laid = opr_slide_layout(deck, order[lr[j]], NULL, NULL, options->today);
+                scale.origin_x = j ? deck->width : 0;
+                if (!laid || draw_laid(pdf, deck, laid, &scale, 0) < 0) {
+                    opr_slide_free(laid);
+                    free(order);
+                    goto memory;
+                }
+                overflow |= laid->overflow;
+                opr_slide_free(laid);
+            }
+        }
+        free(order);
+    } else if (options && options->pages == OPR_PDF_HANDOUTS) {
         int per = options->handout_slides, k = 0, w, h, box[4];
         if (per != 1 && per != 2 && per != 3 && per != 4 && per != 9)
             per = 6;
@@ -307,13 +518,21 @@ int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigne
                 goto memory;
         }
     } else {
+        int m = opr_pdf_margin(options);           /* room for the bleed and the crop marks */
+        scale.origin_x = scale.origin_y = m;
         for (i = 0; i < deck->nslides; i++) {
             const owf_slide *s = &deck->slides[i];
             opr_slide *laid;
             if (s->hidden && !(options && options->with_hidden))
                 continue;
             laid = opr_slide_layout(deck, i, NULL, NULL, options ? options->today : NULL);
-            if (!laid || owf_pdf_page(pdf, deck->width, deck->height) < 0) {
+            if (!laid || owf_pdf_page(pdf, deck->width + 2 * m, deck->height + 2 * m) < 0) {
+                opr_slide_free(laid);
+                goto memory;
+            }
+            if (bleed_of(options) && bleed_colour(deck, i) &&   /* a coloured background runs into the bleed */
+                owf_pdf_rect(pdf, m - bleed_of(options), m - bleed_of(options), deck->width + 2 * bleed_of(options),
+                             deck->height + 2 * bleed_of(options), bleed_colour(deck, i), 0, 0) < 0) {
                 opr_slide_free(laid);
                 goto memory;
             }
@@ -323,6 +542,8 @@ int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigne
             }
             overflow |= laid->overflow;
             opr_slide_free(laid);
+            if (options && options->crop_marks && crop_marks(pdf, m, deck->width, deck->height, mark_gap(options)) < 0)
+                goto memory;
         }
     }
     if (overflow)

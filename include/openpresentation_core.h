@@ -25,6 +25,7 @@
 #define OPENPRESENTATION_CORE_H
 
 #include "owf_deck.h"
+#include "owf_spell.h"
 #include "gfopenlayout.h"
 
 #ifdef __cplusplus
@@ -74,15 +75,32 @@ owf_font_kind opr_font_kind(const owf_deck *deck, int font);
 typedef enum {
     OPR_PDF_SLIDES,              /* a page a slide, at the slide's size */
     OPR_PDF_NOTES,               /* a notes page a slide: the slide above its notes */
-    OPR_PDF_HANDOUTS             /* handouts: handout_slides slides to a page */
+    OPR_PDF_HANDOUTS,            /* handouts: handout_slides slides to a page */
+    OPR_PDF_BOOKLET              /* a folded booklet: two pages side by side on each sheet side, in the order that
+                                    folds and staples in the middle (blank pages made up to a multiple of four) */
 } opr_pdf_pages;
+
+/* For a booklet of n pages: sheet side k's (0 the first sheet's front, 1 its back, ...) left and right page,
+   from 0, or -1 for a blank. The sides come to (n + 3) / 4 * 2. 0, or -1 when k is not a side. */
+int opr_booklet_side(int n, int k, int *left, int *right);
 
 typedef struct {
     int with_hidden;             /* hidden slides too */
     const char *today;           /* the date fields' text; NULL: today's */
     opr_pdf_pages pages;         /* 0: the slides */
     int handout_slides;          /* OPR_PDF_HANDOUTS: 1, 2, 3, 4, 6 or 9 (others: 6) */
+    /* For a printer, OPR_PDF_SLIDES only: bleed, twips each page prints past its trimmed edge (0 none, at
+       most OPR_PDF_MAX_BLEED), and crop marks at the trimmed corners, outside the bleed. Either makes each
+       PDF page larger than the slide by opr_pdf_margin's on every side, the slide in the middle. */
+    int bleed;
+    int crop_marks;
 } opr_pdf_options;
+
+#define OPR_PDF_MAX_BLEED 1440
+#define OPR_PDF_MARK_LENGTH 360  /* a crop mark, twips */
+#define OPR_PDF_MARK_GAP 120     /* the least room between a mark and the trimmed edge, twips */
+/* The room round each page for options' bleed and crop marks, twips (0: none). */
+int opr_pdf_margin(const opr_pdf_options *options);
 
 /* The deck as a PDF: by options->pages, one page a slide at the slide's
  * size, a notes page a slide, or handouts, both on the deck's notes page
@@ -90,6 +108,33 @@ typedef struct {
  * OWF_OK, or OWF_ERR_MEMORY. */
 int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigned char **data, size_t *length,
                    owf_report *report);
+
+/* A gradient fill as plain polygons, for a screen that fills polygons but can't clip (opr_gradient.c: libowf's
+ * owf_fill_gradient_band, owf_fill.h, by its first name):
+ * band (0..bands-1) of the gradient inside the closed outline xy (n points, at most OL_MAX_SHAPE_POINTS)
+ * across the box x, y, w, h, into out (at most cap points) with its colour (0xRRGGBB). LINEAR runs from
+ * one colour to the other along angle (tenths anticlockwise, 0 left to right; each band overlaps the
+ * next by a unit); RADIAL's band 0 is the outermost ring, from at the centre, each band drawn over the
+ * one before. The point count (0: nothing to draw), or -1 when out is too small. */
+#define OPR_GRADIENT_LINEAR 1
+#define OPR_GRADIENT_RADIAL 2
+/* enough points for any band of an OL_MAX_SHAPE_POINTS outline: each cut keeps the outline's points
+ * and adds at most two per edge, and a ring adds its sides */
+#define OPR_GRADIENT_MAX_POINTS (3 * OL_MAX_SHAPE_POINTS + 32 + 8)
+int opr_gradient_band(const int *xy, int n, int x, int y, int w, int h, int kind, int angle, unsigned long from,
+                      unsigned long to, int band, int bands, int *out, int cap, unsigned long *colour);
+
+/* Hatching as plain lines, for a screen that draws lines but can't clip (opr_gradient.c): the lines of
+ * kind (OPR_HATCH_SINGLE, _DOUBLE: and at right angles, _TRIPLE: and at 45 degrees between) inside the
+ * closed outline xy (n points), at angle (tenths anticlockwise, 0 left to right) and distance apart, the
+ * pattern running through (x, y), so it stays put as the shape moves with its box. Into out as x1, y1,
+ * x2, y2 for each line (at most cap lines); the count. When more lines would cross the outline than out
+ * holds, the lines are spaced twice as far apart (then four times, and so on) until they fit; -1 only when
+ * even that cannot fit them (out too small for one line of each set). */
+#define OPR_HATCH_SINGLE 1
+#define OPR_HATCH_DOUBLE 2
+#define OPR_HATCH_TRIPLE 3
+int opr_hatch_lines(const int *xy, int n, int x, int y, int kind, int angle, int distance, int *out, int cap);
 
 /* The deck as PowerPoint (PPTX, opr_pptx.c): its slides with their objects
  * where they are drawn, text with its look and levels, pictures, shapes,
@@ -165,23 +210,20 @@ int opr_text_find(const owf_deck *deck, int start_slide, int start_obj,
 
 /* ---- Spelling (opr_spell.c) ----
  *
- * GFOpenWrite's dictionary and word rules (include/ow_spell_dict.h; the
- * app opens one with ow_spell_open). The next misspelt word at or after
- * (start_slide, start_obj, start): each slide's objects that can be typed
+ * GFOffice's one dictionary and word rules (owfspell.library,
+ * libowf/include/owf_spell.h; the app opens one with
+ * owf_spell_open_default). The next misspelt word at or after (start_slide, start_obj, start): each slide's objects that can be typed
  * in, in order, then its notes (obj OPR_NOTES), wrapping once to the first
  * slide. A placeholder still showing its prompt is left alone. 1 with
  * result's selection on the word and its text in word (cut to word_size),
  * 0 when the deck is clean, -1 for bad input or no memory. */
-struct ow_spell;
-int opr_spell_next(const owf_deck *deck, struct ow_spell *spell, int start_slide, int start_obj,
+int opr_spell_next(const owf_deck *deck, owf_spell *spell, int start_slide, int start_obj,
                    opr_pos start, opr_find_result *result, char *word, size_t word_size);
 /* The misspelt words of one paragraph's text (opr_para_text's), for the
  * wavy underline as you type: up to max_ranges byte ranges written; the
- * return is how many there are in all. */
-typedef struct {
-    size_t start, end;
-} opr_spell_range;
-int opr_spell_words(struct ow_spell *spell, const char *text, size_t length,
+ * return is how many there are in all (owf_spell_words). */
+typedef owf_spell_range opr_spell_range;
+int opr_spell_words(owf_spell *spell, const char *text, size_t length,
                     opr_spell_range *ranges, int max_ranges);
 /* The misspelt words of one object's text (obj OPR_NOTES: the slide's
  * notes), for the wavy underline as you type. With caret not NULL the word
@@ -193,7 +235,7 @@ typedef struct {
     int para;
     size_t start, end;
 } opr_spell_mark;
-int opr_spell_marks(const owf_deck *deck, struct ow_spell *spell, int slide, int obj, const opr_pos *caret,
+int opr_spell_marks(const owf_deck *deck, owf_spell *spell, int slide, int obj, const opr_pos *caret,
                     opr_spell_mark *marks, int max_marks);
 /* ARexx SPELL, args being what follows the command word:
  *   SPELL [COUNT]       how many misspelt words the deck has
@@ -205,7 +247,7 @@ int opr_spell_marks(const owf_deck *deck, struct ow_spell *spell, int slide, int
  *   SPELL IGNORE word   passed until the dictionary is closed
  * The answer, or the reason, goes in out; the return is ARexx's code: 0,
  * 5 with no dictionary, 10 for a bad command, 20 for no memory. */
-int opr_spell_rexx(const owf_deck *deck, struct ow_spell *spell, const char *args, char *out, size_t size);
+int opr_spell_rexx(const owf_deck *deck, owf_spell *spell, const char *args, char *out, size_t size);
 /* Delete exactly the selected characters and paragraph separators. Both ends
  * collapse to the start. The caller owns the Undo snapshot, as for typing. */
 int opr_text_delete_selection(owf_deck *deck, int slide, int obj,
@@ -342,6 +384,20 @@ int opr_table_apply_style(opr_undo *u, owf_deck *deck, int slide, int obj,
                           int row, int column, opr_table_scope scope,
                           unsigned long shading, int borders,
                           unsigned long border_colour);
+/* Presentation tables part 4: merge rows x cols cells from row, col into one
+ * (-2: one cell, past the table, or over a cell another merge has); split
+ * the merge that has row, col in it (-2: none); set a row's least height in
+ * twips (0: as its text needs); turn the design's parts on and off
+ * (OWF_TABLE_...). The text of the cells a merge covers is kept, not shown,
+ * and comes back on a split. Each is one Undo step. */
+int opr_table_merge(opr_undo *u, owf_deck *deck, int slide, int obj,
+                    int row, int column, int rows, int columns);
+int opr_table_split(opr_undo *u, owf_deck *deck, int slide, int obj,
+                    int row, int column);
+int opr_table_set_row_height(opr_undo *u, owf_deck *deck, int slide, int obj,
+                             int row, int twips);
+int opr_table_set_design(opr_undo *u, owf_deck *deck, int slide, int obj,
+                         unsigned design);
 /* A new embedded picture. The resource bytes and metadata are copied into
  * deck->res; coordinates are slide twips and crop is thousandths cut from
  * left, top, right and bottom. */
@@ -391,6 +447,31 @@ int opr_obj_align(opr_undo *u, owf_deck *deck, int slide, int obj,
  * one undo step. -2 means an unsupported object or invalid look. */
 int opr_obj_set_look(opr_undo *u, owf_deck *deck, int slide, int obj,
                      const owf_look *look);
+/* The Area window's values, in the units it shows: percents, whole degrees and
+ * twips. opr_area_get fills one from a look (spacing, shadow colour and offsets
+ * show their defaults when unset); opr_area_put sets the look's transparency,
+ * hatching and shadow from one and leaves the rest. A value the look already
+ * means is kept as it is stored, so get then put changes nothing. opr_area_put
+ * returns 0, or -2 when a value is out of range (the look is then unchanged). */
+typedef struct {
+    int transparency;            /* 0..100 percent see-through */
+    int hatch;                   /* 0: none, or OPR_HATCH_SINGLE/_DOUBLE/_TRIPLE */
+    unsigned long hatch_colour;  /* 0xRRGGBB */
+    int hatch_degrees;           /* 0..359, anticlockwise */
+    int hatch_spacing;           /* twips between lines, 10..10000 */
+    int shadow;                  /* 0 or 1 */
+    unsigned long shadow_colour; /* 0xRRGGBB */
+    int shadow_dx, shadow_dy;    /* twips right of and below the object, -10000..10000 */
+    int shadow_transparency;     /* 0..100 */
+} opr_area;
+#define OPR_AREA_SHADOW_OFFSET 113   /* 0.2 cm, as ODF's default */
+void opr_area_get(const owf_look *look, opr_area *area);
+int opr_area_put(owf_look *look, const opr_area *area);
+/* Replace one slide's background colour, gradient, transparency and hatching
+ * (OWF_BACKGROUND_LOOK's fields; a picture background stays) as one undo step.
+ * A fill of 0 means the master's background. -2: an invalid look. */
+int opr_slide_set_background(opr_undo *u, owf_deck *deck, int slide,
+                             const owf_look *background);
 /* Set equal columns inside one top-level text frame or text-bearing shape.
  * columns is 1..16 and gap is twips. One column stores the canonical zero
  * values. The change is one undo step. */

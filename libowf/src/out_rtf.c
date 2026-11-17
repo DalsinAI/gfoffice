@@ -102,6 +102,7 @@ static void put_charfmt(rtf_out *w, const owf_charfmt *f)
     if (f->flags & OWF_ITALIC) owf_buf_puts(&w->out, "\\i");
     if (f->flags & OWF_UNDERLINE) owf_buf_puts(&w->out, "\\ul");
     if (f->flags & OWF_STRIKE) owf_buf_puts(&w->out, "\\strike");
+    if (f->flags & OWF_HIDDEN) owf_buf_puts(&w->out, "\\v");          /* 1.14 */
     if (f->flags & OWF_SUPER) owf_buf_puts(&w->out, "\\super");
     else if (f->flags & OWF_SUB) owf_buf_puts(&w->out, "\\sub");
     if (f->colour != OWF_COLOUR_AUTO)
@@ -183,6 +184,10 @@ static void put_runs(rtf_out *w, const owf_para *p, int depth)
         case OWF_RUN_TAB: owf_buf_puts(&w->out, "\\tab "); break;
         case OWF_RUN_LINEBREAK: owf_buf_puts(&w->out, "\\line "); break;
         case OWF_RUN_FIELD:
+            if (r->field == OWF_FIELD_HIDE_PARA) {   /* 1.20: RTF has no hidden paragraph: it is saved shown */
+                owf_report_add(w->report, OWF_NOTE_APPROX, "A hidden paragraph is saved shown, without its condition");
+                break;
+            }
             if (r->field > OWF_FIELD_TIME) {         /* 1.7: the value it showed */
                 put_text(&w->out, r->text ? r->text : "");
                 break;

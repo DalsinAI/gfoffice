@@ -1,7 +1,7 @@
 /*
- * libowf: Microsoft Publisher files (.pub), read for GFOpenPublisher.
+ * libowf: Microsoft Publisher files (.pub), read for GFOpenPressmaster.
  *
- * Phase 0's reader (docs/gfoffice/Design-OpenPublisher.md): it tells the
+ * Phase 0's reader (docs/gfoffice/Design-OpenPressmaster.md): it tells the
  * version, gives the page size, the pages and master pages, each page's
  * frames with their boxes and kinds, the text of text frames and tables as
  * paragraphs, the fonts the text names and the pictures. Phase 1 adds the
@@ -78,9 +78,17 @@ typedef struct {
     long inset[4];               /* a text box's margins, EMU: left, top, right, bottom; -1: not said */
 } owf_pub_frame;
 
+/* owf_pub_page.side: a master's. A two-page master is two masters with
+ * one name, its left and its right page (PUB-FORMAT.md 5.4). */
+#define OWF_PUB_ONE_PAGE 0
+#define OWF_PUB_LEFT 1
+#define OWF_PUB_RIGHT 2
+
 typedef struct {
     char *name;                  /* a master page's ("Master Page A"); NULL for a page */
     int master;                  /* a page's master: into owf_pub.masters; -1: none */
+    int side;                    /* a master's: OWF_PUB_ONE_PAGE, OWF_PUB_LEFT or OWF_PUB_RIGHT */
+    int pair;                    /* a two-page master's other page: into owf_pub.masters; -1: none */
     int nframes, capframes;
     owf_pub_frame *frames;       /* back to front as the file lists them */
 } owf_pub_page;
@@ -102,6 +110,7 @@ typedef struct owf_pub {
     int nscheme;
     unsigned long scheme[16];
     int scratch_frames;          /* frames on the scratch area, not on any page (not kept) */
+    int facing;                  /* 1: a two-page master, so the pages face each other as spreads */
 } owf_pub;
 
 /* 0 (not .pub) to 100. */
@@ -112,6 +121,13 @@ int owf_pub_detect(const unsigned char *data, size_t length);
 int owf_pub_read(const unsigned char *data, size_t length, owf_pub **pub, owf_report *report);
 int owf_pub_read_file(const char *path, owf_pub **pub, owf_report *report);
 void owf_pub_free(owf_pub *pub);
+/* owfpub.library 3.3: the publication as a .pub in the 2002-or-later form
+ * (Publisher 2007's), into memory from malloc: pages and master pages, text
+ * boxes, shapes and tables with their boxes and looks, the text with its
+ * runs, links and cells, the colour scheme, pictures, groups and WordArt.
+ * The scratch area is not written yet (a note in the report says so).
+ * OWF_OK, or OWF_ERR_MEMORY. */
+int owf_pub_write(const owf_pub *pub, unsigned char **data, size_t *length, owf_report *report);
 
 #ifdef __cplusplus
 }

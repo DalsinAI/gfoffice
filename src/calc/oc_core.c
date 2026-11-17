@@ -92,6 +92,7 @@ int oc_range_clip(const oc_core *core, const owf_range *in, owf_range *out)
 
 void oc_changed(oc_core *core)
 {
+    oc_track_changed(core);                          /* the command's changes, while the book records them */
     core->dirty = 1;
     core->changes++;
 }
@@ -166,6 +167,7 @@ void oc_core_free(oc_core *core)
     oc_clip_free(&core->clip);
     oc_cf_forget(core);
     oc_charts_forget(core);
+    oc_track_free(core);
     owf_calc_free(core->calc);
     owf_book_free(core->book);
     free(core->states);
@@ -204,6 +206,7 @@ int oc_core_set_book(oc_core *core, owf_book *book)
     oc_cf_forget(core);
     oc_charts_forget(core);
     core->chart_sel = 0;
+    oc_track_hint(core, OC_HINT_NONE, 0, 0, 0, 0, NULL);
     owf_calc_free(core->calc);
     owf_book_free(core->book);
     core->book = book;
@@ -224,6 +227,7 @@ int oc_core_set_book(oc_core *core, owf_book *book)
     for (i = 0; i < core->nstates; i++)
         if (book->sheets[i].hidden && i == core->sheet)
             core->sheet = 0;
+    oc_track_opened(core);                       /* its tracked cells' new content, from the cells */
     core->dirty = 0;
     core->changes++;
     core->undo_lost = 0;
@@ -394,6 +398,7 @@ int oc_core_add_sheet(oc_core *core, const char *name)
     for (i = book->nsheets - 1; i > at; i--)
         core->states[i] = core->states[i - 1];
     state_init(&core->states[at]);
+    oc_track_hint(core, OC_HINT_ADD_SHEET, at, 0, 0, 0, NULL);
     oc_undo_push(core, u);
     owf_calc_rebuild(core->calc);
     owf_calc_recalc(core->calc);
@@ -420,6 +425,7 @@ int oc_core_rename_sheet(oc_core *core, int sheet, const char *name)
         oc_undo_free(u);
         u = NULL;
     }
+    oc_track_hint(core, OC_HINT_RENAME, sheet, 0, 0, 0, book->sheets[sheet].name);
     /* the engine renames it in every formula and name that refers to it */
     rc = owf_calc_rename_sheet(core->calc, sheet, name);
     oc_charts_forget(core);                          /* their cells name it */
@@ -437,10 +443,8 @@ int oc_core_delete_sheet(oc_core *core, int sheet)
 {
     owf_book *book = core->book;
     oc_undo *u;
-    owf_sheet gone;
-    int i, j;
-    if (sheet < 0 || sheet >= book->nsheets || book->nsheets < 2)
-        return OWF_ERR_UNSUPPORTED;
+    if (sheet < 0 || sheet >= book->nsheets || book->nsheets < 2 || book->track_changes)
+        return OWF_ERR_UNSUPPORTED;                  /* not while changes are recorded, as in a shared workbook */
     if (oc_book_locked(core))
         return OC_PROTECTED;
     if (core->edit_mode)
@@ -451,6 +455,20 @@ int oc_core_delete_sheet(oc_core *core, int sheet)
         u = NULL;
     }
     oc_undo_push(core, u);
+    oc_drop_sheet(core, sheet);
+    owf_calc_rebuild(core->calc);
+    owf_calc_recalc(core->calc);
+    if (core->clip.valid)
+        core->clip.cut = 0;
+    oc_changed(core);
+    return OWF_OK;
+}
+
+void oc_drop_sheet(oc_core *core, int sheet)
+{
+    owf_book *book = core->book;
+    owf_sheet gone;
+    int i, j;
     gone = book->sheets[sheet];
     for (i = sheet; i + 1 < book->nsheets; i++) {
         book->sheets[i] = book->sheets[i + 1];
@@ -485,12 +503,6 @@ int oc_core_delete_sheet(oc_core *core, int sheet)
         book->active = book->active > 0 ? book->active - 1 : 0;
     if (core->sheet >= book->nsheets || core->sheet > sheet)
         core->sheet = core->sheet > 0 ? core->sheet - 1 : 0;
-    owf_calc_rebuild(core->calc);
-    owf_calc_recalc(core->calc);
-    if (core->clip.valid)
-        core->clip.cut = 0;
-    oc_changed(core);
-    return OWF_OK;
 }
 
 static int moved_sheet_index(int index, int from, int to)
@@ -545,6 +557,8 @@ int oc_core_move_sheet(oc_core *core, int sheet, int to)
             book->names[i].sheet = moved_sheet_index(book->names[i].sheet, sheet, to);
     book->active = moved_sheet_index(book->active, sheet, to);
     core->sheet = moved_sheet_index(core->sheet, sheet, to);
+    oc_track_sheet_moved(core, sheet, to);           /* the changes go with their sheets */
+    oc_track_hint(core, OC_HINT_QUIET, 0, 0, 0, 0, NULL);
     core->chart_sel_sheet = moved_sheet_index(core->chart_sel_sheet, sheet, to);
     oc_charts_forget(core);
     core->chart_sel = 0;
@@ -700,6 +714,7 @@ int oc_core_duplicate_sheet(oc_core *core, int sheet, const char *name)
         core->clip.cut = 0;
     if (rc == OWF_OK)
         rc = oc_recalc(core, 1);
+    oc_track_hint(core, OC_HINT_ADD_SHEET, at, 0, 0, 0, NULL);
     oc_undo_push(core, undo);
     oc_changed(core);
 prepared:
@@ -1829,14 +1844,14 @@ static int text_needs_quote(const char *t)
     return 0;
 }
 
-static int input_into(const oc_core *core, const owf_cell *c, char *out, size_t size)
+static int input_reveal(const oc_core *core, const owf_cell *c, char *out, size_t size, int reveal)
 {
     char num[40];
     const char *e;
     if (!c)
         return snprintf(out, size, "%s", "");
     if (c->formula) {
-        if (oc_formula_hidden(core, core->sheet, c->row, c->col))
+        if (!reveal && oc_formula_hidden(core, core->sheet, c->row, c->col))
             return snprintf(out, size, "%s", "");     /* a protected sheet hides it */
         return snprintf(out, size, "=%s", c->formula);
     }
@@ -1866,6 +1881,29 @@ static int input_into(const oc_core *core, const owf_cell *c, char *out, size_t 
         break;
     }
     return snprintf(out, size, "%s", "");
+}
+
+static int input_into(const oc_core *core, const owf_cell *c, char *out, size_t size)
+{
+    return input_reveal(core, c, out, size, 0);
+}
+
+char *oc_cell_input_of(const oc_core *core, const owf_cell *c, int *lost)
+{
+    size_t n = 64;
+    char *out;
+    if (oc_cell_empty(c))
+        return NULL;
+    if (c->formula)
+        n += strlen(c->formula);
+    if (c->text)
+        n += strlen(c->text);
+    out = owf_malloc(n);
+    if (out)
+        input_reveal(core, c, out, n, 1);
+    else
+        *lost = 1;
+    return out;
 }
 
 char *oc_core_cell_input(const oc_core *core, int sheet, unsigned row, unsigned col)

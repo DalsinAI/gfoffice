@@ -9,12 +9,13 @@
  * with tabs between the cells, and notes go to the end; the import report
  * says so. Tracked changes (text:tracked-changes; 1.5) are the document's:
  * insertions between text:change-start and text:change-end, deletions at
- * text:change with their text from the changed region. 1.13: a paragraph's
+ * text:change with their text from the changed region. 1.22.1: a paragraph's
  * format change (text:format-change with gfo:para-style-before, as out_odt
  * writes it) is the paragraph's, with the format before from that style;
  * one without it (no format before) is kept as the format is now.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
+#include "owf_ifform.h"
 #include "owf_internal.h"
 #include "owf_track.h"
 #include "owf_comment.h"
@@ -50,7 +51,7 @@ typedef struct {
     owf_list_style lists[MAX_LISTS];
     int nlists;
     owf_parafmt base_para;
-    const owf_xml_node *para_format;  /* 1.13: the paragraph format change begun in the paragraph being read */
+    const owf_xml_node *para_format;  /* 1.22.1: the paragraph format change begun in the paragraph being read */
     owf_charfmt base_char;           /* the default style's text, with real font and size */
     struct { const char *name; unsigned long colour; } cells[64];   /* table-cell styles with a background */
     int ncells;
@@ -139,6 +140,10 @@ static void read_text_props(odt *o, const owf_xml_node *n, owf_charprops *cp)
     if ((v = owf_xml_attr(n, NS_STYLE, "text-line-through-style"))) {
         cp->fmt.flags = strcmp(v, "none") ? cp->fmt.flags | OWF_STRIKE : cp->fmt.flags & ~OWF_STRIKE;
         cp->mask |= OWF_CP_STRIKE;
+    }
+    if ((v = owf_xml_attr(n, NS_TEXT, "display"))) {   /* 1.14: hidden text */
+        cp->fmt.flags = !strcmp(v, "none") ? cp->fmt.flags | OWF_HIDDEN : cp->fmt.flags & ~OWF_HIDDEN;
+        cp->mask |= OWF_CP_HIDDEN;
     }
     if ((v = owf_xml_attr(n, NS_STYLE, "text-position"))) {
         cp->fmt.flags &= ~(OWF_SUPER | OWF_SUB);
@@ -498,14 +503,74 @@ static int odf_field(const owf_xml_node *c)
         *owf_xml_attr(c, NS_TEXT, "column-name")) return OWF_FIELD_MERGE;                  /* 1.9 */
     if (owf_xml_is(c, NS_TEXT, "alphabetical-index-mark") && owf_xml_attr(c, NS_TEXT, "string-value") &&
         *owf_xml_attr(c, NS_TEXT, "string-value")) return OWF_FIELD_INDEX;                 /* 1.10 */
+    if ((owf_xml_is(c, NS_TEXT, "conditional-text") || owf_xml_is(c, NS_TEXT, "hidden-text")) &&
+        owf_xml_attr(c, NS_TEXT, "condition"))
+        return OWF_FIELD_IF;                                                               /* 1.16, 1.20 */
+    if (owf_xml_is(c, NS_TEXT, "hidden-paragraph") && owf_xml_attr(c, NS_TEXT, "condition"))
+        return OWF_FIELD_HIDE_PARA;                                                        /* 1.20 */
     if (owf_xml_is(c, NS_TEXT, "sequence") && owf_xml_attr(c, NS_TEXT, "name") &&
-        *owf_xml_attr(c, NS_TEXT, "name")) return OWF_FIELD_SEQ;                           /* 1.12.6 */
+        *owf_xml_attr(c, NS_TEXT, "name")) return OWF_FIELD_SEQ;
+    if (owf_xml_is(c, NS_TEXT, "text-input")) return OWF_FIELD_FILLIN;                     /* 1.19 */
     if ((owf_xml_is(c, NS_TEXT, "bookmark-ref") || owf_xml_is(c, NS_TEXT, "reference-ref")) &&
         owf_xml_attr(c, NS_TEXT, "ref-name")) {
         form = owf_xml_attr(c, NS_TEXT, "reference-format");
         return form && !strcmp(form, "page") ? OWF_FIELD_REF_PAGE : OWF_FIELD_REF;
     }
     return -1;
+}
+
+/* 1.16: text:conditional-text's condition ("ooow:Gender == "F"") and texts as an IF's form (owf_ifform.h): a
+ * name a user field as {DOCVARIABLE name}; 0 for a condition that isn't one comparison */
+static int odf_if_form(const owf_doc *doc, const owf_xml_node *c, char *out, size_t size)
+{
+    const char *s = owf_xml_attr(c, NS_TEXT, "condition"), *yes = owf_xml_attr(c, NS_TEXT, "string-value-if-true"),
+               *no = owf_xml_attr(c, NS_TEXT, "string-value-if-false"), *colon;
+    if (owf_xml_is(c, NS_TEXT, "hidden-text")) {     /* 1.20: its text hidden while it holds: "" or the text */
+        yes = "";
+        no = owf_xml_attr(c, NS_TEXT, "string-value");
+    } else if (owf_xml_is(c, NS_TEXT, "hidden-paragraph")) {   /* 1.20: "1" while it hides the paragraph */
+        yes = "1";
+        no = "";
+    }
+    owf_if_form f;
+    char tok[112];                                   /* (room for "DOCVARIABLE " before it in f.a) */
+    int kind, k, i;
+    memset(&f, 0, sizeof f);
+    if (!s) return 0;
+    if ((colon = strchr(s, ':')) && colon - s < 6) s = colon + 1;   /* ooow:, ooo:, of: */
+    for (k = 0; k < 2; ++k) {
+        char *v = k ? f.b : f.a;
+        int quoted;
+        while (*s == ' ') ++s;
+        quoted = *s == '"';
+        if (!owf_if_token(&s, tok, sizeof tok, &kind) || kind == 3) return 0;
+        snprintf(v, sizeof f.a, "%s", tok);
+        for (i = 0; !quoted && i < doc->nuserfields; ++i)
+            if (!strcmp(doc->userfields[i].name, tok)) { /* a user field's name */
+                snprintf(v, sizeof f.a, "DOCVARIABLE %s", tok);
+                if (k) f.b_field = 1; else f.a_field = 1;
+                break;
+            }
+        if (k) break;
+        while (*s == ' ') ++s;                       /* the operator: == != < > <= >=, or EQ NEQ LT GT LEQ GEQ */
+        if (!strncmp(s, "==", 2)) { strcpy(f.op, "="); s += 2; }
+        else if (!strncmp(s, "!=", 2)) { strcpy(f.op, "<>"); s += 2; }
+        else if (!strncmp(s, "<=", 2) || !strncmp(s, ">=", 2)) { memcpy(f.op, s, 2); s += 2; }
+        else if (*s == '<' || *s == '>') { f.op[0] = *s++; }
+        else if (!strncmp(s, "NEQ ", 4)) { strcpy(f.op, "<>"); s += 4; }
+        else if (!strncmp(s, "EQ ", 3)) { strcpy(f.op, "="); s += 3; }
+        else if (!strncmp(s, "LEQ ", 4)) { strcpy(f.op, "<="); s += 4; }
+        else if (!strncmp(s, "GEQ ", 4)) { strcpy(f.op, ">="); s += 4; }
+        else if (!strncmp(s, "LT ", 3)) { strcpy(f.op, "<"); s += 3; }
+        else if (!strncmp(s, "GT ", 3)) { strcpy(f.op, ">"); s += 3; }
+        else return 0;
+    }
+    while (*s == ' ') ++s;
+    if (*s) return 0;                                /* more than one comparison */
+    snprintf(f.yes, sizeof f.yes, "%s", yes ? yes : "");
+    snprintf(f.no, sizeof f.no, "%s", no ? no : "");
+    owf_if_format(&f, out, size);
+    return 1;
 }
 
 /* 1.7: text:user-field-decls, the document's user fields */
@@ -999,7 +1064,31 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
         owf_buf shown;
         const char *arg = NULL;
         owf_field field = (owf_field)odf_field(c);
+        char form[320];
+        const char *fixed = NULL;                    /* (1.20: what a hidden text or paragraph shows) */
+        int hide = owf_xml_is(c, NS_TEXT, "hidden-text") || field == OWF_FIELD_HIDE_PARA;
+        if (hide) {
+            const char *h = owf_xml_attr(c, NS_TEXT, "is-hidden");
+            int hidden = h && !strcmp(h, "true");
+            fixed = field == OWF_FIELD_HIDE_PARA ? (hidden ? "1" : "")
+                  : hidden ? "" : owf_xml_attr(c, NS_TEXT, "string-value") ? owf_xml_attr(c, NS_TEXT, "string-value") : "";
+        }
         if (field == OWF_FIELD_USER || field == OWF_FIELD_SEQ) arg = owf_xml_attr(c, NS_TEXT, "name");
+        else if (field == OWF_FIELD_FILLIN) arg = owf_xml_attr(c, NS_TEXT, "description");   /* 1.19: its prompt */
+        else if (field == OWF_FIELD_IF || field == OWF_FIELD_HIDE_PARA) {   /* 1.16: as Word's form, or its text alone */
+            if (!odf_if_form(o->b->doc, c, form, sizeof form)) {
+                owf_buf_init(&shown);
+                if (field == OWF_FIELD_HIDE_PARA) ;  /* (1.20: a condition we can't read: the paragraph shown) */
+                else if (fixed) owf_buf_puts(&shown, fixed);
+                else plain_text(c, &shown);
+                set_fmt(o->b, &rel);
+                if (shown.length) owf_builder_text(o->b, (const char *)shown.data, shown.length);
+                owf_buf_free(&shown);
+                o->space = 0;
+                return;
+            }
+            arg = form;
+        }
         else if (field == OWF_FIELD_REF || field == OWF_FIELD_REF_PAGE) arg = owf_xml_attr(c, NS_TEXT, "ref-name");
         else if (field == OWF_FIELD_INDEX) {         /* 1.10: the entry, under its main entry (key1) */
             const char *key = owf_xml_attr(c, NS_TEXT, "key1"), *value = owf_xml_attr(c, NS_TEXT, "string-value");
@@ -1025,7 +1114,8 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
                 o->b->failed = 1;
         }
         owf_buf_init(&shown);
-        plain_text(c, &shown);
+        if (fixed) owf_buf_puts(&shown, fixed);
+        else plain_text(c, &shown);
         owf_buf_putc(&shown, 0);
         set_fmt(o->b, &rel);
         owf_builder_field(o->b, field, arg, shown.failed ? NULL : (const char *)shown.data);
@@ -1098,7 +1188,7 @@ static void inline_node(odt *o, const owf_xml_node *c, const owf_charfmt *fmt)
         const owf_xml_node *fc = region ? owf_xml_child(region, NS_TEXT, "format-change") : NULL;
         int rev = 0;
         if (fc && owf_xml_attr(fc, OWF_ODF_NS_GFO, "para-style-before")) {
-            /* 1.13: a paragraph's format change, made the paragraph's at its end (paragraph_format_change) */
+            /* 1.22.1: a paragraph's format change, made the paragraph's at its end (paragraph_format_change) */
             if (owf_xml_is(c, NS_TEXT, "change-start") && !o->in_deletion) o->para_format = fc;
         } else if (region && !o->in_deletion)
             rev = region_change(o, region, &what);
@@ -1196,7 +1286,7 @@ static void odt_para_bookmarks(odt *o)
     owf_buf_free(&names);
 }
 
-/* 1.13: the paragraph just made gets the format change begun in it (o->para_format): who, when, and the format
+/* 1.22.1: the paragraph just made gets the format change begun in it (o->para_format): who, when, and the format
  * before from gfo:para-style-before's automatic style, its heading level from the style's parent */
 static void paragraph_format_change(odt *o)
 {
@@ -1259,12 +1349,12 @@ static void paragraph(odt *o, const owf_xml_node *p, const char *prefix, int lis
         owf_builder_text(o->b, prefix, strlen(prefix));
         owf_builder_special(o->b, OWF_RUN_TAB, OWF_FIELD_PAGE);
     }
-    outer = o->para_format;                          /* 1.13: a text box's paragraph inside keeps it */
+    outer = o->para_format;                          /* 1.22.1: a text box's paragraph inside keeps it */
     o->para_format = NULL;
     inline_children(o, p, &cf);
     owf_builder_end_para(o->b);
     odt_para_bookmarks(o);                           /* 1.4 */
-    paragraph_format_change(o);                      /* 1.13 */
+    paragraph_format_change(o);                      /* 1.22.1 */
     o->para_format = outer;
 }
 

@@ -112,4 +112,10 @@ int owf_slide_obj_by_id(const owf_slide *slide, long id) (a0,d0)
 long owf_deck_new_obj_id(const owf_deck *deck) (a0)
 owf_anim *owf_slide_add_anim(owf_slide *slide, int at, long obj) (a0,d0,d1)
 int owf_slide_delete_anim(owf_slide *slide, int index) (a0,d0)
+* 3.14: the page PDF writer's gradient fill, for OWConvert's deck PDF
+int owf_pdf_gradient(owf_pdf *pdf, const int *xy, int npoints, int x, int y, int w, int h, int kind, int angle, unsigned long from, unsigned long to) (a0,a1,d0,d1,d2,d3,d4,d5,d6,d7,a2)
+* 3.18: see-through drawing in the page PDF writer, for the deck PDF's see-through fills and shadows
+void owf_pdf_alpha(owf_pdf *pdf, int opaque) (a0,d0)
+* 3.19: a picture's own size, for picture fills tiled at it
+int owf_deck_image_size(const owf_image *image, int *width, int *height) (a0,a1,a2)
 ==end

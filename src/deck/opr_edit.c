@@ -600,7 +600,7 @@ static int field_run_at(const owf_para *p, size_t at, int last)
     size_t cum = 0;
     int j, found = -1;
     for (j = 0; j < p->nruns; j++) {
-        if (cum == at && p->runs[j].kind == OWF_RUN_FIELD) {
+        if (cum == at && p->runs[j].kind == OWF_RUN_FIELD && p->runs[j].field != OWF_FIELD_INDEX) {   /* an index mark shows nothing */
             found = j;
             if (!last)
                 break;
@@ -913,6 +913,7 @@ typedef enum {
     SNAP_ANIMS,
     SNAP_MASTERS,
     SNAP_SLIDE_MASTER,
+    SNAP_BACKGROUND,
     SNAP_GROUP
 } snapshot_kind;
 
@@ -926,6 +927,11 @@ typedef struct snapshot {
     /* SNAP_TEXT also owns table grid geometry when its object is a table. */
     int table_ncols;
     int *table_col_widths;
+    /* and its rows' heights and merged cells */
+    int table_nrows, table_nmerges;
+    unsigned table_design;
+    int *table_row_heights;
+    owf_table_merge *table_merges;
     /* SNAP_SLIDE owns saved when saved_present is set. The saved slide and
      * the deck's slot change places on undo/redo, so no deep copy is needed. */
     owf_slide saved;
@@ -947,7 +953,8 @@ typedef struct snapshot {
     unsigned box_flags;
     /* SNAP_OBJ_ROTATION: the shape's rotation in tenths of a degree. */
     int rotation;
-    /* SNAP_OBJ_LOOK: complete fill/stroke appearance. */
+    /* SNAP_OBJ_LOOK: complete fill/stroke appearance. SNAP_BACKGROUND: the
+     * slide's background fields (OWF_BACKGROUND_LOOK) belonging to the saved state. */
     owf_look look;
     /* SNAP_OBJ_COLUMNS: complete text-frame columns, gap and insets. */
     int text_columns, text_column_gap;
@@ -1068,6 +1075,8 @@ static void snap_free(snapshot *s)
         story_free(&s->text);
         owf_free(s->levels);
         owf_free(s->table_col_widths);
+        owf_free(s->table_row_heights);
+        owf_free(s->table_merges);
     } else if (s->kind == SNAP_SLIDE && s->saved_present) {
         slide_free(&s->saved);
     } else if (s->kind == SNAP_NAME) {
@@ -1136,6 +1145,25 @@ static int snap_take(snapshot *s, const owf_deck *deck, int slide, int obj)
         }
         memcpy(s->table_col_widths, o->col_widths,
                (size_t)o->ncols * sizeof *s->table_col_widths);
+    }
+    if (o->row_heights && o->nrows > 0) {
+        s->table_row_heights = owf_malloc((size_t)o->nrows * sizeof *s->table_row_heights);
+        if (!s->table_row_heights) {
+            snap_free(s);
+            return -1;
+        }
+        memcpy(s->table_row_heights, o->row_heights, (size_t)o->nrows * sizeof *s->table_row_heights);
+    }
+    s->table_nrows = o->nrows;
+    s->table_design = o->table_design;
+    if (o->merges && o->nmerges > 0) {
+        s->table_merges = owf_malloc((size_t)o->nmerges * sizeof *s->table_merges);
+        if (!s->table_merges) {
+            snap_free(s);
+            return -1;
+        }
+        memcpy(s->table_merges, o->merges, (size_t)o->nmerges * sizeof *s->table_merges);
+        s->table_nmerges = o->nmerges;
     }
     return 0;
 }
@@ -1275,6 +1303,23 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
         widths = o->col_widths;
         o->col_widths = s->table_col_widths;
         s->table_col_widths = widths;
+        ncols = o->nrows;
+        o->nrows = s->table_nrows;
+        s->table_nrows = ncols;
+        widths = o->row_heights;
+        o->row_heights = s->table_row_heights;
+        s->table_row_heights = widths;
+        ncols = o->nmerges;
+        o->nmerges = s->table_nmerges;
+        s->table_nmerges = ncols;
+        flags = o->table_design;
+        o->table_design = s->table_design;
+        s->table_design = flags;
+        {
+            owf_table_merge *m = o->merges;
+            o->merges = s->table_merges;
+            s->table_merges = m;
+        }
         flags = o->flags;
         o->flags = (o->flags & ~(unsigned)OWF_OBJ_EMPTY) | (s->flags & OWF_OBJ_EMPTY);
         s->flags = flags;
@@ -1426,6 +1471,15 @@ static int snap_swap(snapshot *s, owf_deck *deck, int *focus)
             return -1;
         look = o->look;
         o->look = s->look;
+        s->look = look;
+    } else if (s->kind == SNAP_BACKGROUND) {
+        owf_slide *sl;
+        owf_look look;
+        if (!deck || s->slide < 0 || s->slide >= deck->nslides)
+            return -1;
+        sl = &deck->slides[s->slide];
+        OWF_BACKGROUND_LOOK(sl, &look);
+        OWF_BACKGROUND_SET(sl, &s->look);
         s->look = look;
     } else if (s->kind == SNAP_OBJ_COLUMNS) {
         owf_obj *o = object(deck, s->slide, s->obj);
@@ -2416,12 +2470,148 @@ static int valid_shade(unsigned long shade)
     return !shade || (OWF_SHADE_SET(shade) && !(shade & ~0x1ffffffUL));
 }
 
+/* The fill fields an object and a background share: colour, gradient's second colour, transparency,
+   hatching. */
+static int valid_area(const owf_look *look)
+{
+    return valid_shade(look->fill) && valid_shade(look->fill2) && look->transparency <= 100 &&
+           look->hatch <= OWF_HATCH_TRIPLE && valid_shade(look->hatch_colour) &&
+           look->hatch_distance >= 0 && look->hatch_distance <= 20000 &&
+           look->hatch_angle > -36000 && look->hatch_angle < 36000;
+}
+
 static int valid_look(const owf_look *look)
 {
-    return look && valid_shade(look->fill) && valid_shade(look->line) &&
+    return look && valid_area(look) && valid_shade(look->line) &&
            look->line_width >= 0 && look->line_width <= 10000 &&
            look->line_style <= OWF_LINE_SLANTED_DASH_DOT &&
-           !(look->arrows & ~(OWF_ARROW_START | OWF_ARROW_END));
+           !(look->arrows & ~(OWF_ARROW_START | OWF_ARROW_END)) &&
+           look->shadow <= 1 && look->shadow_transparency <= 100 && valid_shade(look->shadow_colour) &&
+           look->shadow_dx >= -20000 && look->shadow_dx <= 20000 &&
+           look->shadow_dy >= -20000 && look->shadow_dy <= 20000 && look->picture <= OWF_PICTURE_TILE &&
+           look->tile_width >= 0 && look->tile_height >= 0;
+}
+
+static int tenths_of_turn(int angle)
+{
+    angle %= 3600;
+    return angle < 0 ? angle + 3600 : angle;
+}
+
+void opr_area_get(const owf_look *look, opr_area *area)
+{
+    if (!area)
+        return;
+    memset(area, 0, sizeof *area);
+    area->hatch_spacing = OWF_HATCH_DISTANCE;
+    area->shadow_colour = OWF_SHADE_RGB(OWF_SHADOW_COLOUR);
+    area->shadow_dx = area->shadow_dy = OPR_AREA_SHADOW_OFFSET;
+    if (!look)
+        return;
+    area->transparency = look->transparency;
+    if (look->hatch != OWF_HATCH_NONE) {
+        area->hatch = look->hatch;
+        area->hatch_colour = OWF_SHADE_RGB(look->hatch_colour);
+        area->hatch_degrees = tenths_of_turn(look->hatch_angle) / 10;
+        if (look->hatch_distance > 0)
+            area->hatch_spacing = look->hatch_distance;
+    }
+    if (look->shadow) {
+        area->shadow = 1;
+        if (OWF_SHADE_SET(look->shadow_colour))
+            area->shadow_colour = OWF_SHADE_RGB(look->shadow_colour);
+        area->shadow_dx = look->shadow_dx;
+        area->shadow_dy = look->shadow_dy;
+        area->shadow_transparency = look->shadow_transparency;
+    }
+}
+
+/* old if it already shows rgb (unset showing fallback), else rgb as a set shade */
+static unsigned long kept_shade(unsigned long old, unsigned long rgb, unsigned long fallback)
+{
+    unsigned long shown = OWF_SHADE_SET(old) ? OWF_SHADE_RGB(old) : fallback;
+    return shown == rgb ? old : OWF_SHADE(rgb);
+}
+
+int opr_area_put(owf_look *look, const opr_area *area)
+{
+    if (!look || !area)
+        return -1;
+    if (area->transparency < 0 || area->transparency > 100 || area->hatch < 0 ||
+        area->hatch > OPR_HATCH_TRIPLE || (area->hatch_colour & ~0xffffffUL) ||
+        area->hatch_degrees < 0 || area->hatch_degrees > 359 ||
+        area->hatch_spacing < 10 || area->hatch_spacing > 10000 || area->shadow < 0 || area->shadow > 1 ||
+        (area->shadow_colour & ~0xffffffUL) || area->shadow_dx < -10000 || area->shadow_dx > 10000 ||
+        area->shadow_dy < -10000 || area->shadow_dy > 10000 || area->shadow_transparency < 0 ||
+        area->shadow_transparency > 100)
+        return -2;
+    look->transparency = (unsigned char)area->transparency;
+    if (area->hatch) {
+        int had = look->hatch != OWF_HATCH_NONE;
+        if (!had || tenths_of_turn(look->hatch_angle) / 10 != area->hatch_degrees)
+            look->hatch_angle = area->hatch_degrees * 10;
+        if (!had || (look->hatch_distance > 0 ? look->hatch_distance : OWF_HATCH_DISTANCE) != area->hatch_spacing)
+            look->hatch_distance = area->hatch_spacing;
+        look->hatch_colour = had ? kept_shade(look->hatch_colour, area->hatch_colour, 0) : OWF_SHADE(area->hatch_colour);
+        look->hatch = (unsigned char)area->hatch;
+    } else {
+        look->hatch = OWF_HATCH_NONE;
+        look->hatch_angle = look->hatch_distance = 0;
+        look->hatch_colour = 0;
+    }
+    if (area->shadow) {
+        look->shadow_colour = look->shadow ? kept_shade(look->shadow_colour, area->shadow_colour,
+                                                         OWF_SHADE_RGB(OWF_SHADOW_COLOUR))
+                                           : OWF_SHADE(area->shadow_colour);
+        look->shadow = 1;
+        look->shadow_dx = area->shadow_dx;
+        look->shadow_dy = area->shadow_dy;
+        look->shadow_transparency = (unsigned char)area->shadow_transparency;
+    } else {
+        look->shadow = look->shadow_transparency = 0;
+        look->shadow_dx = look->shadow_dy = 0;
+        look->shadow_colour = 0;
+    }
+    return 0;
+}
+
+int opr_slide_set_background(opr_undo *u, owf_deck *deck, int slide, const owf_look *background)
+{
+    snapshot s;
+    owf_slide *sl;
+    owf_look now, wanted;
+    if (!u || !deck || !background || slide < 0 || slide >= deck->nslides)
+        return -1;
+    if (!valid_area(background))
+        return -2;
+    sl = &deck->slides[slide];
+    OWF_BACKGROUND_LOOK(sl, &now);
+    memset(&wanted, 0, sizeof wanted);
+    wanted.fill = background->fill;
+    wanted.gradient = background->gradient;
+    wanted.gradient_angle = background->gradient_angle;
+    wanted.fill2 = background->fill2;
+    wanted.transparency = background->transparency;
+    wanted.hatch = background->hatch;
+    wanted.hatch_angle = background->hatch_angle;
+    wanted.hatch_distance = background->hatch_distance;
+    wanted.hatch_colour = background->hatch_colour;
+    /* the picture and how it is laid (#19) are not the window's: kept as they are, so a tiled picture
+     * stays tiled at its size, and an unchanged Apply is still no edit */
+    wanted.picture = now.picture;
+    wanted.tile_width = now.tile_width;
+    wanted.tile_height = now.tile_height;
+    if (!memcmp(&now, &wanted, sizeof now))
+        return 0;
+    memset(&s, 0, sizeof s);
+    s.kind = SNAP_BACKGROUND;
+    s.slide = slide;
+    s.obj = -1;
+    s.focus = s.other_focus = slide;
+    s.look = now;
+    OWF_BACKGROUND_SET(sl, &wanted);
+    structural_push(u, &s);
+    return 0;
 }
 
 int opr_obj_insert_shape(opr_undo *u, owf_deck *deck, int slide,
@@ -2657,6 +2847,56 @@ static int table_insert_empty_cell(owf_deck *deck, int slide, owf_obj *o,
     return 0;
 }
 
+/* A table's merged cells after a row (rows 1) or column (rows 0) comes in
+ * before at (n 1) or goes at at (n -1): a merge after it moves, one across
+ * it grows or shrinks, and one left a single cell goes. */
+static void table_merges_shift(owf_obj *o, int rows, int at, int n)
+{
+    int i, out = 0;
+    for (i = 0; i < o->nmerges; ++i) {
+        owf_table_merge m = o->merges[i];
+        int *first = rows ? &m.row : &m.col, *count = rows ? &m.rows : &m.cols;
+        if (*first > at || (n > 0 && *first == at))
+            *first += n;
+        else if (at < *first + *count)
+            *count += n;
+        if (m.rows >= 1 && m.cols >= 1 && m.rows * m.cols > 1)
+            o->merges[out++] = m;
+    }
+    o->nmerges = out;
+    if (!out) {
+        owf_free(o->merges);
+        o->merges = NULL;
+    }
+}
+
+/* A table's row heights after a row comes in before at (as tall as the row
+ * it goes before, or the last) or goes at at. -1 when memory runs out. */
+static int table_heights_shift(owf_obj *o, int at, int n)
+{
+    if (!o->row_heights || o->nrows <= 0)
+        return 0;
+    if (n > 0) {
+        int *h;
+        if (at > o->nrows)
+            return 0;
+        h = owf_realloc(o->row_heights, (size_t)(o->nrows + 1) * sizeof *h);
+        if (!h)
+            return -1;
+        o->row_heights = h;
+        memmove(&h[at + 1], &h[at], (size_t)(o->nrows - at) * sizeof *h);
+        h[at] = at < o->nrows ? h[at + 1] : h[at - 1];
+        ++o->nrows;
+    } else {
+        if (at >= o->nrows)
+            return 0;
+        memmove(&o->row_heights[at], &o->row_heights[at + 1],
+                (size_t)(o->nrows - at - 1) * sizeof *o->row_heights);
+        --o->nrows;
+    }
+    return 0;
+}
+
 int opr_table_insert_row(opr_undo *u, owf_deck *deck, int slide, int obj,
                          int row)
 {
@@ -2689,6 +2929,12 @@ int opr_table_insert_row(opr_undo *u, owf_deck *deck, int slide, int obj,
             snap_free(&before);
             return -1;
         }
+    if (table_heights_shift(o, row, 1) < 0) {
+        snap_swap(&before, deck, NULL);
+        snap_free(&before);
+        return -1;
+    }
+    table_merges_shift(o, 1, row, 1);
     structural_push(u, &before);
     return 0;
 }
@@ -2717,6 +2963,8 @@ int opr_table_delete_row(opr_undo *u, owf_deck *deck, int slide, int obj,
     for (i = 0; i < o->text.nparas; ++i)
         if (o->text.paras[i].table_row > row)
             --o->text.paras[i].table_row;
+    table_heights_shift(o, row, -1);
+    table_merges_shift(o, 1, row, -1);
     structural_push(u, &before);
     return 0;
 }
@@ -2799,6 +3047,7 @@ int opr_table_insert_column(opr_undo *u, owf_deck *deck, int slide, int obj,
             return -1;
         }
     }
+    table_merges_shift(o, 0, column, 1);
     structural_push(u, &before);
     return 0;
 }
@@ -2840,6 +3089,143 @@ int opr_table_delete_column(opr_undo *u, owf_deck *deck, int slide, int obj,
             --o->text.paras[i].table_col;
         o->text.paras[i].table_cols = o->ncols;
     }
+    table_merges_shift(o, 0, column, -1);
+    structural_push(u, &before);
+    return 0;
+}
+
+/* The merge with row, col in it, or -1. */
+static int table_merge_index(const owf_obj *o, int row, int col)
+{
+    int i;
+    for (i = 0; i < o->nmerges; ++i) {
+        const owf_table_merge *m = &o->merges[i];
+        if (row >= m->row && row < m->row + m->rows && col >= m->col && col < m->col + m->cols)
+            return i;
+    }
+    return -1;
+}
+
+/* Adds a merge to a table's list. -1 when memory runs out. */
+static int table_merge_add(owf_obj *o, int row, int col, int rows, int cols)
+{
+    owf_table_merge *m = owf_realloc(o->merges, (size_t)(o->nmerges + 1) * sizeof *m);
+    if (!m)
+        return -1;
+    o->merges = m;
+    m[o->nmerges].row = row;
+    m[o->nmerges].col = col;
+    m[o->nmerges].rows = rows;
+    m[o->nmerges].cols = cols;
+    ++o->nmerges;
+    return 0;
+}
+
+/* Sets a row's least height (0: as its text needs), the list growing to
+ * hold it, new rows 0. -1 when memory runs out. */
+static int table_row_height(owf_obj *o, int row, int twips)
+{
+    if (row >= o->nrows) {
+        int *h = owf_realloc(o->row_heights, (size_t)(row + 1) * sizeof *h);
+        if (!h)
+            return -1;
+        memset(&h[o->nrows], 0, (size_t)(row + 1 - o->nrows) * sizeof *h);
+        o->row_heights = h;
+        o->nrows = row + 1;
+    }
+    o->row_heights[row] = twips;
+    return 0;
+}
+
+int opr_table_merge(opr_undo *u, owf_deck *deck, int slide, int obj,
+                    int row, int column, int rows, int columns)
+{
+    snapshot before;
+    owf_obj *o = object(deck, slide, obj);
+    int nrows, ncols, r, c, made;
+    if (!u || !deck || !o)
+        return -1;
+    if (table_dimensions(o, &nrows, &ncols) < 0 || row < 0 || column < 0 || rows < 1 || columns < 1 ||
+        rows * columns < 2 || row + rows > nrows || column + columns > ncols)
+        return -2;
+    for (r = row; r < row + rows; ++r)
+        for (c = column; c < column + columns; ++c)
+            if (table_merge_index(o, r, c) >= 0)
+                return -2;
+    if (snap_take(&before, deck, slide, obj) < 0)
+        return -1;
+    made = table_merge_add(o, row, column, rows, columns);
+    if (made < 0) {
+        snap_free(&before);
+        return -1;
+    }
+    structural_push(u, &before);
+    return 0;
+}
+
+int opr_table_split(opr_undo *u, owf_deck *deck, int slide, int obj,
+                    int row, int column)
+{
+    snapshot before;
+    owf_obj *o = object(deck, slide, obj);
+    int k;
+    if (!u || !deck || !o)
+        return -1;
+    if (o->kind != OWF_OBJ_TABLE || (k = table_merge_index(o, row, column)) < 0)
+        return -2;
+    if (snap_take(&before, deck, slide, obj) < 0)
+        return -1;
+    memmove(&o->merges[k], &o->merges[k + 1], (size_t)(o->nmerges - k - 1) * sizeof *o->merges);
+    if (!--o->nmerges) {
+        owf_free(o->merges);
+        o->merges = NULL;
+    }
+    structural_push(u, &before);
+    return 0;
+}
+
+int opr_table_set_row_height(opr_undo *u, owf_deck *deck, int slide, int obj,
+                             int row, int twips)
+{
+    snapshot before;
+    owf_obj *o = object(deck, slide, obj);
+    int nrows, set;
+    if (!u || !deck || !o)
+        return -1;
+    if (table_dimensions(o, &nrows, NULL) < 0 || row < 0 || row >= nrows || twips < 0 || twips > 31680)
+        return -2;   /* 31680 twips: 22 inches, past any slide */
+    if ((o->row_heights && row < o->nrows ? o->row_heights[row] : 0) == twips)
+        return 0;
+    if (snap_take(&before, deck, slide, obj) < 0)
+        return -1;
+    set = table_row_height(o, row, twips);
+    if (set >= 0 && o->nrows < nrows)
+        set = table_row_height(o, nrows - 1, 0);
+    if (set < 0) {
+        snap_swap(&before, deck, NULL);
+        snap_free(&before);
+        return -1;
+    }
+    structural_push(u, &before);
+    return 0;
+}
+
+int opr_table_set_design(opr_undo *u, owf_deck *deck, int slide, int obj,
+                         unsigned design)
+{
+    snapshot before;
+    owf_obj *o = object(deck, slide, obj);
+    const unsigned all = OWF_TABLE_FIRST_ROW | OWF_TABLE_LAST_ROW | OWF_TABLE_FIRST_COL |
+                         OWF_TABLE_LAST_COL | OWF_TABLE_BANDED_ROWS | OWF_TABLE_BANDED_COLS;
+    if (!u || !deck || !o)
+        return -1;
+    if (o->kind != OWF_OBJ_TABLE || (design & ~all))
+        return -2;
+    if (o->table_design == design)
+        return 0;
+    if (snap_take(&before, deck, slide, obj) < 0)
+        return -1;
+    o->table_design = design;
     structural_push(u, &before);
     return 0;
 }
@@ -3025,7 +3411,7 @@ static int paste_object_resources(owf_obj *o, owf_doc *to, const owf_doc *from)
     int p, r, i, mapped;
     if (!o || !to || !from)
         return -2;
-    if (o->kind == OWF_OBJ_PICTURE && o->image >= 0) {
+    if (o->image >= 0) {         /* a picture, a replacement picture, or a picture fill */
         mapped = paste_image(to, from, o->image);
         if (mapped < 0) return mapped;
         o->image = mapped;

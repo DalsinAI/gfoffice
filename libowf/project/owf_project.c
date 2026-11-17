@@ -75,6 +75,7 @@ int owf_project_add_task(owf_project *p, const char *name, long duration)
     if (name && !(t->name = dup_text(name))) return -1;
     t->uid = p->next_uid++;
     t->level = 1;
+    t->priority = OWF_PRIORITY_DEFAULT;
     t->duration = duration < 0 ? 0 : duration;
     t->milestone = duration == 0;
     t->constraint = OWF_CON_ASAP;
@@ -152,11 +153,27 @@ typedef struct {
     owf_ptime *alap_start;
 } sched;
 
-static const owf_pcal *cal_of(const owf_project *p, const owf_ptask *t)
+const owf_pcal *owf_ptask_calendar(const owf_project *p, int task)
 {
+    const owf_ptask *t;
+    int i;
+    if (!p || task < 0 || task >= p->ntasks || !p->ncalendars) return NULL;
+    t = &p->tasks[task];
     if (t->elapsed) return NULL;
     if (t->calendar >= 0 && t->calendar < p->ncalendars) return &p->calendars[t->calendar];
+    for (i = 0; i < p->nassigns; i++) {          /* the first work resource with a calendar of its own */
+        const owf_passign *a = &p->assigns[i];
+        const owf_presource *r;
+        if (a->task != task || a->resource < 0 || a->resource >= p->nresources) continue;
+        r = &p->resources[a->resource];
+        if (r->type == OWF_RES_WORK && r->calendar >= 0 && r->calendar < p->ncalendars) return &p->calendars[r->calendar];
+    }
     return &p->calendars[p->calendar];
+}
+
+static const owf_pcal *cal_of(const owf_project *p, const owf_ptask *t)
+{
+    return owf_ptask_calendar(p, (int)(t - p->tasks));
 }
 
 static const owf_pcal *project_cal(const owf_project *p)
@@ -367,10 +384,13 @@ static void forward(sched *s)
         case OWF_CON_FNLT: { owf_ptime b = add(c, t->constraint_date, -dur); if (b < es) es = b; } break;
         default: break;
         }
+        if (t->level_delay > 0 && t->constraint != OWF_CON_MSO && t->constraint != OWF_CON_MFO && !s->alap_fixed[x])
+            es = t->level_delay_elapsed || !c ? es + t->level_delay : add(c, owf_pcal_next_start(c, es), t->level_delay);
         if (s->alap_fixed[x]) es = s->alap_start[x];
         if (dur > 0 && c) es = owf_pcal_next_start(c, es);
+        if (t->has_actual_start) es = t->actual_start;   /* what happened wins over links and constraints */
         t->early_start = es;
-        t->early_finish = dur > 0 ? add(c, es, dur) : es;
+        t->early_finish = t->has_actual_start && t->has_actual_finish ? t->actual_finish : dur > 0 ? add(c, es, dur) : es;
         if (t->early_finish > p->finish) p->finish = t->early_finish;
     }
 }
@@ -508,6 +528,66 @@ done:
     owf_free(s.alap_fixed);
     owf_free(s.alap_start);
     return ok == 1 ? OWF_OK : ok == 0 ? OWF_ERR_FORMAT : OWF_ERR_MEMORY;
+}
+
+/* ---- Tracking ---- */
+
+int owf_project_set_actual(owf_project *p, int task, int has_start, owf_ptime start, int has_finish, owf_ptime finish)
+{
+    owf_ptask *t;
+    if (!p || task < 0 || task >= p->ntasks) return OWF_ERR_FORMAT;
+    outline(p);
+    t = &p->tasks[task];
+    if (t->summary || (has_finish && (!has_start || finish < start))) return OWF_ERR_FORMAT;
+    t->has_actual_start = !!has_start;
+    t->actual_start = has_start ? start : 0;
+    t->has_actual_finish = !!has_finish;
+    t->actual_finish = has_finish ? finish : 0;
+    if (has_finish) {
+        t->percent = 100;
+        if (!t->milestone || finish > start) t->duration = work(cal_of(p, t), start, finish);
+    }
+    return OWF_OK;
+}
+
+int owf_project_update(owf_project *p, owf_ptime status, int whole)
+{
+    int i, changed = 0;
+    if (!p) return 0;
+    p->has_status_date = 1;
+    p->status_date = status;
+    for (i = 0; i < p->ntasks; i++) {
+        owf_ptask *t = &p->tasks[i];
+        int before = t->percent, had_start = t->has_actual_start, had_finish = t->has_actual_finish;
+        if (t->summary || t->has_actual_finish) continue;
+        if (t->early_start > status || (t->early_start == status && t->duration > 0)) continue;
+        if (!t->has_actual_start) {
+            t->has_actual_start = 1;
+            t->actual_start = t->early_start;
+        }
+        if (t->early_finish <= status) {
+            t->percent = 100;
+            t->has_actual_finish = 1;
+            t->actual_finish = t->early_finish;
+        } else if (!whole && t->duration > 0) {
+            long done = work(cal_of(p, t), t->early_start, status);
+            int pc = done <= 0 ? 0 : (int)(done * 100 / t->duration);
+            if (pc > 99) pc = 99;                        /* not finished until its finish */
+            if (pc > t->percent) t->percent = pc;
+        }
+        if (t->percent != before || t->has_actual_start != had_start || t->has_actual_finish != had_finish) changed++;
+    }
+    return changed;
+}
+
+long owf_ptask_actual_duration(const owf_ptask *t)
+{
+    return t ? t->duration * t->percent / 100 : 0;
+}
+
+long owf_ptask_remaining_duration(const owf_ptask *t)
+{
+    return t ? t->duration - owf_ptask_actual_duration(t) : 0;
 }
 
 /* ---- Copies (for Undo) ---- */

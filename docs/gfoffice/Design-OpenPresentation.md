@@ -429,7 +429,7 @@ inspector described below remain planned.
 GFOpenPresentation 0.3.5 moves rectangles, rounded rectangles, ellipses,
 triangles, diamonds, block arrows, lines and polygons into OpenLayout 13's
 normalized shape operations. The Amiga screen and PDF renderer now consume the
-same geometry, fill, stroke, dash and arrow metadata; GFOpenPublisher inherits
+same geometry, fill, stroke, dash and arrow metadata; GFOpenPressmaster inherits
 that path without a Publisher-specific drawing implementation.
 
 GFOpenPresentation 0.3.8 adds the first authored drawing-object lifecycle:
@@ -443,42 +443,42 @@ GFOpenPresentation 0.3.9 adds Object > Duplicate to that lifecycle. The
 portable libowf 1.4.2 model deep-copies every allocation owned by an object,
 clears file-local IDs, and the presentation core resolves inherited geometry,
 offsets and clamps the independent copy, selects it, and records the insertion
-as one undoable presence change. GFOpenPublisher 0.1.4 consumes the same path.
+as one undoable presence change. GFOpenPressmaster 0.1.4 consumes the same path.
 
-GFOpenPresentation 0.4.0 and GFOpenPublisher 0.1.5 add the four drawing-order
+GFOpenPresentation 0.4.0 and GFOpenPressmaster 0.1.5 add the four drawing-order
 commands: Bring to Front, Bring Forward, Send Backward and Send to Back. The
 portable core moves one top-level object as a single undo step, repairs group
 parent indexes, and crosses a group only as a complete block. Group and child
 selection remain deliberately refused until whole-group editing is delivered.
 
-GFOpenPresentation 0.4.1 and GFOpenPublisher 0.1.6 add Align Left, Centre,
+GFOpenPresentation 0.4.1 and GFOpenPressmaster 0.1.6 add Align Left, Centre,
 Right, Top, Middle and Bottom against the slide/page. The reusable core
 resolves an inherited box, changes only the required axis through the existing
 one-step geometry history, and makes the result explicit for ODP persistence.
 No-op alignment consumes no undo entry. Multi-object alignment remains later.
 
-GFOpenPresentation 0.5.0 and GFOpenPublisher 0.1.7 add Object > Appearance for
+GFOpenPresentation 0.5.0 and GFOpenPressmaster 0.1.7 add Object > Appearance for
 a selected top-level text box or shape. The shared requester edits solid fill,
 stroke colour and width, solid/dashed/dotted/dash-dot line style and start/end
 arrowheads. The portable core validates and swaps the complete `owf_look` as
 one undo/redo step; ODP round-trip tests cover every edited field. Group-wide
 appearance and richer fills remain later work.
 
-GFOpenPresentation 0.5.1 and GFOpenPublisher 0.1.8 expose the existing reusable
+GFOpenPresentation 0.5.1 and GFOpenPressmaster 0.1.8 expose the existing reusable
 box-edit operation as Object > Position and Size. A selected top-level object's
 resolved left, top, width and height are entered exactly in slide/page twips,
 validated against the page bounds, and committed as one undo step. An inherited
 placeholder becomes an explicit box. Multi-selection and aspect locking remain
 later work.
 
-GFOpenPresentation 0.6.0 and GFOpenPublisher 0.2.0 add Insert > Text Box. The
+GFOpenPresentation 0.6.0 and GFOpenPressmaster 0.2.0 add Insert > Text Box. The
 portable core creates an owned `OWF_OBJ_TEXT` with validated page geometry,
 insets, vertical alignment, fill/stroke look and an independent UTF-8 story as
 one object-presence undo step. The native shared window selects it and enters
 typing immediately. ODP round-trip coverage verifies the authored frame rather
 than only imported text.
 
-GFOpenPresentation 0.6.1 and GFOpenPublisher 0.2.1 add Insert > Picture. The
+GFOpenPresentation 0.6.1 and GFOpenPressmaster 0.2.1 add Insert > Picture. The
 shared native requester reads up to 32 MB, asks datatypes for the natural
 dimensions, preserves the aspect ratio while fitting the picture to the
 slide/page and calls `opr_obj_insert_picture`. That portable operation owns
@@ -487,42 +487,42 @@ and commits object plus resource transactionally as one undoable presence
 change. The authored picture uses the existing OpenLayout crop/display data,
 datatype screen cache, PDF renderer and ODP round trip.
 
-GFOpenPresentation 0.6.2 and GFOpenPublisher 0.2.4 add shared paragraph-range
+GFOpenPresentation 0.6.2 and GFOpenPressmaster 0.2.4 add shared paragraph-range
 rich-text commands in portable core 0.9.0. Bold, italic and underline toggle
 as one text-snapshot Undo step; font size and left, centre, right or justified
 alignment are set explicitly. The native Format menu applies them to the
 current caret paragraph. Existing OpenLayout run/paragraph styling renders the
 result and ODP round-trip tests verify its effective appearance.
 
-GFOpenPresentation 0.6.3 and GFOpenPublisher 0.2.5 add equal text-frame columns
+GFOpenPresentation 0.6.3 and GFOpenPressmaster 0.2.5 add equal text-frame columns
 through shared core 0.10.0 and GFOpenLayout 0.15. The one/two/three-column
 Format commands, Undo/Redo snapshot, resolved object geometry, ODP
 `style:columns` persistence and PPTX DrawingML import are common. The deck
 adapter passes column count and gap to the layout box; the applications do not
 split lines or position column glyphs themselves.
 
-GFOpenPresentation 0.6.4 and GFOpenPublisher 0.2.7 share object wrap metadata,
+GFOpenPresentation 0.6.4 and GFOpenPressmaster 0.2.7 share object wrap metadata,
 Undo/Redo, ODP interchange and deck-to-layout translation through portable
 core 0.12.0. Publisher exposes the authoring menu; both applications render
 imported square and top-and-bottom exclusions through GFOpenLayout 0.16. The
 deck adapter supplies only overlapping geometry and does not implement a
 second line fitter.
 
-GFOpenPresentation 0.6.5 and GFOpenPublisher 0.2.9 add shared Text Frame
+GFOpenPresentation 0.6.5 and GFOpenPressmaster 0.2.9 add shared Text Frame
 settings through portable core 0.13.0: column count, exact column gap and four
 internal margins change atomically. Existing ODP padding/column persistence and
 GFOpenLayout frame geometry remain the single interchange and layout paths.
 
-GFOpenPresentation 0.6.6 and GFOpenPublisher 0.3.0 add exact RGB text colour
+GFOpenPresentation 0.6.6 and GFOpenPressmaster 0.3.0 add exact RGB text colour
 through portable core 0.14.0, the existing character-run renderer and ODP
 interchange. It is undoable and reaches screen and PDF from the same model.
 
-GFOpenPresentation 0.6.7 and GFOpenPublisher 0.3.1 add named Font Family
+GFOpenPresentation 0.6.7 and GFOpenPressmaster 0.3.1 add named Font Family
 authoring through portable core 0.15.0 and the deck's existing shared font
 table. The existing screen/PDF font resolver and ODP font-face interchange
 remain authoritative.
 
-GFOpenPresentation 0.6.8 and GFOpenPublisher 0.3.2 add character-range
+GFOpenPresentation 0.6.8 and GFOpenPressmaster 0.3.2 add character-range
 selection through portable core 0.16.0. Drag selection, Shift+Arrow and Select
 All share one anchor/focus model; replacement typing and cross-paragraph
 deletion use the existing text snapshot Undo. Exact run slices receive bold,
@@ -541,31 +541,31 @@ slice, but imported ODP objects marked `style:wrap-contour` now retain Tight
 distinctly and use the same reusable ellipse/polygon/rotation geometry as
 Publisher instead of a rectangular approximation.
 
-GFOpenPresentation 0.6.11 and GFOpenPublisher 0.3.5 carry shared core 0.19.0
+GFOpenPresentation 0.6.11 and GFOpenPressmaster 0.3.5 carry shared core 0.19.0
 and expose Object > Picture Crop. The command validates and changes all four
 crop edges as one Undo/Redo snapshot, then relies on the existing OpenLayout
 picture crop operation and ODP interchange. Presentation and Publisher
 therefore share the authoring command as well as the model and renderer.
 
-GFOpenPresentation 0.6.12 and GFOpenPublisher 0.3.6 carry shared core 0.20.0
+GFOpenPresentation 0.6.12 and GFOpenPressmaster 0.3.6 carry shared core 0.20.0
 and add exact text Cut, Copy and Paste. Cross-paragraph selection extraction
 is portable deck-core code; the Amiga applications share the FTXT device
 adapter with GFOpenWrite. Paste reuses the current range-replacement path and
 OpenLayout caret map rather than introducing another text model.
 
-GFOpenPresentation 0.6.13 and GFOpenPublisher 0.3.7 carry shared core 0.21.0
+GFOpenPresentation 0.6.13 and GFOpenPressmaster 0.3.7 carry shared core 0.21.0
 and add Find/Find Next across editable text objects and slides/pages. Search
 wraps once and returns the existing exact selection type, which the current
 OpenLayout-derived highlight reveals without new geometry.
 
-GFOpenPresentation 0.6.14 and GFOpenPublisher 0.3.8 carry shared core 0.22.0
+GFOpenPresentation 0.6.14 and GFOpenPressmaster 0.3.8 carry shared core 0.22.0
 and reuse OpenGadTools' existing horizontal ruler. While typing, its scale is
 the resolved text frame's inner width; dragging its left, first-line/hanging
 or right marker applies one paragraph-range Undo step and reflows through the
 existing OpenLayout path. The command and ODP persistence live in the deck
 core/model; the ruler is UI chrome, so neither belongs in a new OpenLayout API.
 
-GFOpenPresentation 0.6.15 and GFOpenPublisher 0.3.9 carry shared core 0.23.0
+GFOpenPresentation 0.6.15 and GFOpenPressmaster 0.3.9 carry shared core 0.23.0
 and add system clipboard Cut/Copy/Paste for one supported top-level object.
 The Amiga adapter stores an ODP document plus source slide/object indexes in a
 custom IFF form; the portable paste command deep-copies the selected object,
@@ -574,7 +574,7 @@ offsets it and adds one object-presence Undo step. Text editing continues to
 use standard FTXT. Groups, charts and opaque kept-package objects remain
 refused until their dependent parts have portable copiers.
 
-GFOpenPresentation 0.6.16 and GFOpenPublisher 0.3.10 carry shared core 0.24.0
+GFOpenPresentation 0.6.16 and GFOpenPressmaster 0.3.10 carry shared core 0.24.0
 and add Edit > Replace plus Replace All in Text Box. The one-match command
 reuses wrapped Find and exact selection replacement. The portable all-match
 command scans one editable object, folds ASCII case, continues after inserted
@@ -583,7 +583,7 @@ fixes deletion across adjacent formatted runs. OpenLayout continues to supply
 only the resolved frame, caret/selection geometry and reflow; search and text
 mutation remain in the shared deck editor.
 
-GFOpenPresentation 0.6.17 and GFOpenPublisher 0.3.11 carry shared core 0.25.0
+GFOpenPresentation 0.6.17 and GFOpenPressmaster 0.3.11 carry shared core 0.25.0
 and add optional half-inch grid display and move/resize snapping. The pure
 core helper supplies signed threshold geometry; the shared native shell draws
 the editor-only dots and applies snapping to the dragged position or active
@@ -591,14 +591,14 @@ resize edges. The grid is not document content and therefore does not belong
 in OpenLayout or ODP/PDF. Completed object geometry continues through the
 existing one-step box Undo command.
 
-GFOpenPresentation 0.6.18 and GFOpenPublisher 0.3.12 carry shared core 0.26.0
+GFOpenPresentation 0.6.18 and GFOpenPressmaster 0.3.12 carry shared core 0.26.0
 and add fixed page guides at both half-inch margins and both page centres.
 Objects snap their start, centre or end; resize handles snap the active edge,
 with guides preferred over the grid. The core supplies reusable box-anchor
 geometry while the native shell retains overlay/toggle state. Custom guides
 and baseline-grid authoring remain separate work.
 
-GFOpenPresentation 0.6.22 and GFOpenPublisher 0.3.16 carry shared core 0.30.0
+GFOpenPresentation 0.6.22 and GFOpenPressmaster 0.3.16 carry shared core 0.30.0
 and add native table creation plus row/column insertion/deletion. The portable commands build the existing
 tagged-cell story model transactionally; OpenLayout renders it through its
 existing table role. Native cell text is editable, Tab/Shift-Tab navigates,

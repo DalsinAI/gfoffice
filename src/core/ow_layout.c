@@ -138,7 +138,11 @@ static void change_style(const owf_doc *doc, int number, ol_style *s)
 static int hidden_deletion(const ow_layout *l, const owf_doc *doc, const owf_run *r)
 {
     const owf_revision *rv;
-    if (!l || !(l->view & OW_LAYOUT_FINAL) || r->comment || r->note > 0)
+    if (r->comment || r->note > 0)
+        return 0;
+    if ((r->fmt.flags & OWF_HIDDEN) && !(l && (l->view & OW_LAYOUT_SHOW_HIDDEN)))
+        return 1;                                    /* 2.0.46: hidden text, where the view doesn't show it */
+    if (!l || !(l->view & OW_LAYOUT_FINAL))
         return 0;
     rv = OWF_DOC_REVISION(doc, r->revision);
     return rv && rv->kind == OWF_REV_DELETE;
@@ -189,6 +193,7 @@ static void run_style(const owf_doc *doc, const owf_charfmt *fmt, int line_spaci
     if (flags & OWF_ITALIC) text |= OL_TEXT_ITALIC;
     if (flags & OWF_UNDERLINE) text |= OL_TEXT_UNDERLINE;
     if (flags & OWF_STRIKE) text |= OL_TEXT_STRIKE;
+    if (flags & OWF_HIDDEN) text |= OL_TEXT_UNDERLINE;   /* 2.0.46: shown hidden text, underlined */
     if (flags & OWF_SUPER) text |= OL_TEXT_SUPER;
     if (flags & OWF_SUB) text |= OL_TEXT_SUB;
     if (font >= 0 && font < doc->nfonts) {
@@ -636,6 +641,7 @@ static const char *field_text(const field_values *fv, const owf_run *r)
     case OWF_FIELD_PAGES: return fv ? fv->pages : "1";
     case OWF_FIELD_DATE: return fv && fv->date ? fv->date : "";
     case OWF_FIELD_TIME: return fv && fv->time ? fv->time : "";
+    case OWF_FIELD_HIDE_PARA: return "";              /* 2.0.51: it shows nothing ("1" is whether it hides) */
     default: return r->text ? r->text : "";         /* 2.3.0: the value the editor worked out */
     }
 }
@@ -815,7 +821,9 @@ static int add_table(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node 
     for (i = first; i < end; ++i) {
         const owf_para *p = &story->paras[i];
         int c = p->table_col < 0 ? 0 : (p->table_col >= cols ? cols - 1 : p->table_col);
-        const owf_revision *rv = OWF_DOC_REVISION(doc, p->row_revision);
+        /* (2.0.53: or a tracked cell by itself, its column put in or deleted: the same, the cell alone) */
+        int rnum = p->row_revision ? p->row_revision : p->cell_revision;
+        const owf_revision *rv = OWF_DOC_REVISION(doc, rnum);
         /* 2.0.38: a tracked row: edged in its author's colour, or (the final view) a deleted one left out */
         unsigned long change_rgb = 0;
         if (rv && l && (l->view & OW_LAYOUT_FINAL)) {
@@ -832,7 +840,7 @@ static int add_table(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node 
                 continue;
             }
         } else if (rv) {
-            change_rgb = change_colour(doc, p->row_revision) | 0x1000000UL;   /* (nonzero even for black) */
+            change_rgb = change_colour(doc, rnum) | 0x1000000UL;   /* (nonzero even for black) */
         }
         if (!have_row || p->table_row != row_value) {
             /* the last row's missing cells, then a new row */
@@ -875,6 +883,17 @@ static int add_story(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node 
             while (end < story->nparas && story->paras[end].table_id == p->table_id) ++end;
             if (!add_table(l, doc, od, parent, story, i, end, record, fv)) return 0;
             i = end;
+        } else if (owf_para_hidden(p) && !(l && (l->view & OW_LAYOUT_SHOW_HIDDEN))) {
+            /* 2.0.51 (libowf 1.20): a hidden paragraph, its condition holding: its block still made (the caret
+             * code wants one), in a box shown not at all, as a deleted row's in the final view */
+            ol_node *none = ol_node_append(od, parent, OL_ROLE_BLOCK, NULL);
+            ol_style s;
+            if (!none) return 0;
+            ol_style_init(&s);
+            s.display = OL_DISPLAY_NONE;
+            ol_node_set_style(none, &s);
+            if (!add_paragraph(l, record, doc, od, none, p, i, fv)) return 0;
+            ++i;
         } else {
             if (!add_paragraph(l, record, doc, od, parent, p, i, fv)) return 0;
             ++i;

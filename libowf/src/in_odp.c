@@ -17,9 +17,11 @@
  * level's look (the master's title, outline level, notes or other text), so
  * that a master's look stays the master's.
  *
- * What the model doesn't edit (other shapes, embedded charts and objects,
- * animations, rare transitions) is kept as the file's XML, with the styles,
- * drawing definitions and package members it refers to, and written back.
+ * An embedded chart is read with its own data (owf_chartodf.c) and written
+ * back from it. What the model doesn't edit (other shapes, other embedded
+ * objects, animations, rare transitions) is kept as the file's XML, with
+ * the styles, drawing definitions and package members it refers to, and
+ * written back.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_deck_int.h"
@@ -78,6 +80,7 @@ typedef struct {
     owf_buf scratch;
     int failed;
     int depth;
+    int fill_image;                  /* the picture read_look last read for a picture fill */
 } odp;
 
 /* ---- Small helpers ---- */
@@ -908,6 +911,54 @@ static void keep_refs(odp *o, const owf_xml_node *n, int where, int depth)
             keep_refs(o, c, where, depth + 1);
 }
 
+/* An embedded chart object's chart (draw:object xlink:href="./Object 1", its content.xml an office:chart), read
+ * with its own data (Presentation gap 2): malloc'd, or NULL when it is not one (or memory ran out). */
+/* A chart of a kind owf_chart does not know (radar, bubble, stock, gantt...) is not one to write back: NULL, so
+ * the object is kept whole as before, not saved as a bar chart. */
+static owf_chart *known_kind(owf_chart *chart)
+{
+    if (chart && chart->kind == OWF_CHART_OTHER) {
+        owf_chart_clear(chart);
+        free(chart);
+        return NULL;
+    }
+    return chart;
+}
+
+static owf_chart *read_chart_object(odp *o, const owf_xml_node *ob)
+{
+    const char *href = attr(ob, NS_XLINK, "href");
+    char path[256];
+    unsigned char *data = NULL;
+    size_t length = 0;
+    owf_chart *chart;
+    const owf_xml_node *doc = owf_xml_child(ob, NS_OFFICE, "document");
+    if (doc) {                       /* a flat file's: the chart inside the object */
+        chart = malloc(sizeof *chart);
+        if (chart && owf_chart_from_odf_node(doc, chart) != OWF_OK) {
+            free(chart);
+            chart = NULL;
+        }
+        return known_kind(chart);
+    }
+    if (!o->zip || !href)
+        return NULL;
+    if (!strncmp(href, "./", 2))
+        href += 2;
+    if (!*href || strlen(href) + sizeof "/content.xml" > sizeof path)
+        return NULL;
+    snprintf(path, sizeof path, "%s/content.xml", href);
+    if (owf_unzip_read(o->zip, path, &data, &length) != OWF_OK)
+        return NULL;
+    chart = malloc(sizeof *chart);
+    if (chart && owf_chart_from_odf((const char *)data, length, chart) != OWF_OK) {
+        free(chart);
+        chart = NULL;
+    }
+    free(data);
+    return known_kind(chart);
+}
+
 /* An object kept whole, with what it refers to. */
 static int keep_object(odp *o, const owf_xml_node *n, int where)
 {
@@ -1289,6 +1340,204 @@ static void resolve_flows(odp *o)
         }
 }
 
+/* ODF's draw:angle as tenths of a degree: plain tenths ("450"), or with a unit ("45deg", "45.5deg",
+ * "0.785rad", "50grad"); integer arithmetic */
+static int odf_angle(const char *v)
+{
+    long whole = 0, thousandths = 0, scale = 100, t;
+    int negative = 0;
+    const char *p;
+    if (!v) return 0;
+    while (*v == ' ') v++;
+    p = v;
+    if (*p == '-' || *p == '+') negative = *p++ == '-';
+    for (; *p >= '0' && *p <= '9'; p++)
+        if (whole < 100000) whole = whole * 10 + (*p - '0');
+    if (*p == '.')
+        for (p++; *p >= '0' && *p <= '9'; p++, scale /= 10) thousandths += (*p - '0') * scale;
+    if (!strncmp(p, "rad", 3))
+        return radians_tenths(v, &p);
+    if (!strncmp(p, "deg", 3)) t = whole * 10 + (thousandths + 50) / 100;
+    else if (!strncmp(p, "grad", 4)) t = whole * 9 + (thousandths * 9 + 500) / 1000;
+    else t = whole + (thousandths >= 500);
+    t %= 3600;
+    return (int)(negative ? -t : t);
+}
+
+/* The draw:gradient named name into look: linear and axial (drawn linear) run from start-color to
+ * end-color along draw:angle, ODF's 0 being top to bottom; radial, ellipsoid, square and
+ * rectangular have end-color at the centre and start-color at the edge. 0 when there is none. */
+static int read_gradient(odp *o, const char *name, owf_look *look)
+{
+    const owf_xml_node *c;
+    const char *style;
+    unsigned long from, to;
+    for (c = o->common ? o->common->first : NULL; c; c = c->next)
+        if (is(c, NS_DRAW, "gradient") && same(attr(c, NS_DRAW, "name"), name))
+            break;
+    if (!c) return 0;
+    from = shade(attr(c, NS_DRAW, "start-color"));
+    to = shade(attr(c, NS_DRAW, "end-color"));
+    if (!from) from = OWF_SHADE(0);
+    if (!to) to = OWF_SHADE(0xFFFFFF);
+    style = attr(c, NS_DRAW, "style");
+    if (style && (!strcmp(style, "radial") || !strcmp(style, "ellipsoid") || !strcmp(style, "square") ||
+                  !strcmp(style, "rectangular"))) {
+        look->gradient = OWF_GRADIENT_RADIAL;
+        look->fill = to;
+        look->fill2 = from;
+        look->gradient_angle = 0;
+        if (strcmp(style, "radial"))
+            owf_report_add(o->report, OWF_NOTE_APPROX, "Ellipsoid, square and rectangular gradients are drawn round");
+    } else {
+        int a = (2700 + odf_angle(attr(c, NS_DRAW, "angle"))) % 3600;
+        look->gradient = OWF_GRADIENT_LINEAR;
+        look->fill = from;
+        look->fill2 = to;
+        look->gradient_angle = a < 0 ? a + 3600 : a;
+        if (style && !strcmp(style, "axial"))
+            owf_report_add(o->report, OWF_NOTE_APPROX, "Axial gradients are drawn from one side to the other");
+    }
+    return 1;
+}
+
+/* The draw:hatch named name into look: single, double or triple lines of draw:color, draw:distance
+ * apart, at draw:rotation (tenths of a degree anticlockwise, as ours). 0 when there is none. */
+static int read_hatch(odp *o, const char *name, owf_look *look)
+{
+    const owf_xml_node *c;
+    const char *style;
+    int distance = 0;
+    for (c = o->common ? o->common->first : NULL; c; c = c->next)
+        if (is(c, NS_DRAW, "hatch") && same(attr(c, NS_DRAW, "name"), name))
+            break;
+    if (!c) return 0;
+    style = attr(c, NS_DRAW, "style");
+    look->hatch = same(style, "double") ? OWF_HATCH_DOUBLE : same(style, "triple") ? OWF_HATCH_TRIPLE
+                                                                                  : OWF_HATCH_SINGLE;
+    look->hatch_colour = shade(attr(c, NS_DRAW, "color"));
+    if (!look->hatch_colour) look->hatch_colour = OWF_SHADE(0);
+    look->hatch_angle = odf_angle(attr(c, NS_DRAW, "rotation"));
+    if (look->hatch_angle < 0) look->hatch_angle += 3600;
+    if (length_attr(c, NS_DRAW, "distance", &distance) && distance > 0)
+        look->hatch_distance = clamp(distance, 6, 5670);
+    return 1;
+}
+
+/* draw:opacity ("40%": 60% shows through), or the draw:opacity gradient draw:opacity-name names
+ * (drawn evenly at the middle of its start and end), as look->transparency. */
+static void read_opacity(odp *o, const gstyle *st, const char *element, owf_look *look)
+{
+    const char *v = prop(o, st, element, NS_DRAW, "opacity"), *name;
+    int opacity = percent(v, -1);
+    if (opacity < 0 && (name = prop(o, st, element, NS_DRAW, "opacity-name")) && *name) {
+        const owf_xml_node *c;
+        for (c = o->common ? o->common->first : NULL; c; c = c->next)
+            if (is(c, NS_DRAW, "opacity") && same(attr(c, NS_DRAW, "name"), name)) {
+                opacity = (percent(attr(c, NS_DRAW, "start"), 0) + percent(attr(c, NS_DRAW, "end"), 100)) / 2;
+                owf_report_add(o->report, OWF_NOTE_APPROX, "Graded transparency is drawn even all over");
+                break;
+            }
+    }
+    if (opacity >= 0)
+        look->transparency = (unsigned char)(opacity >= 100 ? 0 : 100 - opacity);
+}
+
+/* draw:shadow="visible": its offset (0.2 cm each way when the file has none), colour and opacity */
+static void read_shadow(odp *o, const gstyle *st, owf_look *look)
+{
+    int dx = 113, dy = 113, opacity, blur = 0;
+    if (!same(prop(o, st, "graphic-properties", NS_DRAW, "shadow"), "visible"))
+        return;
+    look->shadow = 1;
+    parse_len(prop(o, st, "graphic-properties", NS_DRAW, "shadow-offset-x"), &dx);
+    parse_len(prop(o, st, "graphic-properties", NS_DRAW, "shadow-offset-y"), &dy);
+    look->shadow_dx = clamp(dx, -5670, 5670);
+    look->shadow_dy = clamp(dy, -5670, 5670);
+    look->shadow_colour = shade(prop(o, st, "graphic-properties", NS_DRAW, "shadow-color"));
+    if (!look->shadow_colour) look->shadow_colour = OWF_SHADE(OWF_SHADOW_COLOUR);
+    opacity = percent(prop(o, st, "graphic-properties", NS_DRAW, "shadow-opacity"), 100);
+    look->shadow_transparency = (unsigned char)(opacity >= 100 ? 0 : opacity <= 0 ? 100 : 100 - opacity);
+    if (parse_len(prop(o, st, "graphic-properties", NS_DRAW, "shadow-blur"), &blur) && blur > 0)
+        owf_report_add(o->report, OWF_NOTE_APPROX, "Soft shadows are drawn with a sharp edge");
+}
+
+/* A hatch fill (draw:fill="hatch") into look: over draw:fill-color when draw:fill-hatch-solid, on its own
+ * otherwise. 0 when its draw:hatch is missing. */
+static int read_hatch_fill(odp *o, const gstyle *st, const char *element, owf_look *look)
+{
+    if (!read_hatch(o, prop(o, st, element, NS_DRAW, "fill-hatch-name"), look))
+        return 0;
+    look->fill = 0;
+    if (same(prop(o, st, element, NS_DRAW, "fill-hatch-solid"), "true")) {
+        look->fill = shade(prop(o, st, element, NS_DRAW, "fill-color"));
+        if (!look->fill) look->fill = OWF_SHADE(0xFFFFFF);
+    }
+    return 1;
+}
+
+/* draw:fill-image-width or -height: a length, or 0 (the picture's own size) for a percentage */
+static int tile_length(odp *o, const char *v)
+{
+    int twips;
+    if (!v)
+        return 0;
+    if (strchr(v, '%')) {
+        if (atoi(v) != 100)
+            owf_report_add(o->report, OWF_NOTE_APPROX, "Picture tiles sized in percent are drawn at the picture's own size");
+        return 0;
+    }
+    return parse_len(v, &twips) && twips > 0 ? twips : 0;
+}
+
+/* A bitmap fill: the draw:fill-image the style names into *image, laid by style:repeat (stretch, or
+ * repeat at draw:fill-image-width by -height; no-repeat drawn stretched). 0 when it can't be had. */
+static int read_picture_fill(odp *o, const gstyle *st, const char *element, owf_look *look, int *image)
+{
+    const char *name = prop(o, st, element, NS_DRAW, "fill-image-name");
+    const char *repeat = prop(o, st, element, NS_STYLE, "repeat");
+    const owf_xml_node *c;
+    int index = -1;
+    if (!name)
+        return 0;
+    for (c = o->common ? o->common->first : NULL; c; c = c->next)
+        if (is(c, NS_DRAW, "fill-image") && same(attr(c, NS_DRAW, "name"), name)) {
+            index = load_picture(o, c, o->deck->width, o->deck->height, NULL);
+            break;
+        }
+    if (index < 0)
+        return 0;
+    *image = index;
+    look->tile_width = look->tile_height = 0;
+    if (repeat && !strcmp(repeat, "repeat")) {
+        look->picture = OWF_PICTURE_TILE;
+        look->tile_width = tile_length(o, prop(o, st, element, NS_DRAW, "fill-image-width"));
+        look->tile_height = tile_length(o, prop(o, st, element, NS_DRAW, "fill-image-height"));
+        if (!look->tile_width || !look->tile_height)
+            look->tile_width = look->tile_height = 0;
+    } else {
+        look->picture = OWF_PICTURE_STRETCH;
+        if (repeat && !strcmp(repeat, "no-repeat"))
+            owf_report_add(o->report, OWF_NOTE_APPROX, "Pictures that fill once are drawn stretched");
+    }
+    return 1;
+}
+
+/* After read_look: an object that can show a picture fill (keep) takes the picture it read; any
+ * other drops it, drawn in its fill colour. */
+static void take_picture_fill(odp *o, owf_obj *obj, int keep)
+{
+    if (obj->look.picture == OWF_PICTURE_NONE)
+        return;
+    if (keep) {
+        obj->image = o->fill_image;
+        return;
+    }
+    obj->look.picture = OWF_PICTURE_NONE;
+    obj->look.tile_width = obj->look.tile_height = 0;
+    owf_report_add(o->report, OWF_NOTE_APPROX, "Picture fills are drawn in one colour");
+}
+
 /* Fill, line, insets, alignment and fitting from the object's style. */
 static void read_look(odp *o, owf_obj *obj, const gstyle *st, int is_shape)
 {
@@ -1300,12 +1549,23 @@ static void read_look(odp *o, owf_obj *obj, const gstyle *st, int is_shape)
 
     if (fill && !strcmp(fill, "solid"))
         obj->look.fill = shade(prop(o, st, "graphic-properties", NS_DRAW, "fill-color"));
+    else if (fill && !strcmp(fill, "gradient") &&
+             read_gradient(o, prop(o, st, "graphic-properties", NS_DRAW, "fill-gradient-name"), &obj->look))
+        ;
+    else if (fill && !strcmp(fill, "hatch") && read_hatch_fill(o, st, "graphic-properties", &obj->look))
+        ;
+    else if (fill && !strcmp(fill, "bitmap") &&
+             read_picture_fill(o, st, "graphic-properties", &obj->look, &o->fill_image))
+        obj->look.fill = shade(prop(o, st, "graphic-properties", NS_DRAW, "fill-color"));
     else if (fill && (!strcmp(fill, "gradient") || !strcmp(fill, "hatch") || !strcmp(fill, "bitmap"))) {
         obj->look.fill = shade(prop(o, st, "graphic-properties", NS_DRAW, "fill-color"));
-        owf_report_add(o->report, OWF_NOTE_APPROX, "Gradient, hatched and picture fills are drawn in one colour");
+        owf_report_add(o->report, OWF_NOTE_APPROX, "Picture fills are drawn in one colour");
     } else if (!fill && is_shape) {
         obj->look.fill = shade(prop(o, st, "graphic-properties", NS_DRAW, "fill-color"));
     }
+    if (OWF_LOOK_FILLED(&obj->look))
+        read_opacity(o, st, "graphic-properties", &obj->look);
+    read_shadow(o, st, &obj->look);
     if (stroke && strcmp(stroke, "none")) {
         obj->look.line = shade(prop(o, st, "graphic-properties", NS_SVG, "stroke-color"));
         if (!obj->look.line)
@@ -1527,12 +1787,28 @@ static void read_text(odp *o, owf_obj *obj, const owf_xml_node *box, const owf_x
 static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_master *m, int which)
 {
     const owf_xml_node *groups[8], *g, *row, *cell;
-    int widths[TABLE_MAX_COLS], ncols = 0, ngroups = 0, nrows = 0, i, merged = 0;
+    int widths[TABLE_MAX_COLS], ncols = 0, ngroups = 0, nrows = 0, i;
     textctx t;
 
     memset(&t, 0, sizeof t);
 
     obj->kind = OWF_OBJ_TABLE;
+    {   /* its design: which parts of its template are on, and the template's name */
+        static const struct { const char *name; unsigned bit; } uses[] = {
+            { "use-first-row-styles", OWF_TABLE_FIRST_ROW }, { "use-last-row-styles", OWF_TABLE_LAST_ROW },
+            { "use-first-column-styles", OWF_TABLE_FIRST_COL }, { "use-last-column-styles", OWF_TABLE_LAST_COL },
+            { "use-banding-rows-styles", OWF_TABLE_BANDED_ROWS }, { "use-banding-columns-styles", OWF_TABLE_BANDED_COLS },
+        };
+        const char *tn = attr(tbl, NS_TABLE, "template-name");
+        size_t k;
+        for (k = 0; k < sizeof uses / sizeof uses[0]; k++)
+            if (same(attr(tbl, NS_TABLE, uses[k].name), "true"))
+                obj->table_design |= uses[k].bit;
+        if (tn && *tn && !(obj->table_style = owf_deck_strdup(tn, strlen(tn)))) {
+            o->failed = 1;
+            return;
+        }
+    }
     /* columns, inside their groups too */
     groups[ngroups++] = tbl;
     for (i = 0; i < ngroups; i++)
@@ -1572,22 +1848,44 @@ static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_
             }
             if (!is(row, NS_TABLE, "table-row"))
                 continue;
+            {   /* its height: the row style's, or its least height; none: as its text needs */
+                const gstyle *rs = find_style(o, attr(row, NS_TABLE, "style-name"), "table-row", which);
+                const char *h = prop(o, rs, "table-row-properties", NS_STYLE, "row-height");
+                int tw = 0;
+                if (!h)
+                    h = prop(o, rs, "table-row-properties", NS_STYLE, "min-row-height");
+                if (h && parse_len(h, &tw) && owf_table_set_row_height(obj, nrows, clamp(tw, 0, MAX_COORD)) < 0)
+                    o->failed = 1;
+            }
             for (cell = row->first; cell; cell = cell->next) {
                 const gstyle *cs;
                 const char *span;
                 unsigned long fill;
                 int before = obj->text.nparas, k;
                 if (is(cell, NS_TABLE, "covered-table-cell")) {
+                    /* still a cell: an empty paragraph, so the row has every column */
+                    if (col < TABLE_MAX_COLS) {
+                        t.b.parafmt = m->other.para;
+                        owf_builder_end_para(&t.b);
+                        for (k = before; k < obj->text.nparas; k++) {
+                            obj->text.paras[k].table_id = 0;
+                            obj->text.paras[k].table_row = nrows;
+                            obj->text.paras[k].table_col = col;
+                        }
+                    }
                     col++;
-                    merged = 1;
                     continue;
                 }
                 if (!is(cell, NS_TABLE, "table-cell") || col >= TABLE_MAX_COLS)
                     continue;
-                if ((span = attr(cell, NS_TABLE, "number-columns-spanned")) && atoi(span) > 1)
-                    merged = 1;
-                if ((span = attr(cell, NS_TABLE, "number-rows-spanned")) && atoi(span) > 1)
-                    merged = 1;
+                {
+                    int span_c = (span = attr(cell, NS_TABLE, "number-columns-spanned")) ? atoi(span) : 1;
+                    int span_r = (span = attr(cell, NS_TABLE, "number-rows-spanned")) ? atoi(span) : 1;
+                    if (span_c > 1 || span_r > 1) {
+                        if (owf_table_add_merge(obj, nrows, col, span_r > 0 ? span_r : 1, span_c > 0 ? span_c : 1) < 0)
+                            o->failed = 1;
+                    }
+                }
                 cs = find_style(o, attr(cell, NS_TABLE, "style-name"), "table-cell", which);
                 t.st = cs;
                 text_blocks(&t, cell, 0, 0);
@@ -1620,8 +1918,8 @@ static void read_table(odp *o, owf_obj *obj, const owf_xml_node *tbl, const owf_
         o->failed = 1;
     for (i = 0; i < obj->text.nparas; i++)
         obj->text.paras[i].table_cols = ncols;
-    if (merged)
-        owf_report_add(o->report, OWF_NOTE_APPROX, "Merged table cells are shown apart");
+    if (obj->nrows > 0 && obj->nrows < nrows && owf_table_set_row_height(obj, nrows - 1, 0) < 0)
+        o->failed = 1;        /* rows past the last with a height: as their text needs */
     obj->ncols = ncols;
     if (ncols) {
         int any = 0;
@@ -1787,7 +2085,12 @@ static int read_object(odp *o, objctx *c, const owf_xml_node *n, int parent, int
         if (!ob)
             ob = owf_xml_child(n, NS_DRAW, "floating-frame");
         read_look(o, obj, st, 0);
-        if (ob) {
+        if (ob && is(ob, NS_DRAW, "object") && (obj->chart = read_chart_object(o, ob)) != NULL) {
+            obj->kind = OWF_OBJ_CHART;          /* written back from its chart (out_odp.c), not kept */
+            owf_report_add(o->report, OWF_NOTE_APPROX, "Charts are shown as their box; their data is kept");
+            if (img)
+                obj->image = load_picture(o, img, obj->width, obj->height, obj->alt);
+        } else if (ob) {
             obj->kind = OWF_OBJ_OTHER;
             what = is(ob, NS_DRAW, "plugin") ? "Sound and video" : "Embedded charts and objects";
             if (img)       /* its replacement picture, to show */
@@ -1804,6 +2107,7 @@ static int read_object(odp *o, objctx *c, const owf_xml_node *n, int parent, int
         } else {
             obj->kind = OWF_OBJ_TEXT;
         }
+        take_picture_fill(o, obj, obj->kind == OWF_OBJ_TEXT);
     } else if (is(n, NS_DRAW, "rect") || is(n, NS_DRAW, "ellipse") || is(n, NS_DRAW, "circle") ||
                is(n, NS_DRAW, "line") || is(n, NS_DRAW, "polygon") || is(n, NS_DRAW, "custom-shape")) {
         const char *kind = attr(n, NS_DRAW, "kind");
@@ -1866,6 +2170,8 @@ static int read_object(odp *o, objctx *c, const owf_xml_node *n, int parent, int
             }
         }
         read_look(o, obj, st, obj->shape != OWF_SHAPE_LINE);
+        take_picture_fill(o, obj, obj->kind == OWF_OBJ_SHAPE &&
+                                  (obj->shape == OWF_SHAPE_RECT || obj->shape == OWF_SHAPE_ROUNDRECT));
         if (obj->shape == OWF_SHAPE_LINE)
             obj->look.fill = 0;
         read_text(o, obj, n, n, st, c->m, c->which);
@@ -1901,6 +2207,7 @@ static int read_object(odp *o, objctx *c, const owf_xml_node *n, int parent, int
     } else {
         obj->kind = OWF_OBJ_OTHER;
         read_look(o, obj, st, 1);
+        take_picture_fill(o, obj, 0);
         what = is(n, NS_DRAW, "connector") ? "Connectors"
              : is(n, NS_DRAW, "polyline") || is(n, NS_DRAW, "path") ? "Freeform lines and curves"
              : "Objects GFOpenPresentation doesn't draw yet";
@@ -1930,35 +2237,44 @@ static int read_object(odp *o, objctx *c, const owf_xml_node *n, int parent, int
 
 /* ---- Pages ---- */
 
-/* A drawing-page style's background onto *colour and *image. */
-static void read_background(odp *o, const gstyle *st, unsigned long *colour, int *image)
+/* A drawing-page style's background onto bg (its colour, gradient, hatching and transparency) and *image. */
+static void read_background(odp *o, const gstyle *st, owf_look *bg, int *image)
 {
     const char *fill = prop(o, st, "drawing-page-properties", NS_DRAW, "fill");
+    owf_look g;
     if (!fill)
         return;
+    memset(&g, 0, sizeof g);
     if (!strcmp(fill, "solid")) {
-        *colour = shade(prop(o, st, "drawing-page-properties", NS_DRAW, "fill-color"));
+        *bg = g;
+        bg->fill = shade(prop(o, st, "drawing-page-properties", NS_DRAW, "fill-color"));
     } else if (!strcmp(fill, "bitmap")) {
-        const char *name = prop(o, st, "drawing-page-properties", NS_DRAW, "fill-image-name");
-        const owf_xml_node *c;
-        for (c = o->common ? o->common->first : NULL; c; c = c->next)
-            if (is(c, NS_DRAW, "fill-image") && same(attr(c, NS_DRAW, "name"), name)) {
-                *image = load_picture(o, c, o->deck->width, o->deck->height, NULL);
-                break;
-            }
+        if (read_picture_fill(o, st, "drawing-page-properties", &g, image))
+            *bg = g;
     } else if (!strcmp(fill, "gradient")) {
-        const char *name = prop(o, st, "drawing-page-properties", NS_DRAW, "fill-gradient-name");
-        const owf_xml_node *c;
-        for (c = o->common ? o->common->first : NULL; c; c = c->next)
-            if (is(c, NS_DRAW, "gradient") && same(attr(c, NS_DRAW, "name"), name)) {
-                *colour = shade(attr(c, NS_DRAW, "start-color"));
-                break;
-            }
-        owf_report_add(o->report, OWF_NOTE_APPROX, "Gradient backgrounds are drawn in one colour");
+        if (read_gradient(o, prop(o, st, "drawing-page-properties", NS_DRAW, "fill-gradient-name"), &g)) {
+            *bg = g;
+        } else {
+            /* its draw:gradient is missing: the page's fill-color, and the report says so */
+            *bg = g;
+            bg->fill = shade(prop(o, st, "drawing-page-properties", NS_DRAW, "fill-color"));
+            owf_report_add(o->report, OWF_NOTE_APPROX, "Gradient backgrounds are drawn in one colour");
+        }
     } else if (!strcmp(fill, "hatch")) {
-        *colour = shade(prop(o, st, "drawing-page-properties", NS_DRAW, "fill-color"));
-        owf_report_add(o->report, OWF_NOTE_APPROX, "Hatched backgrounds are drawn in one colour");
+        if (read_hatch_fill(o, st, "drawing-page-properties", &g)) {
+            /* hatching on its own is drawn over white, as Impress does */
+            if (!g.fill) g.fill = OWF_SHADE(0xFFFFFF);
+            *bg = g;
+        } else {
+            *bg = g;
+            bg->fill = shade(prop(o, st, "drawing-page-properties", NS_DRAW, "fill-color"));
+            owf_report_add(o->report, OWF_NOTE_APPROX, "Hatched backgrounds are drawn in one colour");
+        }
+    } else if (!strcmp(fill, "none")) {
+        return;
     }
+    if (OWF_SHADE_SET(bg->fill) || *image >= 0)
+        read_opacity(o, st, "drawing-page-properties", bg);
 }
 
 /* The transition, from smil:type and the like. */
@@ -2124,7 +2440,12 @@ static void read_page(odp *o, const owf_xml_node *page)
     if ((v = attr(page, NS_DRAW, "name")) && owf_deck_set_text(&s->name, v) < 0)
         o->failed = 1;
     st = find_style(o, attr(page, NS_DRAW, "style-name"), "drawing-page", OWF_ODF_CONTENT_AUTO);
-    read_background(o, st, &s->background, &s->background_image);
+    {
+        owf_look bg;
+        OWF_BACKGROUND_LOOK(s, &bg);
+        read_background(o, st, &bg, &s->background_image);
+        OWF_BACKGROUND_SET(s, &bg);
+    }
     read_transition(o, s, st);
     s->hidden = same(prop(o, st, "drawing-page-properties", NS_PRES, "visibility"), "hidden");
     if (!same(prop(o, st, "drawing-page-properties", NS_PRES, "display-footer"), "false") &&
@@ -2434,7 +2755,12 @@ static void read_master(odp *o, const owf_xml_node *mp)
     read_master_levels(o, m, o->mnames[index], o->deck->res->base.font);
     m->background = OWF_SHADE(0xFFFFFF);
     st = find_style(o, attr(mp, NS_DRAW, "style-name"), "drawing-page", OWF_ODF_STYLES_AUTO);
-    read_background(o, st, &m->background, &m->background_image);
+    {
+        owf_look bg;
+        OWF_BACKGROUND_LOOK(m, &bg);
+        read_background(o, st, &bg, &m->background_image);
+        OWF_BACKGROUND_SET(m, &bg);
+    }
     oc.objs = &m->objs;
     oc.n = &m->nobjs;
     oc.cap = &m->capobjs;

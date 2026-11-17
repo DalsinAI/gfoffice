@@ -33,7 +33,7 @@ extern "C" {
 
 typedef enum {
     OWF_OBJ_TEXT, OWF_OBJ_PICTURE, OWF_OBJ_SHAPE, OWF_OBJ_TABLE,
-    OWF_OBJ_CHART,               /* a chart and its data (chart); PPTX's read, others still OWF_OBJ_OTHER */
+    OWF_OBJ_CHART,               /* a chart and its data (chart): PPTX's and ODP's */
     OWF_OBJ_GROUP,               /* its objects follow it, with parent set to it */
     OWF_OBJ_OTHER                /* kept for save (keep), drawn as its box */
 } owf_obj_kind;
@@ -67,13 +67,75 @@ typedef enum {
 #define OWF_AUTOFIT_SHRINK 1     /* the text shrinks to fit the box */
 #define OWF_AUTOFIT_GROW 2       /* the box grows with the text */
 
+/* owf_look.gradient: how the fill runs from fill to fill2 */
+#define OWF_GRADIENT_NONE 0      /* fill all over */
+#define OWF_GRADIENT_LINEAR 1    /* along gradient_angle across the box */
+#define OWF_GRADIENT_RADIAL 2    /* fill at the box's centre, fill2 at its corners */
+
 typedef struct {
     unsigned long fill;          /* OWF_SHADE(0xRRGGBB); 0: none */
     unsigned long line;          /* OWF_SHADE(0xRRGGBB); 0: none */
     int line_width;              /* twips; 0: the thinnest line */
     unsigned char line_style;    /* OWF_LINE_..., the workbook's border numbers */
     unsigned char arrows;        /* OWF_ARROW_START | OWF_ARROW_END */
+    unsigned char gradient;      /* OWF_GRADIENT_...; with a fill only */
+    int gradient_angle;          /* LINEAR: tenths of a degree anticlockwise from fill to fill2, 0 left
+                                    to right, 900 bottom to top; the object's rotation turns it too */
+    unsigned long fill2;         /* OWF_SHADE(0xRRGGBB): the gradient's other end */
+    /* Hatching, see-through fills and shadows (owfpresent.library 3.16, appended): */
+    unsigned char transparency;  /* percent of what is behind that shows through the fill, 0 to 100 */
+    unsigned char hatch;         /* OWF_HATCH_...: lines of hatch_colour over the fill, or on their own
+                                    when there is no fill */
+    int hatch_angle;             /* tenths of a degree anticlockwise; 0: lines left to right */
+    int hatch_distance;          /* twips between the lines; 0: OWF_HATCH_DISTANCE */
+    unsigned long hatch_colour;  /* OWF_SHADE(0xRRGGBB); 0: black */
+    unsigned char shadow;        /* 1: a copy of the object's outline drawn behind it */
+    unsigned char shadow_transparency; /* percent, as transparency */
+    int shadow_dx, shadow_dy;    /* twips the shadow lies right of and below the object */
+    unsigned long shadow_colour; /* OWF_SHADE(0xRRGGBB); 0: grey 808080 */
+    /* Picture fills (owfpresent.library 3.19, appended): a text box or shape whose picture is
+       owf_obj.image (a background's: background_image) is filled with it, over its fill colour. */
+    unsigned char picture;       /* OWF_PICTURE_...; NONE: no picture fill */
+    int tile_width, tile_height; /* TILE: twips of one tile; 0: the picture's own size */
 } owf_look;
+
+/* owf_look.hatch */
+#define OWF_HATCH_NONE 0
+#define OWF_HATCH_SINGLE 1       /* lines at hatch_angle */
+#define OWF_HATCH_DOUBLE 2       /* and the same at right angles: a grid */
+#define OWF_HATCH_TRIPLE 3       /* and a third set at 45 degrees between them */
+#define OWF_HATCH_DISTANCE 114   /* twips: 2 mm, Impress's own */
+#define OWF_SHADOW_COLOUR 0x808080UL
+
+/* 1 when the look fills its outline: a colour, a gradient, hatching on its own, or a picture */
+#define OWF_LOOK_FILLED(l) (OWF_SHADE_SET((l)->fill) || (l)->hatch != OWF_HATCH_NONE || \
+                            (l)->picture != OWF_PICTURE_NONE)
+
+/* owf_look.picture */
+#define OWF_PICTURE_NONE 0
+#define OWF_PICTURE_STRETCH 1    /* the picture stretched over the box */
+#define OWF_PICTURE_TILE 2       /* repeated from the box's top left, tile_width by tile_height */
+
+/* A slide's or a master's background fields (p: owf_slide * or owf_master *) as the owf_look *l, and
+ * back; the picture (background_image) is not in it, only how it is laid (picture, tile size).
+ * Needs <string.h>. */
+#define OWF_BACKGROUND_LOOK(p, l)                                                                          \
+    (memset((l), 0, sizeof *(l)), (l)->fill = (p)->background, (l)->gradient = (p)->background_gradient,   \
+     (l)->gradient_angle = (p)->background_angle, (l)->fill2 = (p)->background2,                           \
+     (l)->transparency = (p)->background_transparency, (l)->hatch = (p)->background_hatch,                 \
+     (l)->hatch_angle = (p)->background_hatch_angle, (l)->hatch_distance = (p)->background_hatch_distance, \
+     (l)->hatch_colour = (p)->background_hatch_colour,                                                     \
+     (l)->picture = (p)->background_image < 0 ? OWF_PICTURE_NONE                                            \
+                    : (p)->background_tile ? OWF_PICTURE_TILE : OWF_PICTURE_STRETCH,                         \
+     (l)->tile_width = (p)->background_tile_width, (l)->tile_height = (p)->background_tile_height)
+#define OWF_BACKGROUND_SET(p, l)                                                                           \
+    ((p)->background = (l)->fill, (p)->background_gradient = (l)->gradient,                                \
+     (p)->background_angle = (l)->gradient_angle, (p)->background2 = (l)->fill2,                           \
+     (p)->background_transparency = (l)->transparency, (p)->background_hatch = (l)->hatch,                 \
+     (p)->background_hatch_angle = (l)->hatch_angle, (p)->background_hatch_distance = (l)->hatch_distance, \
+     (p)->background_hatch_colour = (l)->hatch_colour,                                                     \
+     (p)->background_tile = (l)->picture == OWF_PICTURE_TILE, (p)->background_tile_width = (l)->tile_width, \
+     (p)->background_tile_height = (l)->tile_height)
 
 /* How one level of text looks: in a master, and in a frame's own list. */
 #define OWF_BULLET_NUMBER 0x80000000UL   /* | '1', 'a', 'A', 'i' or 'I': numbered */
@@ -91,6 +153,21 @@ typedef struct {
 } owf_textlevel;
 
 #define OWF_TEXT_LEVELS 9
+
+/* A table's merged cell: the cell at (row, col) covers rows x cols cells; the cells it covers stay in the
+ * table's text, empty, so every row keeps its ncols cells. */
+typedef struct {
+    int row, col, rows, cols;
+} owf_table_merge;
+
+/* owf_obj.table_design: which of the table design's parts are on (PPTX a:tblPr, ODF table:use-...-styles) */
+#define OWF_TABLE_FIRST_ROW   0x01u   /* a header row */
+#define OWF_TABLE_LAST_ROW    0x02u   /* a total row */
+#define OWF_TABLE_FIRST_COL   0x04u
+#define OWF_TABLE_LAST_COL    0x08u
+#define OWF_TABLE_BANDED_ROWS 0x10u
+#define OWF_TABLE_BANDED_COLS 0x20u
+#define OWF_TABLE_MAX_MERGES  1024
 
 typedef struct {
     owf_obj_kind kind;
@@ -142,6 +219,16 @@ typedef struct {
        earlier field keeps its offset. */
     unsigned char wrap;
     int wrap_gap[4];
+    /* OWF_OBJ_TABLE (Presentation gap 3; libowf 1.17, appended so every earlier field keeps its offset): its
+       rows' heights in twips, nrows of them (0: as tall as its text needs; NULL: every row so), its merged
+       cells (each cell a merge covers still has its paragraph, empty when the file gives it no text, so
+       every row has ncols cells), which parts of its design are on (OWF_TABLE_...) and the design's name as the file gives it
+       (PPTX a:tableStyleId, ODF table:template-name; NULL: none). */
+    int nrows, *row_heights;
+    int nmerges;
+    owf_table_merge *merges;
+    unsigned table_design;
+    char *table_style;
 } owf_obj;
 
 /* ---- Slides, masters, layouts ---- */
@@ -236,6 +323,21 @@ typedef struct {
        are what the show plays; changing them drops the kept XML. */
     int nanims, capanims;
     owf_anim *anims;
+    /* A gradient background (owfpresent.library 3.8, appended): background runs to background2 by
+       background_gradient (OWF_GRADIENT_...) along background_angle, as owf_look's fill to fill2. */
+    unsigned char background_gradient;
+    int background_angle;
+    unsigned long background2;
+    /* Hatched and see-through backgrounds (owfpresent.library 3.16, appended), as owf_look's: a
+       see-through background shows white behind it. */
+    unsigned char background_transparency;
+    unsigned char background_hatch;
+    int background_hatch_angle, background_hatch_distance;
+    unsigned long background_hatch_colour;
+    /* A tiled picture background (owfpresent.library 3.19, appended): background_image repeated
+       background_tile_width by _height twips (0: its own size); 0: stretched over the page. */
+    unsigned char background_tile;
+    int background_tile_width, background_tile_height;
 } owf_slide;
 
 typedef struct {
@@ -245,6 +347,15 @@ typedef struct {
     unsigned long background;    /* OWF_SHADE(0xRRGGBB); 0: white */
     int background_image;        /* into res->images; -1: none */
     owf_textlevel title, subtitle, body[OWF_TEXT_LEVELS], notes, other;
+    unsigned char background_gradient;   /* as owf_slide's (owfpresent.library 3.8, appended) */
+    int background_angle;
+    unsigned long background2;
+    unsigned char background_transparency;   /* as owf_slide's (owfpresent.library 3.16, appended) */
+    unsigned char background_hatch;
+    int background_hatch_angle, background_hatch_distance;
+    unsigned long background_hatch_colour;
+    unsigned char background_tile;           /* as owf_slide's (owfpresent.library 3.19, appended) */
+    int background_tile_width, background_tile_height;
 } owf_master;
 
 typedef struct {
@@ -322,7 +433,10 @@ void owf_deck_free(owf_deck *deck);
 /* Building and changing a deck. NULL or -1 when memory runs out or an
  * index is out of range; the deck stays valid. A pointer to a slide or an
  * object stays good until the next one is added to the same array. */
-owf_slide *owf_deck_add_slide(owf_deck *deck, int at, int layout);   /* at -1: the end; layout -1: none */
+owf_slide *owf_deck_add_slide(owf_deck *deck, int at, int layout);
+/* A picture's own size in twips, from its PNG or JPEG header (its resolution, else 96 dots an inch);
+   0 when it is not known (owfpresent.library 3.19). */
+int owf_deck_image_size(const owf_image *image, int *width, int *height);   /* at -1: the end; layout -1: none */
 /* A deep copy of index, inserted at (outside 0..n: the end). Pictures,
  * imported XML and package parts remain shared by their immutable deck
  * indexes; every allocation owned by the slide and its objects is copied.
