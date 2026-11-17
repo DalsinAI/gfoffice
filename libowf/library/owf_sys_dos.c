@@ -152,6 +152,13 @@ done:
     return result;
 }
 
+/* No OWF_ZIP_EPOCH in owf.library: zips are stamped with the clock. */
+int owf_sys_zip_epoch(owf_time *t)
+{
+    (void)t;
+    return 0;
+}
+
 /* The Amiga's clock keeps local time: days since 1 January 1978, minutes
  * and ticks (50 a second). */
 int owf_sys_now(owf_time *t)

@@ -9,6 +9,9 @@ CFLAGS ?= -O2
 WARN = -std=c99 -Wall -Wextra -Wpedantic -Wno-overlength-strings
 OWF_SRC = $(wildcard libowf/src/*.c)
 OUT = build/host
+# the tests' zips are stamped 14 November 2023 22:13:20 UTC, not the clock: saved twice, the same bytes
+# (owf_sys_zip_epoch); zips only, the clock (TODAY) stays real; an environment's own OWF_ZIP_EPOCH wins
+export OWF_ZIP_EPOCH ?= 1700000000
 
 all: $(OUT)/owconvert
 
@@ -364,10 +367,13 @@ $(OUT)/test-opencalc-core-asan: $(OPENCALC_DEPS)
 		-Iinclude -Ilibowf/include -Ilibowf/src -Ilibowf/calc -Isrc/calc \
 		$(OWF_SRC) $(CALC_SRC) $(OPENCALC_SRC) tests/calc_core/test_calc_core.c -lz -lm -o $@
 
+# The tests write into build/host whatever OUT is, so it is made here too.
 opencalc-test: $(OUT)/test-opencalc-core
+	mkdir -p build/host
 	$(OUT)/test-opencalc-core
 
 opencalc-check: $(OUT)/test-opencalc-core-asan
+	mkdir -p build/host
 	$(OUT)/test-opencalc-core-asan
 
 test: opencalc-test

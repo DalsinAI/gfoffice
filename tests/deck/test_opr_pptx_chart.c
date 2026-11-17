@@ -188,6 +188,9 @@ static void test_no_data(void)
 
 int main(void)
 {
+    /* saved twice, the same bytes: one zip time for every save (not the clock's 2-second steps) */
+    owf_time fixed = { 2023, 11, 14, 22, 13, 20 };
+    owf_zip_fix_time(&fixed);
     test_round_trip();
     test_no_data();
     printf("test_opr_pptx_chart: %d checks, %d failed\n", checks, failures);

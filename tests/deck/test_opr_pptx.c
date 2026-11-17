@@ -13,6 +13,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "openpresentation_core.h"
+#include "owf_internal.h"   /* owf_zip_fix_time */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -194,6 +195,9 @@ static void after_outline(void)
 
 int main(void)
 {
+    /* saved twice, the same bytes: one zip time for every save (not the clock's 2-second steps) */
+    owf_time fixed = { 2023, 11, 14, 22, 13, 20 };
+    owf_zip_fix_time(&fixed);
     basics();
     shapes();
     after_outline();
