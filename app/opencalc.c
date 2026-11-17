@@ -2705,7 +2705,7 @@ static int spell_ready(void)
     char msg[160];
     if (spell) return 1;
     if (!owf_spell_library()) {
-        ask_window("Spelling", "owfspell.library was not found. Install it in LIBS:.", "OK");
+        ask_window("Spelling", "owfspell.library 1.1 or newer was not found. Install it in LIBS:.", "OK");
         return 0;
     }
     if ((spell = owf_spell_open_default(msg, sizeof msg)) != NULL) { set_status(msg); return 1; }
