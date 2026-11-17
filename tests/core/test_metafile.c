@@ -170,7 +170,19 @@ static int rec_width(void *ctx, const char *utf8, size_t length, owf_font_kind k
     return (int)length * 100;
 }
 
-static const owf_mf_sink sink = { rec_path, rec_ellipse, rec_text, rec_width };
+static const owf_mf_sink sink = { rec_path, rec_ellipse, rec_text, rec_width, NULL };
+
+static int rec_clip(void *ctx, int x, int y, int w, int h)
+{
+    recorder *r = (recorder *)ctx;
+    char buf[64];
+    snprintf(buf, sizeof buf, "C %d,%d %d,%d;", x, y, w, h);
+    say(r, buf);
+    return 0;
+}
+
+/* the same, told the clip */
+static const owf_mf_sink csink = { rec_path, rec_ellipse, rec_text, rec_width, rec_clip };
 
 /* The picture most of the checks play: placeable, bounds 0,0 to 1000,500, drawn into 2000 by 1000 (twice) */
 static void sample(wmf *w)
@@ -867,6 +879,76 @@ static void test_emf_render_and_pdf(void)
     free(argb);
 }
 
+/* ---- clipping: IntersectClipRect, SaveDC/RestoreDC keeping it, ExtSelectClipRgn's reset ---- */
+static void test_clip(void)
+{
+    wmf w;
+    recorder r;
+    owf_mf_result res;
+    start(&w, 1, 0, 0, 1000, 1000, 0);
+    box_record(&w, 0x0416, 100, 100, 500, 500);          /* IntersectClipRect */
+    box_record(&w, 0x041B, 0, 0, 1000, 1000);
+    box_record(&w, 0x0416, 300, 300, 800, 800);          /* with the one before: 300,300 to 500,500 */
+    box_record(&w, 0x041B, 0, 0, 1000, 1000);
+    begin(&w, 0x001E); end(&w);                           /* SaveDC */
+    box_record(&w, 0x0416, 900, 900, 950, 950);          /* outside it: nothing shows */
+    box_record(&w, 0x041B, 0, 0, 1000, 1000);
+    begin(&w, 0x0127); put16(&w, -1); end(&w);           /* RestoreDC */
+    box_record(&w, 0x041B, 0, 0, 1000, 1000);
+    finish(&w);
+    memset(&r, 0, sizeof r);
+    CHECK(owf_metafile_play(w.d, w.n, 0, 0, 1000, 1000, &csink, &r, &res) == OWF_OK && res.skipped == 0 &&
+          res.drawn == 4, "a WMF with clipping plays, none left out");
+    CHECK(!strncmp(r.log, "C 100,100 400,400;P ", 20) && strstr(r.log, ";C 300,300 200,200;P ") &&
+          strstr(r.log, ";C 900,900 0,0;P ") && strstr(strstr(r.log, ";C 900,900 0,0;P "), ";C 300,300 200,200;P "),
+          "the sink told each clip before it draws: set, cut down, empty, and back after RestoreDC");
+    memset(&r, 0, sizeof r);
+    CHECK(owf_metafile_play(w.d, w.n, 0, 0, 1000, 1000, &sink, &r, &res) == OWF_OK && res.skipped == 3 &&
+          res.drawn == 4, "a sink that can't clip: the clip records counted as left out, all drawn");
+    {
+        emf e;
+        unsigned char *argb = (unsigned char *)malloc(100 * 50 * 4);
+        owf_image im;
+        owf_pdf *pdf = owf_pdf_new();
+        unsigned char *out = NULL;
+        size_t n = 0;
+        estart(&e, 10000, 5000, 2);
+        ebrush(&e, 1, 0, 255, 0, 0);
+        eone(&e, 37, 1);                                  /* SelectObject: red */
+        erect(&e, 30, 0, 0, 500, 250);                    /* IntersectClipRect: the top left quarter */
+        erect(&e, 43, 0, 0, 1000, 500);
+        ebegin(&e, 75); e32(&e, 0); e32(&e, 5); eend(&e);  /* ExtSelectClipRgn RGN_COPY, no region: no clip */
+        erect(&e, 43, 900, 400, 1000, 500);
+        ebegin(&e, 75); e32(&e, 32); e32(&e, 1); for (n = 0; n < 8; n++) e32(&e, 0); eend(&e);   /* a region */
+        efinish(&e);
+        memset(&r, 0, sizeof r);
+        CHECK(owf_metafile_play(e.d, e.n, 0, 0, 1000, 500, &csink, &r, &res) == OWF_OK && res.skipped == 1,
+              "an EMF clip plays; a clip region is left out");
+        CHECK(!strncmp(r.log, "C 0,0 500,250;P 0,0 1000,0 1000,500 0,500 ", 42) && strstr(r.log, ";C 0,0 -1,-1;P "),
+              "IntersectClipRect, then ExtSelectClipRgn taking it off");
+        if (argb && pdf) {
+            memset(argb, 255, 100 * 50 * 4);
+            CHECK(owf_metafile_render(e.d, e.n, argb, 100, 50, NULL) == OWF_OK, "clipped into pixels");
+            CHECK(pixel(argb, 100, 10, 10) == 0xFF0000 && pixel(argb, 100, 49, 24) == 0xFF0000 &&
+                  pixel(argb, 100, 50, 10) == 0xFFFFFF && pixel(argb, 100, 10, 25) == 0xFFFFFF &&
+                  pixel(argb, 100, 95, 45) == 0xFF0000, "red only inside the clip, then all of the corner after it");
+            memset(&im, 0, sizeof im);
+            im.mime = (char *)"image/x-emf";
+            im.data = e.d;
+            im.length = e.n;
+            n = 0;
+            CHECK(owf_pdf_page(pdf, 12240, 15840) == 0 && owf_pdf_image(pdf, &im, 1440, 1440, 2000, 1000, NULL) == 0 &&
+                  owf_pdf_finish(pdf, "clip", &out, &n, NULL) == OWF_OK && out, "the clipped EMF in a PDF");
+            if (out)
+                CHECK(count(out, n, " re W n") == 4 && count(out, n, "Q\nq\n") == 2,
+                      "PDF: the box, then box and clip, then the box again");
+        }
+        free(out);
+        owf_pdf_free(pdf);
+        free(argb);
+    }
+}
+
 int main(void)
 {
     test_play();
@@ -881,6 +963,7 @@ int main(void)
     test_emf_paths();
     test_emf_path_full();
     test_arcs();
+    test_clip();
     test_emf_damaged();
     test_emf_render_and_pdf();
     printf("metafile: %d checks, %d failed\n", checks, failures);
