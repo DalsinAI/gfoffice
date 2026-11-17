@@ -10,6 +10,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include "owf_ifform.h"
 #include "openwrite_core.h"
 #include "owf_internal.h"
 #include "owf_zip.h"
@@ -29,7 +31,8 @@ static int checks, failures;
 static const char *dump(const owf_doc *doc)
 {
     static const char *const names[] = { "PAGE", "PAGES", "DATE", "TIME", "TITLE", "AUTHOR", "SUBJECT", "FILENAME",
-                                         "WORDS", "CHAPTER", "USER", "REF", "REFPAGE", "MERGE", "INDEX", "SEQ" };
+                                         "WORDS", "CHAPTER", "USER", "REF", "REFPAGE", "MERGE", "INDEX", "SEQ",
+                                         "IF", "FILLIN", "HIDEPARA" };
     static char out[2048];
     size_t used = 0;
     int i, j;
@@ -610,6 +613,327 @@ static void test_caption_refs(void)
     owf_doc_free(doc);
 }
 
+/* libowf 1.16 (2.0.48): conditional text (IF): Word's form kept, its value worked out from a user field
+ * (numbers as numbers, * in text); DOCX with its field nested in its code, ODT text:conditional-text; Word's
+ * own form with a MERGEFIELD in it */
+static void test_if(void)
+{
+    static const char *const names[] = { "[Content_Types].xml", "_rels/.rels", "word/document.xml" };
+    static const char *const parts[] = {
+        "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+        "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+        "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+        "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>"
+        "</Types>",
+        "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+        "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>"
+        "</Relationships>",
+        "<?xml version=\"1.0\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>"
+        "<w:p><w:r><w:t xml:space=\"preserve\">Hello </w:t></w:r>"
+        "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText xml:space=\"preserve\"> IF </w:instrText></w:r>"
+        "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText xml:space=\"preserve\"> MERGEFIELD Title </w:instrText></w:r>"
+        "<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>Dr</w:t></w:r><w:r><w:fldChar w:fldCharType=\"end\"/></w:r>"
+        "<w:r><w:instrText xml:space=\"preserve\"> = \"Dr\" \"Doctor\" \"friend\" </w:instrText></w:r>"
+        "<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>Doctor</w:t></w:r><w:r><w:fldChar w:fldCharType=\"end\"/></w:r>"
+        "<w:r><w:t>!</w:t></w:r></w:p>"
+        "<w:sectPr/></w:body></w:document>" };
+    static const char *const fmts[] = { "docx", "odt" };
+    owf_doc *doc = doc_of(), *word = NULL, *back = NULL;
+    ow_editor *ed = doc ? ow_editor_new(doc) : NULL;
+    static const char *const want =
+        "Getting started|Plug it in and wait.{IF:{DOCVARIABLE Gender} = \"F*\" \"Ms\" \"Mr\"=Ms}|Using it|Press the button.";
+    int k;
+    CHECK(ed != NULL, "editor");
+    if (!ed) { owf_doc_free(doc); return; }
+    CHECK(ow_editor_set_user_field(ed, "Gender", "Female") == OWF_OK, "user field");
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_IF, "{DOCVARIABLE Gender} \"F\" \"Ms\"") == OWF_ERR_FORMAT,
+          "no operator: refused");
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_IF, "{DOCVARIABLE Gender} =") == OWF_ERR_FORMAT, "no texts: refused");
+    caret_end(ed, 1);
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_IF, "{DOCVARIABLE Gender} = \"F*\" \"Ms\" \"Mr\"") == OWF_OK, "IF");
+    CHECK(!strcmp(dump(doc), want), dump(doc));
+    CHECK(ow_editor_set_user_field(ed, "Gender", "Male") == OWF_OK && ow_editor_update_fields(ed) >= 0 &&
+          strstr(dump(doc), "\"Mr\"=Mr}"), dump(doc));
+    ow_editor_set_user_field(ed, "Gender", "Female");
+    ow_editor_update_fields(ed);
+    caret_end(ed, 3);                                /* numbers as numbers: 10 > 9, though "10" < "9" as text */
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_IF, "10 > 9 \"big\" \"small\"") == OWF_OK &&
+          strstr(dump(doc), "=big}"), dump(doc));
+    CHECK(ow_editor_undo(ed) == 1 && !strcmp(dump(doc), want), dump(doc));
+    {   /* Budgie on #376: many stars against a long text finish at once (the recursive matcher took 37 s on
+         * six); * and ? still match as Word's do; nan, inf and hex are text, not numbers */
+        char text[201], pattern[64];
+        clock_t t0 = clock();
+        memset(text, 'a', 200);
+        text[200] = 0;
+        strcpy(pattern, "*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*b");
+        CHECK(!owf_if_holds(text, "=", pattern) && owf_if_holds(text, "<>", pattern), "no b: no match");
+        text[199] = 'b';
+        CHECK(owf_if_holds(text, "=", pattern), "a b at the end: a match");
+        CHECK((double)(clock() - t0) / CLOCKS_PER_SEC < 0.5, "many stars, quickly");
+        CHECK(owf_if_holds("Female", "=", "F*") && owf_if_holds("Fe", "=", "F?") && !owf_if_holds("F", "=", "F?") &&
+              owf_if_holds("abc", "=", "*") && owf_if_holds("", "=", "*") && !owf_if_holds("abc", "=", "a*d"),
+              "Word's * and ?");
+        CHECK(owf_if_holds("nan", "=", "nan") && owf_if_holds("inf", "=", "inf") && !owf_if_holds("0x10", "=", "16") &&
+              owf_if_holds("010", "=", "10.00") && owf_if_holds("-2.5", "<", "1") && owf_if_holds("-2.5", "<", "-2.25") &&
+              owf_if_holds("1.05", "<", "1.5") && owf_if_holds("100", ">", "99") && owf_if_holds("-0", "=", "0") &&
+              !owf_if_holds("1e1", "=", "10"), "numbers and words");
+    }
+    for (k = 0; k < 2; ++k) {
+        const owf_format *f = owf_format_named(fmts[k]);
+        unsigned char *data = NULL;
+        size_t length = 0;
+        CHECK(f && f->export(doc, &data, &length, NULL) == OWF_OK && data, fmts[k]);
+        if (!data) continue;
+        {
+            owf_unzip zip;
+            unsigned char *xml = NULL;
+            size_t n = 0;
+            CHECK(owf_unzip_open(&zip, data, length) &&
+                  owf_unzip_read(&zip, k ? "content.xml" : "word/document.xml", &xml, &n) == OWF_OK, "part");
+            if (xml) {
+                if (k) CHECK(strstr((char *)xml, "<text:conditional-text text:condition=\"ooow:Gender == &quot;F*&quot;\" "
+                                                 "text:string-value-if-true=\"Ms\" text:string-value-if-false=\"Mr\" "
+                                                 "text:current-value=\"true\">Ms</text:conditional-text>") != NULL,
+                             "text:conditional-text");
+                else CHECK(strstr((char *)xml, "<w:instrText xml:space=\"preserve\"> DOCVARIABLE Gender </w:instrText>") &&
+                           strstr((char *)xml, " IF </w:instrText>"), "IF with its field nested");
+                owf_free(xml);
+            }
+        }
+        CHECK(owf_import_memory(data, length, NULL, &back, NULL, NULL) == OWF_OK && back, fmts[k]);
+        if (back) {
+            CHECK(!strcmp(dump(back), want), dump(back));
+            owf_doc_free(back);
+            back = NULL;
+        }
+        free(data);
+    }
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+    CHECK(zip_import(names, parts, 3, &word) == OWF_OK && word, "Word's IF");
+    if (word) {
+        CHECK(!strcmp(dump(word), "Hello {IF:{MERGEFIELD Title} = \"Dr\" \"Doctor\" \"friend\"=Doctor}!"), dump(word));
+        owf_doc_free(word);
+    }
+}
+
+/* libowf 1.20 (2.0.51): hidden paragraphs (ODF text:hidden-paragraph, OWF_FIELD_HIDE_PARA) and hidden text
+ * (text:hidden-text, an IF whose first text is ""): worked out from a user field, out and back through ODT,
+ * the paragraph left out of Markdown, HTML and PDF and written w:vanish in DOCX; OpenOffice's own form read */
+static int has(const unsigned char *d, size_t n, const char *s)
+{
+    size_t k = strlen(s), i;
+    for (i = 0; d && i + k <= n; ++i)
+        if (!memcmp(d + i, s, k)) return 1;
+    return 0;
+}
+
+static void test_hidden_paragraph(void)
+{
+    static const char *const names[] = { "mimetype", "content.xml" };
+    static const char *const parts[] = {
+        "application/vnd.oasis.opendocument.text",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-content "
+        "xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+        "xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" office:version=\"1.3\"><office:body><office:text>"
+        "<text:user-field-decls><text:user-field-decl office:value-type=\"string\" office:string-value=\"yes\" "
+        "text:name=\"Draft\"/></text:user-field-decls>"
+        "<text:p>Shown</text:p>"
+        "<text:p><text:hidden-paragraph text:condition=\"ooow:Draft == &quot;yes&quot;\" text:is-hidden=\"true\"/>Draft only</text:p>"
+        "<text:p>See <text:hidden-text text:condition=\"ooow:Draft != &quot;yes&quot;\" text:string-value=\"the final\" "
+        "text:is-hidden=\"true\">the final</text:hidden-text> copy</text:p>"
+        "</office:text></office:body></office:document-content>" };
+    static const char *const fmts[] = { "odt", "docx", "markdown", "html", "pdf" };
+    static const char *const want =
+        "Getting started|{HIDEPARA:{DOCVARIABLE Draft} = \"yes\" \"1\" \"\"=1}Plug it in and wait.|Using it"
+        "{IF:{DOCVARIABLE Draft} = \"yes\" \"\" \"Note\"=}|Press the button.";
+    owf_doc *doc = doc_of(), *back = NULL, *oo = NULL;
+    ow_editor *ed = doc ? ow_editor_new(doc) : NULL;
+    ow_selection sel;
+    int k;
+    CHECK(ed != NULL, "editor");
+    if (!ed) { owf_doc_free(doc); return; }
+    CHECK(ow_editor_set_user_field(ed, "Draft", "yes") == OWF_OK, "user field");
+    memset(&sel, 0, sizeof sel);
+    sel.anchor.paragraph = sel.focus.paragraph = 1;
+    ow_editor_set_selection(ed, &sel);
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_HIDE_PARA, "{DOCVARIABLE Draft} \"yes\"") == OWF_ERR_FORMAT,
+          "no operator: refused");
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_HIDE_PARA, NULL) == OWF_ERR_FORMAT, "no condition: refused");
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_HIDE_PARA, "{DOCVARIABLE Draft} = \"yes\"") == OWF_OK, "HIDEPARA");
+    caret_end(ed, 2);
+    CHECK(ow_editor_insert_field_arg(ed, OWF_FIELD_IF, "{DOCVARIABLE Draft} = \"yes\" \"\" \"Note\"") == OWF_OK,
+          "hidden text");
+    CHECK(!strcmp(dump(doc), want), dump(doc));
+    CHECK(owf_para_hidden(&doc->body.paras[1]) && !owf_para_hidden(&doc->body.paras[0]), "the paragraph is hidden");
+    caret_end(ed, 0);                                /* the caret steps over it */
+    ow_editor_move_caret(ed, OW_MOVE_RIGHT, 0);
+    sel = ow_editor_selection(ed);
+    CHECK(sel.focus.paragraph == 2, "Right goes past the hidden paragraph");
+    ow_editor_set_show_hidden(ed, 1);
+    caret_end(ed, 0);
+    ow_editor_move_caret(ed, OW_MOVE_RIGHT, 0);
+    sel = ow_editor_selection(ed);
+    CHECK(sel.focus.paragraph == 1, "shown: Right goes into it");
+    ow_editor_set_show_hidden(ed, 0);
+
+    for (k = 0; k < 5; ++k) {
+        const owf_format *f = owf_format_named(fmts[k]);
+        unsigned char *data = NULL, *xml = NULL;
+        size_t length = 0, n = 0;
+        CHECK(f && f->export(doc, &data, &length, NULL) == OWF_OK && data, fmts[k]);
+        if (!data) continue;
+        if (k < 2) {
+            owf_unzip zip;
+            CHECK(owf_unzip_open(&zip, data, length) &&
+                  owf_unzip_read(&zip, k ? "word/document.xml" : "content.xml", &xml, &n) == OWF_OK, "part");
+        }
+        if (k == 0) {
+            CHECK(has(xml, n, "<text:hidden-paragraph text:condition=\"ooow:Draft == &quot;yes&quot;\" "
+                              "text:is-hidden=\"true\"/>"), "text:hidden-paragraph");
+            CHECK(has(xml, n, "<text:hidden-text text:condition=\"ooow:Draft == &quot;yes&quot;\" "
+                              "text:string-value=\"Note\" text:is-hidden=\"true\">Note</text:hidden-text>"), "text:hidden-text");
+            CHECK(owf_import_memory(data, length, NULL, &back, NULL, NULL) == OWF_OK && back, "ODT back");
+            if (back) {
+                CHECK(!strcmp(dump(back), want), dump(back));
+                owf_doc_free(back);
+                back = NULL;
+            }
+        } else if (k == 1) {
+            CHECK(has(xml, n, "<w:vanish/>") && has(xml, n, "Plug it in") && !has(xml, n, "HIDEPARA"),
+                  "DOCX: the hidden paragraph's text w:vanish");
+        } else {
+            CHECK(!has(data, length, "Plug") && has(data, length, "Using"), fmts[k]);   /* (PDF: a word a piece) */
+        }
+        owf_free(xml);
+        free(data);
+    }
+    CHECK(ow_editor_set_user_field(ed, "Draft", "no") == OWF_OK && ow_editor_update_fields(ed) >= 0 &&
+          !owf_para_hidden(&doc->body.paras[1]) && strstr(dump(doc), "\"Note\"=Note}"), dump(doc));
+    /* Agnus on #21: the caret never stays in a paragraph that becomes hidden, so nothing is typed unseen: a
+     * user field changed under it moves it on (the next one shown, else the one before) */
+    caret_end(ed, 1);
+    CHECK(ow_editor_set_user_field(ed, "Draft", "yes") == OWF_OK && ow_editor_update_fields(ed) >= 0 &&
+          owf_para_hidden(&doc->body.paras[1]), "hidden again");
+    sel = ow_editor_selection(ed);
+    CHECK(sel.focus.paragraph == 2 && sel.anchor.paragraph == 2, "the caret moved on to the next paragraph shown");
+    CHECK(ow_editor_insert_utf8(ed, "X", 1) == OWF_OK && strstr(dump(doc), "and wait.|X") , dump(doc));
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+
+    {   /* inserting one hides the caret's paragraph: typing then goes into the next one; at the end, the one before */
+        owf_doc *d2 = doc_of();
+        ow_editor *e2 = d2 ? ow_editor_new(d2) : NULL;
+        unsigned char *data = NULL;
+        size_t length = 0;
+        owf_report *rp = owf_report_new();
+        if (e2) {
+            ow_editor_set_user_field(e2, "Draft", "yes");
+            caret_end(e2, 1);
+            CHECK(ow_editor_insert_field_arg(e2, OWF_FIELD_HIDE_PARA, "{DOCVARIABLE Draft} = \"yes\"") == OWF_OK, "inserted");
+            CHECK(ow_editor_insert_text_block(e2, "X", 1) == OWF_OK, "typed");
+            CHECK(strstr(dump(d2), "=1}|XUsing it") != NULL, dump(d2));
+            caret_end(e2, 3);
+            CHECK(ow_editor_insert_field_arg(e2, OWF_FIELD_HIDE_PARA, "{DOCVARIABLE Draft} = \"yes\"") == OWF_OK, "last");
+            sel = ow_editor_selection(e2);
+            CHECK(sel.focus.paragraph == 2, "the last hidden: back to the one before");
+            /* a condition ODF can't write (a merge field's) is noted, not dropped silently */
+            caret_end(e2, 0);
+            CHECK(ow_editor_insert_field_arg(e2, OWF_FIELD_HIDE_PARA, "{MERGEFIELD Town} = \"Leeds\"") == OWF_OK, "merge");
+            CHECK(owf_format_named("odt")->export(d2, &data, &length, rp) == OWF_OK && rp && owf_report_count(rp) > 0,
+                  "ODT notes the condition it can't write");
+            free(data);
+            ow_editor_free(e2);
+        }
+        owf_report_free(rp);
+        owf_doc_free(d2);
+    }
+
+    CHECK(zip_import(names, parts, 2, &oo) == OWF_OK && oo, "OpenOffice's hidden paragraph and text");
+    if (oo) {
+        CHECK(!strcmp(dump(oo), "Shown|{HIDEPARA:{DOCVARIABLE Draft} = \"yes\" \"1\" \"\"=1}Draft only|"
+                                "See {IF:{DOCVARIABLE Draft} <> \"yes\" \"\" \"the final\"=} copy"), dump(oo));
+        CHECK(owf_para_hidden(&oo->body.paras[1]), "hidden as it was saved");
+        owf_doc_free(oo);
+    }
+}
+
+/* libowf 1.19 (2.0.50): input fields (FILLIN): a prompt and the answer given, kept by update_fields, given a
+ * new answer (undoable), through DOCX and ODT; Word's own form with \d and a quote in the prompt */
+static void test_fill_in(void)
+{
+    static const char *const names[] = { "[Content_Types].xml", "_rels/.rels", "word/document.xml" };
+    static const char *const parts[] = {
+        "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+        "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+        "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+        "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>"
+        "</Types>",
+        "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+        "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>"
+        "</Relationships>",
+        "<?xml version=\"1.0\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>"
+        "<w:p><w:r><w:t xml:space=\"preserve\">Dear </w:t></w:r>"
+        "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText xml:space=\"preserve\"> FILLIN \"Whose \\\"name\\\"?\" \\d \"Sir\" </w:instrText></w:r>"
+        "<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>Ann</w:t></w:r><w:r><w:fldChar w:fldCharType=\"end\"/></w:r>"
+        "<w:fldSimple w:instr=\" FILLIN Town \"><w:r><w:t>Leeds</w:t></w:r></w:fldSimple></w:p>"
+        "<w:sectPr/></w:body></w:document>" };
+    static const char *const fmts[] = { "docx", "odt" };
+    owf_doc *doc = doc_of(), *word = NULL, *back = NULL;
+    ow_editor *ed = doc ? ow_editor_new(doc) : NULL;
+    const char *prompt = NULL, *answer = NULL;
+    static const char *const want = "Getting started|Plug it in and wait.{FILLIN:Your name?=Ann}|Using it|Press the button.";
+    int k;
+    CHECK(ed != NULL, "editor");
+    if (!ed) { owf_doc_free(doc); return; }
+    CHECK(ow_editor_insert_fill_in(ed, NULL, "x") == OWF_ERR_FORMAT, "an input field needs a prompt");
+    caret_end(ed, 1);
+    CHECK(ow_editor_insert_fill_in(ed, "Your name?", "Bob") == OWF_OK, "inserted");
+    CHECK(!strcmp(dump(doc), "Getting started|Plug it in and wait.{FILLIN:Your name?=Bob}|Using it|Press the button."),
+          dump(doc));
+    CHECK(ow_editor_update_fields(ed) >= 0 && strstr(dump(doc), "=Bob}"), "update_fields keeps the answer");
+    CHECK(ow_editor_fill_in_count(ed) == 1 && ow_editor_fill_in_at(ed, 0, &prompt, &answer) &&
+          !strcmp(prompt, "Your name?") && !strcmp(answer, "Bob") && !ow_editor_fill_in_at(ed, 1, NULL, NULL), "listed");
+    CHECK(ow_editor_set_fill_in(ed, 0, "Ann") == OWF_OK && !strcmp(dump(doc), want), dump(doc));
+    CHECK(ow_editor_undo(ed) == 1 && strstr(dump(doc), "=Bob}") && ow_editor_redo(ed) == 1 && !strcmp(dump(doc), want),
+          "an answer is one undo");
+    CHECK(ow_editor_set_fill_in(ed, 1, "x") == OWF_ERR_FORMAT, "no second one");
+    for (k = 0; k < 2; ++k) {
+        const owf_format *f = owf_format_named(fmts[k]);
+        unsigned char *data = NULL;
+        size_t length = 0;
+        CHECK(f && f->export(doc, &data, &length, NULL) == OWF_OK && data, fmts[k]);
+        if (!data) continue;
+        {
+            owf_unzip zip;
+            unsigned char *xml = NULL;
+            size_t n = 0;
+            CHECK(owf_unzip_open(&zip, data, length) &&
+                  owf_unzip_read(&zip, k ? "content.xml" : "word/document.xml", &xml, &n) == OWF_OK, "part");
+            if (xml) {
+                CHECK(strstr((char *)xml, k ? "<text:text-input text:description=\"Your name?\">Ann</text:text-input>"
+                                            : "FILLIN &quot;Your name?&quot;") != NULL, k ? "text:text-input" : "FILLIN");
+                owf_free(xml);
+            }
+        }
+        CHECK(owf_import_memory(data, length, NULL, &back, NULL, NULL) == OWF_OK && back, fmts[k]);
+        if (back) {
+            CHECK(!strcmp(dump(back), want), dump(back));
+            owf_doc_free(back);
+            back = NULL;
+        }
+        free(data);
+    }
+    ow_editor_free(ed);
+    owf_doc_free(doc);
+    CHECK(zip_import(names, parts, 3, &word) == OWF_OK && word, "Word's FILLIN");
+    if (word) {
+        CHECK(!strcmp(dump(word), "Dear {FILLIN:Whose \"name\"?=Ann}{FILLIN:Town=Leeds}"), dump(word));
+        owf_doc_free(word);
+    }
+}
+
 int main(void)
 {
     test_editing();
@@ -621,6 +945,9 @@ int main(void)
     test_odf_form();
     test_seq();
     test_caption_refs();
+    test_if();
+    test_fill_in();
+    test_hidden_paragraph();
     printf("fields: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

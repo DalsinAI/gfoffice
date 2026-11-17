@@ -97,6 +97,24 @@ for bug in doc.get('bugs', {}).values():
 EOF
 fi
 
+# The Document Foundation's bug tracker (bugs.documentfoundation.org): the
+# .pub attachments of its Publisher-import bugs, through its REST interface,
+# BUG:ATTACHMENT. The files only: the bugs' discussions are about another
+# implementation and are not read for the format (CORPUS.md).
+TDF_PUB="59355:73033 61579:75659 64631:79338 67299:83079 69080:99486 69080:131925 78739:99784 79182:99721 89063:113069 89993:114080 95348:120057 100639:125942 102039:127356 133297:161173 150838:182274 160489:193443 163388:197010"
+if command -v python3 >/dev/null; then
+    python3 -I - "$DEST" $TDF_PUB <<'EOF' || FAILED="$FAILED tdf-attachments"
+import base64, json, os, sys, urllib.request
+for pair in sys.argv[2:]:
+    bug, aid = pair.split(':')
+    url = 'https://bugs.documentfoundation.org/rest/bug/attachment/%s' % aid
+    with urllib.request.urlopen(url, timeout=120) as r:
+        a = json.load(r)['attachments'][aid]
+    with open(os.path.join(sys.argv[1], 'tdf%s-%s.pub' % (bug, aid)), 'wb') as f:
+        f.write(base64.b64decode(a['data']))
+EOF
+fi
+
 # ---- PageStream (Amiga): no sample found on GitHub ----
 for p in pgs22demo pgs3 pgs3f pgsmodam; do
     fetch_url "https://aminet.net/text/dtp/$p.lha" "aminet-$p.lha"

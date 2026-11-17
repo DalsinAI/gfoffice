@@ -16,6 +16,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <string.h>
 
 #define EMU(twips) ((long)(twips) * 635L)
@@ -34,7 +35,7 @@ typedef struct {
     int *image_used;             /* per res image: its media number, 0: not written yet */
     int nmedia;
     int ncharts;                 /* charts written: ppt/charts/chart<n>.xml, each with its workbook */
-    int lost_tables, lost_groups, lost_other, lost_transition;
+    int lost_groups, lost_other, lost_transition;
 } pptxw;
 
 /* ---- Small pieces ---- */
@@ -67,6 +68,125 @@ static const char *pic_ext(const owf_image *im)
 static void put_colour(owf_buf *b, unsigned long rgb)
 {
     owf_buf_printf(b, "<a:solidFill><a:srgbClr val=\"%06lX\"/></a:solidFill>", rgb & 0xFFFFFFUL);
+}
+
+/* a colour, see-through by transparency percent (an a:alpha of the opaque part) */
+static void put_srgb(owf_buf *b, unsigned long rgb, int transparency)
+{
+    if (transparency > 0)
+        owf_buf_printf(b, "<a:srgbClr val=\"%06lX\"><a:alpha val=\"%d\"/></a:srgbClr>", rgb & 0xFFFFFFUL,
+                       (100 - (transparency > 100 ? 100 : transparency)) * 1000);
+    else
+        owf_buf_printf(b, "<a:srgbClr val=\"%06lX\"/>", rgb & 0xFFFFFFUL);
+}
+
+/* hatching as a:pattFill's nearest preset: lines across, up, rising or falling, or a grid; close ones (under
+ * 1.5 mm apart) as the narrow and small presets */
+static const char *pattern_of(const owf_look *l)
+{
+    int a = ((l->hatch_angle % 1800) + 1800) % 1800, close = l->hatch_distance > 0 && l->hatch_distance < 85;
+    int q = ((a + 225) / 450) % 4;   /* 0 across, 1 rising, 2 up, 3 falling */
+    if (l->hatch != OWF_HATCH_SINGLE)
+        return q & 1 ? "diagCross" : close ? "smGrid" : "cross";
+    switch (q) {
+    case 1: return "upDiag";
+    case 2: return close ? "narVert" : "vert";
+    case 3: return "dnDiag";
+    default: return close ? "narHorz" : "horz";
+    }
+}
+
+/* an object's fill: hatching (a:pattFill, its lines the foreground, the fill or a clear white the
+ * background), a gradient (a:gradFill: a:lin's ang 60000ths of a degree clockwise, our angle
+ * anticlockwise; a radial one an a:path circle from the centre), plain, or none; see-through as an
+ * a:alpha on each colour */
+static void put_fill(owf_buf *b, const owf_look *l)
+{
+    int t = l->transparency;
+    if (l->hatch != OWF_HATCH_NONE) {
+        owf_buf_printf(b, "<a:pattFill prst=\"%s\"><a:fgClr>", pattern_of(l));
+        put_srgb(b, OWF_SHADE_SET(l->hatch_colour) ? OWF_SHADE_RGB(l->hatch_colour) : 0, t);
+        owf_buf_puts(b, "</a:fgClr><a:bgClr>");
+        if (OWF_SHADE_SET(l->fill))
+            put_srgb(b, OWF_SHADE_RGB(l->fill), t);
+        else
+            put_srgb(b, 0xFFFFFF, 100);
+        owf_buf_puts(b, "</a:bgClr></a:pattFill>");
+    } else if (OWF_SHADE_SET(l->fill) && OWF_SHADE_SET(l->fill2) &&
+               (l->gradient == OWF_GRADIENT_LINEAR || l->gradient == OWF_GRADIENT_RADIAL)) {
+        owf_buf_puts(b, "<a:gradFill rotWithShape=\"1\"><a:gsLst><a:gs pos=\"0\">");
+        put_srgb(b, OWF_SHADE_RGB(l->fill), t);
+        owf_buf_puts(b, "</a:gs><a:gs pos=\"100000\">");
+        put_srgb(b, OWF_SHADE_RGB(l->fill2), t);
+        owf_buf_puts(b, "</a:gs></a:gsLst>");
+        if (l->gradient == OWF_GRADIENT_RADIAL)
+            owf_buf_puts(b, "<a:path path=\"circle\"><a:fillToRect l=\"50000\" t=\"50000\" r=\"50000\" b=\"50000\"/>"
+                            "</a:path>");
+        else
+            owf_buf_printf(b, "<a:lin ang=\"%ld\" scaled=\"0\"/>",
+                           (long)((3600 - ((l->gradient_angle % 3600) + 3600) % 3600) % 3600) * 6000L);
+        owf_buf_puts(b, "</a:gradFill>");
+    } else if (OWF_SHADE_SET(l->fill)) {
+        owf_buf_puts(b, "<a:solidFill>");
+        put_srgb(b, OWF_SHADE_RGB(l->fill), t);
+        owf_buf_puts(b, "</a:solidFill>");
+    } else {
+        owf_buf_puts(b, "<a:noFill/>");
+    }
+}
+
+/* tan(degrees) * 16384, 0 to 45 */
+static const long tan_deg[46] = { 0, 286, 572, 859, 1146, 1433, 1722, 2012, 2303, 2595, 2889, 3185, 3483, 3783, 4085, 4390, 4698, 5009, 5323, 5641, 5963, 6289, 6620, 6955, 7295, 7640, 7991, 8348, 8712, 9082, 9459, 9845, 10238, 10640, 11051, 11472, 11904, 12346, 12801, 13268, 13748, 14242, 14752, 15278, 15822, 16384 };
+
+/* The direction of (dx, dy) in tenths of a degree clockwise from left to right (y runs down), 0 to 3599,
+ * without floating point */
+static int direction_of(long dx, long dy)
+{
+    long ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy, n, d, t;
+    int k, a;
+    if (!ax && !ay)
+        return 0;
+    n = ax < ay ? ax : ay;
+    d = ax < ay ? ay : ax;
+    t = (long)((long long)n * 16384 / d);   /* tan of the angle from the nearer axis, 0 to 45 degrees */
+    for (k = 0; k < 45 && tan_deg[k + 1] <= t; k++)
+        ;
+    a = k * 10 + (k < 45 ? (int)((t - tan_deg[k]) * 10 / (tan_deg[k + 1] - tan_deg[k])) : 0);
+    if (ax < ay) a = 900 - a;                 /* 0 to 90 from the x axis */
+    if (dx < 0) a = 1800 - a;
+    if (dy < 0) a = 3600 - a;
+    return a % 3600;
+}
+
+/* the whole square root of v (v >= 0) */
+static long root_of(long long v)
+{
+    long long r = 0, bit = 1LL << 40;
+    while (bit > v) bit >>= 2;
+    while (bit) {
+        if (v >= r + bit) {
+            v -= r + bit;
+            r = (r >> 1) + bit;
+        } else {
+            r >>= 1;
+        }
+        bit >>= 2;
+    }
+    return (long)r;
+}
+
+/* an object's shadow: a:effectLst's a:outerShdw, sharp (blurRad 0), dist and dir from its offset */
+static void put_shadow(owf_buf *b, const owf_look *l)
+{
+    long dist;
+    if (!l->shadow)
+        return;
+    dist = root_of((long long)l->shadow_dx * l->shadow_dx + (long long)l->shadow_dy * l->shadow_dy);
+    owf_buf_printf(b, "<a:effectLst><a:outerShdw blurRad=\"0\" dist=\"%ld\" dir=\"%ld\" algn=\"tl\" rotWithShape=\"0\">",
+                   EMU(dist), (long)direction_of(l->shadow_dx, l->shadow_dy) * 6000L);
+    put_srgb(b, OWF_SHADE_SET(l->shadow_colour) ? OWF_SHADE_RGB(l->shadow_colour) : OWF_SHADOW_COLOUR,
+             l->shadow_transparency);
+    owf_buf_puts(b, "</a:outerShdw></a:effectLst>");
 }
 
 static const char *font_name(const owf_deck *d, int font)
@@ -207,6 +327,8 @@ static void put_text_run(owf_buf *b, const owf_deck *d, const owf_run *r)
     }
 }
 
+static void put_para(owf_buf *b, const owf_deck *d, const owf_obj *o, const owf_para *p, int level);
+
 static void put_body(owf_buf *b, const owf_deck *d, const owf_obj *o, const owf_story *story, int in_shape)
 {
     int i;
@@ -229,9 +351,18 @@ static void put_body(owf_buf *b, const owf_deck *d, const owf_obj *o, const owf_
     if ((o->flags & OWF_OBJ_EMPTY) || !story->nparas) {
         owf_buf_puts(b, "<a:p><a:endParaRPr lang=\"en-GB\"/></a:p>");
     } else {
-        for (i = 0; i < story->nparas; i++) {
-            const owf_para *p = &story->paras[i];
-            int level = owf_obj_level(o, i), j;
+        for (i = 0; i < story->nparas; i++)
+            put_para(b, d, o, &story->paras[i], owf_obj_level(o, i));
+    }
+    owf_buf_puts(b, in_shape ? "</p:txBody>" : "</a:txBody>");
+}
+
+/* One paragraph (a:p) at its list level. */
+static void put_para(owf_buf *b, const owf_deck *d, const owf_obj *o, const owf_para *p, int level)
+{
+    int j;
+    {
+        {
             owf_buf_puts(b, "<a:p><a:pPr");
             if (level > 1) owf_buf_printf(b, " lvl=\"%d\"", level - 1);
             if (p->fmt.align != OWF_ALIGN_LEFT) owf_buf_printf(b, " algn=\"%s\"", align_name(p->fmt.align));
@@ -252,7 +383,6 @@ static void put_body(owf_buf *b, const owf_deck *d, const owf_obj *o, const owf_
             owf_buf_puts(b, "<a:endParaRPr lang=\"en-GB\"/></a:p>");
         }
     }
-    owf_buf_puts(b, in_shape ? "</p:txBody>" : "</a:txBody>");
 }
 
 /* ---- Objects ---- */
@@ -441,6 +571,116 @@ static void put_chart(pptxw *w, owf_buf *b, const owf_obj *o, const owf_obj *box
                       "</a:graphicData></a:graphic></p:graphicFrame>", rid);
 }
 
+/* A table's merge whose first cell is row, col; or (cover) the one covering it otherwise. */
+static const owf_table_merge *table_merge_at(const owf_obj *o, int row, int col, int cover)
+{
+    int i;
+    for (i = 0; o->merges && i < o->nmerges; i++) {
+        const owf_table_merge *m = &o->merges[i];
+        int first = m->row == row && m->col == col;
+        if (cover ? !first && row >= m->row && row < m->row + m->rows && col >= m->col && col < m->col + m->cols
+                  : first)
+            return m;
+    }
+    return NULL;
+}
+
+/* A PowerPoint table style's id: a GUID in braces, as a:tableStyleId has it
+ * (an ODP template's name is not one) */
+static int style_id(const char *s)
+{
+    size_t i;
+    if (!s || strlen(s) != 38 || s[0] != '{' || s[37] != '}')
+        return 0;
+    for (i = 1; i < 37; i++)
+        if (i == 9 || i == 14 || i == 19 || i == 24 ? s[i] != '-' : !isxdigit((unsigned char)s[i]))
+            return 0;
+    return 1;
+}
+
+/* A slide table as PowerPoint's own (a:tbl in a p:graphicFrame): its
+ * design's parts and style id, its columns, each row at its height (one
+ * without as tall as the table shares out), each cell's text and fill, a
+ * merge's spans on its first cell and the cells it covers marked so. */
+static void put_table(owf_buf *b, const owf_deck *d, const owf_obj *o, const owf_obj *box, int id)
+{
+    static const struct { const char *attr; unsigned flag; } design[] = {
+        { "firstRow", OWF_TABLE_FIRST_ROW }, { "lastRow", OWF_TABLE_LAST_ROW },
+        { "firstCol", OWF_TABLE_FIRST_COL }, { "lastCol", OWF_TABLE_LAST_COL },
+        { "bandRow", OWF_TABLE_BANDED_ROWS }, { "bandCol", OWF_TABLE_BANDED_COLS },
+    };
+    int ncols = o->ncols > 0 ? o->ncols : 1, nrows = 0, row, col, i, k, shared, left;
+    char name[48];
+    for (i = 0; i < o->text.nparas; i++)
+        if (o->text.paras[i].table_row + 1 > nrows)
+            nrows = o->text.paras[i].table_row + 1;
+    if (nrows < 1)
+        nrows = 1;
+    if (ncols > 64)
+        ncols = 64;
+    /* rows without a height share what those with one leave of the table's */
+    left = box->height;
+    k = 0;
+    for (row = 0; row < nrows; row++) {
+        if (o->row_heights && row < o->nrows && o->row_heights[row] > 0)
+            left -= o->row_heights[row];
+        else
+            k++;
+    }
+    shared = k && left > 0 ? left / k : 370;   /* 370 twips: PowerPoint's 0.26 in */
+    snprintf(name, sizeof name, "Table %d", id);
+    owf_buf_puts(b, "<p:graphicFrame>");
+    put_nv(b, "GraphicFrame", id, o, name);
+    owf_buf_puts(b, "<p:cNvGraphicFramePr><a:graphicFrameLocks noGrp=\"1\"/></p:cNvGraphicFramePr><p:nvPr/>"
+                    "</p:nvGraphicFramePr>");
+    put_xfrm(b, "p", box);
+    owf_buf_puts(b, "<a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/table\">"
+                    "<a:tbl><a:tblPr");
+    for (i = 0; i < (int)(sizeof design / sizeof design[0]); i++)
+        if (o->table_design & design[i].flag)
+            owf_buf_printf(b, " %s=\"1\"", design[i].attr);
+    owf_buf_puts(b, ">");
+    if (style_id(o->table_style))
+        owf_buf_printf(b, "<a:tableStyleId>%s</a:tableStyleId>", o->table_style);
+    owf_buf_puts(b, "</a:tblPr><a:tblGrid>");
+    for (col = 0; col < ncols; col++)
+        owf_buf_printf(b, "<a:gridCol w=\"%ld\"/>",
+                       EMU(o->col_widths && col < o->ncols ? o->col_widths[col] : box->width / ncols));
+    owf_buf_puts(b, "</a:tblGrid>");
+    for (row = 0; row < nrows; row++) {
+        int h = o->row_heights && row < o->nrows && o->row_heights[row] > 0 ? o->row_heights[row] : shared;
+        owf_buf_printf(b, "<a:tr h=\"%ld\">", EMU(h));
+        for (col = 0; col < ncols; col++) {
+            const owf_table_merge *m = table_merge_at(o, row, col, 0), *under = table_merge_at(o, row, col, 1);
+            unsigned long fill = 0;
+            int any = 0;
+            owf_buf_puts(b, "<a:tc");
+            if (m && m->cols > 1) owf_buf_printf(b, " gridSpan=\"%d\"", m->cols);
+            if (m && m->rows > 1) owf_buf_printf(b, " rowSpan=\"%d\"", m->rows);
+            if (under && col > under->col) owf_buf_puts(b, " hMerge=\"1\"");
+            if (under && row > under->row) owf_buf_puts(b, " vMerge=\"1\"");
+            owf_buf_puts(b, "><a:txBody><a:bodyPr/><a:lstStyle/>");
+            for (i = 0; i < o->text.nparas; i++) {
+                const owf_para *p = &o->text.paras[i];
+                if (p->table_row != row || p->table_col != col)
+                    continue;
+                put_para(b, d, o, p, owf_obj_level(o, i));
+                if (!any && OWF_SHADE_SET(p->cell_shading))
+                    fill = p->cell_shading;
+                any = 1;
+            }
+            if (!any)
+                owf_buf_puts(b, "<a:p><a:endParaRPr lang=\"en-GB\"/></a:p>");
+            owf_buf_puts(b, "</a:txBody><a:tcPr>");
+            if (fill)
+                put_colour(b, OWF_SHADE_RGB(fill));
+            owf_buf_puts(b, "</a:tcPr></a:tc>");
+        }
+        owf_buf_puts(b, "</a:tr>");
+    }
+    owf_buf_puts(b, "</a:tbl></a:graphicData></a:graphic></p:graphicFrame>");
+}
+
 static void put_object(pptxw *w, owf_buf *b, const owf_obj *o, const owf_obj *box, int id, rels *r, int first_rid,
                        int on_master)
 {
@@ -467,10 +707,16 @@ static void put_object(pptxw *w, owf_buf *b, const owf_obj *o, const owf_obj *bo
         put_xfrm(b, "a", box);
         owf_buf_puts(b, "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>");
         if (OWF_SHADE_SET(o->look.line)) put_line(b, &o->look);
+        put_shadow(b, &o->look);
         owf_buf_puts(b, "</p:spPr></p:pic>");
         return;
     }
-    if (o->kind == OWF_OBJ_TABLE) w->lost_tables++;
+    if (o->kind == OWF_OBJ_TABLE) {
+        if (o->ncols > 64)
+            owf_report_add(w->report, OWF_NOTE_LOST, "A table's columns past the 64th were left out");
+        put_table(b, d, o, box, id);
+        return;
+    }
     if (o->kind == OWF_OBJ_OTHER || o->kind == OWF_OBJ_CHART) {
         if (!o->text.nparas) {
             w->lost_other++;
@@ -490,32 +736,38 @@ static void put_object(pptxw *w, owf_buf *b, const owf_obj *o, const owf_obj *bo
     put_xfrm(b, "a", box);
     if (o->kind == OWF_OBJ_SHAPE) {
         owf_buf_printf(b, "<a:prstGeom prst=\"%s\"><a:avLst/></a:prstGeom>", preset(o));
-        if (OWF_SHADE_SET(o->look.fill) && o->shape != OWF_SHAPE_LINE) put_colour(b, OWF_SHADE_RGB(o->look.fill));
+        if (OWF_LOOK_FILLED(&o->look) && o->shape != OWF_SHAPE_LINE) put_fill(b, &o->look);
         else owf_buf_puts(b, "<a:noFill/>");
         put_line(b, &o->look);
     } else {
         owf_buf_puts(b, "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>");
-        if (OWF_SHADE_SET(o->look.fill)) put_colour(b, OWF_SHADE_RGB(o->look.fill));
-        else owf_buf_puts(b, "<a:noFill/>");
+        put_fill(b, &o->look);
         if (OWF_SHADE_SET(o->look.line)) put_line(b, &o->look);
     }
+    put_shadow(b, &o->look);
     owf_buf_puts(b, "</p:spPr>");
     if (o->shape != OWF_SHAPE_LINE || o->kind != OWF_OBJ_SHAPE)
         put_body(b, d, o, &o->text, 1);
     owf_buf_puts(b, "</p:sp>");
 }
 
-static void put_background(pptxw *w, owf_buf *b, unsigned long colour, int image, rels *r, int first_rid)
+/* a page's background: its picture (image into res->images, or -1), else its look bg */
+static void put_background(pptxw *w, owf_buf *b, const owf_look *bg, int image, rels *r, int first_rid)
 {
     int media, rid;
     if (image >= 0 && (media = media_of(w, image)) > 0 && (rid = rel_of(r, media, first_rid)) >= 0) {
-        owf_buf_printf(b, "<p:bg><p:bgPr><a:blipFill><a:blip r:embed=\"rId%d\"/><a:stretch><a:fillRect/></a:stretch>"
-                          "</a:blipFill><a:effectLst/></p:bgPr></p:bg>", rid);
+        owf_buf_printf(b, "<p:bg><p:bgPr><a:blipFill><a:blip r:embed=\"rId%d\"", rid);
+        if (bg->transparency > 0)
+            owf_buf_printf(b, "><a:alphaModFix amt=\"%d\"/></a:blip>",
+                           (100 - (bg->transparency > 100 ? 100 : bg->transparency)) * 1000);
+        else
+            owf_buf_puts(b, "/>");
+        owf_buf_puts(b, "<a:stretch><a:fillRect/></a:stretch></a:blipFill><a:effectLst/></p:bgPr></p:bg>");
         return;
     }
-    if (OWF_SHADE_SET(colour)) {
+    if (OWF_SHADE_SET(bg->fill)) {
         owf_buf_puts(b, "<p:bg><p:bgPr>");
-        put_colour(b, OWF_SHADE_RGB(colour));
+        put_fill(b, bg);
         owf_buf_puts(b, "<a:effectLst/></p:bgPr></p:bg>");
     }
 }
@@ -576,7 +828,11 @@ static void put_slide(pptxw *w, int index)
         owf_buf_puts(&b, "\"");
     }
     owf_buf_puts(&b, ">");
-    put_background(w, &b, s->background, s->background_image, &r, 3);
+    {
+        owf_look bg;
+        OWF_BACKGROUND_LOOK(s, &bg);
+        put_background(w, &b, &bg, s->background_image, &r, 3);
+    }
     put_tree_start(&b);
     for (i = 0; i < s->nobjs; i++) {
         const owf_obj *o = &s->objs[i];
@@ -676,7 +932,11 @@ static void put_master(pptxw *w, int index)
     }
     owf_buf_puts(&b, ">");
     if (OWF_SHADE_SET(m->background) || m->background_image >= 0)
-        put_background(w, &b, m->background, m->background_image, &r, 3);
+        {
+            owf_look bg;
+            OWF_BACKGROUND_LOOK(m, &bg);
+            put_background(w, &b, &bg, m->background_image, &r, 3);
+        }
     else
         owf_buf_puts(&b, "<p:bg><p:bgRef idx=\"1001\"><a:schemeClr val=\"bg1\"/></p:bgRef></p:bg>");
     put_tree_start(&b);
@@ -924,8 +1184,6 @@ int opr_export_pptx(const owf_deck *deck, unsigned char **data, size_t *length, 
         owf_buf_free(&out);
         return OWF_ERR_MEMORY;
     }
-    if (w.lost_tables)
-        owf_report_add(report, OWF_NOTE_APPROX, "Tables are saved as text boxes in PPTX for now (%d)", w.lost_tables);
     if (w.lost_groups)
         owf_report_add(report, OWF_NOTE_APPROX, "Groups are saved as their objects, ungrouped (%d)", w.lost_groups);
     if (w.lost_other)

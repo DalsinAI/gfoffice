@@ -1524,4 +1524,45 @@ __owfpresent_owf_slide_delete_anim(void *__base, owf_slide *slide, int index)
 #define owf_slide_delete_anim(slide, index) __owfpresent_owf_slide_delete_anim((OWFPRESENT_BASE_NAME), (owf_slide *)(slide), (int)(index))
 #define __owf_slide_delete_anim_base(__in_base, slide, index) __owfpresent_owf_slide_delete_anim((__in_base), (owf_slide *)(slide), (int)(index))
 
+static __inline__ int
+__owfpresent_owf_pdf_gradient(void *__base, owf_pdf *pdf, const int *xy, int npoints, int x, int y, int w, int h, int kind, int angle, unsigned long from, unsigned long to)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(pdf);
+	register ULONG _a1 __asm("a1") = (ULONG)(xy);
+	register ULONG _d0 __asm("d0") = (ULONG)(npoints);
+	register ULONG _d1 __asm("d1") = (ULONG)(x);
+	register ULONG _d2 __asm("d2") = (ULONG)(y);
+	register ULONG _d3 __asm("d3") = (ULONG)(w);
+	register ULONG _d4 __asm("d4") = (ULONG)(h);
+	register ULONG _d5 __asm("d5") = (ULONG)(kind);
+	register ULONG _d6 __asm("d6") = (ULONG)(angle);
+	register ULONG _d7 __asm("d7") = (ULONG)(from);
+	register ULONG _a2 __asm("a2") = (ULONG)(to);
+	register void *_a6 __asm("a6") = __base;
+	__asm__ __volatile__ ("jsr -540(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a2), "r" (_a6), "r" (_d2), "r" (_d3), "r" (_d4), "r" (_d5), "r" (_d6), "r" (_d7)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_pdf_gradient(pdf, xy, npoints, x, y, w, h, kind, angle, from, to) __owfpresent_owf_pdf_gradient((OWFPRESENT_BASE_NAME), (owf_pdf *)(pdf), (const int *)(xy), (int)(npoints), (int)(x), (int)(y), (int)(w), (int)(h), (int)(kind), (int)(angle), (unsigned long)(from), (unsigned long)(to))
+#define __owf_pdf_gradient_base(__in_base, pdf, xy, npoints, x, y, w, h, kind, angle, from, to) __owfpresent_owf_pdf_gradient((__in_base), (owf_pdf *)(pdf), (const int *)(xy), (int)(npoints), (int)(x), (int)(y), (int)(w), (int)(h), (int)(kind), (int)(angle), (unsigned long)(from), (unsigned long)(to))
+
+static __inline__ void
+__owfpresent_owf_pdf_alpha(void *__base, owf_pdf *pdf, int opaque)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(pdf);
+	register ULONG _d0 __asm("d0") = (ULONG)(opaque);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -546(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	(void)_d0; (void)_d1; (void)_a0; (void)_a1;
+}
+#define owf_pdf_alpha(pdf, opaque) __owfpresent_owf_pdf_alpha((OWFPRESENT_BASE_NAME), (owf_pdf *)(pdf), (int)(opaque))
+#define __owf_pdf_alpha_base(__in_base, pdf, opaque) __owfpresent_owf_pdf_alpha((__in_base), (owf_pdf *)(pdf), (int)(opaque))
+
 #endif /* INLINE_OWFPRESENT_H */

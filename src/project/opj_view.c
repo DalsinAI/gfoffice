@@ -52,7 +52,9 @@ void opj_view_init(opj_view *v, const opj_doc *doc, int width, int height, int r
 
 int opj_column_width(int column)
 {
-    static const int widths[OPJ_NCOLS] = { 32, 180, 56, 96, 96, 84, 64, 48, 140, 96, 96, 72, 72, 140, 96, 160 };
+    static const int widths[OPJ_NCOLS] = { 32, 180, 56, 96, 96, 84, 64, 48, 140, 96, 96, 72, 72, 140, 96, 160,
+                                                   96, 96, 96, 96, 80, 80, 80, 80, 80, 96, 64, 80, 96, 80, 80, 96, 80,
+                                                   56, 88 };
     return column >= 0 && column < OPJ_NCOLS ? widths[column] : 0;
 }
 
@@ -108,9 +110,49 @@ owf_ptime opj_view_time(const opj_view *v, long x)
     return v->origin + days * DAY + (dx - days * dw) * DAY / dw;
 }
 
+/* The view's lines when it has some worked out, else NULL (a line is a task). */
+static const opj_lines *lines_of(const opj_view *v)
+{
+    return v && v->lines && v->lines->line_of ? v->lines : NULL;
+}
+
+/* A task row's line; -1 hidden (or out of the lines' range). */
+static int view_line(const opj_view *v, int row)
+{
+    const opj_lines *l = lines_of(v);
+    if (!l) return row;
+    return row >= 0 && row < l->ntasks ? l->line_of[row] : -1;
+}
+
+#define HIDDEN_Y (-1000000)              /* a hidden task's row: far above the view */
+
 int opj_row_y(const opj_view *v, int row)
 {
-    return 2 * v->row_height + (row - v->first_row) * v->row_height;
+    int line = view_line(v, row);
+    if (line < 0 && lines_of(v)) return HIDDEN_Y;
+    return 2 * v->row_height + (line - v->first_row) * v->row_height;
+}
+
+int opj_view_lines(const opj_view *v, const opj_doc *doc)
+{
+    const opj_lines *l = lines_of(v);
+    if (!doc || !doc->plan) return 0;
+    return l ? l->n : doc->plan->ntasks;
+}
+
+int opj_view_line_task(const opj_view *v, const opj_doc *doc, int line)
+{
+    const opj_lines *l = lines_of(v);
+    int task;
+    if (!doc || !doc->plan || line < 0 || line >= opj_view_lines(v, doc)) return -1;
+    task = l ? l->task[line] : line;
+    return task < doc->plan->ntasks ? task : -1;
+}
+
+int opj_view_task_line(const opj_view *v, const opj_doc *doc, int task)
+{
+    if (!doc || !doc->plan || task < 0 || task >= doc->plan->ntasks) return -1;
+    return view_line(v, task);
 }
 
 int opj_rows_shown(const opj_view *v)
@@ -134,7 +176,7 @@ int opj_bar_of(const opj_view *v, const opj_doc *doc, int row, opj_bar *bar)
     const owf_ptask *t;
     int y, rh = v->row_height;
     long x0, x1;
-    if (!doc || row < 0 || row >= doc->plan->ntasks) return 0;
+    if (!doc || row < 0 || row >= doc->plan->ntasks || view_line(v, row) < 0) return 0;
     t = &doc->plan->tasks[row];
     y = opj_row_y(v, row);
     x0 = opj_view_x(v, t->early_start);
@@ -167,6 +209,31 @@ int opj_bar_of(const opj_view *v, const opj_doc *doc, int row, opj_bar *bar)
             bar->done.y = bar->bar.y + third;
             bar->done.h = bar->bar.h - 2 * third;
         }
+    }
+    return 1;
+}
+
+int opj_status_x(const opj_view *v, const opj_doc *doc, long *x)
+{
+    if (!v || !v->progress_lines || !doc || !doc->plan || !doc->plan->has_status_date) return 0;
+    if (x) *x = opj_view_x(v, doc->plan->status_date);
+    return 1;
+}
+
+int opj_progress_point(const opj_view *v, const opj_doc *doc, int row, long *x)
+{
+    const owf_ptask *t;
+    owf_ptime status;
+    opj_bar b;
+    if (!opj_status_x(v, doc, NULL) || !opj_bar_of(v, doc, row, &b)) return 0;
+    t = &doc->plan->tasks[row];
+    status = doc->plan->status_date;
+    if (t->summary) return 0;
+    if (t->percent >= 100 && t->early_finish <= status) return 0;    /* done by then: nothing to show */
+    if (t->percent == 0 && t->early_start >= status) return 0;       /* not due to start yet */
+    if (x) {
+        if (b.kind == OPJ_BAR_MILESTONE) *x = b.bar.x + b.bar.w / 2;
+        else *x = b.bar.x + (long)b.bar.w * t->percent / 100;
     }
     return 1;
 }
@@ -228,6 +295,21 @@ static void line(oldraw *d, int x0, int y0, int x1, int y1, oldraw_colour c)
 {
     if (y0 == y1) fill(d, x0 < x1 ? x0 : x1, y0, (x0 < x1 ? x1 - x0 : x0 - x1) + 1, 1, c);
     else if (x0 == x1) fill(d, x0, y0 < y1 ? y0 : y1, 1, (y0 < y1 ? y1 - y0 : y0 - y1) + 1, c);
+}
+
+/* A slanting line from x0, y0 down to x1, y1 (y1 > y0), as runs of a row each. */
+static void slant(oldraw *d, int x0, int y0, int x1, int y1, oldraw_colour c)
+{
+    int y, dy = y1 - y0, px = x0;
+    if (dy <= 0) {
+        line(d, x0, y0, x1, y0, c);
+        return;
+    }
+    for (y = 0; y <= dy; y++) {
+        int x = x0 + (int)((long)(x1 - x0) * y / dy);
+        line(d, px, y0 + y, x, y0 + y, c);
+        px = x;
+    }
 }
 
 static void draw_path(oldraw *d, const opj_path *p, oldraw_colour c)
@@ -402,7 +484,9 @@ int opj_baseline_bar(const opj_view *v, const opj_doc *doc, int row, oldraw_rect
     const owf_ptask *t;
     long x0, x1;
     int rh;
-    if (!v || !bar || !(v->show_baseline || v->tracking) || !doc || row < 0 || row >= doc->plan->ntasks) return 0;
+    if (!v || !bar || !(v->show_baseline || v->tracking) || !doc || row < 0 || row >= doc->plan->ntasks ||
+        view_line(v, row) < 0)
+        return 0;
     t = &doc->plan->tasks[row];
     if (!t->baselined) return 0;
     rh = v->row_height;
@@ -447,6 +531,14 @@ void opj_label_text(const opj_view *v, const opj_doc *doc, int row, char *out, s
     else owf_presource_names_text(doc->plan, row, out, size);
 }
 
+/* The ink of an ID cell: an over-allocated row's ID ends in "!" and is drawn red, as MS Project's
+ * indicator, but not on the selection's fill (red on it would not read). */
+static oldraw_colour flagged(const char *text, int id_cell, int selected, oldraw_colour ink)
+{
+    size_t n = strlen(text);
+    return id_cell && !selected && n && text[n - 1] == '!' ? OPJ_COLOUR_CRITICAL : ink;
+}
+
 static void draw_sheet_row(oldraw *d, const opj_view *v, const opj_doc *doc, int row)
 {
     const owf_ptask *t = &doc->plan->tasks[row];
@@ -461,16 +553,36 @@ static void draw_sheet_row(oldraw *d, const opj_view *v, const opj_doc *doc, int
         if (v->columns[c] <= 0) continue;
         if (c == OPJ_COL_NAME) indent = (t->level - 1) * (v->row_height * 3 / 4);
         opj_cell_text(doc, row, c, text, sizeof text);
+        if (c == OPJ_COL_ID && owf_ptask_overallocated(doc->plan, row) && strlen(text) + 1 < sizeof text)
+            strcat(text, "!");                              /* drawn only: the cell's text stays the number */
         r.x = x + 3 + indent;
         r.y = y;
         r.w = v->columns[c] - 6 - indent;
         r.h = v->row_height;
         if (r.w > 0)
-            oldraw_text_box(d, &r, text, (size_t)-1, &v->font, ink, c == OPJ_COL_NAME && t->summary ? OLDRAW_BOLD : 0,
+            oldraw_text_box(d, &r, text, (size_t)-1, &v->font, flagged(text, c == OPJ_COL_ID, selected, ink),
+                            c == OPJ_COL_NAME && t->summary ? OLDRAW_BOLD : 0,
                             c == OPJ_COL_ID || c == OPJ_COL_PERCENT ? OLDRAW_RIGHT : OLDRAW_LEFT);
         x += v->columns[c];
         fill(d, x - 1, y, 1, v->row_height, OPJ_COLOUR_GRID);
     }
+    fill(d, 0, y + v->row_height - 1, sw, 1, OPJ_COLOUR_GRID);
+}
+
+/* A group's heading line across the table: shaded, its column and value in bold. */
+static void draw_heading_row(oldraw *d, const opj_view *v, const opj_doc *doc, int line)
+{
+    int y = 2 * v->row_height + (line - v->first_row) * v->row_height, sw = sheet_width(v);
+    char text[320];
+    oldraw_rect r;
+    fill(d, 0, y, sw, v->row_height, OPJ_COLOUR_HEADING);
+    opj_lines_heading_text(v->lines, doc, line, text, sizeof text);
+    r.x = 3;
+    r.y = y;
+    r.w = sw - 6;
+    r.h = v->row_height;
+    if (r.w > 0)
+        oldraw_text_box(d, &r, text, (size_t)-1, &v->font, OLDRAW_PEN(OLDRAW_PEN_TEXT), OLDRAW_BOLD, OLDRAW_LEFT);
     fill(d, 0, y + v->row_height - 1, sw, 1, OPJ_COLOUR_GRID);
 }
 
@@ -482,7 +594,7 @@ static int crosses(const oldraw_rect *a, int x, int y, int w, int h)
 void opj_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rect *area)
 {
     oldraw_rect all;
-    int row, last, i, j, sw = sheet_width(v), cl = opj_chart_left(v), rh = v->row_height;
+    int row, line, last, i, j, sw = sheet_width(v), cl = opj_chart_left(v), rh = v->row_height, sel;
     if (!d || !v || !doc) return;
     if (!area) {
         all.x = all.y = 0;
@@ -492,26 +604,33 @@ void opj_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rec
     }
     oldraw_clip(d, area);
     last = v->first_row + opj_rows_shown(v);
-    if (last > doc->plan->ntasks) last = doc->plan->ntasks;
+    if (last > opj_view_lines(v, doc)) last = opj_view_lines(v, doc);
+    sel = opj_view_task_line(v, doc, v->selected);
 
     /* The chart: background, days off, bars, then the links over them, then the timescale on top. */
     if (crosses(area, cl, 0, v->width - cl, v->height)) {
         fill(d, cl, 2 * rh, v->width - cl, v->height - 2 * rh, OLDRAW_PEN(OLDRAW_PEN_BACKGROUND));
         draw_nonworking(d, v, doc, area);
-        if (v->selected >= v->first_row && v->selected < last)
+        for (line = v->first_row; line < last; line++)          /* the groups' headings, shaded across */
+            if (opj_view_line_task(v, doc, line) < 0)
+                fill(d, cl, 2 * rh + (line - v->first_row) * rh, v->width - cl, rh, OPJ_COLOUR_HEADING);
+        if (sel >= v->first_row && sel < last)
             fill(d, cl, opj_row_y(v, v->selected), v->width - cl, rh, OPJ_COLOUR_NONWORKING);
-        for (row = v->first_row; row < last; row++) {
+        for (line = v->first_row; line < last; line++) {
             opj_bar b;
+            row = opj_view_line_task(v, doc, line);
             if (opj_bar_of(v, doc, row, &b) && crosses(area, b.bar.x, b.bar.y, b.bar.w, b.bar.h)) draw_bar(d, &b);
         }
-        for (row = v->first_row; row < last; row++) {            /* baselines under them */
+        for (line = v->first_row; line < last; line++) {          /* baselines under them */
             oldraw_rect r;
+            row = opj_view_line_task(v, doc, line);
             if (opj_baseline_bar(v, doc, row, &r) && crosses(area, r.x, r.y, r.w, r.h))
                 fill(d, r.x, r.y, r.w, r.h, OPJ_COLOUR_BASELINE);
         }
-        for (row = v->first_row; row < last; row++) {            /* resource names beside the bars */
+        for (line = v->first_row; line < last; line++) {          /* resource names beside the bars */
             oldraw_rect r;
             char text[256];
+            row = opj_view_line_task(v, doc, line);
             if (!opj_label_box(v, doc, row, &r) || !crosses(area, r.x, r.y, r.w, r.h)) continue;
             opj_label_text(v, doc, row, text, sizeof text);
             oldraw_text_box(d, &r, text, (size_t)-1, &v->font, OLDRAW_PEN(OLDRAW_PEN_TEXT), 0, OLDRAW_LEFT);
@@ -531,6 +650,21 @@ void opj_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rec
                 }
                 if (crosses(area, x0 - 4, y0 - 4, x1 - x0 + 9, y1 - y0 + 9)) draw_path(d, &p, OPJ_COLOUR_LINK);
             }
+        {                                                        /* the progress line, over the bars */
+            long sx;
+            if (opj_status_x(v, doc, &sx) && sx >= cl && sx < v->width)
+                for (line = v->first_row; line < last; line++) {
+                    int y = 2 * rh + (line - v->first_row) * rh;
+                    long px;
+                    row = opj_view_line_task(v, doc, line);
+                    if (row >= 0 && opj_progress_point(v, doc, row, &px)) {
+                        if (px < cl) px = cl;
+                        if (px >= v->width) px = v->width - 1;
+                        slant(d, (int)sx, y, (int)px, y + rh / 2, OPJ_COLOUR_PROGRESS);
+                        slant(d, (int)px, y + rh / 2, (int)sx, y + rh - 1, OPJ_COLOUR_PROGRESS);
+                    } else slant(d, (int)sx, y, (int)sx, y + rh - 1, OPJ_COLOUR_PROGRESS);
+                }
+        }
         draw_timescale(d, v, area);
     }
     /* The bar between the two halves. */
@@ -546,8 +680,12 @@ void opj_draw(oldraw *d, const opj_view *v, const opj_doc *doc, const oldraw_rec
     /* The table. */
     if (crosses(area, 0, 0, sw, v->height)) {
         fill(d, 0, 2 * rh, sw, v->height - 2 * rh, OLDRAW_PEN(OLDRAW_PEN_BACKGROUND));
-        for (row = v->first_row; row < last; row++)
-            if (crosses(area, 0, opj_row_y(v, row), sw, rh)) draw_sheet_row(d, v, doc, row);
+        for (line = v->first_row; line < last; line++) {
+            if (!crosses(area, 0, 2 * rh + (line - v->first_row) * rh, sw, rh)) continue;
+            row = opj_view_line_task(v, doc, line);
+            if (row >= 0) draw_sheet_row(d, v, doc, row);
+            else draw_heading_row(d, v, doc, line);
+        }
         draw_sheet_titles(d, v);
     }
     oldraw_clip(d, NULL);
@@ -694,7 +832,7 @@ static void task_usage_cell(const opj_doc *doc, int t, int a, int column, char *
     const owf_project *p = doc->plan;
     char text[16];
     if (a < 0) {
-        if (column == OPJ_UCOL_ID) snprintf(out, size, "%d", t + 1);
+        if (column == OPJ_UCOL_ID) snprintf(out, size, owf_ptask_overallocated(p, t) ? "%d!" : "%d", t + 1);
         else if (column == OPJ_UCOL_NAME) snprintf(out, size, "%s", p->tasks[t].name ? p->tasks[t].name : "");
         else {
             opj_work_text(p->tasks[t].work, text);
@@ -734,6 +872,7 @@ void opj_usage_view(const opj_view *v, opj_view *usage)
 {
     int c;
     *usage = *v;
+    usage->lines = NULL;                         /* its rows are its own */
     for (c = 0; c < OPJ_NCOLS; c++) usage->columns[c] = 0;
     usage->sheet_width = USAGE_SHEET;
 }
@@ -778,7 +917,7 @@ static void draw_usage_row(oldraw *d, const opj_view *u, const opj_doc *doc, int
         r.w = widths[c] - 6 - indent;
         r.h = u->row_height;
         if (r.w > 0)
-            oldraw_text_box(d, &r, text, (size_t)-1, &u->font, ink,
+            oldraw_text_box(d, &r, text, (size_t)-1, &u->font, flagged(text, c == OPJ_UCOL_ID, selected, ink),
                             assign < 0 && c == OPJ_UCOL_NAME && (!tasks || doc->plan->tasks[owner].summary) ? OLDRAW_BOLD : 0,
                             c == OPJ_UCOL_NAME ? OLDRAW_LEFT : OLDRAW_RIGHT);
         x += widths[c];
@@ -1052,7 +1191,7 @@ void opj_hit_test(const opj_view *v, const opj_doc *doc, int x, int y, opj_hit *
 {
     int sw = sheet_width(v), cl = opj_chart_left(v), rh = v->row_height, row;
     memset(hit, 0, sizeof *hit);
-    hit->row = hit->column = -1;
+    hit->row = hit->column = hit->line = -1;
     if (x < 0 || y < 0 || x >= v->width || y >= v->height || !doc) return;
     if (x >= sw && x < cl) {
         hit->what = OPJ_HIT_SPLIT;
@@ -1074,9 +1213,14 @@ void opj_hit_test(const opj_view *v, const opj_doc *doc, int x, int y, opj_hit *
         hit->what = x < sw ? OPJ_HIT_COLUMN_TITLE : OPJ_HIT_TIMESCALE;
         return;
     }
-    row = v->first_row + (y - 2 * rh) / rh;
-    if (row >= doc->plan->ntasks) row = -1;
+    hit->line = v->first_row + (y - 2 * rh) / rh;
+    if (hit->line >= opj_view_lines(v, doc)) hit->line = -1;
+    row = opj_view_line_task(v, doc, hit->line);
     hit->row = row;
+    if (hit->line >= 0 && row < 0) {
+        hit->what = OPJ_HIT_HEADING;
+        return;
+    }
     if (x < sw) {
         hit->what = row >= 0 ? OPJ_HIT_CELL : OPJ_HIT_NONE;
         return;
@@ -1114,10 +1258,10 @@ int opj_print_layout(opj_print *pr, const opj_view *proto, const opj_doc *doc, i
     pr->first_days = first_chart / dw;
     pr->more_days = more_chart / dw;
     if (pr->rows_per_page < 1 || pr->first_days < 1 || pr->more_days < 1) return 0;
-    ntasks = doc->plan->ntasks;
+    ntasks = opj_view_lines(proto, doc);                       /* the lines: the view's filter and groups */
     pr->down = ntasks > 0 ? (ntasks + pr->rows_per_page - 1) / pr->rows_per_page : 1;
     end = doc->plan->start;
-    for (i = 0; i < ntasks; i++)
+    for (i = 0; i < doc->plan->ntasks; i++)
         if (doc->plan->tasks[i].early_finish > end) end = doc->plan->tasks[i].early_finish;
     days = floor_div(end - proto->origin, DAY) + 2;             /* to a day past the finish */
     pr->across = 1;

@@ -44,8 +44,20 @@ int owf_pdf_ellipse(owf_pdf *pdf, int x, int y, int w, int h, unsigned long fill
 /* npoints x, y pairs; closed joins the last to the first. */
 int owf_pdf_path(owf_pdf *pdf, const int *xy, int npoints, int closed, unsigned long fill,
                  unsigned long line, int line_width);
+
+/* A gradient fill inside the closed outline xy (npoints x, y pairs, twips), across the box x, y, w,
+ * h: OWF_PDF_GRADIENT_LINEAR runs from one colour to the other along angle (tenths of a degree
+ * anticlockwise, 0 left to right, 900 bottom to top); _RADIAL has from at the box's centre and to
+ * at its corners. Drawn as 48 bands of plain colour, clipped to the outline. 0, or -1. */
+#define OWF_PDF_GRADIENT_LINEAR 1
+#define OWF_PDF_GRADIENT_RADIAL 2
+int owf_pdf_gradient(owf_pdf *pdf, const int *xy, int npoints, int x, int y, int w, int h, int kind, int angle,
+                     unsigned long from, unsigned long to);
 /* Lines are dashed from now on (dash 1) or solid again (0). */
 void owf_pdf_dash(owf_pdf *pdf, int dash);
+/* What is drawn from now on is opaque percent opaque (1 to 100), so what is behind it shows through:
+ * fills, lines and gradients (PDF 1.4's constant alpha). 100 again for solid. */
+void owf_pdf_alpha(owf_pdf *pdf, int opaque);
 /* A picture in the box x, y, w, h; with clip, only what is inside it shows
  * (a cropped picture). 0, or -1 when memory runs out; a picture the PDF
  * can't hold (only JPEG, PNG and WMF) is left out and reported at the end. */

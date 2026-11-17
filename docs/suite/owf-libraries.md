@@ -20,7 +20,7 @@ stay where they are: no file moves (section 6).
 | --- | --- | --- |
 | `owfwrite.library` | GFOpenWrite | The document model (`owf_doc.c`) and its formats (`owf_format.c`'s table): DOCX and ODT in and out, flat ODT, Final Writer, Wordworth, ProWrite, IFF FTXT, ANSI, text, HTML out, and PDF out (`out_pdf.c`). RTF has no reader in libowf yet; when it gets one, it goes here. |
 | `owfcalc.library` | GFOpenCalc | The workbook model (`owf_book.c`, `owf_booknum.c`), XLSX, ODS, flat ODS, XLS and CSV (with `owf_xlformula.c` and `owf_xlfunc.c`), charts (`owf_chart.c`), the formula engine (`libowf/calc`), and the library's own doubles and maths (`owf_softdouble.c`, `owf_libm.c`). |
-| `owfpub.library` | GFOpenPublisher | The `.pub` reader (`in_pub.c`) and its compound-file reader (`owf_cfb.c`), with the document model its stories use. |
+| `owfpub.library` | GFOpenPressmaster | The `.pub` reader (`in_pub.c`) and its compound-file reader (`owf_cfb.c`), with the document model its stories use. From 3.8 also the publication core in `libowf/pub`: the merge table, Mail Merge, Catalog Merge and the built-in templates. |
 | `owfpresent.library` | GFOpenPresentation | The deck model (`owf_deck.c`), ODP and flat ODP (`in_odp.c`, `out_odp.c`, and W138's coming `in_pptx.c`), and the page PDF writer (`owf_pdf.c`, `owf_pdffonts.c`), with the document model its text frames use. |
 
 These lists are not kept anywhere. Each library is built from one small file
@@ -110,8 +110,8 @@ These changes are small, and they don't change behaviour:
 | --- | --- | --- | --- | --- |
 | `owfwrite.library` | `OWFWriteBase` | 3.3 | 40 | `<proto/owfwrite.h>` |
 | `owfcalc.library` | `OWFCalcBase` | 3.9 | 98 | `<proto/owfcalc.h>` |
-| `owfpub.library` | `OWFPubBase` | 3.2 | 37 | `<proto/owfpub.h>` |
-| `owfpresent.library` | `OWFPresentBase` | 3.5 | 81 | `<proto/owfpresent.h>` |
+| `owfpub.library` | `OWFPubBase` | 3.8 | 55 | `<proto/owfpub.h>` |
+| `owfpresent.library` | `OWFPresentBase` | 3.18 | 82 | `<proto/owfpresent.h>` |
 
 **Version 3 for all four.** The four libraries continue owf.library 2, so
 their versions go on from it. GFOpenUp's GFOffice part takes its version from
@@ -237,7 +237,7 @@ it uses all four, and loads only the ones a conversion needs.
 | `tools/owc_doc.c` | `OWF_USE_WRITE_LIBRARY` | Documents, and `owf_file_kind` |
 | `tools/owc_book.c` | `OWF_USE_CALC_LIBRARY` | Workbooks |
 | `tools/owc_deck.c` | `OWF_USE_PRESENT_LIBRARY` | Presentations, and their PDFs through GFOpenLayout (`src/deck`, compiled for the same library) |
-| `tools/owc_pub.c` | `OWF_USE_PUB_LIBRARY` | `.pub` files: their version and pages. OWConvert can't convert them until GFOpenPublisher saves something. |
+| `tools/owc_pub.c` | `OWF_USE_PUB_LIBRARY` | `.pub` files: their version and pages. OWConvert can't convert them until GFOpenPressmaster saves something. |
 
 **How a conversion is chosen:**
 
@@ -266,7 +266,8 @@ built together with no library at all.
     checks the library's own calls:
     - documents saved and read back;
     - the workbook fixtures and the formula engine;
-    - `Sample.pub` (made by `tools/pubgen/make_pub.py`);
+    - `Sample.pub` (made by `tools/pubgen/make_pub.py`), then the templates
+      and a Mail Merge of a Flyer from a two-record table;
     - an ODP saved and read back, a new deck, and a PDF page.
 
     It runs everything again from a second task at the same time.
@@ -351,5 +352,86 @@ A workbook conversion now loads all of owfcalc.library: the formula engine and e
 6. **gfopenup, after GFOpenUp 0.8.10:** the GFOffice part ships the four
    libraries and retires owf.library (section 4).
 7. **gfoffice: owf.library 2's build removed.**
+
+
+## 9. owfdiag.library, the fifth (17 Nov 2026)
+
+Dale (17 Nov): Diag, Pressmaster and Draw get libraries like the others,
+not monolithic programs. The plan is
+`gfoffice-rc/LIBRARY-SPLIT-PLAN-20261117.md` in the project files.
+owfdiag.library is GFOpenDiag's.
+
+| Library | Base | Version | Calls | Proto |
+| --- | --- | --- | --- | --- |
+| `owfdiag.library` | `OWFDiagBase` | 1.0 | 145 | `<proto/owfdiag.h>` |
+
+**What it holds.** `scripts/owfdiag-sources.sh` lists the sources:
+
+- the diagram model and its formats (`libowf/diagram`): draw.io, SVG, PNG
+  with the diagram inside, PDF, EPS, outlines, Mermaid, DOT, GraphML and
+  Excalidraw;
+- GFOpenDiag's editing core (`src/diag`): Undo, shapes and connectors,
+  layers, hits, the clipboard, order and groups, align, mind maps, the style
+  panel's properties, the stencils and the ARexx commands;
+- the PNG and ILBM writers EXPORT uses (`src/deck/ow_picture.c`) until the
+  shared picture writers reach the core (`owf_picture_png` and
+  `owf_picture_ilbm` are added to the end of the SFD then).
+
+The canvas and the mouse (`odg_view.c`, `odg_edit.c`) draw with GFOpenLayout
+in the program's window, so they stay in GFOpenDiag. They are compiled into
+an archive of their own (`obj/libowfdiag.a`), linked before `libowf.a`.
+
+**The calls.** The 17 shared calls come first, as in the other four. Then
+every call of `owf_diagram.h` and of the core's headers
+(`include/opendiag_core.h`, `_clip`, `_order`, `_align`, `_mind`, `_style`,
+`_stencil`, `_rexx`), in header order. Two calls change shape for the
+library:
+
+- `odg_port_point` returns a structure, which a library call can't, so the
+  call is `odg_port_xy` (the point comes back through a pointer). A program
+  on the library still calls `odg_port_point`: `opendiag_proto.h` defines it
+  on top of `odg_port_xy`.
+- An array argument (`const owf_dnum box[4]`) is its pointer in the SFD;
+  `check_sfd.py` reads it so.
+- `odg_paste`, `odg_paste_next`, `odg_duplicate` and `odg_ungroup` take the
+  new id arrays' types (`odg_clip_id *`, `odg_order_id *`): the same memory,
+  with a name the SFD can hold.
+
+**Using it.** A program defines `OWF_USE_DIAG_LIBRARY`. Then
+`opendiag_proto.h` includes `<proto/owfdiag.h>` once every diagram header is
+complete, and formats `owf_report_add` as `owf_proto.h` does for the others.
+`owf_proto.h` does nothing for it. `owf_open()` checks the sizes of the
+diagram structures, numbered from `OWF_DSTRUCT_FIRST` (100) past every
+`OWF_STRUCT_`, through `owf_struct_size`. On the library, `owf_kind.c` is
+built with `OWF_KIND_DIAGRAMS` and hands those numbers to `odg_struct_size`
+(`src/diag/odg_sizes.c`).
+
+**State and memory.** The library's code is shared by every task that opens
+it, so the diagram code and the core keep nothing between calls
+(`make diagram-state-check`, `tests/diag/check_no_state.sh`). The ARexx
+commands read and write files with libowf's own (`owf_sys_read_file`,
+`owf_sys_write_file`), not the C library's stdio: on the library, these work
+over dos.library. A save writes a second file first and then takes the name,
+as every other libowf save does. The page picture the program draws for
+EXPORT (`odg_picture_fn`) is `owf_malloc`'d, so the library's `owf_free`
+gives it back.
+
+**Tests.** OWFLibsTest's `owf_libs_diag.c` runs the shared checks. It also
+checks:
+
+- the diagram structures' sizes;
+- an edited page with Undo and Redo, saved as draw.io (plain and compressed)
+  and read back;
+- SVG, PDF, EPS, Mermaid, DOT, GraphML and Excalidraw out;
+- a mind map, the stencils and `odg_port_point`;
+- ARexx ADDSHAPE, GETVALUE, SAVEAS and OPEN in `T:`.
+
+`ONLY=diag` runs it alone. The same file runs on the PC with libowf linked
+in (`make diagram-library-test`, and under ASan in `make check`).
+
+**What follows.** GFOpenDiag moves onto the library next (`build.d/diag.sh`
+with `OWF=library`), then the shape geometry moves to a shared module with
+the fills (Arnold). RC91 ships GFOpenDiag linked; a later RC ships it on
+owfdiag.library.
 
 Team 5

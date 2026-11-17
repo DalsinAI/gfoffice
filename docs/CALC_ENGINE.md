@@ -273,6 +273,93 @@ being looked for in the book's own folder. ARexx `LINKS` gives
 `UPDATELINK ALL` updates them (RC 10 when a file cannot be read, 5 for a
 link that is not there); tests/arexx/calc-links.rexx runs them.
 
+## External data: web pages and databases
+
+A range of a sheet can be filled from a web page's table or from a
+database's table, view or query, and refreshed from it again (OpenOffice's
+Insert > Link to External Data and Data > Data Sources; Excel's Get
+External Data). The core (`oc_extdata.c`, `opencalc_core.h`):
+
+- `oc_core_extdata_add` reads the source, puts its values from a top left
+  cell (`dest`; empty: the active cell) and keeps the range with its
+  settings, one Undo step. `oc_core_extdata_change` sets new settings (a
+  new place empties the old one), `oc_core_extdata_refresh` reads one (or
+  every one) again, `oc_core_extdata_remove` forgets one, its values kept or
+  emptied. A refresh writes from the top left cell: the range grows or
+  shrinks to the new values and what it no longer covers is emptied;
+  styles stay. Cells beside it that hold something are not written over
+  (`OC_EXTDATA_BLOCKED`) unless `OC_EXTDATA_OVERWRITE` says so; a
+  protected sheet refuses (`OC_PROTECTED`); a source that cannot be read
+  changes nothing, so the last values stay.
+- `oc_core_extdata_refresh_on_open` refreshes those set to refresh as the
+  book opens, quietly (`OC_EXTDATA_QUIET`: no Undo step, the book not
+  marked changed); the program refreshes the ones with `refresh_seconds`
+  on its own clock the same way (never while a cell is being typed in).
+- Each range is kept on its sheet in hidden names: `_GF_EXTDATA_n` is the
+  range as a reference, which follows rows and columns put in or taken out
+  as any name does, and `_GF_EXTDATA_n_D1`, `_D2`... hold the settings
+  (kind, source, item, place, headers, refresh) as text in pieces of 200
+  characters, so XLSX and ODS keep them with the book's names.
+- The core reads nothing itself: an `oc_extdata_io` gives it a page's
+  bytes (`fetch`) or a database item's values (`query`).
+  `oc_extdata_fetch_file` reads files; a source that is not a URL is made a
+  path as a link's is (`oc_link_path`: `file:///...`, a name beside the
+  book).
+
+Web pages (`oc_html.c`): `oc_web_tables` lists a page's tables in the
+order they open, a table inside a cell being one of its own after it
+(LibreOffice's HTML_1, HTML_2...), with id, caption, rows and columns;
+`oc_web_table` gives one table's cells, picked as "HTML_2", "2", its id
+or its caption. Colspan and rowspan take their room (the cells they cover
+are left empty), entities are decoded, white space and `<br>` become
+single spaces, scripts, styles and comments are skipped, and a page in
+ISO-8859-1 or Windows-1252 (its charset says so, or a byte is not UTF-8)
+is made UTF-8. Each cell is put in as if typed, so "1.17", "50%" and
+"16/11/2026" become numbers; one starting "=" or "'" stays text.
+
+Databases (`src/calc/extdb/oc_extdb.c`, `opencalc_extdb.h`, built apart
+from the core because it needs SQLite): `oc_extdb_query` is an
+`oc_extdata_io.query`. A GFOpenBase project (.oadb) is opened read only
+through GFOpenBase's core, so a table's values come as GFOpenBase shows
+them (Currency "1,234.50" and numbers and dates put in as typed, Text and
+Memo kept as text, so "0123" stays "0123", a Datatype object left empty);
+an item is a table, a saved query (one asking for a value is refused), a
+view or a query typed in (SELECT or WITH). Any other SQLite file is read
+with SQLite: numbers as numbers, text as text (ISO dates and times put in
+as typed), one statement that only reads. `oc_extdb_items` lists the
+tables, views and saved queries for the window.
+
+Tests: `test_web_tables` and `test_extdata` (calc core): the page's
+tables, spans, nesting, entities, character sets, a page cut short; a
+range added, Undo and Redo, a formula over it, refreshed smaller and
+larger, refused onto a cell that holds something and then written over, a
+source gone and a table missing (the last values stay), a row put in
+above (the range follows), a database through a test `query`, settings of
+over 600 characters with quotes and semicolons, a move to another sheet,
+XLSX and ODS saved and opened again, refresh on opening (no Undo step),
+removed with and without its values, a protected sheet.
+tests/calc_core/test_calc_extdb.c (`make calc-extdb-test`): a GFOpenBase
+project's table, a drawn query (Currency), SQL queries, a view, a query
+asking for a value, a statement that would change the file, the items
+listed; a plain SQLite file; a file that is not a database; a range
+filled through the core.
+
+## Tracked changes: the window and ARexx
+
+Edit > Track Changes > Record Changes turns recording on and off (its tick
+follows the book). Turning it off with changes not yet accepted or rejected
+asks first: they are dropped and the sheet stays as it is. Manage Changes...
+lists each change as `oc_core_change_line` gives it ("Cell Sheet1.A1 changed
+from 5 to 7 (Dale, 2026-11-16 07:00)"); picking one shows its place
+(`oc_core_change_go`: its sheet active, its cell selected), and Accept,
+Reject, Accept All and Reject All are each one Undo step. Changes are made
+under ENV USER (or USERNAME) until Changes Author... names someone.
+
+ARexx: `TRACKCHANGES [ON|OFF [FORCE]]` ("1" or "0"; OFF with changes is
+RC 5 unless FORCE), `CHANGES` (how many), `CHANGE n` (its line),
+`SHOWCHANGE n`, `ACCEPTCHANGE n|ALL` and `REJECTCHANGE n|ALL` (how many are
+left), `CHANGEAUTHOR [name]`. Test script: tests/arexx/calc-track.rexx.
+
 ## Sheet and cell protection
 
 owf.library 2.6 gives `owf_sheet` its protection (`protect`, the

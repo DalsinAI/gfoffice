@@ -17,6 +17,7 @@ other sheets.
 
 | Date | Main | Version | Against draw.io | Against Dia | What moved it |
 | --- | --- | --- | ---: | ---: | --- |
+| 16 Nov 2026 | 3569cf3 | GFOpenDiag 0.1.0 | **66%** | **72%** | #323 (shape outlines shared by the canvas and every writer), #324 (those shapes drawn on the canvas, in SVG, PDF and EPS; the palette grows from 8 shapes to 46 in Flowchart and Basic sets, with a Shapes submenu for each) and #325 (UML and network outlines) |
 | 16 Nov 2026 | a49df06 | GFOpenDiag 0.1.0 | **63%** | **69%** | #207, #208, #210 and #314 (Mermaid, DOT, GraphML and Excalidraw export); #316 (Cut, Copy, Paste, Duplicate), #317 (drawing order, Group, Ungroup), #318 (Align, Distribute) and #320 (their Edit and Arrange menus and ARexx commands) |
 | 16 Nov 2026 | e646263 | GFOpenDiag 0.1.0 | **54%** | **59%** | First score. D1 and D2 (the model, `.drawio` read and write, SVG and PNG with the diagram inside), #189 (D3, the editing core), #192 (D4, the canvas), #195 (Style window), #196 (layers), #197 (shapes palette), #198, #199, #200 and #201 (D5: mind map, its keys, outlines, Import and Export Outline), #202 (PDF), #203 (ARexx fixes), #204 (PNG and IFF ILBM), #205 (EPS) |
 
@@ -33,7 +34,7 @@ The credit is how much of that area GFOpenDiag does against each comparator.
 | --- | ---: | --- | ---: | ---: | --- | --- |
 | Canvas and selection | 12 | Part | 80% | 80% | Draw, move, resize and delete shapes; click, Shift-click and lasso selection; Select All and None; cursor-key nudge (Shift for ten); zoom in, zoom out, actual size, fit; grid shown; snap to grid | Rulers, guides, snap to other shapes' edges |
 | Undo, save and reload | 10 | Done | 100% | 100% | Undo and Redo for every edit, one step per operation; `.drawio` is the native file, plain or compressed, and round-trips with diagrams.net; unsaved-change check on quit | |
-| Shapes and stencils | 12 | Part | 25% | 35% | Box, rounded box, ellipse, rhombus and text tools; a flowchart palette of 8 shapes (process, decision, terminator, data, predefined process, preparation, triangle, circle); other draw.io shapes are kept and written back | The design's cylinder, cloud, document, actor and picture shapes; UML, network and ER sheets; the Amiga stencil set; user stencil files; shape search |
+| Shapes and stencils | 12 | Part | 50% | 65% | Box, rounded box, ellipse, rhombus and text tools; a palette of 46 shapes in two sets, each with a Shapes submenu and an ARexx SHAPE name: Flowchart (27, the whole draw.io flowchart set) and Basic (19: cylinder, cloud, note, cube, step, callout, actor, cross, arrows and the rest); 12 UML shapes (lifeline, boundary, entity, control, component, package, frame, interfaces, end state) and 17 network shapes are drawn on the canvas and in every export when a file uses them, under draw.io's style names; other draw.io shapes are kept and written back | UML and Network sets in the palette, and their dots and dashed lifelines drawn; a shapes panel to pick from; ER and Amiga sets; pictures; user stencil files; shape search |
 | Connectors | 12 | Part | 60% | 60% | Connector tool joins two shapes or leaves an end loose; ends stay glued and follow when shapes move; elbow (orthogonal) routing from the facing sides or named ports; arrowheads; connector labels | Straight and curved kinds to pick; dragging waypoints and bends; picking a port by mouse; jumps at crossings; routing round shapes |
 | Text and labels | 6 | Part | 50% | 70% | Double-click or Return types a label; labels wrap and align as draw.io's; font size and colour; draw.io's HTML labels shown as text | Bold, italic and mixed runs in a label; rotated text; spelling |
 | Style | 8 | Part | 55% | 70% | Style window for one or many cells: fill, line colour, line width, font colour, font size, dashed, rounded; one OK is one Undo step | Shadow, opacity, gradients, rotation and flip, line ends to choose, copy style |
@@ -44,7 +45,7 @@ The credit is how much of that area GFOpenDiag does against each comparator.
 | Import and other formats | 6 | Part | 40% | 30% | `.drawio` and `.xml`, draw.io's own SVG and PNG, outlines from `.mm`, OPML and Markdown | VSDX, `.dia`, ODG, CSV; Mermaid, DOT, GraphML and Excalidraw in (they are export only) |
 | Print | 2 | Gap | 0% | 0% | ARexx PRINT says to export and print the SVG | Printing from the window |
 | Find | 2 | Gap | 0% | 0% | | Find and replace in labels |
-| **Total** | **100** | | **63%** | **69%** | | |
+| **Total** | **100** | | **66%** | **72%** | | |
 
 The ARexx port (about 60 commands, tested by `tests/arexx/diag.rexx`) is not
 counted: draw.io and Dia have no ARexx, and their plugin and Python scripting
@@ -52,12 +53,12 @@ is outside the everyday workflow scored here.
 
 ## Waiting to merge
 
-Nothing for GFOpenDiag is waiting to merge. The menus from #320 still owe a lab
-run, and the m68k build of #316 to #320 is owed until the os32-gcc16 stove is
-back after the re-wire.
+Nothing for GFOpenDiag is waiting to merge. The menus from #320 and the Shapes
+submenus from #324 still owe a lab run, and the m68k build of #316 to #325 is
+owed until the os32-gcc16 stove is back after the re-wire.
 
 ## The three biggest gaps
 
-1. Shapes and stencils: only 8 flowchart shapes; no UML, network or Amiga sets and no pictures (9 points against draw.io).
+1. Shapes and stencils: UML and network shapes are drawn but not yet in the palette; no shapes panel, ER or Amiga sets, pictures or shape search (6 points against draw.io).
 2. Connectors: no straight or curved kind, no waypoint editing and no port picking by mouse (5 points).
 3. Style: no shadow, opacity, gradients, rotation or line ends to choose (4 points against draw.io).

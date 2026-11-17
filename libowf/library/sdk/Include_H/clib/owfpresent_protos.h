@@ -102,6 +102,8 @@ int owf_slide_obj_by_id(const owf_slide *slide, long id);
 long owf_deck_new_obj_id(const owf_deck *deck);
 owf_anim * owf_slide_add_anim(owf_slide *slide, int at, long obj);
 int owf_slide_delete_anim(owf_slide *slide, int index);
+int owf_pdf_gradient(owf_pdf *pdf, const int *xy, int npoints, int x, int y, int w, int h, int kind, int angle, unsigned long from, unsigned long to);
+void owf_pdf_alpha(owf_pdf *pdf, int opaque);
 
 #ifdef __cplusplus
 }

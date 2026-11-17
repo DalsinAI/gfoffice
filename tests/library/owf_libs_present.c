@@ -77,6 +77,7 @@ static void new_deck(const owf_libs_env *e)
 
 static void page_pdf(const owf_libs_env *e)
 {
+    static const int box[8] = {6000, 4000, 9000, 4000, 9000, 6000, 6000, 6000};
     owf_pdf *pdf = owf_pdf_new();
     owf_report *report = owf_report_new();
     unsigned char *data = NULL;
@@ -88,10 +89,16 @@ static void page_pdf(const owf_libs_env *e)
         owf_pdf_text(pdf, 1000, 1700, width, "Slide one", 9, OWF_FONT_SANS, OWF_BOLD, 640, OWF_SHADE(0x000000));
         owf_pdf_ellipse(pdf, 2000, 4000, 3000, 2000, OWF_SHADE(0xF0C000), 0, 0);
         owf_pdf_link(pdf, 720, 720, 2000, 400, "https://amicradle.com/");
+        if (owf_pdf_gradient(pdf, box, 4, 6000, 4000, 3000, 2000, OWF_PDF_GRADIENT_LINEAR, 0,
+                             OWF_SHADE(0x203040), OWF_SHADE(0xDDE4F0)) != 0)
+            width = 0;
+        owf_pdf_alpha(pdf, 50);              /* 3.17: a see-through rectangle */
+        owf_pdf_rect(pdf, 1000, 6500, 2000, 1000, OWF_SHADE(0x2060C0), 0, 0);
+        owf_pdf_alpha(pdf, 100);
         r = owf_pdf_finish(pdf, "OWFLibsTest", &data, &length, report);
     }
     LCHECK(e, width > 0 && r == OWF_OK && data && length > 400 && !memcmp(data, "%PDF-", 5) &&
-           owf_pdf_page_count(pdf) == 1, "%s: a page from the page PDF writer: %lu bytes", e->tag,
+           owf_pdf_page_count(pdf) == 1, "%s: a page from the page PDF writer (with a gradient): %lu bytes", e->tag,
            (unsigned long)length);
     owf_free(data);
     owf_pdf_free(pdf);

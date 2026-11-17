@@ -39,7 +39,7 @@ digraph GFOfficeOpenLayout {
         Writer [label="OpenWriter"];
         Calc [label="OpenCalc"];
         Present [label="OpenPresentation"];
-        Publisher [label="OpenPublisher"];
+        Publisher [label="OpenPressmaster"];
         { rank=same; apps_anchor; Writer; Calc; Present; Publisher; }
     }
 

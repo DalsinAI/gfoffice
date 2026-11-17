@@ -166,6 +166,7 @@ static int draw_list(owf_pdf *pdf, const oc_core *core, const oc_draw_list *list
             (!gridlines && it->role == OC_ROLE_GRID) || it->role == OC_ROLE_SELECTION ||
             it->role == OC_ROLE_CURSOR || it->role == OC_ROLE_EDIT || it->role == OC_ROLE_NOTE ||
             it->role == OC_ROLE_NOTE_LINE || it->role == OC_ROLE_FILTER || it->role == OC_ROLE_FREEZE ||
+            it->role == OC_ROLE_CHANGE ||
             it->kind == OC_DRAW_DROPDOWN || it->kind == OC_DRAW_FILTER || it->kind == OC_DRAW_CARET)
             continue;
         switch (it->kind) {

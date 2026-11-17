@@ -250,13 +250,14 @@ static void test_mspdi_written(void)
                     "</FromDate><ToDate>2026-11-28T23:59:00</ToDate></TimePeriod><WorkingTimes><WorkingTime><FromTime>"
                     "10:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime></WorkingTimes></WeekDay>");
     /* Design: two days are 16 hours; the notes escaped. */
-    CHECK_HAS(data, "<UID>1</UID><ID>1</ID><Name>Design, review</Name><OutlineLevel>1</OutlineLevel>"
+    CHECK_HAS(data, "<UID>1</UID><ID>1</ID><Name>Design, review</Name><Type>0</Type><OutlineLevel>1</OutlineLevel><Priority>500</Priority>"
                     "<Start>2026-11-16T08:00:00</Start><Finish>2026-11-17T17:00:00</Finish>"
                     "<Duration>PT16H0M0S</Duration><DurationFormat>7</DurationFormat>");
     CHECK_HAS(data, "<Notes>Ask &quot;Dale&quot; &lt;first&gt;</Notes>");
     /* Build: FS (1) with a 4 hour lag, 2400 tenths of a minute, shown in hours (5); it starts at 13:00
      * on Wednesday (Tuesday 17:00 plus 4 working hours is Wednesday 12:00, the lunch break). */
-    CHECK_HAS(data, "<Name>Build</Name><OutlineLevel>1</OutlineLevel><Start>2026-11-18T13:00:00</Start>"
+    CHECK_HAS(data, "<Name>Build</Name><Type>0</Type><OutlineLevel>1</OutlineLevel><Priority>500</Priority>"
+                    "<Start>2026-11-18T13:00:00</Start>"
                     "<Finish>2026-11-23T12:00:00</Finish>");
     CHECK_HAS(data, "<PercentComplete>25</PercentComplete>");
     CHECK_HAS(data, "<PredecessorLink><PredecessorUID>1</PredecessorUID><Type>1</Type><CrossProject>0</CrossProject>"
@@ -275,7 +276,7 @@ static void test_mspdi_written(void)
     /* Docs is a summary over Guide; Guide is an estimated day (39) on Short, SNET (4). */
     CHECK_HAS(data, "<Name>Docs</Name>");
     CHECK_HAS(data, "<Summary>1</Summary>");
-    CHECK_HAS(data, "<DurationFormat>39</DurationFormat><Estimated>1</Estimated>");
+    CHECK_HAS(data, "<DurationFormat>39</DurationFormat><EffortDriven>0</EffortDriven><Estimated>1</Estimated>");
     CHECK_HAS(data, "<ConstraintType>4</ConstraintType><CalendarUID>2</CalendarUID>"
                     "<ConstraintDate>2026-11-18T08:00:00</ConstraintDate>");
 
@@ -665,8 +666,9 @@ static void test_baseline(void)
     p->tasks[0].duration = 3 * D;                                    /* Design slips a day */
     CHECK_N(owf_project_schedule(p), OWF_OK);
     CHECK_N(owf_project_write(p, OWF_PFILE_MSPDI, &data, &length), OWF_OK);
-    CHECK_HAS(data, "<DurationFormat>7</DurationFormat><Work>PT24H0M0S</Work><Estimated>");
-    CHECK_HAS(data, "<PercentComplete>0</PercentComplete><Cost>48000</Cost><EarlyStart>");
+    CHECK_HAS(data, "<DurationFormat>7</DurationFormat><Work>PT24H0M0S</Work><EffortDriven>0</EffortDriven><Estimated>");
+    CHECK_HAS(data, "<PercentComplete>0</PercentComplete><Cost>48000</Cost><ActualDuration>PT0H0M0S</ActualDuration>"
+                    "<RemainingDuration>PT24H0M0S</RemainingDuration><EarlyStart>");
     CHECK_HAS(data, "<Baseline><Number>0</Number><Start>2026-11-16T08:00:00</Start><Finish>2026-11-17T17:00:00</Finish>"
                     "<Duration>PT16H0M0S</Duration><DurationFormat>7</DurationFormat><Work>PT16H0M0S</Work>"
                     "<Cost>32000</Cost></Baseline></Task>");
@@ -686,16 +688,55 @@ static void test_baseline(void)
     owf_project_free(q);
     q = NULL;
     owf_free(data);
-    /* By hand: a Baseline with no Number is Baseline 0; Baselines 1 to 10 are left out. */
+    /* By hand: a Baseline with no Number is Baseline 0; Baselines 1 to 10 are kept by number. */
     CHECK_N(owf_project_read((const unsigned char *)hand, sizeof hand - 1, &q), OWF_OK);
     if (q && q->ntasks == 2) {
         CHECK(q->tasks[0].baselined && q->tasks[0].baseline_start == AT(16, 8, 0));
         CHECK(q->tasks[0].baseline_finish == AT(16, 17, 0) && q->tasks[0].baseline_duration == D);
         CHECK(q->tasks[0].baseline_work == 240 && q->tasks[0].baseline_cost == 12345);
         CHECK(!q->tasks[1].baselined);
+        CHECK_N(q->tasks[0].more_baselined, 1 << 1);
+        CHECK_N(q->tasks[0].more_baselines[0].start, owf_ptime_make(2026, 11, 1, 8, 0));
+        CHECK_N(q->tasks[1].more_baselined, 1 << 2);
     } else
         CHECK(q && q->ntasks == 2);
     owf_project_free(q);
+    /* Baseline 3 out and back, after Baseline 0, in both formats; a Number past 10 is left out. */
+    owf_project_set_baseline_n(p, 3, 0, -1);
+    {
+        int f;
+        for (f = OWF_PFILE_GFPROJ; f <= OWF_PFILE_MSPDI; f++) {
+            q = NULL;
+            CHECK_N(owf_project_write(p, f, &data, &length), OWF_OK);
+            if (f == OWF_PFILE_MSPDI)
+                CHECK_HAS(data, "</Baseline><Baseline><Number>3</Number><Start>2026-11-16T08:00:00</Start>");
+            CHECK_N(owf_project_read(data, length, &q), OWF_OK);
+            if (q && q->ntasks == p->ntasks) {
+                for (i = 0; i < p->ntasks; i++) {
+                    owf_pbaseline x, y;
+                    CHECK(owf_ptask_baseline(&q->tasks[i], 3, &x) && owf_ptask_baseline(&p->tasks[i], 3, &y));
+                    CHECK(x.start == y.start && x.finish == y.finish && x.duration == y.duration);
+                    CHECK(x.work == y.work && x.cost == y.cost);
+                    CHECK(q->tasks[i].baselined && q->tasks[i].more_baselined == 1 << 3);
+                }
+            } else
+                CHECK(q && q->ntasks == p->ntasks);
+            owf_project_free(q);
+            owf_free(data);
+        }
+    }
+    {
+        static const char eleven[] =
+            "<?xml version=\"1.0\"?>\n<Project xmlns=\"http://schemas.microsoft.com/project\">"
+            "<StartDate>2026-11-16T08:00:00</StartDate><Tasks>"
+            "<Task><UID>1</UID><ID>1</ID><Name>Dig</Name><OutlineLevel>1</OutlineLevel><Duration>PT8H0M0S</Duration>"
+            "<Baseline><Number>11</Number><Start>2026-11-01T08:00:00</Start></Baseline>"
+            "<Baseline><Number>-1</Number><Start>2026-11-01T08:00:00</Start></Baseline></Task></Tasks></Project>\n";
+        q = NULL;
+        CHECK_N(owf_project_read((const unsigned char *)eleven, sizeof eleven - 1, &q), OWF_OK);
+        CHECK(q && q->ntasks == 1 && !q->tasks[0].baselined && q->tasks[0].more_baselined == 0);
+        owf_project_free(q);
+    }
     owf_project_free(p);
 }
 
@@ -734,6 +775,121 @@ static const char mpx_sample[] =
     "70,30,Sign off,0d,\"20,10SS+50%\",1,As Soon As Possible,,0,102\r\n"
     "70,40,Night shift,1d?,,1\r\n"
     "70,50,Odd links,1d,\"99,50,zz\",1\r\n";
+
+/* Actual start and finish and the status date go out in MSPDI (with the actual and remaining duration MS
+ * Project shows) and come back, in .gfproj too; a task with none writes none. By hand: an ActualFinish with
+ * no ActualStart, or before it, is left out. */
+/* Leveling delays go through .gfproj and MSPDI, in tenths of a minute with their format; MS Project's
+ * own "edays" (8) reads back as elapsed. */
+static void test_leveling_delay(void)
+{
+    static const char hand[] =
+        "<?xml version=\"1.0\"?>\n<Project xmlns=\"http://schemas.microsoft.com/project\">"
+        "<StartDate>2026-11-16T08:00:00</StartDate><Tasks>"
+        "<Task><UID>1</UID><ID>1</ID><Name>A</Name><OutlineLevel>1</OutlineLevel><Duration>PT8H0M0S</Duration>"
+        "<LevelingDelay>14400</LevelingDelay><LevelingDelayFormat>8</LevelingDelayFormat></Task>"
+        "<Task><UID>2</UID><ID>2</ID><Name>B</Name><OutlineLevel>1</OutlineLevel><Duration>PT8H0M0S</Duration>"
+        "<LevelingDelay>0</LevelingDelay><LevelingDelayFormat>8</LevelingDelayFormat></Task>"
+        "</Tasks></Project>\n";
+    owf_project *p = sample(), *q = NULL;
+    unsigned char *data;
+    size_t length;
+    int f;
+    p->tasks[1].level_delay = 960;
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    for (f = OWF_PFILE_GFPROJ; f <= OWF_PFILE_MSPDI; f++) {
+        CHECK_N(owf_project_write(p, f, &data, &length), OWF_OK);
+        if (f == OWF_PFILE_MSPDI) CHECK_HAS(data, "<LevelingDelay>9600</LevelingDelay><LevelingDelayFormat>7</LevelingDelayFormat>");
+        q = NULL;
+        CHECK_N(owf_project_read(data, length, &q), OWF_OK);
+        if (q && q->ntasks == p->ntasks) {
+            CHECK_N(q->tasks[1].level_delay, 960);
+            CHECK(!q->tasks[1].level_delay_elapsed);
+            CHECK_N(q->tasks[0].level_delay, 0);
+        } else
+            CHECK(q && q->ntasks == p->ntasks);
+        owf_project_free(q);
+        owf_free(data);
+    }
+    owf_project_free(p);
+    q = NULL;
+    CHECK_N(owf_project_read((const unsigned char *)hand, sizeof hand - 1, &q), OWF_OK);
+    if (q && q->ntasks == 2) {
+        CHECK_N(q->tasks[0].level_delay, 1440);
+        CHECK(q->tasks[0].level_delay_elapsed);
+        CHECK_N(q->tasks[1].level_delay, 0);
+        CHECK_N(owf_project_schedule(q), OWF_OK);
+        CHECK_N(q->tasks[0].early_start, owf_ptime_make(2026, 11, 17, 8, 0));
+    } else
+        CHECK(q && q->ntasks == 2);
+    owf_project_free(q);
+}
+
+static void test_actuals(void)
+{
+    static const char hand[] =
+        "<?xml version=\"1.0\"?>\n<Project xmlns=\"http://schemas.microsoft.com/project\">"
+        "<StartDate>2026-11-16T08:00:00</StartDate><StatusDate>2026-11-18T17:00:00</StatusDate><Tasks>"
+        "<Task><UID>1</UID><ID>1</ID><Name>A</Name><OutlineLevel>1</OutlineLevel><Duration>PT8H0M0S</Duration>"
+        "<ActualFinish>2026-11-16T17:00:00</ActualFinish></Task>"
+        "<Task><UID>2</UID><ID>2</ID><Name>B</Name><OutlineLevel>1</OutlineLevel><Duration>PT8H0M0S</Duration>"
+        "<ActualStart>2026-11-17T08:00:00</ActualStart><ActualFinish>2026-11-16T17:00:00</ActualFinish></Task>"
+        "</Tasks></Project>\n";
+    owf_project *p = sample(), *q = NULL;
+    unsigned char *data;
+    size_t length;
+    int f;
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_N(owf_project_set_actual(p, 0, 1, AT(16, 8, 0), 1, AT(17, 17, 0)), OWF_OK);
+    CHECK_N(owf_project_set_actual(p, 1, 1, AT(18, 13, 0), 0, 0), OWF_OK);
+    p->has_status_date = 1;
+    p->status_date = AT(18, 17, 0);
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    for (f = OWF_PFILE_GFPROJ; f <= OWF_PFILE_MSPDI; f++) {
+        CHECK_N(owf_project_write(p, f, &data, &length), OWF_OK);
+        if (f == OWF_PFILE_MSPDI) {
+            CHECK_HAS(data, "<FinishDate>");
+            CHECK_HAS(data, "<StatusDate>2026-11-18T17:00:00</StatusDate>");
+            CHECK_HAS(data, "<PercentComplete>100</PercentComplete><Cost>32000</Cost><ActualStart>2026-11-16T08:00:00</ActualStart>"
+                            "<ActualFinish>2026-11-17T17:00:00</ActualFinish><ActualDuration>PT16H0M0S</ActualDuration>"
+                            "<RemainingDuration>PT0H0M0S</RemainingDuration>");
+            CHECK_HAS(data, "<PercentComplete>25</PercentComplete><Cost>24000</Cost><ActualStart>2026-11-18T13:00:00</ActualStart>"
+                            "<ActualDuration>PT6H0M0S</ActualDuration><RemainingDuration>PT18H0M0S</RemainingDuration>");
+        }
+        q = NULL;
+        CHECK_N(owf_project_read(data, length, &q), OWF_OK);
+        if (q && q->ntasks == p->ntasks) {
+            CHECK(q->has_status_date && q->status_date == AT(18, 17, 0));
+            CHECK(q->tasks[0].has_actual_start && q->tasks[0].actual_start == AT(16, 8, 0));
+            CHECK(q->tasks[0].has_actual_finish && q->tasks[0].actual_finish == AT(17, 17, 0));
+            CHECK(q->tasks[1].has_actual_start && q->tasks[1].actual_start == AT(18, 13, 0));
+            CHECK(!q->tasks[1].has_actual_finish && !q->tasks[2].has_actual_start);
+            CHECK_N(owf_project_schedule(q), OWF_OK);
+            CHECK_N(q->tasks[1].early_start, AT(18, 13, 0));
+        } else
+            CHECK(q && q->ntasks == p->ntasks);
+        owf_project_free(q);
+        owf_free(data);
+    }
+    owf_project_free(p);
+    q = NULL;
+    CHECK_N(owf_project_read((const unsigned char *)hand, sizeof hand - 1, &q), OWF_OK);
+    if (q && q->ntasks == 2) {
+        CHECK(q->has_status_date && q->status_date == AT(18, 17, 0));
+        CHECK(!q->tasks[0].has_actual_start && !q->tasks[0].has_actual_finish);
+        CHECK(q->tasks[1].has_actual_start && !q->tasks[1].has_actual_finish);
+    } else
+        CHECK(q && q->ntasks == 2);
+    owf_project_free(q);
+    /* No status date, no actuals: none written. */
+    p = owf_project_new(AT(16, 8, 0));
+    owf_project_add_task(p, "A", D);
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_N(owf_project_write(p, OWF_PFILE_MSPDI, &data, &length), OWF_OK);
+    CHECK(!strstr((const char *)data, "StatusDate") && !strstr((const char *)data, "<ActualStart>"));
+    owf_free(data);
+    owf_project_free(p);
+}
 
 static void test_mpx(void)
 {
@@ -945,6 +1101,96 @@ static void test_gan(void)
     owf_project_free(p);
 }
 
+/* Task types go through .gfproj and MSPDI (Type 0..2, EffortDriven); Fixed Work reads as effort driven. */
+static void test_task_types(void)
+{
+    static const char hand[] =
+        "<?xml version=\"1.0\"?>\n<Project xmlns=\"http://schemas.microsoft.com/project\">"
+        "<StartDate>2026-11-16T08:00:00</StartDate><Tasks>"
+        "<Task><UID>1</UID><ID>1</ID><Name>A</Name><Type>2</Type><OutlineLevel>1</OutlineLevel>"
+        "<EffortDriven>0</EffortDriven></Task>"
+        "<Task><UID>2</UID><ID>2</ID><Name>B</Name><Type>7</Type><OutlineLevel>1</OutlineLevel></Task>"
+        "</Tasks></Project>\n";
+    owf_project *p = sample(), *q = NULL;
+    unsigned char *data;
+    size_t length;
+    int f;
+    p->tasks[0].type = OWF_TT_FIXED_DURATION;
+    p->tasks[0].effort_driven = 1;
+    p->tasks[1].type = OWF_TT_FIXED_WORK;
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    for (f = OWF_PFILE_GFPROJ; f <= OWF_PFILE_MSPDI; f++) {
+        CHECK_N(owf_project_write(p, f, &data, &length), OWF_OK);
+        if (f == OWF_PFILE_MSPDI) CHECK_HAS(data, "<Type>1</Type>");
+        q = NULL;
+        CHECK_N(owf_project_read(data, length, &q), OWF_OK);
+        if (q && q->ntasks == p->ntasks) {
+            CHECK_N(q->tasks[0].type, OWF_TT_FIXED_DURATION);
+            CHECK_N(q->tasks[0].effort_driven, 1);
+            CHECK_N(q->tasks[1].type, OWF_TT_FIXED_WORK);
+            CHECK_N(q->tasks[1].effort_driven, 1);              /* written as EffortDriven 1 */
+            CHECK_N(q->tasks[2].type, OWF_TT_FIXED_UNITS);
+            CHECK_N(q->tasks[2].effort_driven, 0);
+        } else
+            CHECK(q && q->ntasks == p->ntasks);
+        owf_project_free(q);
+        owf_free(data);
+    }
+    owf_project_free(p);
+    q = NULL;
+    CHECK_N(owf_project_read((const unsigned char *)hand, sizeof hand - 1, &q), OWF_OK);
+    if (q && q->ntasks == 2) {
+        CHECK_N(q->tasks[0].type, OWF_TT_FIXED_WORK);
+        CHECK_N(q->tasks[0].effort_driven, 1);                  /* Fixed Work always is */
+        CHECK_N(q->tasks[1].type, OWF_TT_FIXED_UNITS);          /* no such type: the default */
+    } else
+        CHECK(q && q->ntasks == 2);
+    owf_project_free(q);
+}
+
+/* Priority through both files; one out of MSPDI's 0..1000 reads as the default. */
+static void test_priority(void)
+{
+    static const char hand[] =
+        "<?xml version=\"1.0\"?>\n<Project xmlns=\"http://schemas.microsoft.com/project\">"
+        "<StartDate>2026-11-16T08:00:00</StartDate><Tasks>"
+        "<Task><UID>1</UID><ID>1</ID><Name>A</Name><OutlineLevel>1</OutlineLevel><Priority>1000</Priority></Task>"
+        "<Task><UID>2</UID><ID>2</ID><Name>B</Name><OutlineLevel>1</OutlineLevel><Priority>1500</Priority></Task>"
+        "<Task><UID>3</UID><ID>3</ID><Name>C</Name><OutlineLevel>1</OutlineLevel></Task>"
+        "</Tasks></Project>\n";
+    owf_project *p = sample(), *q = NULL;
+    unsigned char *data;
+    size_t length;
+    int f;
+    p->tasks[0].priority = 0;
+    p->tasks[1].priority = OWF_PRIORITY_DO_NOT_LEVEL;
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    for (f = OWF_PFILE_GFPROJ; f <= OWF_PFILE_MSPDI; f++) {
+        CHECK_N(owf_project_write(p, f, &data, &length), OWF_OK);
+        if (f == OWF_PFILE_MSPDI) CHECK_HAS(data, "<Priority>1000</Priority>");
+        q = NULL;
+        CHECK_N(owf_project_read(data, length, &q), OWF_OK);
+        if (q && q->ntasks == p->ntasks) {
+            CHECK_N(q->tasks[0].priority, 0);
+            CHECK_N(q->tasks[1].priority, OWF_PRIORITY_DO_NOT_LEVEL);
+            CHECK_N(q->tasks[2].priority, OWF_PRIORITY_DEFAULT);
+        } else
+            CHECK(q && q->ntasks == p->ntasks);
+        owf_project_free(q);
+        owf_free(data);
+    }
+    owf_project_free(p);
+    q = NULL;
+    CHECK_N(owf_project_read((const unsigned char *)hand, sizeof hand - 1, &q), OWF_OK);
+    if (q && q->ntasks == 3) {
+        CHECK_N(q->tasks[0].priority, OWF_PRIORITY_DO_NOT_LEVEL);
+        CHECK_N(q->tasks[1].priority, OWF_PRIORITY_DEFAULT);          /* out of range */
+        CHECK_N(q->tasks[2].priority, OWF_PRIORITY_DEFAULT);          /* none given */
+    } else
+        CHECK(q && q->ntasks == 3);
+    owf_project_free(q);
+}
+
 int main(void)
 {
     test_durations();
@@ -955,6 +1201,10 @@ int main(void)
     test_csv_read();
     test_cost_resource();
     test_baseline();
+    test_actuals();
+    test_leveling_delay();
+    test_task_types();
+    test_priority();
     test_mpx();
     test_gan();
     test_damaged();
