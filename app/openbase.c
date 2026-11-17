@@ -49,6 +49,7 @@
 #include <string.h>
 
 #include "openbase_core.h"
+#include "openbase_spell.h"
 #include "owf.h"
 #include "owf_open.h"   /* OWF=library: reports write through owfwrite.library */
 #include "openbase_sheet.h"
@@ -4330,7 +4331,7 @@ static int form_taken(const char *name)
     return 0;
 }
 
-enum { FD_FIELD = 1, FD_LABEL, FD_LINE, FD_BOX, FD_BUTTON, FD_TEXT, FD_EVENTS, FD_REMOVE, FD_SAVE, FD_SAVEAS, FD_CLOSE,
+enum { FD_FIELD = 1, FD_LABEL, FD_LINE, FD_BOX, FD_BUTTON, FD_TEXT, FD_EVENTS, FD_SPELL, FD_REMOVE, FD_SAVE, FD_SAVEAS, FD_CLOSE,
        FD_NBUTTONS = FD_CLOSE };
 #define FD_PER_ROW 6
 
@@ -4442,6 +4443,9 @@ static void design_button(struct Window *dw, int id)
     case FD_EVENTS:
         design_events();
         break;
+    case FD_SPELL:
+        design_spell(dw);
+        break;
     case FD_TEXT:
         if (d_sel < 0) { tell("Choose a label, a box or a button first."); break; }
         it = &d_form->items[d_sel];
@@ -4477,11 +4481,93 @@ static void design_button(struct Window *dw, int id)
     ActivateWindow(dw);
 }
 
+/* ---- Spelling: GFOffice's one spell checker, owfspell.library (libowf/include/owf_spell.h) ---- */
+
+static owf_spell *spell;
+
+/* The library and the dictionary, opened the first time they are needed. */
+static int spell_ready(void)
+{
+    char msg[160];
+    if (spell) return 1;
+    if (!owf_spell_library()) {
+        tell("owfspell.library was not found. Install it in LIBS:.");
+        return 0;
+    }
+    if ((spell = owf_spell_open_default(msg, sizeof msg)) != NULL) { set_status(msg); return 1; }
+    tell("No dictionary was found. Install Dictionaries/en_GB.words beside GFOpenBase.");
+    return 0;
+}
+
+static void spell_finish(void)
+{
+    if (spell) owf_spell_close(spell);   /* through the library: only when one was opened */
+    spell = NULL;
+    owf_spell_library_close();
+}
+
+/* The designer's Spelling...: each misspelt word of the form's labels, boxes' titles and buttons' words from the
+ * chosen item on, the item chosen, with Change... (the first suggestion offered), Skip, Ignore All, Add (to the
+ * user's words) and Stop. */
+static void design_spell(struct Window *dw)
+{
+    ob_spell_hit hit;
+    int item = d_sel, stop_item = -1, guard = 0, rc;
+    size_t from = 0, stop_start = 0;
+    if (!spell_ready()) return;
+    while (guard++ < 10000) {
+        char sug[4][OWF_SPELL_WORD], text[400], entered[OB_LABEL_MAX];
+        int n, i, pick;
+        size_t used;
+        rc = ob_spell_next(d_form, spell, item, from, &hit);
+        if (rc < 0) break;
+        if (rc == 0 || (hit.item == stop_item && hit.start == stop_start)) {
+            tell(guard > 1 ? "The form's words are checked." : "No misspelt words on the form.");
+            break;
+        }
+        item = d_sel = hit.item;
+        design_follow();
+        design_draw(dw);
+        n = owf_spell_suggest(spell, hit.word, sug[0], 4);
+        used = (size_t)snprintf(text, sizeof text, "Not in the dictionary: %s\nSuggestions:", hit.word);
+        for (i = 0; i < n && used < sizeof text; i++)
+            used += (size_t)snprintf(text + used, sizeof text - used, " %s", sug[i]);
+        if (!n && used < sizeof text) snprintf(text + used, sizeof text - used, " none");
+        pick = ask(text, "Change...|Skip|Ignore All|Add|Stop");
+        if (pick <= 0) break;
+        if (pick == 2) {                                  /* Skip: this once, so the check ends back here */
+            if (stop_item < 0) { stop_item = item; stop_start = hit.start; }
+            from = hit.end;
+            continue;
+        }
+        if (pick == 3 || pick == 4) {
+            if (!(pick == 3 ? owf_spell_ignore(spell, hit.word) : owf_spell_add(spell, hit.word))) {
+                tell("Spelling: not enough memory");
+                break;
+            }
+            from = hit.end;
+            continue;
+        }
+        put_text(entered, sizeof entered, n ? sug[0] : hit.word);
+        if (!ask_text("Spelling", "Change to:", entered, sizeof entered)) { from = hit.end; continue; }
+        if ((rc = ob_spell_replace(d_form, &hit, entered)) != OWF_OK) {
+            tell(rc == OWF_ERR_FORMAT ? "Spelling: that is longer than an item's words can be." : "Spelling: the item changed.");
+            from = hit.end;
+            continue;
+        }
+        d_changed = 1;
+        from = hit.start + strlen(entered);
+        if (stop_item == item && hit.start < stop_start)
+            stop_start = stop_start + from - hit.end;     /* the skipped word moved along with the change */
+    }
+    design_draw(dw);
+}
+
 /* The designer window on f; changed when f isn't kept as it is yet. */
 static void design_window(ob_form *f, int changed)
 {
     static const char *const btext[FD_NBUTTONS] = {
-        "Field...", "Label...", "Line", "Box...", "Button...", "Words...", "Events...", "Remove", "Save", "Save As...", "Close"
+        "Field...", "Label...", "Line", "Box...", "Button...", "Words...", "Events...", "Spelling...", "Remove", "Save", "Save As...", "Close"
     };
     struct Window *dw;
     struct Gadget *eg = NULL, *g;
@@ -5603,9 +5689,12 @@ static int rexx_do_command(const char *command, char **result_out)
     else if (starts_word_ci(command, "LASTERROR", &arg)) put_text(result_text, sizeof result_text, rexx_lasterror);
     else if (starts_word_ci(command, "HELP", &arg))
         put_text(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE "
-                 "OPEN TABLES TABLE FORMS ROW FIRSTROW NEXTROW PREVROW LASTROW COUNTROWS GETFIELDS GETROW ADDROW CHANGEROW DELETEROW QUIT");
+                 "OPEN TABLES TABLE FORMS SPELL ROW FIRSTROW NEXTROW PREVROW LASTROW COUNTROWS GETFIELDS GETROW ADDROW CHANGEROW DELETEROW QUIT");
     else if (starts_word_ci(command, "DEACTIVATE", &arg)) {
         rc = RX_NOW; put_text(result_text, sizeof result_text, "DEACTIVATE: GFOpenBase has no icon to go to");
+    } else if (starts_word_ci(command, "SPELL", &arg)) {   /* the saved forms' words (openbase_spell.h) */
+        if (!spell_ready()) { rc = RX_NOW; put_text(result_text, sizeof result_text, "No dictionary"); }
+        else rc = ob_spell_rexx(proj, spell, arg, result_text, sizeof result_text);
     } else if (starts_word_ci(command, "FAULT", &arg)) {
         if (!*arg) { rc = RX_ERROR; put_text(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -5838,6 +5927,7 @@ static int window_main(int argc, char **argv)
 out:
     rexx_close();
     ob_sheet_close();
+    spell_finish();
     if (RexxSysBase) { CloseLibrary((struct Library *)RexxSysBase); RexxSysBase = NULL; }
     close_project();
     close_window();
