@@ -532,6 +532,23 @@ static void test_level(void)
     CHECK_S(ok("GETCELL 2 Start"), "Tue 17/11/26");
     ok("UNDO");
     CHECK_S(ok("GETCELL 2 Start"), "Mon 16/11/26");
+    /* ORDER, Priority and Overallocated */
+    CHECK_S(ok("GETCELL 1 ID"), "1!");
+    CHECK_S(ok("GETCELL 2 Overallocated"), "Yes");
+    CHECK_S(ok("LEVEL ORDER ID"), "1");                                   /* Dig is first: Fill waits */
+    CHECK_S(ok("GETCELL 2 Start"), "Wed 18/11/26");
+    CHECK_S(ok("GETCELL 2 Overallocated"), "No");
+    ok("SETCELL 2 Priority 900");
+    CHECK_S(ok("GETCELL 2 Priority"), "900");
+    CHECK_S(ok("LEVEL ORDER \"Priority, Standard\""), "1");              /* Fill keeps Monday now */
+    CHECK_S(ok("GETCELL 2 Start"), "Mon 16/11/26");
+    CHECK_S(ok("GETCELL 1 Start"), "Tue 17/11/26");
+    ok("SETCELL 1 Priority 1000");                                        /* Do Not Level */
+    CHECK_S(ok("LEVEL ORDER Priority"), "1");
+    CHECK_S(ok("GETCELL 1 Start"), "Mon 16/11/26");
+    CHECK_N(rx_do("LEVEL ORDER Sideways"), OPJ_RX_ERROR);
+    CHECK(strstr(rx.lasterror, "ORDER is Standard, ID or Priority") != NULL);
+    CHECK_N(rx_do("SETCELL 1 Priority 1001"), OPJ_RX_ERROR);
 }
 
 /* SORT, FIND and REPLACETEXT. */

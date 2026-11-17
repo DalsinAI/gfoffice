@@ -127,7 +127,13 @@ typedef struct {
     /* what an edit keeps fixed (owf_project_keep_types): MSPDI's Type and EffortDriven */
     int type;                            /* OWF_TT_; 0, Fixed Units, as MS Project's new tasks */
     int effort_driven;                   /* adding or removing a resource keeps the work (Fixed Work always) */
+    /* MSPDI's Priority, 0..1000 (500 for a new task, as MS Project): at a levelling clash with
+     * OWF_LEVEL_PRIORITY the higher keeps its place; 1000 is "Do Not Level", never moved */
+    int priority;
 } owf_ptask;
+
+#define OWF_PRIORITY_DEFAULT 500
+#define OWF_PRIORITY_DO_NOT_LEVEL 1000
 
 enum { OWF_TT_FIXED_UNITS, OWF_TT_FIXED_DURATION, OWF_TT_FIXED_WORK };
 
@@ -261,14 +267,25 @@ void owf_project_clear_baseline_n(owf_project *p, int n, int first, int count);
 int owf_ptask_baseline(const owf_ptask *t, int n, owf_pbaseline *out);
 /* ---- Levelling (owf_presource.c) ---- */
 
+/* Leveling order, MS Project's and ProjectLibre's: at a clash, who keeps their place first.
+ * OWF_LEVEL_STANDARD: the earlier start, then less total slack, then the first in the plan (by ID).
+ * OWF_LEVEL_ID_ONLY: the first in the plan.
+ * OWF_LEVEL_PRIORITY ("Priority, Standard"): the higher priority, then as Standard. */
+enum { OWF_LEVEL_STANDARD, OWF_LEVEL_ID_ONLY, OWF_LEVEL_PRIORITY, OWF_LEVEL_NORDERS };
+
 /* MS Project's Level Resources: clears every task's leveling delay, then delays tasks until no work
  * resource has more assigned at once than its max units, where moving a task can mend it. These keep
  * their place: summaries, milestones, tasks with an actual start, tasks that must start or finish on a
- * date, ALAP tasks. At a clash the tasks that start earlier, then have less total slack, then come first
- * in the plan keep theirs; the next is moved to where one of them finishes, until it fits. within_slack:
- * a task is only moved within the total slack it had (MS Project's "Level only within available slack").
- * Schedules p. How many tasks it delayed; -1 when the plan won't schedule (a loop) or for memory. */
+ * date, ALAP tasks, tasks of priority 1000 (Do Not Level). At a clash the tasks keep theirs in the
+ * order's turn (OWF_LEVEL_); the next is moved to where one of them finishes, until it fits.
+ * within_slack: a task is only moved within the total slack it had (MS Project's "Level only within
+ * available slack"). Schedules p. How many tasks it delayed; -1 when the plan won't schedule (a loop),
+ * for memory, or for an order out of range. owf_project_level is owf_project_level_by with Standard. */
+int owf_project_level_by(owf_project *p, int within_slack, int order);
 int owf_project_level(owf_project *p, int within_slack);
+/* 1 when one of task's work resources has more assigned at some time within the task than its max
+ * units allow (MS Project's task Overallocated field); 0 else, or out of range. Uses the scheduled dates. */
+int owf_ptask_overallocated(const owf_project *p, int task);
 /* Every task's leveling delay back to 0, and schedules p; OWF_OK or what owf_project_schedule gave. */
 int owf_project_clear_leveling(owf_project *p);
 

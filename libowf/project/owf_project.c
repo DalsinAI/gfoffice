@@ -75,6 +75,7 @@ int owf_project_add_task(owf_project *p, const char *name, long duration)
     if (name && !(t->name = dup_text(name))) return -1;
     t->uid = p->next_uid++;
     t->level = 1;
+    t->priority = OWF_PRIORITY_DEFAULT;
     t->duration = duration < 0 ? 0 : duration;
     t->milestone = duration == 0;
     t->constraint = OWF_CON_ASAP;
