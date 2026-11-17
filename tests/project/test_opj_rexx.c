@@ -119,6 +119,10 @@ static void test_resources_and_baseline(void)
     CHECK_S(ok("GETRESOURCE 1 rate"), "20.00/h");
     CHECK_S(ok("GETRESOURCE 1 Work"), "28h");                                /* 16h, and half of 24h */
     CHECK_S(ok("GETRESOURCE 1 Cost"), "560.00");
+    CHECK_S(ok("GETRESOURCE 1 Calendar"), "Standard");                      /* Base Calendar: the plan's */
+    CHECK_N(rx_do("SETRESOURCE 1 Calendar Nights"), OPJ_RX_ERROR);          /* no such calendar */
+    ok("SETRESOURCE 1 \"Base Calendar\" 1");
+    CHECK_S(ok("GETRESOURCE 1 basecalendar"), "Standard");
     CHECK_S(ok("GETRESOURCE 1 Name"), "Dale");
     CHECK_N(rx_do("GETRESOURCE 2 Name"), OPJ_RX_ERROR);
     CHECK_N(rx_do("SETRESOURCE 1 Work 3h"), OPJ_RX_ERROR);

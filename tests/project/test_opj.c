@@ -1206,6 +1206,35 @@ static void test_work_columns(void)
 }
 
 /* Update Tasks: % Complete, actual and remaining durations and actual dates, one edit. */
+/* Base Calendar on the resource sheet: the tasks a resource works on are scheduled on its calendar. */
+static void test_resource_calendar(void)
+{
+    opj_doc *doc = three();
+    int four = -1, dale = -1;
+    char out[64];
+    CHECK_S(opj_resource_column_title(OPJ_RCOL_CALENDAR), "Base Calendar");
+    CHECK_N(opj_column_parse("calendar", 1), OPJ_RCOL_CALENDAR);
+    CHECK_N(opj_add_calendar(doc, "Four days", -1, &four), OWF_OK);
+    CHECK_N(opj_add_resource(doc, "Dale", &dale), OWF_OK);
+    if (four < 0 || dale < 0) { opj_doc_free(doc); return; }
+    opj_resource_cell_text(doc, dale, OPJ_RCOL_CALENDAR, out, sizeof out);
+    CHECK_S(out, "Standard");                                       /* none of its own: the plan's */
+    CHECK_N(opj_set_resource_cell(doc, dale, OPJ_RCOL_CALENDAR, "four DAYS"), OWF_OK);
+    opj_resource_cell_text(doc, dale, OPJ_RCOL_CALENDAR, out, sizeof out);
+    CHECK_S(out, "Four days");
+    CHECK_N(opj_set_resource_cell(doc, dale, OPJ_RCOL_CALENDAR, "Nights"), OWF_ERR_FORMAT);
+    CHECK_N(opj_set_resource_cell(doc, dale, OPJ_RCOL_CALENDAR, "9"), OWF_ERR_FORMAT);
+    /* Fridays off on Dale's calendar: Plan (Mon 16, 2 days) is the same, Build (from Wed 18, 3 days) skips Fri 20 */
+    doc->plan->calendars[four].week[5].nspans = 0;
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_RESOURCES, "Dale"), OWF_OK);
+    CHECK_S(cell_of(doc, 1, OPJ_COL_FINISH), "Mon 23/11/26");
+    CHECK_N(opj_set_resource_cell(doc, dale, OPJ_RCOL_CALENDAR, ""), OWF_OK);   /* back to the plan's */
+    CHECK_S(cell_of(doc, 1, OPJ_COL_FINISH), "Fri 20/11/26");
+    CHECK_N(opj_set_resource_cell(doc, dale, OPJ_RCOL_CALENDAR, "2"), OWF_OK);  /* by number */
+    CHECK_S(cell_of(doc, 1, OPJ_COL_FINISH), "Mon 23/11/26");
+    opj_doc_free(doc);
+}
+
 static void test_update_task(void)
 {
     opj_doc *doc = three();
@@ -2494,6 +2523,7 @@ int main(void)
     test_view_lines();
     test_work_columns();
     test_update_task();
+    test_resource_calendar();
     test_progress_lines();
     test_assign_dialog();
     test_print();
