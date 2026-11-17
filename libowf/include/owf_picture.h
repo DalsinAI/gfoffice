@@ -1,7 +1,7 @@
 /*
  * libowf: the picture writers, one copy for every GFOffice program (docs/suite/owf-shared-core.md): PNG and
- * IFF ILBM files from 24-bit RGB rows, and PNG's chunk CRC. GFOpenPresentation's Export as Pictures, GFOpenDiag's
- * picture EXPORT and its diagram-in-a-PNG (owf_dpng.c) use them; GFOpenPressmaster and GFOpenDraw are to follow.
+ * IFF ILBM files from 24-bit RGB rows. GFOpenPresentation's Export as Pictures and GFOpenDiag's picture EXPORT
+ * use them; GFOpenPressmaster and GFOpenDraw are to follow. PNG's CRC is libowf's owf_crc32 (owf_internal.h).
  * Plain C99, no Amiga headers, no floating point.
  *
  * rgb: height rows of width pixels, 3 bytes each (R, G, B), stride bytes apart. Each writer returns the file
@@ -25,10 +25,6 @@ extern "C" {
 
 unsigned char *owf_picture_png(const unsigned char *rgb, int width, int height, size_t stride, size_t *length);
 unsigned char *owf_picture_ilbm(const unsigned char *rgb, int width, int height, size_t stride, size_t *length);
-
-/* PNG's CRC-32 (ISO 3309, as PNG's specification gives it) of n bytes, carried on from crc: 0 to start, so
- * a chunk's CRC is owf_png_crc(owf_png_crc(0, type, 4), data, length). */
-unsigned long owf_png_crc(unsigned long crc, const unsigned char *p, size_t n);
 
 #ifdef __cplusplus
 }

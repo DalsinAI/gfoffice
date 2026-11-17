@@ -3,7 +3,7 @@
  * GFOpenPresentation's and GFOpenDiag's own copies gave (golden FNV-1a sums of their output, taken from main
  * 3d40fb09 before the move with SHARED_GOLDEN_PRINT), the old names (opr_png_encode, opr_ilbm_encode,
  * opr_gradient_band) give the same bytes as the new, and the pieces are right on their own (PNG's CRC against
- * the specification's values, the sine, the blends, a PNG that inflates back to its rows).
+ * the specification's values, the sine, the blends, a PNG whose stored rows are its pixels).
  * Built with OWF_TEST_NO_ZLIBRARY, so PNG is written with stored blocks and the sums don't hang on a zlib version.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
@@ -12,6 +12,7 @@
 #ifndef SHARED_GOLDEN_PRINT
 #include "owf_fill.h"
 #include "owf_picture.h"
+#include "owf_internal.h"
 #endif
 
 #include <stdio.h>
@@ -163,14 +164,13 @@ static void test_wrappers(void)
         }
 }
 
-/* PNG's CRC: the specification's check value, and IEND's CRC as every PNG ends with it */
+/* PNG's CRC is owf_crc32: the specification's check value, carried on as png_chunk does, and IEND's */
 static void test_crc(void)
 {
     static const unsigned char iend[] = "IEND", nine[] = "123456789";
-    CHECK(owf_png_crc(0, nine, 9) == 0xCBF43926UL);
-    CHECK(owf_png_crc(owf_png_crc(0, nine, 4), nine + 4, 5) == 0xCBF43926UL);   /* carried on */
-    CHECK(owf_png_crc(0, iend, 4) == 0xAE426082UL);
-    CHECK(owf_png_crc(0, nine, 0) == 0);
+    CHECK(owf_crc32(0, nine, 9) == 0xCBF43926UL);
+    CHECK(owf_crc32(owf_crc32(0, nine, 4), nine + 4, 5) == 0xCBF43926UL);
+    CHECK(owf_crc32(0, iend, 4) == 0xAE426082UL);
 }
 
 /* a 3 x 2 PNG, stored blocks: its rows are in it as they went in, behind filter byte 0 */

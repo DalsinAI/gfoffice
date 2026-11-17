@@ -7,7 +7,6 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_diag_int.h"
-#include "owf_picture.h"
 
 #include <string.h>
 
@@ -16,10 +15,34 @@
 
 static const unsigned char signature[8] = { 137, 'P', 'N', 'G', 13, 10, 26, 10 };
 
-/* PNG's CRC over a chunk's type and data (owf_picture.h's, the one copy) */
+static unsigned long crc_table[256];
+static int crc_ready;
+
+static void crc_init(void)
+{
+    unsigned long c;
+    int n, k;
+    for (n = 0; n < 256; n++) {
+        c = (unsigned long)n;
+        for (k = 0; k < 8; k++)
+            c = c & 1 ? 0xedb88320UL ^ (c >> 1) : c >> 1;
+        crc_table[n] = c;
+    }
+    crc_ready = 1;
+}
+
+/* PNG's CRC over a chunk's type and data. */
 static unsigned long crc(const unsigned char *type, const unsigned char *data, size_t n)
 {
-    return owf_png_crc(owf_png_crc(0, type, 4), data, n);
+    unsigned long c = 0xffffffffUL;
+    size_t i;
+    if (!crc_ready)
+        crc_init();
+    for (i = 0; i < 4; i++)
+        c = crc_table[(c ^ type[i]) & 0xff] ^ (c >> 8);
+    for (i = 0; i < n; i++)
+        c = crc_table[(c ^ data[i]) & 0xff] ^ (c >> 8);
+    return (c ^ 0xffffffffUL) & 0xffffffffUL;
 }
 
 static unsigned long be32(const unsigned char *p)

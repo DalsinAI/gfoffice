@@ -1,6 +1,6 @@
-/* The picture writers (owf_picture.h): PNG and IFF ILBM files from 24-bit RGB rows, and PNG's chunk CRC,
+/* The picture writers (owf_picture.h): PNG and IFF ILBM files from 24-bit RGB rows,
  * one copy for every GFOffice program. Moved here from src/deck/ow_picture.c (whose opr_png_encode and
- * opr_ilbm_encode now call these), unchanged.
+ * opr_ilbm_encode now call these), unchanged but for PNG's CRC, which is libowf's owf_crc32 (owf_zip.c's).
  *
  * The program paints into an off-screen bitmap and reads its pixels back; these turn the rows into a file.
  * PNG is deflated with zlib when it is built in (OWF_HAVE_ZLIB) and written with stored blocks otherwise;
@@ -9,6 +9,7 @@
  * its ILBM form.
  * MIT, Copyright (c) 2026 AmiCradle Team. */
 #include "owf_picture.h"
+#include "owf_internal.h"                /* owf_crc32: zip's CRC-32 is PNG's */
 
 #include <stdlib.h>
 #include <string.h>
@@ -54,34 +55,14 @@ static void out_be16(pic_out *o, unsigned v)
     out_bytes(o, b, 2);
 }
 
-unsigned long owf_png_crc(unsigned long crc, const unsigned char *p, size_t n)
-{
-    static unsigned long table[256];
-    static int ready;
-    size_t i;
-    if (!ready) {
-        unsigned long k, c;
-        int b;
-        for (k = 0; k < 256; k++) {
-            c = k;
-            for (b = 0; b < 8; b++) c = c & 1 ? 0xedb88320UL ^ (c >> 1) : c >> 1;
-            table[k] = c;
-        }
-        ready = 1;
-    }
-    crc = (crc ^ 0xffffffffUL) & 0xffffffffUL;
-    for (i = 0; i < n; i++) crc = table[(crc ^ p[i]) & 0xff] ^ (crc >> 8);
-    return (crc ^ 0xffffffffUL) & 0xffffffffUL;
-}
-
 static void png_chunk(pic_out *o, const char *type, const unsigned char *data, size_t n)
 {
     unsigned long crc;
     out_be32(o, (unsigned long)n);
     out_bytes(o, type, 4);
     if (n) out_bytes(o, data, n);
-    crc = owf_png_crc(0, (const unsigned char *)type, 4);
-    if (n) crc = owf_png_crc(crc, data, n);
+    crc = owf_crc32(0, (const unsigned char *)type, 4);
+    if (n) crc = owf_crc32(crc, data, n);
     out_be32(o, crc);
 }
 
