@@ -17,7 +17,14 @@ struct Library *OWFSpellBase;
 
 int owf_spell_library(void)
 {
-    if (!OWFSpellBase) OWFSpellBase = OpenLibrary((CONST_STRPTR)"owfspell.library", 1);
+    if (!OWFSpellBase) {
+        OWFSpellBase = OpenLibrary((CONST_STRPTR)"owfspell.library", 1);
+        /* 1.1 at least: owf_spell_command */
+        if (OWFSpellBase && OWFSpellBase->lib_Version == 1 && OWFSpellBase->lib_Revision < 1) {
+            CloseLibrary(OWFSpellBase);
+            OWFSpellBase = NULL;
+        }
+    }
     return OWFSpellBase != NULL;
 }
 

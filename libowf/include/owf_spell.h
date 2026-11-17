@@ -69,6 +69,17 @@ int owf_spell_words(owf_spell *spell, const char *text, size_t length, owf_spell
 /* The number of words in the dictionary (not the user's). */
 int owf_spell_count(const owf_spell *spell);
 
+/* ARexx SPELL's word commands, the same in every program, args being what
+ * follows SPELL:
+ *   CHECK word    1 when it is spelt right, else 0
+ *   SUGGEST word  the suggestions, a space between
+ *   ADD word      into the user's words (saved)
+ *   IGNORE word   passed until this owf_spell is closed
+ * The answer, or the reason, goes in out; returns ARexx's code (0, 5 with
+ * no dictionary, 10 for a missing word, 20 for no memory), or -1 when args
+ * is none of these (out untouched): the program's own COUNT, LIST... (1.1) */
+int owf_spell_command(owf_spell *spell, const char *args, char *out, size_t size);
+
 #if defined(OWF_USE_SPELL_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
 /* owfspell.library, opened the first time (libowf/amiga/owf_spell_base.c):
  * 1 when it is open. A program calls owf_spell_library_close() as it quits. */

@@ -183,9 +183,9 @@ else
     echo "build-os3.sh: no gfopensqlite build in $OC_SQLITE: GFOpenCalc's External Data reads web pages only"
 fi
 # shellcheck disable=SC2086
-"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_CALC \
+"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_CALC $SPELL \
     -I"$HERE/include" -I"$HERE/app" -I"$HERE/src/calc" -I"$HERE/libowf/calc" -I"$HERE/third_party/opengadtools" \
-    $OCSRC "$HERE"/src/calc/*.c $OC_EXTDB "$HERE/app/opencalc.c" "$HERE/app/ow_autosave.c" "$HERE/app/ow_stack.c" \
+    $OCSRC "$HERE"/src/calc/*.c $OC_EXTDB "$HERE/app/opencalc.c" "$HERE/app/ow_autosave.c" "$HERE/app/ow_stack.c" $SPELL_SRC \
     "$HERE/app/ow_fontwidths.c" "$HERE"/third_party/opengadtools/*.c $OC_EXTDB_LIB -lamiga -lm \
     -o "$OUT/GFOpenCalc"
 echo "$OUT/GFOpenCalc ($(wc -c < "$OUT/GFOpenCalc") bytes)"

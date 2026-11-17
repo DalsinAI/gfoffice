@@ -24,6 +24,7 @@ int owf_spell_word_ok(owf_spell *spell, const char *word, size_t length);
 int owf_spell_scan(owf_spell *spell, const char *text, size_t from, size_t to, size_t *start, size_t *end);
 int owf_spell_words(owf_spell *spell, const char *text, size_t length, owf_spell_range *ranges, int max_ranges);
 int owf_spell_count(const owf_spell *spell);
+int owf_spell_command(owf_spell *spell, const char *args, char *out, size_t size);
 
 #ifdef __cplusplus
 }

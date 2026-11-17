@@ -88,7 +88,7 @@ enum { GID_TOOLBAR = 100, GID_NAME = 300, GID_INPUT, GID_VSCROLL, GID_HSCROLL };
 
 enum {
     M_NEW = 1, M_OPEN, M_SAVE, M_SAVE_AS, M_EXPORT_CSV, M_EXPORT_PDF, M_PRINT, M_ABOUT, M_QUIT,
-    M_UNDO, M_REDO, M_CUT, M_COPY, M_PASTE, M_FIND, M_FIND_NEXT,
+    M_UNDO, M_REDO, M_CUT, M_COPY, M_PASTE, M_FIND, M_FIND_NEXT, M_SPELL,
     M_FILL_DOWN, M_FILL_RIGHT, M_CLEAR, M_CLEAR_FORMATS, M_CLEAR_ALL,
     M_SELECT_ALL, M_SELECT_ROWS, M_SELECT_COLS, M_GOTO,
     M_FREEZE, M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_100,
@@ -136,6 +136,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Paste", "V", 0, 0, (APTR)M_PASTE },
     { NM_ITEM, "Find...", "F", 0, 0, (APTR)M_FIND },
     { NM_ITEM, "Find Next", "G", 0, 0, (APTR)M_FIND_NEXT },
+    { NM_ITEM, "Spelling...", NULL, 0, 0, (APTR)M_SPELL },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Fill Down", "D", 0, 0, (APTR)M_FILL_DOWN },
     { NM_ITEM, "Fill Right", "R", 0, 0, (APTR)M_FILL_RIGHT },
@@ -2023,7 +2024,7 @@ static int break_note_lines(struct RastPort *rp, const char *text, int maxw, int
     return n;
 }
 
-#define ASK_BUTTONS 4
+#define ASK_BUTTONS 5
 
 /* The window with buttons, as EasyRequest's gadget format gives them ("Yes|No|Cancel"): which was chosen as
  * EasyRequest says it (the first 1, the next 2..., the last 0). Return chooses the first; Escape and the close
@@ -2692,6 +2693,91 @@ static void do_find(int ask)
         set_status("Text not found.");
     else
         result(rc, NULL);
+}
+
+/* ---- Spelling: GFOffice's one spell checker, owfspell.library (libowf/include/owf_spell.h) ---- */
+
+static owf_spell *spell;
+
+/* The library and the dictionary, opened the first time they are needed. */
+static int spell_ready(void)
+{
+    char msg[160];
+    if (spell) return 1;
+    if (!owf_spell_library()) {
+        ask_window("Spelling", "owfspell.library 1.1 or newer was not found. Install it in LIBS:.", "OK");
+        return 0;
+    }
+    if ((spell = owf_spell_open_default(msg, sizeof msg)) != NULL) { set_status(msg); return 1; }
+    ask_window("Spelling", "No dictionary was found. Install Dictionaries/en_GB.words beside GFOpenCalc.", "OK");
+    return 0;
+}
+
+static void spell_finish(void)
+{
+    if (spell) owf_spell_close(spell);   /* through the library: only when one was opened */
+    spell = NULL;
+    owf_spell_library_close();
+}
+
+/* Edit > Spelling...: each misspelt word of the sheet's typed text from the active cell on, with Change...
+ * (the first suggestion offered), Skip, Ignore All, Add (to the user's words) and Stop. */
+static void do_spelling(void)
+{
+    oc_spell_hit hit;
+    unsigned stop_row = 0, stop_col = 0;
+    size_t from = 0, stop_start = 0;
+    int have_stop = 0, guard = 0, rc;
+    if (!core || !spell_ready()) return;
+    while (guard++ < 10000) {
+        char sug[4][OWF_SPELL_WORD], word[96], text[400], initial[96], entered[96], *utf8;
+        int n, i, pick;
+        size_t used;
+        rc = oc_core_spell_next(core, spell, from, &hit);
+        if (rc < 0) { result(OWF_ERR_MEMORY, NULL); return; }
+        if (rc == 0 || (have_stop && hit.row == stop_row && hit.col == stop_col && hit.start == stop_start)) {
+            set_status(have_stop || guard > 1 ? "Spelling checked." : "No misspelt words.");
+            refresh();
+            return;
+        }
+        oc_view_show_cell(core, hit.row, hit.col);
+        refresh();
+        to_latin1(hit.word, strlen(hit.word), word, sizeof word);
+        n = owf_spell_suggest(spell, hit.word, sug[0], 4);
+        used = (size_t)snprintf(text, sizeof text, "Not in the dictionary: %s\nSuggestions:", word);
+        for (i = 0; i < n && used < sizeof text; i++) {
+            char l1[OWF_SPELL_WORD];
+            to_latin1(sug[i], strlen(sug[i]), l1, sizeof l1);
+            used += (size_t)snprintf(text + used, sizeof text - used, " %s", l1);
+        }
+        if (!n && used < sizeof text) snprintf(text + used, sizeof text - used, " none");
+        pick = ask_window("Spelling", text, "Change...|Skip|Ignore All|Add|Stop");
+        if (pick <= 0) { set_status("Spelling stopped."); return; }
+        if (pick == 2) {                                  /* Skip: this once, so the check ends back here */
+            if (!have_stop) { stop_row = hit.row; stop_col = hit.col; stop_start = hit.start; have_stop = 1; }
+            from = hit.end;
+            continue;
+        }
+        if (pick == 3 || pick == 4) {
+            if (!(pick == 3 ? owf_spell_ignore(spell, hit.word) : owf_spell_add(spell, hit.word))) {
+                result(OWF_ERR_MEMORY, NULL);
+                return;
+            }
+            from = hit.end;
+            continue;
+        }
+        if (n) to_latin1(sug[0], strlen(sug[0]), initial, sizeof initial);
+        else snprintf(initial, sizeof initial, "%s", word);
+        if (!text_requester("Spelling", "Change to", initial, entered, sizeof entered)) { from = hit.end; continue; }
+        if (!(utf8 = from_latin1(entered))) { result(OWF_ERR_MEMORY, NULL); return; }
+        rc = oc_core_spell_replace(core, &hit, utf8);
+        from = hit.start + strlen(utf8);
+        owf_free(utf8);
+        if (rc != OWF_OK) { result(rc, NULL); return; }
+        if (have_stop && hit.row == stop_row && hit.col == stop_col && hit.start < stop_start)
+            stop_start = stop_start + from - hit.end;     /* the skipped word moved along with the change */
+        refresh();
+    }
 }
 
 static void do_command(int id)
@@ -6677,6 +6763,7 @@ static void menu_action(ULONG id)
     case M_PASTE: do_paste(); break;
     case M_FIND: do_find(1); break;
     case M_FIND_NEXT: do_find(0); break;
+    case M_SPELL: do_spelling(); break;
     case M_FILL_DOWN: result(oc_core_fill(core, OC_FILL_DOWN), "Filled down."); break;
     case M_FILL_RIGHT: result(oc_core_fill(core, OC_FILL_RIGHT), "Filled right."); break;
     case M_CLEAR: result(oc_core_clear(core, OC_CLEAR_CONTENTS), "Cleared."); break;
@@ -7435,7 +7522,7 @@ static int rexx_do_command(const char *command, char **result_out)
     else if (starts_word_ci(command, "DEACTIVATE", &arg)) {
         ok = 0; rc_fail = RX_NOW; snprintf(result_text, sizeof result_text, "DEACTIVATE: GFOpenCalc has no icon to go to");
     } else if (starts_word_ci(command, "HELP", &arg))
-        snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
+        snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT SPELL GETCELL GETFORMULA "
                  "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK CHARTSELECT CHARTMOVE "
                  "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO PIVOTDETAILS PIVOTSET SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER MULTIOP TEXTTOCOLUMNS REMOVEDUPS CONDFMT PROTECT UNPROTECT CELLPROTECT ISPROTECTED PROTECTBOOK UNPROTECTBOOK ISBOOKPROTECTED LINKS UPDATELINK EXTDATA EXTDATAINFO EXTDATAADD EXTDATACHANGE EXTDATAREFRESH EXTDATAREMOVE TRACKCHANGES CHANGES CHANGE SHOWCHANGE ACCEPTCHANGE REJECTCHANGE CHANGEAUTHOR QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {   /* a DOS error code's text, as every Open app's port */
@@ -7463,6 +7550,10 @@ static int rexx_do_command(const char *command, char **result_out)
         ok = *arg && oc_core_write_copy(core, arg, NULL, rp) == OWF_OK;
         owf_report_free(rp);
         snprintf(result_text, sizeof result_text, "%s", ok ? "Exported" : "Export failed");
+    } else if (starts_word_ci(command, "SPELL", &arg)) {   /* COUNT, LIST, CHECK, SUGGEST, ADD, IGNORE (oc_spell_rexx) */
+        int r;
+        if (!spell_ready()) { ok = 0; rc_fail = RX_NOW; snprintf(result_text, sizeof result_text, "No dictionary"); }
+        else if ((r = oc_spell_rexx(core, spell, arg, result_text, sizeof result_text)) != 0) { ok = 0; rc_fail = r; }
     } else if (starts_word_ci(command, "FONTCHECK", &arg)) {
         if (!font_check(arg, result_text, sizeof result_text)) ok = 0;
     } else if (starts_word_ci(command, "CHARTSELECT", &arg)) {   /* n (1 the first, 0 none); none given: which */
@@ -8780,6 +8871,7 @@ out:
     close_window();
     oc_draw_list_free(&dl);
     if (core) { oc_core_free(core); core = NULL; }
+    spell_finish();
     if (theme.text) ogt_theme_free(&theme);
     if (LayersBase) { CloseLibrary(LayersBase); LayersBase = NULL; }
     if (OpenFontTextBase) { CloseLibrary(OpenFontTextBase); OpenFontTextBase = NULL; }

@@ -31,6 +31,7 @@
 #include "owf_calc.h"
 #include "owf_pivot.h"
 #include "owf_scenario.h"
+#include "owf_spell.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -919,6 +920,32 @@ int oc_core_set_comment(oc_core *core, const char *author, const char *text);
  * the formatted value shown in the grid. OWF_OK when found,
  * OWF_ERR_UNSUPPORTED when not found. */
 int oc_core_find(oc_core *core, const char *needle, int match_case, int input, int backwards);
+
+/* ---- Spelling (oc_spell.c) ----
+ * GFOffice's one spell checker (owfspell.library, owf_spell.h; the program
+ * opens one with owf_spell_open_default) over the active sheet's typed
+ * text: not numbers, formulas or what a formula shows. */
+typedef struct {
+    unsigned row, col;           /* the cell */
+    size_t start, end;           /* the word's bytes in its text */
+    char word[96];
+} oc_spell_hit;
+/* The next misspelt word: in the active cell from byte from (0 for its
+ * start; the last hit's end to go on), then the cells after it in rows,
+ * wrapping round to the active cell's start. Selects its cell. 1 with hit
+ * filled, 0 when the sheet is clean, -1 for bad input. */
+int oc_core_spell_next(oc_core *core, owf_spell *spell, size_t from, oc_spell_hit *hit);
+/* Puts with in place of hit's word (undoable, as typing would). OWF_OK;
+ * OWF_ERR_UNSUPPORTED when the cell no longer holds that word there;
+ * OC_PROTECTED on a protected cell. */
+int oc_core_spell_replace(oc_core *core, const oc_spell_hit *hit, const char *with);
+/* ARexx SPELL, args being what follows the command word:
+ *   SPELL [COUNT]   how many misspelt words the active sheet has
+ *   SPELL LIST      one line each, "A1 word", as many as fit
+ *   SPELL CHECK, SUGGEST, ADD or IGNORE word, as every program has
+ *                   (owf_spell_command)
+ * The answer, or the reason, goes in out; the return is ARexx's code. */
+int oc_spell_rexx(oc_core *core, owf_spell *spell, const char *args, char *out, size_t size);
 
 /* ---- Clipboard ----
  * Copy keeps the selection (its first range) inside the core, with
