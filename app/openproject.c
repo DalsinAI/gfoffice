@@ -955,7 +955,7 @@ static void res_build(void)
         size_t k = 0;
         for (c = 0; c < OPJ_NRCOLS; c++) {
             char cell[64];
-            static const int width[OPJ_NRCOLS] = { 4, 16, 9, 5, 10, 6, 10, 8, 10 };
+            static const int width[OPJ_NRCOLS] = { 4, 16, 9, 5, 10, 6, 10, 8, 10, 12 };
             size_t l;
             opj_resource_cell_text(DOC, i, c, cell, sizeof cell);
             l = strlen(cell);
@@ -979,10 +979,10 @@ static void resources_window(void)
     struct Window *rw;
     struct Gadget *eg = NULL, *g, *g_list, *g_col, *g_val;
     struct NewGadget ng;
-    int done = 0, sel = -1, col = OPJ_RCOL_NAME, w = fw * 86, lines = 12, h, i, by;
+    int done = 0, sel = -1, col = OPJ_RCOL_NAME, w = fw * 99, lines = 12, h, i, by;
     char head[200];
     size_t k = 0;
-    static const int width[OPJ_NRCOLS] = { 4, 16, 9, 5, 10, 6, 10, 8, 10 };
+    static const int width[OPJ_NRCOLS] = { 4, 16, 9, 5, 10, 6, 10, 8, 10, 12 };
     for (i = 0; i < OPJ_NRCOLS; i++) {
         const char *t = opj_resource_column_title(i);
         size_t l = strlen(t);
