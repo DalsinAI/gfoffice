@@ -1,4 +1,4 @@
-/* GFOpenPressmaster's mail merge on the page model (src/pub/opp_merge.c). MIT, Copyright (c) 2026 AmiCradle Team. */
+/* GFOpenPressmaster's mail merge on the page model (libowf/pub/opp_merge.c). MIT, Copyright (c) 2026 AmiCradle Team. */
 #include <stdio.h>
 #include <string.h>
 #include "openpressmaster_merge.h"

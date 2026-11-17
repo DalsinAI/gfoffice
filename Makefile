@@ -61,7 +61,7 @@ core-check: $(OUT)/test-core-asan
 
 .PHONY: core-check
 
-MERGE_TABLE_DEPS = $(OWF_SRC) src/core/ow_merge.c tests/core/test_merge_table.c include/ow_merge.h
+MERGE_TABLE_DEPS = $(OWF_SRC) src/core/ow_merge.c tests/core/test_merge_table.c libowf/include/ow_merge.h
 
 $(OUT)/test-merge-table: $(MERGE_TABLE_DEPS)
 	mkdir -p $(OUT)
@@ -562,19 +562,19 @@ pressmaster-name-check:
 test: pressmaster-name-check
 check: pressmaster-name-check
 
-# GFOpenPressmaster's mail merge on the page model (src/pub/opp_merge.c)
-PUB_MERGE_DEPS = $(OWF_SRC) src/pub/opp_merge.c src/core/ow_merge.c tests/pub/test_pub_merge.c \
-	include/openpressmaster_merge.h include/ow_merge.h libowf/include/owf_deck.h
+# GFOpenPressmaster's mail merge on the page model (libowf/pub/opp_merge.c)
+PUB_MERGE_DEPS = $(OWF_SRC) libowf/pub/opp_merge.c src/core/ow_merge.c tests/pub/test_pub_merge.c \
+	libowf/include/openpressmaster_merge.h libowf/include/ow_merge.h libowf/include/owf_deck.h
 
 $(OUT)/test-publisher-merge: $(PUB_MERGE_DEPS)
 	mkdir -p $(OUT)
-	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) src/pub/opp_merge.c \
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) libowf/pub/opp_merge.c \
 		src/core/ow_merge.c tests/pub/test_pub_merge.c -lz -o $@
 
 $(OUT)/test-publisher-merge-asan: $(PUB_MERGE_DEPS)
 	mkdir -p $(OUT)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) src/pub/opp_merge.c \
+		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) libowf/pub/opp_merge.c \
 		src/core/ow_merge.c tests/pub/test_pub_merge.c -lz -o $@
 
 pressmaster-merge-test: $(OUT)/test-publisher-merge
@@ -588,21 +588,21 @@ check: pressmaster-merge-check
 
 .PHONY: pressmaster-merge-test pressmaster-merge-check
 
-# GFOpenPressmaster's built-in publication templates (src/pub/opp_template.c)
-PUB_TEMPLATE_DEPS = $(OWF_SRC) src/pub/opp_template.c src/pub/opp_merge.c src/core/ow_merge.c \
-	tests/pub/test_pub_template.c include/openpressmaster_template.h include/openpressmaster_merge.h \
-	include/ow_merge.h libowf/include/owf_deck.h
+# GFOpenPressmaster's built-in publication templates (libowf/pub/opp_template.c)
+PUB_TEMPLATE_DEPS = $(OWF_SRC) libowf/pub/opp_template.c libowf/pub/opp_merge.c src/core/ow_merge.c \
+	tests/pub/test_pub_template.c libowf/include/openpressmaster_template.h libowf/include/openpressmaster_merge.h \
+	libowf/include/ow_merge.h libowf/include/owf_deck.h
 
 $(OUT)/test-publisher-template: $(PUB_TEMPLATE_DEPS)
 	mkdir -p $(OUT)
-	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) src/pub/opp_template.c \
-		src/pub/opp_merge.c src/core/ow_merge.c tests/pub/test_pub_template.c -lz -o $@
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) libowf/pub/opp_template.c \
+		libowf/pub/opp_merge.c src/core/ow_merge.c tests/pub/test_pub_template.c -lz -o $@
 
 $(OUT)/test-publisher-template-asan: $(PUB_TEMPLATE_DEPS)
 	mkdir -p $(OUT)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) src/pub/opp_template.c \
-		src/pub/opp_merge.c src/core/ow_merge.c tests/pub/test_pub_template.c -lz -o $@
+		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) libowf/pub/opp_template.c \
+		libowf/pub/opp_merge.c src/core/ow_merge.c tests/pub/test_pub_template.c -lz -o $@
 
 pressmaster-template-test: $(OUT)/test-publisher-template
 	$(OUT)/test-publisher-template
@@ -621,13 +621,13 @@ PUB_MERGE_SHOW_DEPS = $(PUB_MERGE_DEPS) $(DECK_DEPS) $(DECK_SRC) tests/pub/test_
 
 $(OUT)/test-publisher-merge-show: $(PUB_MERGE_SHOW_DEPS)
 	mkdir -p $(OUT)
-	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) src/pub/opp_merge.c \
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) libowf/pub/opp_merge.c \
 		src/core/ow_merge.c tests/pub/test_pub_merge_show.c -lz -o $@
 
 $(OUT)/test-publisher-merge-show-asan: $(PUB_MERGE_SHOW_DEPS)
 	mkdir -p $(OUT)
 	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
-		-Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) src/pub/opp_merge.c src/core/ow_merge.c \
+		-Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) libowf/pub/opp_merge.c src/core/ow_merge.c \
 		tests/pub/test_pub_merge_show.c -lz -o $@
 
 pressmaster-merge-show-test: $(OUT)/test-publisher-merge-show
@@ -640,9 +640,9 @@ test: pressmaster-merge-show-test
 check: pressmaster-merge-show-check
 
 # GFOpenPressmaster's master pages (the shared Master view) and Insert > Page Number (src/pub/opp_pagenum.c)
-PUB_MASTERS_SRC = src/pub/opp_pagenum.c src/pub/opp_merge.c src/pub/opp_template.c src/core/ow_merge.c
+PUB_MASTERS_SRC = src/pub/opp_pagenum.c libowf/pub/opp_merge.c libowf/pub/opp_template.c src/core/ow_merge.c
 PUB_MASTERS_DEPS = $(PUB_MERGE_SHOW_DEPS) $(PUB_MASTERS_SRC) tests/pub/test_pub_masters.c \
-	include/openpressmaster_pagenum.h include/openpressmaster_template.h
+	include/openpressmaster_pagenum.h libowf/include/openpressmaster_template.h
 
 $(OUT)/test-pressmaster-masters: $(PUB_MASTERS_DEPS)
 	mkdir -p $(OUT)

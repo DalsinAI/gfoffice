@@ -7624,7 +7624,7 @@ static void insert_page_field(owf_field which)
     draw_status();
 }
 
-/* ---- Mailings: mail merge (src/pub/opp_merge.c) ----
+/* ---- Mailings: mail merge (libowf/pub/opp_merge.c) ----
  * The data source is a CSV file whose first line names the columns. Merge fields show the column's name in
  * guillemets, or the values of the record shown; Merge to New Publication makes the pages once for each record
  * in this window, as a new untitled publication (the publication's own file is left as it is). */

@@ -108,6 +108,12 @@ for f in "$OWF"/src/*.c "$OWF"/calc/*.c; do
     *) SRC="$SRC $f" ;;
     esac
 done
+# GFOpenPressmaster's publications on the page model (owfpub.library 3.8): libowf/pub, and the suite's merge
+# table it reads (src/core/ow_merge.c, GFOpenWrite's too)
+for f in "$OWF"/pub/*.c; do
+    SRC="$SRC $f"
+done
+SRC="$SRC $HERE/src/core/ow_merge.c"
 SRC="$SRC $LIB/owf_sys_dos.c $LIB/owf_runtime.c $LIB/owf_runtime_math.c $LIB/owf_libc.c $LIB/owf_libm.c"
 SRC="$SRC $LIB/owf_softdouble.c $OWF/amiga/owf_zlib_amiga.c"
 # shellcheck disable=SC2086
