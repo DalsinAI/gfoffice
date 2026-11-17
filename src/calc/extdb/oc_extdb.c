@@ -344,13 +344,24 @@ static int read_base(ob_project *p, const char *item, int headers, oc_exttable *
 
 /* ---- other SQLite files ---- */
 
+#define STEP_OPS 10000                   /* SQLite's steps between progress calls */
+
+/* SQLite's progress handler: stops a statement past OC_EXTDB_STEPS of work. */
+static int too_long(void *user)
+{
+    long *calls = user;
+    return ++*calls > OC_EXTDB_STEPS / STEP_OPS;
+}
+
 static int read_sqlite(sqlite3 *db, const char *item, int headers, oc_exttable *out, char *err, size_t errsize)
 {
     sqlite3_stmt *st = NULL;
     const char *tail = NULL;
     extdb_rows r;
+    long calls = 0;
     int rc, c, n;
     memset(&r, 0, sizeof r);
+    sqlite3_progress_handler(db, STEP_OPS, too_long, &calls);
     if (is_sql(item)) {
         rc = sqlite3_prepare_v2(db, item, -1, &st, &tail);
     } else {
@@ -422,7 +433,10 @@ static int read_sqlite(sqlite3 *db, const char *item, int headers, oc_exttable *
         }
     }
     if (!r.failed && rc != SQLITE_DONE) {
-        say(err, errsize, "%s", sqlite3_errmsg(db));
+        if (calls > OC_EXTDB_STEPS / STEP_OPS)
+            say(err, errsize, "The query did too much work and was stopped%s", NULL);
+        else
+            say(err, errsize, "%s", sqlite3_errmsg(db));
         sqlite3_finalize(st);
         rows_free(&r);
         return OWF_ERR_FORMAT;
@@ -496,7 +510,10 @@ int oc_extdb_query(void *user, const char *database, const char *item, int heade
     }
     why[0] = 0;
     if ((p = ob_open(database, OB_OPEN_READONLY, why, sizeof why)) != NULL) {
+        ob_set_step_limit(p, OC_EXTDB_STEPS / OB_STEP_OPS);
         rc = read_base(p, what, headers, out, err, errsize);
+        if (rc != OWF_OK && ob_step_limit_hit(p))
+            say(err, errsize, "The query did too much work and was stopped%s", NULL);
         ob_close(p);
     } else if ((db = open_sqlite(database, err, errsize)) != NULL) {
         rc = read_sqlite(db, what, headers, out, err, errsize);
