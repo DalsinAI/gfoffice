@@ -169,6 +169,7 @@ if [ "${OWF_LEGACY:-yes}" != no ]; then
         */owf_sys.c) ;;   # owf_sys_dos.c instead
         */owf_spell.c) ;;   # owfspell.library's
         */owf_deck.c | */in_odp.c | */out_odp.c | */in_pptx.c | */in_ppt.c | */owf_pdf.c | */owf_pdffonts.c) ;;   # owfpresent.library's
+        */owf_fill.c | */owf_picture.c) ;;   # the drawing programs' (owf_fill.h, owf_picture.h), after the split
         *) LSRC="$LSRC $f" ;;
         esac
     done
