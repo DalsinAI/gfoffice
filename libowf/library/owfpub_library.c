@@ -25,13 +25,15 @@
  * program's size check refuses 3.4. No call changes.
  * 3.6: owf_para.row_revision (owfwrite.library 3.16, libowf 1.12.5; 3.5 is #288's), so owf_para is larger
  * and a program's size check refuses 3.5 and before. No call changes.
+ * 3.7: owf_para.para_format_change and owf_doc.para_format_changes (owfwrite.library 3.24, libowf 1.21), so
+ * owf_para and owf_doc are larger and a program's size check refuses 3.6 and before. No call changes.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfpub.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 6
-#define OWF_LIB_VERS "3.6"
+#define OWF_LIB_REVISION 7
+#define OWF_LIB_VERS "3.7"
 #define OWF_LIB_DATE "16.11.2026"
 #define OWF_LIB_CALLS_H "owfpub_calls.h"
 #include "owf_libbase.h"

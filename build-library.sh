@@ -15,12 +15,16 @@
 #   OUT_DIR/owfdiag.library      diagrams, GFOpenDiag's: the diagram model and
 #                                its formats, and GFOpenDiag's editing core with
 #                                its ARexx commands
+#   OUT_DIR/owfspell.library     GFOffice's one spell checker, every program's
+#                                (libowf/src/owf_spell.c, docs/suite/owf-spell.md)
 #   OUT_DIR/<name>.library.map   each one's linker map
 #   OUT_DIR/owf.library          owf.library 2, the one library before the
 #                                split, until GFOpenUp ships the four
 #                                (OWF_LEGACY=no leaves it out)
 #   OUT_DIR/tests/OWFLibsTest    opens the five from LIBS: and runs their
 #                                calls, from two tasks at once
+#   OUT_DIR/tests/OWFSpellTest   opens owfspell.library from LIBS: twice, as two
+#                                programs would, and runs its calls
 #   OUT_DIR/tests/OWFLibTest     the same for owf.library 2
 #                                (tests/library), with their samples/ and
 #                                fixtures/ beside them
@@ -73,12 +77,12 @@ mkdir -p "$OUT/tests"
 if [ -n "${OPENSDK_SRC:-}" ]; then
     # the headers are made from the SFDs; a stale one fails the build
     for sfd in "$LIB/owf_lib.sfd" "$OWF/amiga/z_lib.sfd" "$LIB/owfwrite_lib.sfd" "$LIB/owfcalc_lib.sfd" \
-               "$LIB/owfpub_lib.sfd" "$LIB/owfpresent_lib.sfd" "$LIB/owfdiag_lib.sfd"; do
+               "$LIB/owfpub_lib.sfd" "$LIB/owfpresent_lib.sfd" "$LIB/owfdiag_lib.sfd" "$LIB/owfspell_lib.sfd"; do
         python3 "$OPENSDK_SRC/OpenNDK/tools/ndkgen.py" --check --out "$(dirname "$sfd")/sdk" "$sfd" ||
             { echo "build-library.sh: $(dirname "$sfd")/sdk is stale: run scripts/gen-sdk.sh" >&2; exit 1; }
     done
     python3 "$HERE/scripts/gen-lib-calls.py" --check "$LIB/owfwrite_lib.sfd" "$LIB/owfcalc_lib.sfd" \
-        "$LIB/owfpub_lib.sfd" "$LIB/owfpresent_lib.sfd" "$LIB/owfdiag_lib.sfd" || exit 1
+        "$LIB/owfpub_lib.sfd" "$LIB/owfpresent_lib.sfd" "$LIB/owfdiag_lib.sfd" "$LIB/owfspell_lib.sfd" || exit 1
 fi
 
 INC="-I$OWF/include -I$OWF/src -I$OWF/calc -I$LIB -I$OWF/amiga/sdk/Include_H"
@@ -143,6 +147,19 @@ for name in $LIBS; do
     fi
 done
 
+# ---- owfspell.library: GFOffice's one spell checker ---------------------------------------------------------------
+# owf_spell.c and what it reaches (files, memory, the runtime) from the same archive; none of the documents' code.
+# shellcheck disable=SC2086
+"$CC" $LIBFLAGS $DEFS $INC "$LIB/owfspell_library.c" "$OBJ/libowf.a" -lgcc \
+    -Wl,-Map,"$OUT/owfspell.library.map" -o "$OUT/owfspell.library"
+echo "$OUT/owfspell.library ($(wc -c < "$OUT/owfspell.library") bytes)"
+UNDEF=$("$BIN/m68k-amigaos-nm" -u "$OUT/owfspell.library" || true)
+if [ -n "$UNDEF" ]; then
+    echo "build-library.sh: owfspell.library has undefined symbols:" >&2
+    echo "$UNDEF" >&2
+    exit 1
+fi
+
 # ---- owf.library 2, the one library before the split -------------------------------------------------------------
 # Built as it was (every libowf file but the deck's) until GFOpenUp ships the four; OWF_LEGACY=no leaves it out.
 if [ "${OWF_LEGACY:-yes}" != no ]; then
@@ -150,6 +167,7 @@ if [ "${OWF_LEGACY:-yes}" != no ]; then
     for f in "$OWF"/src/*.c; do
         case "$f" in
         */owf_sys.c) ;;   # owf_sys_dos.c instead
+        */owf_spell.c) ;;   # owfspell.library's
         */owf_deck.c | */in_odp.c | */out_odp.c | */in_pptx.c | */in_ppt.c | */owf_pdf.c | */owf_pdffonts.c) ;;   # owfpresent.library's
         *) LSRC="$LSRC $f" ;;
         esac
@@ -199,6 +217,10 @@ done
 # shellcheck disable=SC2086
 "$CC" $TESTFLAGS "$T"/owf_libs_*.o "$T/owf_lib_checks_calc.o" "$T/owf_lib_checks_pub.o" -o "$OUT/tests/OWFLibsTest"
 echo "$OUT/tests/OWFLibsTest ($(wc -c < "$OUT/tests/OWFLibsTest") bytes)"
+# OWFSpellTest: owfspell.library's calls from a program (OWF_USE_SPELL_LIBRARY), with the shipped word list beside it
+# shellcheck disable=SC2086
+"$CC" $TESTFLAGS -DOWF_USE_SPELL_LIBRARY "$HERE/tests/library/owf_spell_test.c" "$OWF/amiga/owf_spell_base.c" -o "$OUT/tests/OWFSpellTest"
+echo "$OUT/tests/OWFSpellTest ($(wc -c < "$OUT/tests/OWFSpellTest") bytes)"
 if [ "${OWF_LEGACY:-yes}" != no ]; then
     # shellcheck disable=SC2086
     "$CC" $TESTFLAGS -DOWF_USE_LIBRARY \
@@ -217,5 +239,8 @@ rm -rf "$OUT/tests/pubgen"
 for name in $LIBS; do
     sha256sum "$OUT/$name.library"
 done
+sha256sum "$OUT/owfspell.library" "$OUT/tests/OWFSpellTest"
+mkdir -p "$OUT/tests/Dictionaries"
+cp "$HERE/Dictionaries/en_GB.words" "$OUT/tests/Dictionaries/"
 [ "${OWF_LEGACY:-yes}" = no ] || sha256sum "$OUT/owf.library" "$OUT/tests/OWFLibTest"
 sha256sum "$OUT/tests/OWFLibsTest"
