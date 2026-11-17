@@ -7886,11 +7886,12 @@ int ow_editor_compare(ow_editor *editor, const owf_doc *revised, const char *aut
         pair = di < dj ? di : dj;
         /* a table's paragraphs: only paired, never added or taken away */
         if (dj > pair) {                             /* each before the paragraph after the run, in order */
+            int added = 0;                           /* (the ones really put in: a table's are skipped) */
             for (t = pair; t < dj && rc == OWF_OK; ++t)
                 if (revised->body.paras[j + t].table_id >= 0) continue;
-                else if (!compare_add_para(editor, i + di + (t - pair), &revised->body.paras[j + t]))
+                else if (!compare_add_para(editor, i + di + added, &revised->body.paras[j + t]))
                     rc = OWF_ERR_MEMORY;
-                else ++changes;
+                else { ++added; ++changes; }
         } else if (di > pair) {
             int from = i + pair, to = i + di, keep = 1;
             for (t = from; t < to; ++t) if (story->paras[t].table_id >= 0) keep = 0;

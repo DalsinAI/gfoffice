@@ -1134,6 +1134,22 @@ static void test_compare(void)
     ow_editor_free(ed);
     owf_doc_free(doc); owf_doc_free(rev); owf_doc_free(rev2); owf_doc_free(same);
 
+    {   /* Agnus on #4: a table's paragraph in the revised one is skipped, and the next goes where it belongs */
+        static const char *const ab[] = { "A", "B" }, *const atnb[] = { "A", "T", "N", "B" };
+        doc = doc_of(ab, 2);
+        rev = doc_of(atnb, 4);
+        if (!doc || !rev) { CHECK(0, "compare table docs"); owf_doc_free(doc); owf_doc_free(rev); return; }
+        rev->body.paras[1].table_id = 0;
+        rev->body.paras[1].table_row = rev->body.paras[1].table_col = 0;
+        rev->body.paras[1].table_cols = 1;
+        ed = ow_editor_new(doc);
+        CHECK(ow_editor_compare(ed, rev, "R") == 1, "compare: one paragraph added past the table's");
+        CHECK(!strcmp(plain(doc), "A|N|B"), "compare: N between A and B");
+        if (strcmp(plain(doc), "A|N|B")) printf("  got %s\n", plain(doc));
+        ow_editor_free(ed);
+        owf_doc_free(doc); owf_doc_free(rev);
+    }
+
     {                                                /* too long to match word by word: replaced whole */
         static char x[6000], y[6000];
         const char *xs[1], *ys[1];
