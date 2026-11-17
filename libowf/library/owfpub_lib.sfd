@@ -17,6 +17,10 @@
 ==include <owf.h>
 ==include <owf_pub.h>
 ==include <owf_zip.h>
+==include <owf_deck.h>
+==include <ow_merge.h>
+==include <openpressmaster_merge.h>
+==include <openpressmaster_template.h>
 ==version 3
 * libowf's shared calls
 const char *owf_error_text(int error) (d0)
@@ -58,4 +62,25 @@ int owf_pub_detect(const unsigned char *data, size_t length) (a0,d0)
 int owf_pub_read(const unsigned char *data, size_t length, owf_pub **pub, owf_report *report) (a0,d0,a1,a2)
 int owf_pub_read_file(const char *path, owf_pub **pub, owf_report *report) (a0,a1,a2)
 void owf_pub_free(owf_pub *pub) (a0)
+* 3.7: GFOpenPressmaster's publications on the page model (libowf/pub): the
+* suite's merge table, mail merge and catalog merge, and the built-in
+* templates, with owf_deck_free for the publications they make
+ow_merge_table *ow_merge_table_parse(const char *s, size_t n, int *memory) (a0,d0,a1)
+ow_merge_table *ow_merge_table_from_text(const char *data, size_t length, int *memory) (a0,d0,a1)
+void ow_merge_table_free(ow_merge_table *t) (a0)
+int ow_merge_column(const ow_merge_table *t, const char *name) (a0,a1)
+const char *ow_merge_value(const ow_merge_table *t, int record, const char *column) (a0,d0,a1)
+int opp_merge_insert_field(owf_obj *obj, int para, const char *column, const owf_charfmt *fmt) (a0,d0,a1,a2)
+int opp_merge_insert_field_at(owf_obj *obj, int para, size_t offset, const char *column) (a0,d0,d1,a1)
+int opp_insert_page_field_at(owf_obj *obj, int para, size_t offset, owf_field which) (a0,d0,d1,d2)
+int opp_merge_load_file(const char *path, ow_merge_table **table) (a0,a1)
+int opp_merge_fields(const owf_deck *deck, const ow_merge_table *t, int *missing) (a0,a1,a2)
+int opp_merge_show(owf_deck *deck, const ow_merge_table *t, int record, int *set) (a0,a1,d0,a2)
+int opp_merge_pages(owf_deck *deck, const ow_merge_table *t, int first, int last) (a0,a1,d0,d1)
+int opp_merge_catalog(owf_deck *deck, const ow_merge_table *t, int page, const opp_catalog *cat, int first, int last, int *made) (a0,a1,d0,a2,d1,d2,a3)
+int opp_template_count() ()
+const opp_template_info *opp_template_info_at(int i) (d0)
+int opp_template_find(const char *name) (a0)
+int opp_template_new(int i, owf_deck **deck) (d0,a0)
+void owf_deck_free(owf_deck *deck) (a0)
 ==end

@@ -1,6 +1,6 @@
 /*
- * GFOpenPressmaster's mail merge on the shared page model (src/pub/opp_merge.c).
- * The data source is the suite's merge table (include/ow_merge.h), the same
+ * GFOpenPressmaster's mail merge on the shared page model (libowf/pub/opp_merge.c).
+ * The data source is the suite's merge table (libowf/include/ow_merge.h), the same
  * one GFOpenWrite reads. A merge field is a field run (OWF_RUN_FIELD,
  * OWF_FIELD_MERGE) in a frame's text: its href is the column, its text the
  * value shown. MIT, Copyright (c) 2026 AmiCradle Team.

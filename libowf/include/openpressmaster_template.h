@@ -1,5 +1,5 @@
 /*
- * GFOpenPressmaster's built-in publication templates (src/pub/opp_template.c):
+ * GFOpenPressmaster's built-in publication templates (libowf/pub/opp_template.c):
  * a new publication of a known kind (flyer, postcard, business card, folded
  * card, newsletter, letterhead, catalog page), its page size and its frames
  * made here, with the suite's own placeholder text and colours. MIT,

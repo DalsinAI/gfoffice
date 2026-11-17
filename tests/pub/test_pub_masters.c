@@ -1,7 +1,7 @@
 /*
  * test_pub_masters: GFOpenPressmaster's master pages on a publication
  * (the shared Master view, src/deck/opr_master.c) and Insert > Page Number
- * (src/pub/opp_pagenum.c, the field in src/pub/opp_merge.c):
+ * (src/pub/opp_pagenum.c, the field in libowf/pub/opp_merge.c):
  *
  *   - the Newsletter template's pages share one master; the Master view has
  *     a slide for it;
