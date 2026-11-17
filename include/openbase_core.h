@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.15.0"
+#define OB_CORE_VERSION "0.16.0"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -604,6 +604,7 @@ typedef enum ob_qkind {
     OB_QK_UPDATE,                   /* changes fields of the target's rows */
     OB_QK_APPEND,                   /* adds the rows it reads to the target */
     OB_QK_DELETE,                   /* deletes the target's rows */
+    OB_QK_UNION,                    /* core 0.16, reads: the rows of several tables and queries, one after another */
     OB_QKINDS
 } ob_qkind;
 
@@ -620,6 +621,7 @@ typedef struct ob_query {
     ob_qjoin joins[OB_QUERY_JOINS];
     ob_qkind kind;                  /* core 0.15; OB_QK_SELECT (0) by ob_query_init */
     char target[OB_NAME_MAX];       /* the table an action query changes; "" the first table */
+    int union_all;                  /* core 0.16, OB_QK_UNION: 1 keeps rows that are the same (UNION ALL) */
 } ob_query;
 
 /* A result column: its heading, and the type its values are shown as
@@ -714,9 +716,39 @@ int ob_query_delete(ob_project *p, const char *name);
  * ob_query_rows does. A saved action query is kept as "oadb query 3" (an
  * older GFOpenBase refuses to run it, as SQL that changes rows). */
 #define OB_UNDO_ROWS 20000
-const char *ob_qkind_name(ob_qkind k);      /* "Select", "Update", "Append", "Delete" */
+const char *ob_qkind_name(ob_qkind k);      /* "Select", "Update", "Append", "Delete", "Union" */
 ob_int ob_query_preview(ob_project *p, const ob_query *q, const char *const *params);
 ob_int ob_query_run(ob_project *p, const ob_query *q, const char *const *params, int *undoable);
+
+/* ---- Union queries (core 0.16, design 5.7) ----
+ * A Union query (kind OB_QK_UNION) reads the rows of two or more parts, one
+ * part after another, as one result. Its parts are its tables (q->tables, in
+ * order, up to OB_QUERY_TABLES): each the name of a table (all its fields,
+ * as Table.* shows them) or of a saved Select query. The same part may be
+ * there twice (add it by hand: ob_query_add_table adds a name once).
+ *
+ *   - Every part shows the same number of columns. The headings are the
+ *     first part's. Column by column the parts' types agree: the same type,
+ *     or both text (Text, Memo...), or both whole numbers, or both numbers.
+ *     A column that is an expression (or typed SQL's) in one part is shown
+ *     as the other parts' field is, its values taken as that field stores
+ *     them (Currency in pence); one that is an expression in every part is
+ *     shown as SQLite gives it. Anything else is refused in plain words
+ *     ("column 2 is Currency in A and Text in B").
+ *   - union_all 0 leaves out rows that are the same as one before (UNION);
+ *     1 keeps every row (UNION ALL).
+ *   - Its columns (q->columns) only sort: each names a result heading (as a
+ *     column with no table: ob_query_add_column(q, NULL, "Name")) with sort
+ *     up or down; text sorts without case. No columns: no order is promised.
+ *   - A part can't ask a [question], change rows, or be a Union itself (add
+ *     that union's parts instead), so parts never go round in a circle.
+ *
+ * A Union reads: ob_query_rows, ob_query_total, ob_query_columns, CSV and
+ * views take it as they take a Select query; ob_query_preview and
+ * ob_query_run refuse it. Saved, its grid is "oadb query 4" (an older
+ * GFOpenBase opens it as its SQL, a plain read). Renaming a table or a
+ * saved query renames it in the unions that read it. SQL typed as SQL may
+ * say UNION itself, as a Select query; sql_only with this kind is refused. */
 
 /* ---- A query's rows as CSV, a query as a view (core 0.13.1) ----
  * CSV: a header of the result's headings, then every row the query gives,

@@ -359,6 +359,40 @@ GFOpenBase reads the stored SQL, sees it changes rows and refuses to run
 it. A table's rename follows into the target and Update To's `"Table".`.
 Rows, totals, CSV and views refuse an action query.
 
+### 5.7 Union queries (core 0.16)
+
+A fifth kind, **Union** (`OB_QK_UNION`), reads the rows of two or more
+parts one after another as one result. A part is a table (every field, as
+`Table.*` shows them) or a saved Select query, named in the query's table
+list in order, up to eight; the same part may be there twice.
+
+- Every part shows the same number of columns, and the headings are the
+  first part's. Column by column the types go together: the same type, text
+  with text (Text, Memo, Choice, dates), whole numbers together, numbers
+  together. A column that is an expression or typed SQL in one part is shown
+  as the other parts' field is, its values taken as that field stores them
+  (Currency in pence); an expression in every part is shown as SQLite gives
+  it. Anything else is refused in plain words: "column 2 is Currency in
+  Prices and Text in Names: a union's parts line up kind for kind".
+- `union_all` off leaves out rows that are the same as one before (`UNION`);
+  on keeps every row (`UNION ALL`).
+- The query's columns only sort: each names a result heading, A to Z or Z
+  to A, text without case (`ORDER BY 1 COLLATE NOCASE`). With none, no
+  order is promised.
+- A part can't ask a `[question]`, change rows, or be a Union itself (its
+  parts are added instead), so parts never go round in a circle.
+
+The statement is each part's own SELECT in brackets: `SELECT * FROM (...)
+UNION [ALL] SELECT * FROM (...) ORDER BY ...`. A Union reads, so rows, a
+page of rows, the total, CSV and Save as View take it as they take a Select
+query; preview and run refuse it. Saved, its grid is `oadb query 4` (the
+kind, `all` for UNION ALL, the parts and the sorts); an older GFOpenBase
+opens it as its stored SQL, a plain read. Renaming a table or a saved query
+renames it in the unions that read it; a part that is deleted is named when
+the union is next opened ("there is no table or query named Leeds").
+
+SQL typed as SQL may still say `UNION` itself, as a Select query (5.3).
+
 ## 6. Forms
 
 ### 6.1 Auto forms
