@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.18.0"
+#define OB_CORE_VERSION "0.18.1"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -293,8 +293,13 @@ int ob_rexx_rows(ob_project *p, const char *table, ob_int current, const char *c
  *                                 between
  *   RUNQUERY name [ANSWER a]...   runs an Update, Append or Delete, all or
  *                                 none, with no requester: RESULT the rows
- *                                 changed, one step on the Undo list as
- *                                 ob_query_run makes it
+ *                                 changed. It is one step on the Undo list
+ *                                 when ob_query_run can make it one; when
+ *                                 it can't (more than OB_UNDO_ROWS rows,
+ *                                 triggers on the table, a delete that
+ *                                 cascades or clears) the Undo list is
+ *                                 emptied and RESULT is the count and
+ *                                 NOUNDO, as "25000 NOUNDO"
  * A name with spaces goes in quotes. Each [question] the query asks gets an
  * ANSWER, in the order ob_query_params gives; too few or too many is
  * refused with the first question named. The answer, or the reason, goes in

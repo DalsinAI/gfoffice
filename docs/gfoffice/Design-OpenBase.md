@@ -617,7 +617,7 @@ Nothing asks; the reason for a refusal is in LASTERROR.
 | QUERYFIELDS name | A Select or Union query's headings, each in quotes |
 | COUNTQUERY name [ANSWER a]... | The rows a Select or Union gives; for an Update, Append or Delete the rows it would change, counted and not kept |
 | QUERYROW name ROW n [FIELD h] [ANSWER a]... | Row n (from 1): the column's value, or every value with a tab between |
-| RUNQUERY name [ANSWER a]... | Runs an Update, Append or Delete, all or none: the rows changed. One step on the Undo list. A query that reads is refused (COUNTQUERY and QUERYROW read it) |
+| RUNQUERY name [ANSWER a]... | Runs an Update, Append or Delete, all or none: the rows changed. One step on the Undo list, unless more than 20,000 rows change, the table has triggers, or a delete cascades or clears: then the Undo list is emptied and RESULT is the count and the word NOUNDO (`25000 NOUNDO`; `PARSE VAR RESULT n undo .`). A query that reads is refused (COUNTQUERY and QUERYROW read it) |
 | FINDROW Field=Value [BACK] [FIRST] | The next row of the table shown, in its sort and filter, that holds the value (text contains, other fields equal) is chosen: its key, as NEXTROW gives. BACK looks before the row chosen, FIRST from the first row (with BACK, the last). 5 when no row has it |
 
 Each `[question]` a query asks gets one ANSWER, in the query's order; too

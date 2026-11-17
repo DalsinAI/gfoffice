@@ -4009,7 +4009,6 @@ static void test_rexx_queries(void)
     CHECK(!strcmp(ob_undo_name(p), "Update Query Move York: 2 rows in Customers"), "one step of Undo: %s", ob_undo_name(p));
     CHECK(RQ("RUNQUERY \"Move York\"") == 0 && !strcmp(out, "0") && changed == 1, "again: none left: %s", out);
     CHECK(ob_undo(p) && ob_undo(p) && !strcmp(cust_rows(p), before), "undone: %s", cust_rows(p));
-
     /* FINDROW: key order is dan Ann Cy bob Eve */
     CHECK(RF(-1, "FINDROW Town=york") == 0 && pos == 0 && !strcmp(out, "1"), "the first York: %s", out);
     CHECK(RF(0, "findrow town=YORK") == 0 && pos == 3 && !strcmp(out, "4"), "the next: %s", out);
@@ -4042,6 +4041,28 @@ static void test_rexx_queries(void)
     CHECK(ob_rexx_form_refuses("RUNQUERY \"Move York\"") && ob_rexx_form_refuses("findrow Town=york"), "refused while a form is open");
     CHECK(!ob_rexx_form_refuses("COUNTQUERY York") && !ob_rexx_form_refuses("QUERYROW York ROW 1") && !ob_rexx_form_refuses("QUERIES")
           && !ob_rexx_form_refuses("QUERYFIELDS York"), "reading still answers");
+
+    /* a run Undo can't take back says so: a delete that cascades */
+    {
+        static ob_table o2;
+        int steps;
+        orders(&o2, OB_DELETE_CASCADE);
+        strcpy(o2.name, "Lines");
+        CHECK(ob_table_create(p, &o2), "Lines: %s", ob_error(p));
+        ob_query_init(&q, "Drop bob");
+        ob_query_add_table(&q, "Customers");
+        c = ob_query_add_column(&q, "Customers", "Name");
+        strcpy(c->criteria[0], "bob");
+        ob_query_set_kind(&q, OB_QK_DELETE);
+        CHECK(ob_query_save(p, &q), "Drop bob: %s", ob_error(p));
+        steps = ob_undo_count(p);
+        CHECK(RQ("COUNTQUERY \"Drop bob\"") == 0 && !strcmp(out, "1") && ob_undo_count(p) == steps, "counting says only the count: %s", out);
+        CHECK(RQ("RUNQUERY \"Drop bob\"") == 0 && !strcmp(out, "1 NOUNDO") && changed == 1 && ob_undo_count(p) == 0,
+              "no undo, and it says so: %s", out);
+        CHECK(RQ("RUNQUERY \"Drop bob\"") == 0 && !strcmp(out, "0 NOUNDO"), "none left, still no undo: %s", out);
+        CHECK(RQ("RUNQUERY \"Move York\"") == 0 && !strcmp(out, "1") && ob_undo_count(p) == 1, "an update still has its step: %s", out);
+        CHECK(ob_undo(p), "undo it: %s", ob_error(p));
+    }
 #undef RQ
 #undef RF
     ob_close(p);
