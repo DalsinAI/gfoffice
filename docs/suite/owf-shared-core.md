@@ -21,10 +21,32 @@ a separate core library against a copy in each and chose the copies). So
 | `owf_pdf.c`, `owf_pdffonts.c` | `owf_pdf.h` | the page PDF writer | already one copy; owfpresent.library exports it |
 | `owf_picture.c` | `owf_picture.h` | `owf_picture_png`, `owf_picture_ilbm` (PNG's CRC is libowf's `owf_crc32`) | `src/deck/ow_picture.c` (Presentation, Diag) |
 | `owf_fill.c` | `owf_fill.h` | `owf_fill_sin16k`, `owf_fill_blend`, `owf_fill_gradient_band` | `src/deck/opr_gradient.c` (Presentation, Pressmaster), sine and blends also in `owf_pdf.c` |
+| `owf_print.c` | `owf_print.h` | the print core: `owf_print_bleed`, `owf_print_mark_gap`, `owf_print_margin`, `owf_print_crop_lines`, `owf_print_bleed_colour`, `owf_print_booklet_sides`, `owf_print_booklet_side` | `src/deck/opr_pdf.c` (Presentation's and Pressmaster's PDF) |
 
 The old names stay as thin wrappers so no caller changes: `opr_png_encode`,
-`opr_ilbm_encode` (`ow_picture.h`) and `opr_gradient_band`
-(`openpresentation_core.h`). New code calls the `owf_` names.
+`opr_ilbm_encode` (`ow_picture.h`), `opr_gradient_band`, `opr_pdf_margin`
+and `opr_booklet_side` (`openpresentation_core.h`). New code calls the
+`owf_` names.
+
+## The print core (Petersen, 17 November 2026)
+
+Pressmaster's printing splits in two. What a printer's page needs worked
+out is plain arithmetic on the page model, and is `owf_print.c`: the room
+a bleed and crop marks take, the marks' eight lines, the colour that runs
+into the bleed, and the order a folded booklet's pages print in. It draws
+nothing, so a PDF, a screen preview and a printer driver all use the same
+numbers. owfpub.library 3.10 exports it (7 calls).
+
+Drawing a laid-out page into the PDF (`opr_export_pdf` in
+`src/deck/opr_pdf.c`) stays with the programs for now: it walks a
+GFOpenLayout display list, and no GFOffice library holds GFOpenLayout.
+Moving it means either a layout library the page libraries open, or
+GFOpenLayout linked into owfpub.library and owfpresent.library. That is
+a suite decision, not part of this step.
+
+With it came `owf_sys_file_size` (libowf's own, `owf_internal.h`): a
+file's length without reading it. `opp_merge_load_file` asks it first, so
+a data file over `OW_MERGE_MAX_BYTES` is refused before any of it is read.
 
 ## Rules for the shared modules
 

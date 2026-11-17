@@ -13,6 +13,7 @@
 #include <ow_merge.h>
 #include <openpressmaster_merge.h>
 #include <openpressmaster_template.h>
+#include <owf_print.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -75,6 +76,13 @@ const opp_template_info * opp_template_info_at(int i);
 int opp_template_find(const char *name);
 int opp_template_new(int i, owf_deck **deck);
 void owf_deck_free(owf_deck *deck);
+int owf_print_bleed(int bleed);
+int owf_print_mark_gap(int bleed);
+int owf_print_margin(int bleed, int crop_marks);
+int owf_print_crop_lines(int m, int w, int h, int gap, int *xy);
+unsigned long owf_print_bleed_colour(const owf_deck *deck, int page);
+int owf_print_booklet_sides(int pages);
+int owf_print_booklet_side(int pages, int side, int *left, int *right);
 
 #ifdef __cplusplus
 }

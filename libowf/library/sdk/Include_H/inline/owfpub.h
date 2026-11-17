@@ -978,4 +978,125 @@ __owfpub_owf_deck_free(void *__base, owf_deck *deck)
 #define owf_deck_free(deck) __owfpub_owf_deck_free((OWFPUB_BASE_NAME), (owf_deck *)(deck))
 #define __owf_deck_free_base(__in_base, deck) __owfpub_owf_deck_free((__in_base), (owf_deck *)(deck))
 
+static __inline__ int
+__owfpub_owf_print_bleed(void *__base, int bleed)
+{
+	register ULONG _d0 __asm("d0") = (ULONG)(bleed);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a0 __asm("a0");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -360(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "=r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_print_bleed(bleed) __owfpub_owf_print_bleed((OWFPUB_BASE_NAME), (int)(bleed))
+#define __owf_print_bleed_base(__in_base, bleed) __owfpub_owf_print_bleed((__in_base), (int)(bleed))
+
+static __inline__ int
+__owfpub_owf_print_mark_gap(void *__base, int bleed)
+{
+	register ULONG _d0 __asm("d0") = (ULONG)(bleed);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a0 __asm("a0");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -366(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "=r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_print_mark_gap(bleed) __owfpub_owf_print_mark_gap((OWFPUB_BASE_NAME), (int)(bleed))
+#define __owf_print_mark_gap_base(__in_base, bleed) __owfpub_owf_print_mark_gap((__in_base), (int)(bleed))
+
+static __inline__ int
+__owfpub_owf_print_margin(void *__base, int bleed, int crop_marks)
+{
+	register ULONG _d0 __asm("d0") = (ULONG)(bleed);
+	register ULONG _d1 __asm("d1") = (ULONG)(crop_marks);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a0 __asm("a0");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -372(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "=r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_print_margin(bleed, crop_marks) __owfpub_owf_print_margin((OWFPUB_BASE_NAME), (int)(bleed), (int)(crop_marks))
+#define __owf_print_margin_base(__in_base, bleed, crop_marks) __owfpub_owf_print_margin((__in_base), (int)(bleed), (int)(crop_marks))
+
+static __inline__ int
+__owfpub_owf_print_crop_lines(void *__base, int m, int w, int h, int gap, int *xy)
+{
+	register ULONG _d0 __asm("d0") = (ULONG)(m);
+	register ULONG _d1 __asm("d1") = (ULONG)(w);
+	register ULONG _d2 __asm("d2") = (ULONG)(h);
+	register ULONG _d3 __asm("d3") = (ULONG)(gap);
+	register ULONG _a0 __asm("a0") = (ULONG)(xy);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -378(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6), "r" (_d2), "r" (_d3)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_print_crop_lines(m, w, h, gap, xy) __owfpub_owf_print_crop_lines((OWFPUB_BASE_NAME), (int)(m), (int)(w), (int)(h), (int)(gap), (int *)(xy))
+#define __owf_print_crop_lines_base(__in_base, m, w, h, gap, xy) __owfpub_owf_print_crop_lines((__in_base), (int)(m), (int)(w), (int)(h), (int)(gap), (int *)(xy))
+
+static __inline__ unsigned long
+__owfpub_owf_print_bleed_colour(void *__base, const owf_deck *deck, int page)
+{
+	register ULONG _a0 __asm("a0") = (ULONG)(deck);
+	register ULONG _d0 __asm("d0") = (ULONG)(page);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -384(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "+r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (unsigned long)_d0;
+}
+#define owf_print_bleed_colour(deck, page) __owfpub_owf_print_bleed_colour((OWFPUB_BASE_NAME), (const owf_deck *)(deck), (int)(page))
+#define __owf_print_bleed_colour_base(__in_base, deck, page) __owfpub_owf_print_bleed_colour((__in_base), (const owf_deck *)(deck), (int)(page))
+
+static __inline__ int
+__owfpub_owf_print_booklet_sides(void *__base, int pages)
+{
+	register ULONG _d0 __asm("d0") = (ULONG)(pages);
+	register void *_a6 __asm("a6") = __base;
+	register ULONG _d1 __asm("d1");
+	register ULONG _a0 __asm("a0");
+	register ULONG _a1 __asm("a1");
+	__asm__ __volatile__ ("jsr -390(%/a6)"
+		: "+r" (_d0), "=r" (_d1), "=r" (_a0), "=r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_print_booklet_sides(pages) __owfpub_owf_print_booklet_sides((OWFPUB_BASE_NAME), (int)(pages))
+#define __owf_print_booklet_sides_base(__in_base, pages) __owfpub_owf_print_booklet_sides((__in_base), (int)(pages))
+
+static __inline__ int
+__owfpub_owf_print_booklet_side(void *__base, int pages, int side, int *left, int *right)
+{
+	register ULONG _d0 __asm("d0") = (ULONG)(pages);
+	register ULONG _d1 __asm("d1") = (ULONG)(side);
+	register ULONG _a0 __asm("a0") = (ULONG)(left);
+	register ULONG _a1 __asm("a1") = (ULONG)(right);
+	register void *_a6 __asm("a6") = __base;
+	__asm__ __volatile__ ("jsr -396(%/a6)"
+		: "+r" (_d0), "+r" (_d1), "+r" (_a0), "+r" (_a1)
+		: "r" (_a6)
+		: __OPENNDK_FPCLOBBER "cc", "memory");
+	return (int)_d0;
+}
+#define owf_print_booklet_side(pages, side, left, right) __owfpub_owf_print_booklet_side((OWFPUB_BASE_NAME), (int)(pages), (int)(side), (int *)(left), (int *)(right))
+#define __owf_print_booklet_side_base(__in_base, pages, side, left, right) __owfpub_owf_print_booklet_side((__in_base), (int)(pages), (int)(side), (int *)(left), (int *)(right))
+
 #endif /* INLINE_OWFPUB_H */

@@ -108,7 +108,8 @@ for f in "$OWF"/src/*.c "$OWF"/calc/*.c; do
     *) SRC="$SRC $f" ;;
     esac
 done
-# GFOpenPressmaster's publications on the page model (owfpub.library 3.8): libowf/pub, and the suite's merge
+# GFOpenPressmaster's publications on the page model (owfpub.library 3.8; 3.10 adds the print core,
+# libowf/src/owf_print.c, already in the list above): libowf/pub, and the suite's merge
 # table it reads (src/core/ow_merge.c, GFOpenWrite's too)
 for f in "$OWF"/pub/*.c; do
     SRC="$SRC $f"
@@ -176,6 +177,7 @@ if [ "${OWF_LEGACY:-yes}" != no ]; then
         */owf_spell.c) ;;   # owfspell.library's
         */owf_deck.c | */in_odp.c | */out_odp.c | */in_pptx.c | */in_ppt.c | */owf_pdf.c | */owf_pdffonts.c) ;;   # owfpresent.library's
         */owf_fill.c | */owf_picture.c) ;;   # the drawing programs' (owf_fill.h, owf_picture.h), after the split
+        */owf_print.c) ;;   # the print core, on the page model: owfpub.library's (3.10), after the split
         *) LSRC="$LSRC $f" ;;
         esac
     done
