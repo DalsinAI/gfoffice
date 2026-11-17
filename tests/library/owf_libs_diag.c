@@ -42,12 +42,10 @@ static int starts(const unsigned char *data, size_t length, const char *with)
 
 static void edited_page(const owf_libs_env *e)
 {
-    typedef int (*writer)(const owf_diagram *, int, unsigned char **, size_t *);
-    static const struct { const char *name; writer write; int page; const char *start; } out[] = {
-        { "SVG", owf_dsvg_write, 0, "<?xml" }, { "PDF", owf_dpdf_write, -1, "%PDF-" },
-        { "EPS", owf_deps_write, 0, "%!PS-Adobe" }, { "Mermaid", owf_dmermaid_write, 0, "---\ntitle:" },
-        { "DOT", owf_ddot_write, 0, "digraph" }, { "GraphML", owf_dgraphml_write, 0, "<?xml" },
-        { "Excalidraw", owf_dexcal_write, 0, "{" },
+    /* by number, not as function pointers: on the library each call is a macro of its name (<inline/owfdiag.h>) */
+    static const struct { const char *name; int page; const char *start; } out[] = {
+        { "SVG", 0, "<?xml" }, { "PDF", -1, "%PDF-" }, { "EPS", 0, "%!PS-Adobe" }, { "Mermaid", 0, "---\ntitle:" },
+        { "DOT", 0, "digraph" }, { "GraphML", 0, "<?xml" }, { "Excalidraw", 0, "{" },
     };
     owf_diagram d, back;
     odg_doc *doc = (odg_doc *)owf_calloc(1, sizeof *doc);
@@ -88,7 +86,11 @@ static void edited_page(const owf_libs_env *e)
         data = NULL;
     }
     for (i = 0; i < (int)(sizeof out / sizeof out[0]); i++) {
-        r = out[i].write(&d, out[i].page, &data, &length);
+        int pg = out[i].page;
+        r = i == 0 ? owf_dsvg_write(&d, pg, &data, &length) : i == 1 ? owf_dpdf_write(&d, pg, &data, &length)
+            : i == 2 ? owf_deps_write(&d, pg, &data, &length) : i == 3 ? owf_dmermaid_write(&d, pg, &data, &length)
+            : i == 4 ? owf_ddot_write(&d, pg, &data, &length) : i == 5 ? owf_dgraphml_write(&d, pg, &data, &length)
+                     : owf_dexcal_write(&d, pg, &data, &length);
         LCHECK(e, r == OWF_OK && starts(data, length, out[i].start), "%s: written as %s, %lu bytes", e->tag, out[i].name,
                (unsigned long)(r == OWF_OK ? length : 0));
         owf_free(data);
