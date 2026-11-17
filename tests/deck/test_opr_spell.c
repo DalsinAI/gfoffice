@@ -1,6 +1,6 @@
 /*
  * test_opr_spell: spelling through a deck (src/deck/opr_spell.c) with
- * GFOpenWrite's dictionary (src/core/ow_spell_dict.c):
+ * GFOpenWrite's dictionary (libowf/src/owf_spell.c (owfspell.library)):
  *
  *   - the words of a paragraph, as the wavy underline wants them: UTF-8
  *     letters kept whole, apostrophes at a word's ends left off, numbers,
@@ -19,7 +19,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "openpresentation_core.h"
-#include "ow_spell_dict.h"
+#include "owf_spell.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,7 +43,7 @@ static int add_text(owf_deck *d, int slide, owf_obj_kind kind, const char *text)
     return obj;
 }
 
-static void test_words(ow_spell *sp)
+static void test_words(owf_spell *sp)
 {
     opr_spell_range r[8];
     const char *t = "Helo wrld, it's 42 NASA x caf\xc3\xa9 'quoted' OpenWrite";
@@ -58,11 +58,11 @@ static void test_words(ow_spell *sp)
     CHECK(opr_spell_words(sp, "caf\xc3\xa8", 5, r, 8) == 1 && r[0].end == 5, "a UTF-8 word whole");
     CHECK(opr_spell_words(sp, "'tis", 4, r, 8) == 1 && r[0].start == 1, "leading apostrophe left off");
     CHECK(opr_spell_words(NULL, "wrld", 4, r, 8) == 0 && opr_spell_words(sp, NULL, 4, r, 8) == 0, "no checker or text");
-    CHECK(ow_spell_word_ok(sp, "WORLD", 5) && ow_spell_word_ok(sp, "QWZ", 3) && !ow_spell_word_ok(sp, "QWZXYV", 6),
+    CHECK(owf_spell_word_ok(sp, "WORLD", 5) && owf_spell_word_ok(sp, "QWZ", 3) && !owf_spell_word_ok(sp, "QWZXYV", 6),
           "case and short capitals");
 }
 
-static void test_deck(ow_spell *sp)
+static void test_deck(owf_spell *sp)
 {
     owf_deck *d = owf_deck_new(10000, 7500);
     opr_find_result f;
@@ -109,7 +109,7 @@ static void test_deck(ow_spell *sp)
     rc = opr_spell_next(d, sp, 5, 3, at, &f, NULL, 0);
     CHECK(rc == 1 && f.slide == 0 && f.selection.anchor.offset == 6, "a start off the deck: the first slide");
 
-    CHECK(ow_spell_add(sp, "wrld") && ow_spell_add(sp, "helo") && ow_spell_add(sp, "notse"), "added");
+    CHECK(owf_spell_add(sp, "wrld") && owf_spell_add(sp, "helo") && owf_spell_add(sp, "notse"), "added");
     at.para = 0; at.offset = 0;
     rc = opr_spell_next(d, sp, 0, 0, at, &f, word, sizeof word);
     CHECK(rc == 1 && f.slide == 1 && !strcmp(word, "shpae"), "added words pass: %s", word);
@@ -125,7 +125,7 @@ static void test_deck(ow_spell *sp)
     owf_deck_free(d);
 }
 
-static void test_marks(ow_spell *sp)
+static void test_marks(owf_spell *sp)
 {
     owf_deck *d = owf_deck_new(10000, 7500);
     opr_spell_mark m[4];
@@ -156,7 +156,7 @@ static void test_marks(ow_spell *sp)
     CHECK(opr_notes_set(NULL, d, 0, "speker notes") == 0, "notes");
     n = opr_spell_marks(d, sp, 0, OPR_NOTES, NULL, m, 4);
     CHECK(n == 1 && m[0].start == 0 && m[0].end == 6, "the notes' marks: %d", n);
-    CHECK(ow_spell_ignore(sp, "MROE") && opr_spell_marks(d, sp, 0, obj, NULL, m, 4) == 2, "ignored in any case");
+    CHECK(owf_spell_ignore(sp, "MROE") && opr_spell_marks(d, sp, 0, obj, NULL, m, 4) == 2, "ignored in any case");
     {
         FILE *u = fopen(user_path, "r");
         char buf[256];
@@ -165,8 +165,8 @@ static void test_marks(ow_spell *sp)
         buf[got] = 0;
         CHECK(!strstr(buf, "mroe") && strstr(buf, "wrld"), "ignored words are not saved, added ones are: %s", buf);
     }
-    CHECK(!ow_spell_ignore(sp, "") && !ow_spell_ignore(NULL, "x"), "nothing to ignore");
-    CHECK(ow_spell_add(sp, "mroe"), "an ignored word added");
+    CHECK(!owf_spell_ignore(sp, "") && !owf_spell_ignore(NULL, "x"), "nothing to ignore");
+    CHECK(owf_spell_add(sp, "mroe"), "an ignored word added");
     {
         FILE *u = fopen(user_path, "r");
         char buf[256];
@@ -183,7 +183,7 @@ static void test_marks(ow_spell *sp)
     owf_deck_free(d);
 }
 
-static void test_rexx(ow_spell *sp)
+static void test_rexx(owf_spell *sp)
 {
     owf_deck *d = owf_deck_new(10000, 7500);
     char out[256], small[20];
@@ -223,20 +223,20 @@ static void test_rexx(ow_spell *sp)
 int main(void)
 {
     FILE *f = fopen(dict_path, "w");
-    ow_spell *sp;
+    owf_spell *sp;
     char status[128];
     if (!f) return 1;
     fputs("hello\nworld\nit's\nopenwrite\nquoted\ncaf\xc3\xa9\nhere\nand\nnotes\na\nshape\nto\nadd\ntext\nclick\n", f);
     fclose(f);
     remove(user_path);
-    sp = ow_spell_open(dict_path, user_path, status, sizeof status);
+    sp = owf_spell_open(dict_path, user_path, status, sizeof status);
     CHECK(sp != NULL, "open: %s", status);
     if (sp) {
         test_words(sp);
         test_deck(sp);
         test_marks(sp);
         test_rexx(sp);
-        ow_spell_close(sp);
+        owf_spell_close(sp);
     }
     remove(dict_path);
     remove(user_path);

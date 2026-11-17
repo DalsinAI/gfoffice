@@ -7,6 +7,7 @@
 
 #include <exec/types.h>
 #include <dos/dos.h>
+#include <exec/semaphores.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
 
@@ -187,4 +188,41 @@ int owf_sys_now(owf_time *t)
     t->minute = (int)(ds.ds_Minute % 60);
     t->second = (int)(ds.ds_Tick / TICKS_PER_SECOND);
     return 1;
+}
+
+void owf_sys_full_name(const char *path, char *name, size_t size)
+{
+    BPTR lock;
+    if (!size)
+        return;
+    lock = path ? Lock((CONST_STRPTR)path, ACCESS_READ) : 0;
+    if (lock) {
+        LONG ok = NameFromLock(lock, (STRPTR)name, (LONG)size);
+        UnLock(lock);
+        if (ok)
+            return;
+    }
+    snprintf(name, size, "%s", path ? path : "");
+}
+
+/* Made the first time it is wanted, under Forbid so two tasks can't both make it. */
+static struct SignalSemaphore shared_sem;
+static volatile int shared_sem_ready;
+
+void owf_sys_shared_lock(void)
+{
+    if (!shared_sem_ready) {
+        Forbid();
+        if (!shared_sem_ready) {
+            InitSemaphore(&shared_sem);
+            shared_sem_ready = 1;
+        }
+        Permit();
+    }
+    ObtainSemaphore(&shared_sem);
+}
+
+void owf_sys_shared_unlock(void)
+{
+    ReleaseSemaphore(&shared_sem);
 }
