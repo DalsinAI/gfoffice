@@ -79,6 +79,7 @@
 #include "openpressmaster_merge.h"
 #include "openpressmaster_template.h"
 #include "openpressmaster_pagenum.h"
+#include "openpressmaster_spread.h"
 #endif
 #include "ow_layout.h"
 #include "owf_pdf.h"
@@ -104,7 +105,7 @@ struct RxsLib *RexxSysBase = NULL;
 
 #ifdef OPENPRESSMASTER
 #define PROGRAM "GFOpenPressmaster"
-#define VERSION_TEXT "GFOpenPressmaster 0.3.36 (16.11.2026)"
+#define VERSION_TEXT "GFOpenPressmaster 0.3.37 (17.11.2026)"
 #define REXX_PORT_NAME "GFOPENPRESSMASTER"
 #define REXX_OLD_PORT_NAME "GFOPENPUBLISHER"         /* the name before 16 Nov 2026, kept so old scripts run */
 #define UNIT "Page"
@@ -162,7 +163,7 @@ enum {
     M_ZOOM_IN, M_ZOOM_OUT, M_ZOOM_FIT,
     M_SHOW_FIRST, M_SHOW_CURRENT, M_SHOW_LOOP, M_SHOW_ON_AUTO, M_SHOW_ON_OWN, M_SHOW_ON_WB,
     M_VIEW_NORMAL, M_VIEW_SORTER, M_VIEW_NOTES, M_VIEW_OUTLINE,
-    M_VIEW_MASTER, M_SLIDE_DESIGN, M_INSERT_FILE, M_PICTURES,
+    M_VIEW_MASTER, M_VIEW_SPREAD, M_SLIDE_DESIGN, M_INSERT_FILE, M_PICTURES,
     M_SPELL_AS_YOU_TYPE, M_SPELLING,
     M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_PAGES, M_MERGE_CATALOG,
     M_NEW_TEMPLATE, M_PDF_PRINTER, M_PAGE_NUMBER, M_PAGE_COUNT
@@ -326,6 +327,9 @@ static struct NewMenu menus[] = {
     { NM_ITEM, UNIT " Sorter", NULL, CHECKIT, ~2 & 15, (APTR)M_VIEW_SORTER },
     { NM_ITEM, "Notes", NULL, CHECKIT, ~4 & 15, (APTR)M_VIEW_NOTES },
     { NM_ITEM, "Master " UNIT "s", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)M_VIEW_MASTER },
+#ifdef OPENPRESSMASTER
+    { NM_ITEM, "Facing Pages", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)M_VIEW_SPREAD },
+#endif
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "First " UNIT, NULL, 0, 0, (APTR)M_FIRST },
     { NM_ITEM, "Previous " UNIT, "[", 0, 0, (APTR)M_PREV },
@@ -474,6 +478,14 @@ static int sorter_view;
 static int notes_view;
 /* View > Outline: every slide's title and its outline text as one list, typed, demoted and promoted */
 static int outline_view;
+#ifdef OPENPRESSMASTER
+/* View > Facing Pages (include/openpressmaster_spread.h): the page that shares the current page's spread is
+ * shown beside it. slide_box stays the current page's, so everything that edits is as it was; a click on the
+ * other page makes it the current one. Fit to Window only: zoomed in, the current page is shown alone. */
+static int spread_view;
+static box spread_other;                 /* the other page's place; w 0: not shown */
+static int spread_partner = -1;          /* the page shown there; -1: this page is on its own */
+#endif
 static ogt_list *outline_list;
 static opr_outline outline_rows;
 static void outline_refresh(void);
@@ -2462,11 +2474,23 @@ static void update_edit_tools(void)
     ogt_toolbar_enable(&tb, C_REDO, opr_redo_can(undo));
 }
 
+#ifdef OPENPRESSMASTER
+static int spread_on(void)
+{
+    return spread_view && !sorter_view && !notes_view && !outline_view && !mview && zoom == 100 && deck &&
+           deck->nslides > 1;
+}
+#endif
+
 /* Where the slide goes in the view: as large as fits, its shape kept, centred; zoomed, that size times the
  * zoom, scrolled by the pan when larger than the view. */
 static void place_slide(void)
 {
     int mw, mh, w, h;
+#ifdef OPENPRESSMASTER
+    spread_other.w = 0;
+    spread_partner = -1;
+#endif
     slide_area = view_box;
     if (zoom > 100) {
         slide_area.w -= SCROLLER;
@@ -2478,6 +2502,20 @@ static void place_slide(void)
         slide_box = (box){ view_box.x, view_box.y, 0, 0 };
         return;
     }
+#ifdef OPENPRESSMASTER
+    if (spread_on()) {
+        opp_spread_box l, r;
+        if (opp_spread_place(mw, mh, page_width(), page_height(), &l, &r)) {
+            int left = opp_spread_side(current) == OPP_SPREAD_LEFT;
+            const opp_spread_box *mine = left ? &l : &r, *other = left ? &r : &l;
+            pan_x = pan_y = 0;
+            slide_box = (box){ view_box.x + 12 + mine->x, view_box.y + 12 + mine->y, mine->w, mine->h };
+            spread_other = (box){ view_box.x + 12 + other->x, view_box.y + 12 + other->y, other->w, other->h };
+            spread_partner = opp_spread_partner(deck->nslides, current);
+            return;
+        }
+    }
+#endif
     w = mw;
     h = (int)((long)w * page_height() / page_width());
     if (h > mh) {
@@ -3082,6 +3120,40 @@ static void draw_guides(const ol_scale *sc)
 
 /* The slide, or only what of it is in the rectangle (the frame being typed in: no flicker elsewhere), drawn
  * through a clip region, so nothing a slide holds is drawn outside it. */
+#ifdef OPENPRESSMASTER
+/* The page that faces the current one, drawn in its place beside it (nothing when the page is on its own). */
+static void draw_spread_other(struct RastPort *rp)
+{
+    struct Region *region = NULL, *old = NULL;
+    struct Rectangle r;
+    ol_pixel_rect clip;
+    if (spread_other.w <= 0 || spread_partner < 0) return;
+    ogt_frame(rp, ogt_pen(&ctx, "group.line"), spread_other.x - 1, spread_other.y - 1, spread_other.w + 2,
+              spread_other.h + 2);
+    r.MinX = (WORD)spread_other.x;
+    r.MinY = (WORD)spread_other.y;
+    r.MaxX = (WORD)(spread_other.x + spread_other.w - 1);
+    r.MaxY = (WORD)(spread_other.y + spread_other.h - 1);
+    if (LayersBase && (region = NewRegion()) != NULL) {
+        if (OrRectRegion(region, &r)) {
+            old = InstallClipRegion(win->WLayer, region);
+        } else {
+            DisposeRegion(region);
+            region = NULL;
+        }
+    }
+    clip.x = r.MinX;
+    clip.y = r.MinY;
+    clip.width = spread_other.w;
+    clip.height = spread_other.h;
+    paint_slide(rp, laid_get(spread_partner), spread_other.x, spread_other.y, spread_other.w, &clip, 0, NULL);
+    if (region) {
+        InstallClipRegion(win->WLayer, old);
+        DisposeRegion(region);
+    }
+}
+#endif
+
 static void draw_slide_part(const box *part)
 {
     struct RastPort *rp;
@@ -3102,6 +3174,9 @@ static void draw_slide_part(const box *part)
         return;
     }
     rp = win->RPort;
+#ifdef OPENPRESSMASTER
+    if (!part && spread_view) place_slide();        /* the current page's side of the spread may have changed */
+#endif
     if (!part) {
         /* the window's own colour around the slide, so the slide stands out */
         ogt_fill(&ctx, rp, "window", view_box.x, view_box.y, view_box.w, view_box.h);
@@ -3120,6 +3195,9 @@ static void draw_slide_part(const box *part)
             if (hscroll) RefreshGList(hscroll, win, NULL, 1);
             if (vscroll) RefreshGList(vscroll, win, NULL, 1);
         }
+#ifdef OPENPRESSMASTER
+        draw_spread_other(rp);
+#endif
     }
     if (!deck || !deck->nslides || slide_box.w <= 0) return;
     /* the slide, what of it is in the slide area */
@@ -3698,6 +3776,12 @@ static void update_view_menus(void)
         struct MenuItem *masters = menu_item_for(M_VIEW_MASTER);
         if (masters) masters->Flags = (UWORD)(mview ? masters->Flags | CHECKED : masters->Flags & ~CHECKED);
     }
+#ifdef OPENPRESSMASTER
+    {
+        struct MenuItem *facing = menu_item_for(M_VIEW_SPREAD);
+        if (facing) facing->Flags = (UWORD)(spread_view ? facing->Flags | CHECKED : facing->Flags & ~CHECKED);
+    }
+#endif
     ResetMenuStrip(win, menu);
     /* Format works on text, so on the notes too; Insert and Object on what is on the slide in front of you */
     if (sorter_view || outline_view) OffMenu(win, FULLMENUNUM(2, NOITEM, NOSUB));
@@ -6048,6 +6132,13 @@ static void slide_mouse_down(int mx, int my)
 {
     opr_pos at;
     int obj, handle;
+#ifdef OPENPRESSMASTER
+    if (spread_other.w > 0 && spread_partner >= 0 && mx >= spread_other.x && mx < spread_other.x + spread_other.w &&
+        my >= spread_other.y && my < spread_other.y + spread_other.h) {
+        show_slide(spread_partner);                  /* a click on the facing page goes to it */
+        return;
+    }
+#endif
     if (!on_visible_slide(mx, my)) return;
     if (notes_view) {
         /* the notes are the one thing to type in on a notes page */
@@ -7928,7 +8019,9 @@ static void open_deck(const char *path)
         return;
     }
 #ifdef OPENPRESSMASTER
+    spread_view = opp_spread_facing(d);              /* a two-page master: the pages face each other */
     set_deck(d, path, "PUB");
+    update_view_menus();
     snprintf(msg, sizeof msg, "%s, %d page%s%s.", owf_pub_version_name(version), d->nslides,
              d->nslides == 1 ? "" : "s", owf_report_count(report) ? "; some parts shown simpler" : "");
 #else
@@ -8737,6 +8830,14 @@ static void menu_action(ULONG id)
     switch (id) {
     case M_VIEW_NORMAL: master_view_leave(); set_view(0); break;
     case M_VIEW_MASTER: if (mview) master_view_leave(); else master_view_enter(); break;
+#ifdef OPENPRESSMASTER
+    case M_VIEW_SPREAD:
+        spread_view = !spread_view;
+        update_view_menus();
+        relayout();
+        set_status(spread_view ? "Facing pages are shown side by side (at Fit to Window)." : "One page is shown.");
+        break;
+#endif
     case M_SLIDE_DESIGN: slide_design(); break;
 #ifndef OPENPRESSMASTER
     case M_INSERT_FILE: insert_from_file(NULL); break;
