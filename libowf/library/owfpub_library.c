@@ -31,13 +31,15 @@
  * suite's merge table (src/core/ow_merge.c), mail merge and catalog merge (opp_merge.c), the built-in
  * templates (opp_template.c) and owf_deck_free. The library now holds the page model (owf_deck.c) these
  * work on. The 37 calls before are as they were.
+ * 3.9: owf_para.cell_revision (owfwrite.library 3.25, libowf 1.22; 3.8 is #16's), so owf_para is larger and a
+ * program's size check refuses 3.8 and before. No call changes.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfpub.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 8
-#define OWF_LIB_VERS "3.8"
+#define OWF_LIB_REVISION 9
+#define OWF_LIB_VERS "3.9"
 #define OWF_LIB_DATE "17.11.2026"
 #define OWF_LIB_CALLS_H "owfpub_calls.h"
 #include "owf_deck.h"

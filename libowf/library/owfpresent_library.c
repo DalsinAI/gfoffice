@@ -67,13 +67,15 @@
  * 3.19: picture fills: owf_look ends with picture, tile_width and tile_height (so owf_obj is larger), and
  * owf_slide and owf_master end with background_tile and its size, so a program's size check refuses 3.18
  * and before; owf_deck_image_size is a call, at the end.
+ * 3.20: owf_para.cell_revision (owfwrite.library 3.25, libowf 1.22), so owf_para is larger and a program's
+ * size check refuses 3.19 and before. No call changes.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfpresent.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 19
-#define OWF_LIB_VERS "3.19"
+#define OWF_LIB_REVISION 20
+#define OWF_LIB_VERS "3.20"
 #define OWF_LIB_DATE "17.11.2026"
 #define OWF_LIB_CALLS_H "owfpresent_calls.h"
 #include "owf_libbase.h"

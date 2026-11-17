@@ -80,7 +80,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenWrite 2.0.52 (17.11.2026)"
+#define VERSION_TEXT "GFOpenWrite 2.0.53 (17.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -5592,9 +5592,8 @@ static void menu_action(ULONG id)
     case M_TABLE_ROW_DEL: editor_result(ow_editor_table_delete_row(editor),"Table row deleted."); break;
     case M_TABLE_COL_ADD:
     case M_TABLE_COL_DEL:
-        /* 2.0.38: rows are recorded as changes, columns not yet: none while recording */
-        if (ow_editor_track_changes(editor)) set_status("Columns cannot be put in or deleted while changes are recorded.");
-        else if (id == M_TABLE_COL_ADD) editor_result(ow_editor_table_insert_column(editor), "Table column inserted.");
+        /* 2.0.53: recorded as changes too, cell by cell (they were refused while recording from 2.0.38) */
+        if (id == M_TABLE_COL_ADD) editor_result(ow_editor_table_insert_column(editor), "Table column inserted.");
         else editor_result(ow_editor_table_delete_column(editor), "Table column deleted.");
         break;
     case M_PAGE_SETUP: {

@@ -6,7 +6,7 @@ free office suites and their companion tools. The full scorecards are in
 
 | Application | Version | Everyday feature coverage |
 | --- | --- | --- |
-| GFOpenWrite | 2.0.52 | 85% |
+| GFOpenWrite | 2.0.53 | 85% |
 | GFOpenCalc | 0.1.78 | 80% |
 | GFOpenPresentation | 0.6.35 | 89% |
 | GFOpenPressmaster | 0.3.36 | 71% |
@@ -14,6 +14,6 @@ free office suites and their companion tools. The full scorecards are in
 | GFOpenProject | 0.1.25 | 64% |
 | GFOpenDiag | 0.1.0 | 66% to 72% |
 
-GFOpenWrite 2.0.52 is the most complete of the seven and is the one to try
+GFOpenWrite 2.0.53 is the most complete of the seven and is the one to try
 first. GFOpenPresentation 0.6.35 is close behind. GFOpenPressmaster was
 called GFOpenPublisher before 16 November 2026.
