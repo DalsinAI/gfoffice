@@ -161,6 +161,22 @@ static void test_user(void)
     owf_spell_close(a);
 }
 
+static void test_command(owf_spell *s)
+{
+    char out[64];
+    CHECK(owf_spell_command(s, "COUNT", out, sizeof out) == -1 && owf_spell_command(s, "", out, sizeof out) == -1,
+          "not a word command");
+    CHECK(owf_spell_command(s, "check world", out, sizeof out) == 0 && !strcmp(out, "1"), "CHECK, any case");
+    CHECK(owf_spell_command(s, "CHECK wrold", out, sizeof out) == 0 && !strcmp(out, "0"), "CHECK a misspelt word");
+    CHECK(owf_spell_command(s, "SUGGEST wrold", out, sizeof out) == 0 && !strcmp(out, "word world"), "SUGGEST");
+    CHECK(owf_spell_command(s, "SUGGEST wrold", out, 8) == 0 && !strcmp(out, "word"), "SUGGEST cut to fit");
+    CHECK(owf_spell_command(s, "IGNORE \"Zorg\"", out, sizeof out) == 0 && owf_spell_word_ok(s, "zorg", 4),
+          "IGNORE, quoted");
+    CHECK(owf_spell_command(s, "ADD", out, sizeof out) == 10 && strstr(out, "needs a word"), "ADD needs a word");
+    CHECK(owf_spell_command(NULL, "CHECK x", out, sizeof out) == 5 && !strcmp(out, "No dictionary"), "no dictionary");
+    CHECK(owf_spell_command(s, "CHECKS x", out, sizeof out) == -1, "a longer word is not CHECK");
+}
+
 static void test_real(const char *path)
 {
     char status[128], sug[8][OWF_SPELL_WORD];
@@ -192,6 +208,7 @@ int main(int argc, char **argv)
         test_rules(s);
         test_scan(s);
         test_suggest(s);
+        test_command(s);
         owf_spell_close(s);
     }
     test_user();

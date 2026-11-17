@@ -199,23 +199,9 @@ static int rx_spell_word(const char *s, const char *word, const char **rest)
     return 1;
 }
 
-/* The word after a sub-command: "in quotes" or up to the next space. */
-static void rx_spell_arg(const char *s, char *out, size_t size)
-{
-    size_t k = 0;
-    if (*s == '"' || *s == '\'') {
-        char q = *s++;
-        for (; *s && *s != q; s++) if (k + 1 < size) out[k++] = *s;
-    } else {
-        for (; *s && *s != ' ' && *s != '\t'; s++) if (k + 1 < size) out[k++] = *s;
-    }
-    out[k] = 0;
-}
-
 int opr_spell_rexx(const owf_deck *deck, owf_spell *spell, const char *args, char *out, size_t size)
 {
     const char *rest = "";
-    char word[96];
     if (!out || size < 2) return 10;
     out[0] = 0;
     if (!spell) { snprintf(out, size, "No dictionary"); return 5; }
@@ -232,35 +218,10 @@ int opr_spell_rexx(const owf_deck *deck, owf_spell *spell, const char *args, cha
         return 0;
     }
     {
-        static const char *const verbs[] = { "CHECK", "SUGGEST", "ADD", "IGNORE" };
-        int v;
-        for (v = 0; v < 4 && !rx_spell_word(args, verbs[v], &rest); v++) ;
-        if (v == 4) {
-            snprintf(out, size, "SPELL takes COUNT, LIST, CHECK, SUGGEST, ADD or IGNORE");
-            return 10;
-        }
-        rx_spell_arg(rest, word, sizeof word);
-        if (!word[0]) { snprintf(out, size, "SPELL %s needs a word", verbs[v]); return 10; }
-        if (v == 0) {
-            snprintf(out, size, "%d", owf_spell_word_ok(spell, word, strlen(word)));
-        } else if (v == 1) {
-            char sugg[8][48];
-            int n = owf_spell_suggest(spell, word, sugg[0], 8), i;
-            size_t used = 0;
-            for (i = 0; i < n; i++) {
-                size_t m = strlen(sugg[i]);
-                if (used + m + 2 > size) break;
-                if (used) out[used++] = ' ';
-                memcpy(out + used, sugg[i], m);
-                used += m;
-                out[used] = 0;
-            }
-        } else if (v == 2) {
-            if (!owf_spell_add(spell, word)) { snprintf(out, size, "The word could not be saved"); return 10; }
-        } else if (!owf_spell_ignore(spell, word)) {
-            snprintf(out, size, "Not enough memory");
-            return 20;
-        }
-        return 0;
+        /* CHECK, SUGGEST, ADD and IGNORE: every program's (owf_spell_command) */
+        int rc = owf_spell_command(spell, args, out, size);
+        if (rc >= 0) return rc;
+        snprintf(out, size, "SPELL takes COUNT, LIST, CHECK, SUGGEST, ADD or IGNORE");
+        return 10;
     }
 }

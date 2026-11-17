@@ -464,3 +464,80 @@ int owf_spell_suggest(owf_spell *s, const char *word, char *slots, int max)
     }
     return n;
 }
+
+/* ---- ARexx: the word commands every program's SPELL shares ---- */
+
+/* 1 when s starts with word (any case) followed by a space or its end; *rest after the spaces. */
+static int command_word(const char *s, const char *word, const char **rest)
+{
+    size_t n = strlen(word), i;
+    for (i = 0; i < n; i++)
+        if (owf_upper((unsigned char)s[i]) != word[i]) return 0;
+    if (s[n] && s[n] != ' ' && s[n] != '\t') return 0;
+    s += n;
+    while (*s == ' ' || *s == '\t') s++;
+    *rest = s;
+    return 1;
+}
+
+/* The word after a command: "in quotes" or up to the next space. */
+static void command_arg(const char *s, char *out, size_t size)
+{
+    size_t k = 0;
+    if (*s == '"' || *s == '\'') {
+        char q = *s++;
+        for (; *s && *s != q; s++)
+            if (k + 1 < size) out[k++] = *s;
+    } else {
+        for (; *s && *s != ' ' && *s != '\t'; s++)
+            if (k + 1 < size) out[k++] = *s;
+    }
+    out[k] = 0;
+}
+
+int owf_spell_command(owf_spell *s, const char *args, char *out, size_t size)
+{
+    static const char *const verbs[] = { "CHECK", "SUGGEST", "ADD", "IGNORE" };
+    const char *rest = "";
+    char word[96];
+    int v;
+    if (!args) args = "";
+    while (*args == ' ' || *args == '\t') args++;
+    for (v = 0; v < 4 && !command_word(args, verbs[v], &rest); v++) {}
+    if (v == 4) return -1;
+    if (!out || size < 2) return 10;
+    out[0] = 0;
+    if (!s) {
+        snprintf(out, size, "No dictionary");
+        return 5;
+    }
+    command_arg(rest, word, sizeof word);
+    if (!word[0]) {
+        snprintf(out, size, "SPELL %s needs a word", verbs[v]);
+        return 10;
+    }
+    if (v == 0) {
+        snprintf(out, size, "%d", owf_spell_word_ok(s, word, strlen(word)));
+    } else if (v == 1) {
+        char sugg[8][OWF_SPELL_WORD];
+        int n = owf_spell_suggest(s, word, sugg[0], 8), i;
+        size_t used = 0;
+        for (i = 0; i < n; i++) {
+            size_t m = strlen(sugg[i]);
+            if (used + m + 2 > size) break;
+            if (used) out[used++] = ' ';
+            memcpy(out + used, sugg[i], m);
+            used += m;
+            out[used] = 0;
+        }
+    } else if (v == 2) {
+        if (!owf_spell_add(s, word)) {
+            snprintf(out, size, "The word could not be saved");
+            return 10;
+        }
+    } else if (!owf_spell_ignore(s, word)) {
+        snprintf(out, size, "Not enough memory");
+        return 20;
+    }
+    return 0;
+}

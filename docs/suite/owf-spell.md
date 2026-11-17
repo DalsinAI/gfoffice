@@ -10,9 +10,10 @@ uses, not code copied into each program.
 - **Source:** `libowf/src/owf_spell.c`, with its header
   `libowf/include/owf_spell.h`. It was GFOpenWrite's
   `src/core/ow_spell_dict.c` before this change.
-- **Library:** `owfspell.library` 1.0, built by `build-library.sh` from
-  `libowf/library/owfspell_lib.sfd`. It has 10 calls, all named
-  `owf_spell_*`. It doesn't have the four document libraries' 17 shared
+- **Library:** `owfspell.library` 1.1, built by `build-library.sh` from
+  `libowf/library/owfspell_lib.sfd`. It has 11 calls, all named
+  `owf_spell_*`. 1.1 added `owf_spell_command`, the ARexx SPELL word
+  commands every program shares. It doesn't have the four document libraries' 17 shared
   calls, so any file can call it beside owfwrite, owfcalc, owfpub or
   owfpresent.library.
 - **One word list in memory.** Every open of the same file shares one
@@ -39,7 +40,10 @@ uses, not code copied into each program.
    `owf_spell_add` and `owf_spell_ignore` as needed. Walking the document
    stays in each program's core, for example `app/ow_spell.c` (Write) and
    `src/deck/opr_spell.c` (Presentation and Pressmaster).
-5. Call `owf_spell_close`, then `owf_spell_library_close()` when the
+5. Pass ARexx SPELL's CHECK, SUGGEST, ADD and IGNORE to
+   `owf_spell_command`, so they work the same in every program. A program
+   keeps COUNT and LIST, which walk its own document.
+6. Call `owf_spell_close`, then `owf_spell_library_close()` when the
    program quits.
 
 The host tests link `owf_spell.c` directly. No Amiga program links a copy:
@@ -52,7 +56,8 @@ The host tests link `owf_spell.c` directly. No Amiga program links a copy:
 | GFOpenWrite (and the 1.x window) | Spell Check | yes |
 | GFOpenPresentation | Spelling, as you type, ARexx SPELL | yes |
 | GFOpenPressmaster | the same, through Presentation's core | yes |
-| GFOpenCalc, GFOpenDiag, GFOpenBase, GFOpenProject, GFOpenDraw | none yet | next, one PR each |
+| GFOpenCalc | Edit > Spelling..., ARexx SPELL (`src/calc/oc_spell.c`) | yes |
+| GFOpenDiag, GFOpenBase, GFOpenProject, GFOpenDraw | none yet | next, one PR each |
 
 ## Tests
 
@@ -60,7 +65,11 @@ The host tests link `owf_spell.c` directly. No Amiga program links a copy:
   `tests/spell/test_owf_spell.c`. It covers the list formats (CRLF,
   Hunspell flags, a count line, unsorted input), the word rules,
   scanning, suggestions, the user's words with two openers, Ignore All, a
-  list shared by two openers, and the shipped en_GB.words.
+  list shared by two openers, the ARexx word commands, and the shipped
+  en_GB.words.
+- `make calc-spell-test` and `make calc-spell-check` (ASan) run
+  `tests/calc_core/test_calc_spell.c`: Calc's walk over typed text only,
+  wrapping round, Change with Undo, and ARexx SPELL.
 - `make sfd-check` checks owfspell_lib.sfd against owf_spell.h, the
   generated glue and the SDK's offsets.
 - `OWFSpellTest`, built by `build-library.sh` into `tests/`, opens the

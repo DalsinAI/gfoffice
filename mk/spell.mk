@@ -23,3 +23,26 @@ test: spell-lib-test
 check: spell-lib-check
 
 .PHONY: spell-lib-test spell-lib-check
+
+# GFOpenCalc's spelling (src/calc/oc_spell.c) through the active sheet's text cells
+$(OUT)/test-calc-spell: $(OPENCALC_DEPS) src/calc/oc_spell.c tests/calc_core/test_calc_spell.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src -Ilibowf/calc -Isrc/calc \
+		$(OWF_SRC) $(CALC_SRC) $(OPENCALC_SRC) tests/calc_core/test_calc_spell.c -lz -lm -o $@
+
+$(OUT)/test-calc-spell-asan: $(OPENCALC_DEPS) src/calc/oc_spell.c tests/calc_core/test_calc_spell.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src -Ilibowf/calc -Isrc/calc \
+		$(OWF_SRC) $(CALC_SRC) $(OPENCALC_SRC) tests/calc_core/test_calc_spell.c -lz -lm -o $@
+
+calc-spell-test: $(OUT)/test-calc-spell
+	$(OUT)/test-calc-spell
+
+calc-spell-check: $(OUT)/test-calc-spell-asan
+	$(OUT)/test-calc-spell-asan
+
+test: calc-spell-test
+check: calc-spell-check
+
+.PHONY: calc-spell-test calc-spell-check
