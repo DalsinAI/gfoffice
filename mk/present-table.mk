@@ -76,3 +76,27 @@ test: deck-table-pptx-test
 check: deck-table-pptx-check
 .PHONY: deck-table-pptx-test deck-table-pptx-check
 endif
+
+# Part 4b: the table tools' words (src/deck/opr_tabletool.c), which the window's Table menu and ARexx TABLE send.
+#   make deck-tabletool-test / deck-tabletool-check    tests/deck/test_opr_tabletool.c
+ifneq ($(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c),)
+$(OUT)/test-opr-tabletool: $(DECK_DEPS) $(DECK_SRC) include/openpresentation_core.h tests/deck/test_opr_tabletool.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) \
+		tests/deck/test_opr_tabletool.c -lz -lm -o $@
+
+$(OUT)/test-opr-tabletool-asan: $(DECK_DEPS) $(DECK_SRC) include/openpresentation_core.h tests/deck/test_opr_tabletool.c
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(SANITIZE) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) \
+		tests/deck/test_opr_tabletool.c -lz -lm -o $@
+
+deck-tabletool-test: $(OUT)/test-opr-tabletool
+	$(OUT)/test-opr-tabletool
+
+deck-tabletool-check: $(OUT)/test-opr-tabletool-asan
+	$(OUT)/test-opr-tabletool-asan
+
+test: deck-tabletool-test
+check: deck-tabletool-check
+.PHONY: deck-tabletool-test deck-tabletool-check
+endif

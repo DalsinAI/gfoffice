@@ -23,6 +23,7 @@ docs/gfoffice/Impress-Parity.md.
 | 16 Nov 2026 (2) | 0.6.33 | 88% | Spelling: Tools > Spelling..., underlining as you type and ARexx SPELL (#337, #342, #344, #352); slide charts kept as charts with their data, saved to PPTX and ODP, with an editing core and Undo (#348, #354, #355, #356, #358); the show on a screen of its own (#281) |
 | 16 Nov 2026 (3) | 0.6.34 | 89% | Gradient fills (linear and radial) read, saved, printed and shown (gap 2.8) |
 | 16 Nov 2026 (4) | 0.6.35 | 89% | Gradient slide and master backgrounds (gap 2.8) |
+| 17 Nov 2026 | 0.6.36 | 89% | Table tools in the window and ARexx TABLE: merge and split cells, a row's height, the design's parts (tables part 4b; lab owed, so not scored yet) |
 
 Phase 1 target: 76% after P1 to P5. Phase 2 (P6 to P9) aims at 84%.
 
@@ -55,8 +56,8 @@ and the chart editor window.
    and shadows (gradients done).
 2. Charts: a window to edit them, and drawing them as charts on the slide
    and in the PDF; OLE objects other than charts are still kept only.
-3. Tables: merged cells, row heights, designs and banding. Also no
-   PowerPoint 97-2003 (.ppt).
+3. Tables: named designs to pick from (merged cells, row heights and the
+   design's parts are in the window since 0.6.36, lab owed).
 
 ## Phase 1 deliverables
 

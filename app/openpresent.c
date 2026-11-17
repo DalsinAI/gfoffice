@@ -116,7 +116,7 @@ struct RxsLib *RexxSysBase = NULL;
 #define SHOW_TITLE "Page Preview"
 #else
 #define PROGRAM "GFOpenPresentation"
-#define VERSION_TEXT "GFOpenPresentation 0.6.35 (16.11.2026)"
+#define VERSION_TEXT "GFOpenPresentation 0.6.36 (17.11.2026)"
 #define REXX_PORT_NAME "GFOPENPRESENTATION"
 #define UNIT "Slide"
 #define UNIT_UPPER "SLIDE"
@@ -149,7 +149,7 @@ enum {
     M_DISTRIBUTE_ACROSS, M_DISTRIBUTE_DOWN, M_GROUP, M_UNGROUP,
     M_POSITION_SIZE, M_APPEARANCE, M_AREA, M_PICTURE_CROP, M_CHART_DATA,
     M_TABLE_INSERT_ROW, M_TABLE_DELETE_ROW, M_TABLE_INSERT_COLUMN, M_TABLE_DELETE_COLUMN,
-    M_TABLE_STYLE,
+    M_TABLE_STYLE, M_TABLE_MERGE, M_TABLE_SPLIT, M_TABLE_ROW_HEIGHT, M_TABLE_DESIGN,
     M_DUPLICATE_OBJECT, M_DELETE_OBJECT,
     M_WRAP_NONE, M_WRAP_SQUARE, M_WRAP_TIGHT, M_WRAP_TOP_BOTTOM, M_WRAP_DISTANCE,
     M_LINK_TEXT_NEXT, M_UNLINK_TEXT,
@@ -281,6 +281,11 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Insert Column Right", NULL, 0, 0, (APTR)M_TABLE_INSERT_COLUMN },
     { NM_SUB, "Delete Current Column", NULL, 0, 0, (APTR)M_TABLE_DELETE_COLUMN },
     { NM_ITEM, "Table Cell Style...", NULL, 0, 0, (APTR)M_TABLE_STYLE },
+    { NM_ITEM, "Table Cells", NULL, 0, 0, NULL },
+    { NM_SUB, "Merge...", NULL, 0, 0, (APTR)M_TABLE_MERGE },
+    { NM_SUB, "Split", NULL, 0, 0, (APTR)M_TABLE_SPLIT },
+    { NM_SUB, "Row Height...", NULL, 0, 0, (APTR)M_TABLE_ROW_HEIGHT },
+    { NM_ITEM, "Table Design...", NULL, 0, 0, (APTR)M_TABLE_DESIGN },
 #ifdef OPENPRESSMASTER
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Text Wrapping", NULL, 0, 0, NULL },
@@ -7202,6 +7207,79 @@ static void edit_table_style(void)
     draw_status();
 }
 
+/* The table tools (tables part 4b): the caret's cell, 0 0 when the table is only selected. */
+static int table_tool_cell(int *row, int *column)
+{
+    const owf_obj *o;
+    int obj = selected_table_object();
+    *row = *column = 0;
+    if (obj < 0) return -1;
+    o = &deck->slides[current].objs[obj];
+    if (edit_obj == obj && caret.para >= 0 && caret.para < o->text.nparas) {
+        *row = o->text.paras[caret.para].table_row;
+        *column = o->text.paras[caret.para].table_col;
+    }
+    return obj;
+}
+
+/* After a table tool changed the table: the caret in the cell (a merge's first), the slide drawn again. */
+static void table_tool_done(int obj, int row, int column)
+{
+    opr_table_info in;
+    int para;
+    if (opr_table_cell_info(deck, current, obj, row, column, &in)) {
+        row = in.merge_row;
+        column = in.merge_column;
+    }
+    para = table_first_para_in_cell(&deck->slides[current].objs[obj], row, column);
+    selected_obj = edit_obj = obj;
+    caret.para = para >= 0 ? para : 0;
+    caret.offset = 0;
+    collapse_text_selection();
+    edit_grouped = 0;
+    text_changed(NULL);
+}
+
+/* Slide > Table Cells > Merge... (0), Split (1), Row Height... (2), and Table Design... (3): what is typed
+ * goes to the core's table tools (opr_table_tool), which ARexx TABLE uses too; its sentence is the status. */
+static void edit_table_tool(int tool)
+{
+    opr_table_info in;
+    char entered[96], command[128], said[160];
+    int row, column, obj = table_tool_cell(&row, &column), rc;
+    if (obj < 0 || !opr_table_cell_info(deck, current, obj, row, column, &in)) {
+        set_status("Select a table or click in one of its cells first.");
+        draw_status();
+        return;
+    }
+    if (tool == 0) {
+        if (!text_requester("Merge Table Cells", "Rows and columns from this cell, such as 1 2", "1 2", entered,
+                            sizeof entered))
+            return;
+        snprintf(command, sizeof command, "MERGE %s", entered);
+    } else if (tool == 1) {
+        strcpy(command, "SPLIT");
+    } else if (tool == 2) {
+        char now[24];
+        opr_table_length_text(in.row_height, now, sizeof now);
+        if (!text_requester("Table Row Height", "Least height: 1.5cm, 15mm, 0.5in, 36pt or auto", now, entered,
+                            sizeof entered))
+            return;
+        snprintf(command, sizeof command, "ROWHEIGHT %s", entered);
+    } else {
+        char now[96];
+        opr_table_design_text(in.design, now, sizeof now);
+        if (!text_requester("Table Design", "header total firstcolumn lastcolumn bandedrows bandedcolumns, or none",
+                            now, entered, sizeof entered))
+            return;
+        snprintf(command, sizeof command, "DESIGN %s", entered[0] ? entered : "none");
+    }
+    rc = opr_table_tool(undo, deck, current, obj, row, column, command, said, sizeof said);
+    if (rc == 0) table_tool_done(obj, row, column);
+    set_status(said);
+    draw_status();
+}
+
 static void delete_selected_object(void)
 {
     if (deck && picks_together()) {
@@ -8757,6 +8835,10 @@ static void menu_action(ULONG id)
     case M_TABLE_INSERT_COLUMN: edit_table_column(0); break;
     case M_TABLE_DELETE_COLUMN: edit_table_column(1); break;
     case M_TABLE_STYLE: edit_table_style(); break;
+    case M_TABLE_MERGE: edit_table_tool(0); break;
+    case M_TABLE_SPLIT: edit_table_tool(1); break;
+    case M_TABLE_ROW_HEIGHT: edit_table_tool(2); break;
+    case M_TABLE_DESIGN: edit_table_tool(3); break;
 #ifdef OPENPRESSMASTER
     case M_WRAP_NONE: set_selected_wrap(OWF_WRAP_NONE); break;
     case M_WRAP_SQUARE: set_selected_wrap(OWF_WRAP_SQUARE); break;
@@ -9328,6 +9410,24 @@ static int rexx_do_command(const char *command, char **result_out)
                 if (opr_outline_build(deck, &outline_rows) < 0) outline_rows.count = 0;
                 snprintf(result_text, sizeof result_text, "%d", outline_rows.count);
             }
+        }
+    } else if (starts_word_ci(command, "TABLE", &arg)) {    /* TABLE [AT row column] MERGE r c|SPLIT|ROWHEIGHT len|DESIGN [parts]|INFO */
+        int row, column, obj = deck ? table_tool_cell(&row, &column) : -1, r;
+        const char *rest = arg;
+        if (starts_word_ci(arg, "AT", &rest)) {             /* a cell counted from 1; without it, the caret's */
+            char *end;
+            long a = strtol(rest, &end, 10), b = end != rest ? strtol(end, &end, 10) : 0;
+            row = (int)a - 1;
+            column = (int)b - 1;
+            rest = skip_space(end);
+        }
+        if (obj < 0) {
+            ok = 0; rc_fail = RX_NOW;
+            rexx_copy(result_text, sizeof result_text, "No table is selected");
+        } else if ((r = opr_table_tool(undo, deck, current, obj, row, column, rest, result_text, sizeof result_text)) != 0) {
+            ok = 0; rc_fail = RX_NOW;
+        } else if (!starts_word_ci(rest, "INFO", NULL) && !(starts_word_ci(rest, "DESIGN", &arg) && !*arg)) {
+            table_tool_done(obj, row, column);
         }
     } else if (starts_word_ci(command, "SPELL", &arg)) {    /* SPELL [COUNT|LIST|CHECK w|SUGGEST w|ADD w|IGNORE w] */
         int r;

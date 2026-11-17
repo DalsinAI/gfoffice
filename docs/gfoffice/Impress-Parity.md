@@ -181,9 +181,9 @@ Undo and ODP persistence.
 | Insert a table, type in its cells | P1 (data), P3 (editing) | Yes in 0.6.22: native Insert Table, cell-safe rich-text editing, Tab navigation, Undo/Redo and ODP persistence |
 | Column widths | P1 | Yes |
 | Cell fill | P1 | Yes |
-| Merge and split cells | Later | Approx.: shown apart |
-| Borders per cell, table designs (templates), banding | Later | Partial in 0.6.22: fill and four-edge border colour apply to a cell, row or table; named designs and banding remain |
-| Insert and delete rows and columns, row heights | P3 | Partial in 0.6.21: insert/delete rows and columns are undoable and persist; explicit row heights remain |
+| Merge and split cells | Later | Yes in 0.6.36: read, saved and drawn (tables parts 2 to 4); Slide > Table Cells > Merge... and Split, and ARexx TABLE MERGE and SPLIT, each one Undo step |
+| Borders per cell, table designs (templates), banding | Later | Partial in 0.6.22: fill and four-edge border colour apply to a cell, row or table; Table Design... (0.6.36) turns the design's parts on and off (header and total rows, first and last columns, banded rows and columns); picking a named design remains |
+| Insert and delete rows and columns, row heights | P3 | Partial in 0.6.21: insert/delete rows and columns are undoable and persist; Slide > Table Cells > Row Height... (0.6.36) sets a row's least height (cm, mm, in, pt or auto) |
 
 ## 8. Charts, objects, media
 

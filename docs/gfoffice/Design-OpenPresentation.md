@@ -771,6 +771,7 @@ commands read with `ReadArgs` templates, results in `RESULT`, return codes 0,
 | INSERTPICTURE | FILE/A,SLIDE/K/N | A picture, fitted to the body placeholder |
 | SHOW | FROM/K/N,LOOP/S | Starts the show |
 | NEXT, PREVIOUS, ENDSHOW | | Drives a running show |
+| TABLE | [AT row column] MERGE rows columns, SPLIT, ROWHEIGHT length, DESIGN [parts], INFO | The selected table's tools (0.6.36), on the caret's cell or the one AT names (from 1): merge from the cell, split its merge, the row's least height (1.5cm, 15mm, 0.5in, 36pt, auto), the design's parts (header total firstcolumn lastcolumn bandedrows bandedcolumns, none; alone it answers the parts on), and INFO answers "rows columns row column merge-rows merge-columns height design". Each change is one Undo step; a refusal is RC 5 with the reason in RESULT |
 | QUIT | FORCE/S | |
 
 Enough for a script to turn a drawer of photos into a captioned deck, or to
