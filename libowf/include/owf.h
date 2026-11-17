@@ -25,9 +25,10 @@ extern "C" {
 
 #define OWF_VERSION "1.19.0"
 
-/* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
+/* Any of GFOffice's libraries is a library (owf_open.h, owf_proto.h; owfdiag.library's calls come through
+ * opendiag_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
-    defined(OWF_USE_PRESENT_LIBRARY)
+    defined(OWF_USE_PRESENT_LIBRARY) || defined(OWF_USE_DIAG_LIBRARY)
 #ifndef OWF_USE_LIBRARY
 #define OWF_USE_LIBRARY
 #endif
