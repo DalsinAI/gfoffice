@@ -50,7 +50,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenProject 0.1.26 (17.11.2026)"
+#define VERSION_TEXT "GFOpenProject 0.1.27 (17.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenProject, the project planner of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -870,9 +870,18 @@ static void save(int as)
 
 static void export_as(const char *format, const char *pattern)
 {
-    char path[512], more[24];
+    char path[512], more[40];
+    const char *view = "";
+    if (strcmp(format, "PDF") == 0) {                    /* the PDF is of the view on the screen */
+        if (usage_mode == OPJ_VIEW_GRAPH) {
+            tell("The Resource Graph has no PDF yet: choose another view first");
+            return;
+        }
+        view = usage_mode == OPJ_VIEW_TASK_USAGE ? " VIEW TASKUSAGE" : usage_mode ? " VIEW USAGE"
+               : network_mode ? " VIEW NETWORK" : " VIEW GANTT";
+    }
     if (!ask_file("Export the plan as", TRUE, pattern, path, sizeof path)) return;
-    snprintf(more, sizeof more, "FORMAT %.10s", format);
+    snprintf(more, sizeof more, "FORMAT %.10s%s", format, view);
     if (run_file("EXPORT", path, more) != OPJ_RX_OK) tell(rx.lasterror);
     else set_status("Exported");
     redraw();

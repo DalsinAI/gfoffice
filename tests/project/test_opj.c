@@ -2314,6 +2314,151 @@ static void test_pdf(void)
     opj_doc_free(doc);
 }
 
+/* The other views as PDFs (opj_viewprint.c, opj_pdf_write_view): Resource Usage and Task Usage down by rows and
+ * across by whole periods, the Network Diagram by whole lines and columns of boxes; each page with its footer. */
+static void test_pdf_views(void)
+{
+    opj_doc *doc = three(), *bare;
+    opj_view proto, v, paper;
+    opj_viewprint vp;
+    opj_network net;
+    unsigned char *data = NULL;
+    size_t n = 0;
+    char text[40], name[16];
+    int pages = -1, i, w = (OPJ_PDF_PAGE_W - 2 * OPJ_PDF_MARGIN) / OPJ_PDF_TWIPS,
+        h = (OPJ_PDF_PAGE_H - 2 * OPJ_PDF_MARGIN) / OPJ_PDF_TWIPS;
+    owf_ptime last;
+    doc->plan->title = owf_malloc(8);
+    if (doc->plan->title) strcpy(doc->plan->title, "Kitchen");
+    opj_view_init(&proto, doc, 0, 0, 16, OPJ_ZOOM_DAYS);
+    /* The views' names and the words that choose them. */
+    CHECK_S(opj_viewprint_name(OPJ_PRINT_GANTT), "Gantt Chart");
+    CHECK_S(opj_viewprint_name(OPJ_PRINT_USAGE), "Resource Usage");
+    CHECK_S(opj_viewprint_name(OPJ_PRINT_TASK_USAGE), "Task Usage");
+    CHECK_S(opj_viewprint_name(OPJ_PRINT_NETWORK), "Network Diagram");
+    CHECK(opj_viewprint_name(-1) == NULL && opj_viewprint_name(OPJ_NPRINTVIEWS) == NULL);
+    CHECK_N(opj_viewprint_kind("GANTT"), OPJ_PRINT_GANTT);
+    CHECK_N(opj_viewprint_kind("tracking"), OPJ_PRINT_GANTT);
+    CHECK_N(opj_viewprint_kind("Usage"), OPJ_PRINT_USAGE);
+    CHECK_N(opj_viewprint_kind("Resource Usage"), OPJ_PRINT_USAGE);
+    CHECK_N(opj_viewprint_kind("task_usage"), OPJ_PRINT_TASK_USAGE);
+    CHECK_N(opj_viewprint_kind("NETWORK"), OPJ_PRINT_NETWORK);
+    CHECK_N(opj_viewprint_kind("graph"), -1);
+    CHECK_N(opj_viewprint_kind(""), -1);
+    CHECK_N(opj_viewprint_kind(NULL), -1);
+    CHECK_N(opj_viewprint_kind("networkdiagramsandmore"), -1);
+    /* Resource Usage needs a resource; Task Usage and the Network Diagram only tasks. */
+    data = (unsigned char *)"x";
+    CHECK_N(opj_pdf_write_view(doc, &proto, OPJ_PRINT_USAGE, &data, &n, &pages), OWF_ERR_FORMAT);
+    CHECK(data == NULL && n == 0 && pages == 0);
+    CHECK_N(opj_pdf_write_view(doc, &proto, -1, &data, &n, &pages), OWF_ERR_FORMAT);
+    CHECK_N(opj_pdf_write_view(doc, &proto, OPJ_NPRINTVIEWS, &data, &n, &pages), OWF_ERR_FORMAT);
+    CHECK_N(opj_add_resource(doc, "Dale", NULL), OWF_OK);
+    CHECK_N(opj_add_resource(doc, "Bob", NULL), OWF_OK);
+    CHECK_N(opj_assign_resource(doc, 0, 0, NULL), OWF_OK);
+    CHECK_N(opj_assign_resource(doc, 1, 1, "50%"), OWF_OK);
+    /* Six days of plan: one page each. */
+    CHECK_N(opj_pdf_write_view(doc, &proto, OPJ_PRINT_USAGE, &data, &n, &pages), OWF_OK);
+    CHECK_N(pages, 1);
+    CHECK(data && n > 5 && memcmp(data, "%PDF-", 5) == 0 && has_bytes(data, n, "/Count 1"));
+    CHECK(has_bytes(data, n, "(Kitchen) Tj") && has_bytes(data, n, "(Resource Usage) Tj") &&
+          has_bytes(data, n, "(Page 1 of 1) Tj"));
+    CHECK(has_bytes(data, n, "(Dale) Tj") && has_bytes(data, n, "(Bob) Tj") && has_bytes(data, n, "(Plan) Tj"));
+    CHECK(!has_bytes(data, n, "(Ship) Tj"));                               /* nobody is assigned to it */
+    owf_free(data);
+    CHECK_N(opj_pdf_write_view(doc, &proto, OPJ_PRINT_TASK_USAGE, &data, &n, &pages), OWF_OK);
+    CHECK_N(pages, 1);
+    CHECK(has_bytes(data, n, "(Task Usage) Tj") && has_bytes(data, n, "(Page 1 of 1) Tj"));
+    CHECK(has_bytes(data, n, "(Ship) Tj") && has_bytes(data, n, "(Dale) Tj") && has_bytes(data, n, "(Bob) Tj"));
+    owf_free(data);
+    CHECK_N(opj_pdf_write_view(doc, &proto, OPJ_PRINT_NETWORK, &data, &n, &pages), OWF_OK);
+    CHECK_N(pages, 1);                                                     /* three boxes in a chain */
+    CHECK(has_bytes(data, n, "(Network Diagram) Tj") && has_bytes(data, n, "(Page 1 of 1) Tj"));
+    CHECK(has_bytes(data, n, "(Plan) Tj") && has_bytes(data, n, "(Build) Tj") && has_bytes(data, n, "(Ship) Tj"));
+    owf_free(data);
+    /* The Gantt view by this call is opj_pdf_write's. */
+    CHECK_N(opj_pdf_write_view(doc, &proto, OPJ_PRINT_GANTT, &data, &n, &pages), OWF_OK);
+    CHECK(pages == 1 && has_bytes(data, n, "(Task Name) Tj") && !has_bytes(data, n, "(Gantt Chart) Tj"));
+    owf_free(data);
+    /* A long task: the usage views go across by whole periods. Each page after the first starts where a
+     * period starts, later than the page before, and before the plan's end. */
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_DURATION, "120d"), OWF_OK);
+    paper = proto;                                       /* as opj_pdf_write_view sets the paper's view */
+    paper.font.family = NULL;
+    paper.font.px = OPJ_PDF_FONT_PX;
+    paper.font.style = 0;
+    paper.row_height = OPJ_PDF_ROW;
+    CHECK(opj_viewprint_layout(&vp, OPJ_PRINT_USAGE, &paper, doc, NULL, w, h) > 1);
+    CHECK(vp.down == 1 && vp.across > 1 && vp.rows_per_page == (h - 3 * OPJ_PDF_ROW) / OPJ_PDF_ROW);
+    last = paper.origin;
+    for (i = 0; i < vp.across * vp.down; i++) {
+        CHECK(opj_viewprint_page_view(&vp, i, &v));
+        CHECK(v.first_row == 0 && v.width == w);
+        if (i) CHECK(v.origin > last && v.origin < vp.end && opj_period_start(v.zoom, v.origin) == v.origin);
+        last = v.origin;
+    }
+    CHECK(!opj_viewprint_page_view(&vp, vp.across * vp.down, &v) && !opj_viewprint_page_view(&vp, -1, &v));
+    CHECK_N(opj_pdf_write_view(doc, &proto, OPJ_PRINT_USAGE, &data, &n, &pages), OWF_OK);
+    CHECK_N(pages, vp.across);
+    sprintf(text, "(Page %d of %d) Tj", pages, pages);
+    CHECK(has_bytes(data, n, text));
+    sprintf(text, "/Count %d", pages);
+    CHECK(has_bytes(data, n, text));
+    owf_free(data);
+    CHECK_N(opj_set_cell(doc, 1, OPJ_COL_DURATION, "3d"), OWF_OK);
+    /* Sixty more tasks, none linked: Task Usage goes down by rows_per_page rows, and the Network Diagram's one
+     * column down by whole lines of boxes. */
+    for (i = 0; i < 60; i++) {
+        sprintf(name, "Job %d", i + 1);
+        CHECK_N(opj_insert_task(doc, doc->plan->ntasks, name), OWF_OK);
+    }
+    CHECK(opj_viewprint_layout(&vp, OPJ_PRINT_TASK_USAGE, &paper, doc, NULL, w, h) > 1);
+    CHECK_N(vp.down, (opj_task_usage_rows(doc) + vp.rows_per_page - 1) / vp.rows_per_page);
+    CHECK(vp.down == 2 && vp.across == 1);                                 /* 65 rows, 49 a page */
+    CHECK(opj_viewprint_page_view(&vp, 1, &v) && v.first_row == vp.rows_per_page);
+    CHECK_N(opj_pdf_write_view(doc, &proto, OPJ_PRINT_TASK_USAGE, &data, &n, &pages), OWF_OK);
+    CHECK_N(pages, 2);
+    CHECK(has_bytes(data, n, "(Page 2 of 2) Tj") && has_bytes(data, n, "(Job 60) Tj"));
+    owf_free(data);
+    CHECK_N(opj_network_layout(doc, &net), OWF_OK);
+    {
+        /* Boxes 160 wide with 40 between: 6 columns a page; 4 rows and 4 high with 16 between: 9 lines. */
+        int cols = (w - 2 * OPJ_NET_MARGIN + OPJ_NET_GAP_X) / (OPJ_NET_BOX_W + OPJ_NET_GAP_X);
+        int lines = (h - OPJ_PDF_ROW - 2 * OPJ_NET_MARGIN + OPJ_NET_GAP_Y) / (4 * OPJ_PDF_ROW + 4 + OPJ_NET_GAP_Y);
+        oldraw_rect b;
+        CHECK(cols == 6 && lines == 9);
+        CHECK_N(opj_viewprint_layout(&vp, OPJ_PRINT_NETWORK, &paper, doc, &net, w, h),
+                ((net.columns + cols - 1) / cols) * ((net.lines + lines - 1) / lines));
+        CHECK(vp.down > 1 && vp.rows_per_page == lines);
+        /* The second page down starts with a whole box at the margin. */
+        CHECK(opj_viewprint_page_view(&vp, 1, &v) && v.scroll_x == 0 && v.scroll_y == lines * (4 * OPJ_PDF_ROW + 4 + OPJ_NET_GAP_Y));
+        for (i = 0; i < net.ntasks; i++)
+            if (net.column[i] == 0 && net.line[i] == lines) break;
+        CHECK(i < net.ntasks && opj_network_box(&v, &net, i, &b) && b.x == OPJ_NET_MARGIN && b.y == OPJ_NET_MARGIN);
+        CHECK_N(opj_viewprint_layout(&vp, OPJ_PRINT_NETWORK, &paper, doc, NULL, w, h), 0);   /* not laid out */
+        CHECK_N(opj_viewprint_layout(&vp, OPJ_PRINT_NETWORK, &paper, doc, &net, 100, h), 0); /* no room for a box */
+        CHECK_N(opj_viewprint_layout(&vp, OPJ_PRINT_NETWORK, &paper, doc, &net, w, 60), 0);
+    }
+    opj_network_free(&net);
+    CHECK_N(opj_pdf_write_view(doc, &proto, OPJ_PRINT_NETWORK, &data, &n, &pages), OWF_OK);
+    CHECK(pages > 1);
+    sprintf(text, "(Page %d of %d) Tj", pages, pages);
+    CHECK(has_bytes(data, n, text) && has_bytes(data, n, "(Job 60) Tj"));
+    owf_free(data);
+    /* Refused layouts: the Gantt view (opj_print_layout's), a page too small for a row or a day. */
+    CHECK_N(opj_viewprint_layout(&vp, OPJ_PRINT_GANTT, &paper, doc, NULL, w, h), 0);
+    CHECK_N(opj_viewprint_layout(&vp, OPJ_PRINT_USAGE, &paper, doc, NULL, w, 3 * OPJ_PDF_ROW), 0);
+    CHECK_N(opj_viewprint_layout(&vp, OPJ_PRINT_TASK_USAGE, &paper, doc, NULL, 40, h), 0);
+    CHECK_N(opj_viewprint_layout(NULL, OPJ_PRINT_USAGE, &paper, doc, NULL, w, h), 0);
+    CHECK_N(opj_viewprint_layout(&vp, OPJ_PRINT_USAGE, NULL, doc, NULL, w, h), 0);
+    /* A plan with no tasks has nothing to print in any view. */
+    bare = opj_doc_new(NULL, AT(16, 8, 0));
+    CHECK(bare != NULL);
+    for (i = 0; i < OPJ_NPRINTVIEWS; i++) CHECK_N(opj_pdf_write_view(bare, &proto, i, &data, &n, &pages), OWF_ERR_FORMAT);
+    opj_doc_free(bare);
+    opj_doc_free(doc);
+}
+
 /* The Network Diagram: Plan, then Build and Docs (both after Plan), then Ship (after Build). */
 static void test_network(void)
 {
@@ -2800,6 +2945,7 @@ int main(void)
     test_assign_dialog();
     test_print();
     test_pdf();
+    test_pdf_views();
     test_usage();
     test_usage_edits();
     test_task_usage();

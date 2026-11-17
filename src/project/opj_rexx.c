@@ -37,7 +37,7 @@ static const command commands[NCOMMANDS] = {
     { "OPEN", "FILE/A,FORCE/S" },
     { "SAVE", "" },
     { "SAVEAS", "FILE/A" },
-    { "EXPORT", "FILE/A,FORMAT/K" },
+    { "EXPORT", "FILE/A,FORMAT/K,VIEW/K" },
     { "TASKS", "" },
     { "ADDTASK", "NAME/A,AT/K/N,DURATION/K" },
     { "DELETETASK", "ROW/A/N,COUNT/N" },
@@ -339,7 +339,15 @@ static int read_file(const char *name, unsigned char **data, size_t *length)
     return 1;
 }
 
-static int write_file(opj_rexx *rx, const char *name, int format)
+/* Why a view cannot be printed, when opj_pdf_write_view says OWF_ERR_FORMAT. */
+static const char *no_print(const opj_doc *doc, int kind)
+{
+    if (!doc->plan->ntasks) return "The plan has no tasks to print";
+    if (kind == OPJ_PRINT_USAGE && !doc->plan->nresources) return "The plan has no resources to print";
+    return "The page is too small for the plan";
+}
+
+static int write_file(opj_rexx *rx, const char *name, int format, int kind)
 {
     unsigned char *data;
     size_t length;
@@ -349,10 +357,9 @@ static int write_file(opj_rexx *rx, const char *name, int format)
         opj_view v;
         if (rx->view) v = *rx->view;
         else opj_view_init(&v, rx->doc, 0, 0, 16, OPJ_ZOOM_DAYS);
-        rc = opj_pdf_write(rx->doc, &v, &data, &length, NULL);
+        rc = opj_pdf_write_view(rx->doc, &v, kind, &data, &length, NULL);
         if (rc == OWF_ERR_FORMAT) {
-            snprintf(rx->lasterror, sizeof rx->lasterror, "%s", rx->doc->plan->ntasks ? "The page is too small for the plan"
-                                                                                    : "The plan has no tasks to print");
+            snprintf(rx->lasterror, sizeof rx->lasterror, "%s", no_print(rx->doc, kind));
             return OPJ_RX_NOW;
         }
     } else {
@@ -648,17 +655,17 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
             snprintf(rx->lasterror, sizeof rx->lasterror, "SAVE: the plan has no file yet (SAVEAS names one)");
             return OPJ_RX_NOW;
         }
-        if ((rc = write_file(rx, rx->file, opj_rexx_format(rx->file))) == OPJ_RX_OK) opj_doc_saved(doc);
+        if ((rc = write_file(rx, rx->file, opj_rexx_format(rx->file), 0)) == OPJ_RX_OK) opj_doc_saved(doc);
         return rc;
     case C_SAVEAS:
         if (!name_fits(rx, "SAVEAS", a->value[0])) return OPJ_RX_ERROR;
-        if ((rc = write_file(rx, a->value[0], opj_rexx_format(a->value[0]))) == OPJ_RX_OK) {
+        if ((rc = write_file(rx, a->value[0], opj_rexx_format(a->value[0]), 0)) == OPJ_RX_OK) {
             set_file(rx, a->value[0]);
             opj_doc_saved(doc);
         }
         return rc;
     case C_EXPORT: {
-        int format = opj_rexx_format(a->value[0]);
+        int format = opj_rexx_format(a->value[0]), kind = OPJ_PRINT_GANTT;
         const char *dot = strrchr(a->value[0], '.');
         if (dot) {
             char ext[8];
@@ -677,7 +684,18 @@ static int run(opj_rexx *rx, int c, args *a, char *result, size_t size)
                 return OPJ_RX_ERROR;
             }
         }
-        return write_file(rx, a->value[0], format);
+        if (a->value[2]) {
+            if (format != OPJ_EXPORT_PDF) {
+                snprintf(rx->lasterror, sizeof rx->lasterror, "EXPORT: VIEW goes with a PDF only");
+                return OPJ_RX_ERROR;
+            }
+            if ((kind = opj_viewprint_kind(a->value[2])) < 0) {
+                snprintf(rx->lasterror, sizeof rx->lasterror, "EXPORT: VIEW is GANTT, USAGE, TASKUSAGE or NETWORK, not %s",
+                         a->value[2]);
+                return OPJ_RX_ERROR;
+            }
+        }
+        return write_file(rx, a->value[0], format, kind);
     }
     case C_TASKS: snprintf(result, size, "%d", p->ntasks); return OPJ_RX_OK;
     case C_ADDTASK: {

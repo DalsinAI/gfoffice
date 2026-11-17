@@ -652,6 +652,42 @@ void opj_print_draw(oldraw *d, const opj_print *pr, const opj_doc *doc, int page
  * OWF_ERR_FORMAT when the plan has no tasks or a page is too small for it. */
 int opj_pdf_write(const opj_doc *doc, const opj_view *proto, unsigned char **data, size_t *length, int *pages);
 
+/* ---- The other views on pages (opj_viewprint.c), and as PDFs (step 3, part 3) ----
+ * Resource Usage and Task Usage go down by rows and across by whole periods of the timescale's lower tier (a
+ * period the page's edge would cut starts the next page instead), their table on every page, to the plan's
+ * finish. The Network Diagram goes down by whole lines of boxes and across by whole columns, so no box is
+ * cut; a link to a box on another page runs to the page's edge. Every page has a footer row: the plan's
+ * title, the view's name and "Page n of m". The Gantt view's pages are opj_print's. */
+enum { OPJ_PRINT_GANTT, OPJ_PRINT_USAGE, OPJ_PRINT_TASK_USAGE, OPJ_PRINT_NETWORK, OPJ_NPRINTVIEWS };
+/* "Gantt Chart", "Resource Usage", "Task Usage", "Network Diagram"; NULL out of range. */
+const char *opj_viewprint_name(int kind);
+/* The view a word names, as ARexx VIEW's words (GANTT, TRACKING, USAGE or RESOURCEUSAGE, TASKUSAGE, NETWORK;
+ * case, spaces, - and _ aside); -1 for any other. */
+int opj_viewprint_kind(const char *word);
+typedef struct {
+    int kind;                            /* OPJ_PRINT_USAGE, OPJ_PRINT_TASK_USAGE or OPJ_PRINT_NETWORK */
+    opj_view proto;                      /* row height, zoom, origin and font to print with */
+    int page_width, page_height;         /* the printable area, in the printer's pixels */
+    int rows_per_page, down, across;     /* rows_per_page: a usage view's rows, the diagram's lines of boxes */
+    int step_x, step_y;                  /* the diagram: pixels from one page to the next, across and down */
+    owf_ptime end;                       /* a usage view: the plan's finish */
+} opj_viewprint;
+/* Lays a view out on pages of page_width by page_height (net: the diagram laid out, for OPJ_PRINT_NETWORK;
+ * else NULL). The number of pages; 0 for OPJ_PRINT_GANTT (opj_print_layout's), a page too small for a row and
+ * a day, or a box, and a diagram with no box. */
+int opj_viewprint_layout(opj_viewprint *vp, int kind, const opj_view *proto, const opj_doc *doc, const opj_network *net,
+                         int page_width, int page_height);
+/* The view a page (from 0, down then across) shows. 0 when there is no such page. */
+int opj_viewprint_page_view(const opj_viewprint *vp, int page, opj_view *v);
+/* Draws a page onto d (sized as the page). */
+void opj_viewprint_draw(oldraw *d, const opj_viewprint *vp, const opj_doc *doc, const opj_network *net, int page);
+/* A view as a PDF, as opj_pdf_write writes the Gantt view (OPJ_PRINT_GANTT is opj_pdf_write itself): A4
+ * landscape, the paper's own font and row height. OWF_OK; OWF_ERR_MEMORY; OWF_ERR_FORMAT when there is
+ * nothing to print (no tasks; no resources for Resource Usage; only summaries for the diagram), kind is none
+ * of the four, or a page is too small. */
+int opj_pdf_write_view(const opj_doc *doc, const opj_view *proto, int kind, unsigned char **data, size_t *length,
+                       int *pages);
+
 /* ---- The sheets as documents (opj_sheetdoc.c): printed and saved through libowf's writers ----
  * OPJ_SHEET_TASKS: v's table, its shown columns in order and its lines (a group's heading a bold row), a
  * summary's row bold, "!" after an over-allocated task's ID. OPJ_SHEET_RESOURCES: the resource sheet, every
@@ -727,8 +763,8 @@ typedef struct {
 int opj_rexx_command(opj_rexx *rx, const char *command, char *result, size_t size);
 /* The file format a name's extension asks for: .xml MSPDI, .csv CSV, else .gfproj. */
 int opj_rexx_format(const char *file);
-/* EXPORT's format for the printed Gantt view as a PDF (FORMAT PDF, or a .pdf name): not a plan file, so
- * SAVE and SAVEAS never write it. */
+/* EXPORT's format for a printed view as a PDF (FORMAT PDF, or a .pdf name; VIEW names the view, the Gantt
+ * view without it): not a plan file, so SAVE and SAVEAS never write it. */
 #define OPJ_EXPORT_PDF 100
 
 #ifdef __cplusplus
