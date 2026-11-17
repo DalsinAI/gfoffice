@@ -108,7 +108,8 @@ int opr_pdf_margin(const opr_pdf_options *options);
 int opr_export_pdf(const owf_deck *deck, const opr_pdf_options *options, unsigned char **data, size_t *length,
                    owf_report *report);
 
-/* A gradient fill as plain polygons, for a screen that fills polygons but can't clip (opr_gradient.c):
+/* A gradient fill as plain polygons, for a screen that fills polygons but can't clip (opr_gradient.c: libowf's
+ * owf_fill_gradient_band, owf_fill.h, by its first name):
  * band (0..bands-1) of the gradient inside the closed outline xy (n points, at most OL_MAX_SHAPE_POINTS)
  * across the box x, y, w, h, into out (at most cap points) with its colour (0xRRGGBB). LINEAR runs from
  * one colour to the other along angle (tenths anticlockwise, 0 left to right; each band overlaps the

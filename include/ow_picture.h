@@ -1,6 +1,8 @@
 /*
  * ow_picture.h: the PNG and IFF ILBM writers for 24-bit RGB rows (src/deck/opr_picture.c, GFOpenPresentation P9),
- * shared by GFOpenPresentation's Export as Pictures and GFOpenDiag's picture EXPORT. Plain C99, no Amiga headers.
+ * used by GFOpenPresentation's Export as Pictures and GFOpenDiag's picture EXPORT. These are libowf's
+ * owf_picture_png and owf_picture_ilbm (owf_picture.h) by their first names, kept for their callers; new code
+ * calls those. Plain C99, no Amiga headers.
  * rgb: height rows of width pixels, 3 bytes each (R, G, B), stride bytes apart. Each returns the file in memory
  * (malloc'd: free it) and its length, or NULL (memory, or width/height outside 1..16384, or stride too short).
  * PNG is deflated with zlib when built with OWF_HAVE_ZLIB, else written with stored blocks; ILBM is 24 planes
