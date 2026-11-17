@@ -5,6 +5,7 @@
 #include <ctype.h>
 #include "openwrite_core.h"
 #include "owf_notenum_impl.h"
+#include "owf_ifform.h"
 #include "ow_merge.h"
 
 #define OW_UNDO_LIMIT 16
@@ -45,6 +46,7 @@ struct ow_editor {
      * the same author in the same minute. */
     int track;
     int final_view;          /* 2.0.37: deletions hidden (ow_editor_set_final_view): the caret steps over them */
+    int show_hidden;         /* 2.0.46: hidden text shown (ow_editor_set_show_hidden); not: the caret steps over it */
     int *gone, ngone, capgone;   /* 2.0.38: frames an accept or reject takes away, dropped when it is done */
     char *author;
     int typing_rev;
@@ -530,6 +532,8 @@ static void sync_typing_fmt(ow_editor *editor)
         editor->typing_fmt = editor->doc->base;
         editor->typing_fmt_set = 1;
     }
+    if (!editor->show_hidden)
+        editor->typing_fmt.flags &= ~(unsigned)OWF_HIDDEN;   /* 2.0.46: typing beside hidden text the reader sees */
 }
 
 static size_t para_text_offset(const owf_para *p, ow_position pos)
@@ -1369,11 +1373,31 @@ static int hidden_para(ow_editor *editor, int i)
 static int hidden_run(ow_editor *editor, ow_position pos)
 {
     const owf_para *p = &ed_story(editor)->paras[pos.paragraph];
+    const owf_run *run;
     const owf_revision *r;
-    if (!editor->final_view || pos.run < 0 || pos.run >= p->nruns) return 0;
+    if (pos.run < 0 || pos.run >= p->nruns) return 0;
+    run = &p->runs[pos.run];
+    if (!editor->show_hidden && (run->fmt.flags & OWF_HIDDEN) && !run->comment && run->note <= 0)
+        return 1;                                    /* 2.0.46: hidden text, not shown (as the layout leaves it out) */
+    if (!editor->final_view) return 0;
     if (hidden_para(editor, pos.paragraph)) return 1;
-    r = OWF_DOC_REVISION(editor->doc, p->runs[pos.run].revision);
+    r = OWF_DOC_REVISION(editor->doc, run->revision);
     return r && r->kind == OWF_REV_DELETE;
+}
+
+/* 2.0.46: whether caret moves and Backspace and Delete step over text the reader doesn't see: in the final
+ * view, or when the caret's story has hidden text that isn't shown */
+static int hiding(ow_editor *editor)
+{
+    const owf_story *story;
+    int i, j;
+    if (editor->final_view) return 1;
+    if (editor->show_hidden) return 0;
+    story = ed_story(editor);
+    for (i = 0; i < story->nparas; ++i)
+        for (j = 0; j < story->paras[i].nruns; ++j)
+            if (story->paras[i].runs[j].fmt.flags & OWF_HIDDEN) return 1;
+    return 0;
 }
 
 /* One step left (dir < 0) or right that passes a character the reader sees, or a paragraph's end: steps over
@@ -1416,7 +1440,7 @@ static int visible_unit(ow_editor *editor, ow_position caret, int dir, ow_positi
         if (np.paragraph != pos.paragraph &&
             (hidden_para(editor, np.paragraph) || hidden_para(editor, pos.paragraph)))
             return 0;                                /* 2.0.38: never into or across a hidden row */
-        if (np.paragraph != pos.paragraph && editor->track) {
+        if (np.paragraph != pos.paragraph && editor->track && editor->final_view) {
             int ended = np.paragraph < pos.paragraph ? np.paragraph : pos.paragraph;
             end_gone = rev_kind(editor->doc, ed_story(editor)->paras[ended].mark_revision) == OWF_REV_DELETE;
         }
@@ -2245,6 +2269,20 @@ void ow_editor_set_final_view(ow_editor *editor, int on)
 int ow_editor_final_view(const ow_editor *editor)
 {
     return editor ? editor->final_view : 0;
+}
+
+void ow_editor_set_show_hidden(ow_editor *editor, int on)
+{
+    if (!editor) return;
+    editor->show_hidden = on ? 1 : 0;
+    editor->selection.anchor = out_of_hidden(editor, editor->selection.anchor, -1);
+    editor->selection.focus = out_of_hidden(editor, editor->selection.focus, 1);
+    sync_typing_fmt(editor);
+}
+
+int ow_editor_show_hidden(const ow_editor *editor)
+{
+    return editor ? editor->show_hidden : 0;
 }
 
 void ow_editor_set_track_changes(ow_editor *editor, int on)
@@ -4191,8 +4229,8 @@ int ow_editor_backspace(ow_editor *editor)
 
     if (!ow_editor_selection_empty(editor)) {
         rc = editor->track ? tracked_delete_selection(editor) : delete_selection_internal(editor);
-    } else if (editor->final_view) {
-        rc = final_view_delete(editor, -1);          /* 2.0.37 */
+    } else if (hiding(editor)) {
+        rc = final_view_delete(editor, -1);          /* 2.0.37 (2.0.46: or hidden text) */
     } else if (editor->track) {
         /* 2.1.0: recording, the character before the caret is marked deleted; the caret goes before it */
         ow_position end = clamp_position(editor, editor->selection.focus);
@@ -4230,8 +4268,8 @@ int ow_editor_delete_forward(ow_editor *editor)
 
     if (!ow_editor_selection_empty(editor)) {
         rc = editor->track ? tracked_delete_selection(editor) : delete_selection_internal(editor);
-    } else if (editor->final_view) {
-        rc = final_view_delete(editor, 1);           /* 2.0.37 */
+    } else if (hiding(editor)) {
+        rc = final_view_delete(editor, 1);           /* 2.0.37 (2.0.46: or hidden text) */
     } else if (editor->track) {
         /* 2.1.0: recording, the character after the caret is marked deleted; the caret goes past it */
         ow_position end;
@@ -4303,8 +4341,8 @@ int ow_editor_move_caret(ow_editor *editor, ow_move move, int extend_selection)
     } else {
         pos = editor->selection.focus;
         switch (move) {
-        case OW_MOVE_LEFT:  pos = editor->final_view ? visible_step(editor, pos, -1) : move_left_pos(editor, pos); break;
-        case OW_MOVE_RIGHT: pos = editor->final_view ? visible_step(editor, pos, 1) : move_right_pos(editor, pos); break;
+        case OW_MOVE_LEFT:  pos = hiding(editor) ? visible_step(editor, pos, -1) : move_left_pos(editor, pos); break;
+        case OW_MOVE_RIGHT: pos = hiding(editor) ? visible_step(editor, pos, 1) : move_right_pos(editor, pos); break;
         case OW_MOVE_UP:    pos = vertical_pos(editor, pos, -1); break;
         case OW_MOVE_DOWN:  pos = vertical_pos(editor, pos, 1); break;
         case OW_MOVE_HOME:  pos = paragraph_home(editor, pos); break;
@@ -5714,7 +5752,7 @@ int ow_editor_insert_link(ow_editor *editor, const char *text, const char *url)
 static int field_wants_arg(owf_field f)
 {
     return f == OWF_FIELD_USER || f == OWF_FIELD_REF || f == OWF_FIELD_REF_PAGE || f == OWF_FIELD_MERGE ||
-           f == OWF_FIELD_INDEX || f == OWF_FIELD_SEQ || f == OWF_FIELD_FILLIN;
+           f == OWF_FIELD_INDEX || f == OWF_FIELD_SEQ || f == OWF_FIELD_IF || f == OWF_FIELD_FILLIN;
 }
 
 static void merge_field_value(const ow_editor *editor, const char *column, char *out, size_t size);   /* 2.5.0 */
@@ -5879,6 +5917,33 @@ static const char *leaf_name(const char *path)
     return a ? a + 1 : path;
 }
 
+/* libowf 1.16: an IF operand's value: text as it is, or a field in it worked out (a document variable, a
+ * merge field's column, the document's title, author or subject; any other field's code shows nothing) */
+static void if_operand(ow_editor *editor, const char *v, int field, char *out, size_t size)
+{
+    const owf_doc *doc = editor->doc;
+    char word[16], name[128];
+    const char *p = v;
+    size_t n = 0;
+    int i;
+    out[0] = 0;
+    if (!field) { snprintf(out, size, "%s", v); return; }
+    while (*p && *p != ' ' && n + 1 < sizeof word) word[n++] = (char)toupper((unsigned char)*p++);
+    word[n] = 0;
+    while (*p == ' ') ++p;
+    n = 0;
+    if (*p == '"') for (++p; *p && *p != '"' && n + 1 < sizeof name; ) name[n++] = *p++;
+    else while (*p && *p != ' ' && n + 1 < sizeof name) name[n++] = *p++;
+    name[n] = 0;
+    if (!strcmp(word, "DOCVARIABLE")) {
+        for (i = 0; i < doc->nuserfields; ++i)
+            if (!strcmp(doc->userfields[i].name, name)) { snprintf(out, size, "%s", doc->userfields[i].value); break; }
+    } else if (!strcmp(word, "MERGEFIELD")) merge_field_value(editor, name, out, size);
+    else if (!strcmp(word, "TITLE")) snprintf(out, size, "%s", doc->title ? doc->title : "");
+    else if (!strcmp(word, "AUTHOR")) snprintf(out, size, "%s", doc->author ? doc->author : "");
+    else if (!strcmp(word, "SUBJECT")) snprintf(out, size, "%s", doc->subject ? doc->subject : "");
+}
+
 static void field_value(ow_editor *editor, const owf_story *story, int para, const owf_run *run, char *out,
                         size_t size)
 {
@@ -5929,6 +5994,15 @@ static void field_value(ow_editor *editor, const owf_story *story, int para, con
         k = seq_count(doc, story, run, run->href);
         snprintf(out, size, "%d", k);
         break;
+    case OWF_FIELD_IF: {                             /* libowf 1.16: the text for whether it holds */
+        owf_if_form f;
+        char a[256], b[256];
+        if (!owf_if_parse(run->href, &f)) break;
+        if_operand(editor, f.a, f.a_field, a, sizeof a);
+        if_operand(editor, f.b, f.b_field, b, sizeof b);
+        snprintf(out, size, "%s", owf_if_holds(a, f.op, b) ? f.yes : f.no);
+        break;
+    }
     default: break;
     }
 }
@@ -5943,7 +6017,7 @@ static int update_story_fields(ow_editor *editor, owf_story *story)
             owf_run *r = &story->paras[i].runs[j];
             char *v;
             if (r->kind != OWF_RUN_FIELD || r->field <= OWF_FIELD_TIME) continue;
-            if (r->field == OWF_FIELD_FILLIN) continue;   /* libowf 1.15: the answer given, kept */
+            if (r->field == OWF_FIELD_FILLIN) continue;   /* libowf 1.19: the answer given, kept */
             field_value(editor, story, i, r, value, sizeof value);
             if (r->text && !strcmp(r->text, value)) continue;
             if (!(v = copy_bytes(value, strlen(value)))) return -1;
@@ -5970,7 +6044,7 @@ static int update_fields(ow_editor *editor)
     return changed;
 }
 
-/* libowf 1.15: the index-th input field (FILLIN), in update_fields' order of stories; NULL: none */
+/* libowf 1.19: the index-th input field (FILLIN), in update_fields' order of stories; NULL: none */
 static owf_run *fill_in_run(ow_editor *editor, int index)
 {
     owf_doc *doc = editor->doc;
@@ -6269,6 +6343,10 @@ int ow_editor_insert_field_arg(ow_editor *editor, owf_field field, const char *a
     if (!editor || field < OWF_FIELD_PAGE || field > OWF_FIELD_LAST) return OWF_ERR_FORMAT;
     if (field_wants_arg(field) != (arg && *arg)) return OWF_ERR_FORMAT;   /* 2.3.0: a name, for those that take one */
     if (field == OWF_FIELD_SEQ && !seq_name_ok(arg)) return OWF_ERR_FORMAT;   /* libowf 1.12.6: Word's rule */
+    if (field == OWF_FIELD_IF) {                     /* libowf 1.16: a form that reads (owf_ifform.h) */
+        owf_if_form f;
+        if (!owf_if_parse(arg, &f)) return OWF_ERR_FORMAT;
+    }
     editor->typing_group = 0;
     if (!remember_before_edit(editor)) return OWF_ERR_MEMORY;
     if (!ow_editor_selection_empty(editor) && delete_selection_internal(editor) < 0) {

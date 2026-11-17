@@ -1,13 +1,13 @@
-/* tests/arexx/publisher-template.rexx: GFOpenPublisher's New from Template through its ARexx port (ARexx-RULE.md
+/* tests/arexx/pressmaster-template.rexx: GFOpenPressmaster's New from Template through its ARexx port (ARexx-RULE.md
    return codes 0/5/10/20, no requester holds up a command): the template list, a new publication from a
    template, unsaved changes kept, and the Catalog Page template through Catalog Merge.
-   rx tests/arexx/publisher-template.rexx csv   (GFOpenPublisher running; csv: a data source with a Name column
+   rx tests/arexx/pressmaster-template.rexx csv   (GFOpenPressmaster running; csv: a data source with a Name column
    and 2 records; prints PASS/FAIL lines, then ALL PASS or n FAILED) */
 OPTIONS RESULTS
 PARSE ARG csv
-port = 'GFOPENPUBLISHER'
+port = 'GFOPENPRESSMASTER'
 IF ~SHOW('P', port) THEN DO
-    SAY 'FAIL' port 'is not there: start GFOpenPublisher first'
+    SAY 'FAIL' port 'is not there: start GFOpenPressmaster first'
     EXIT 20
 END
 ADDRESS VALUE port

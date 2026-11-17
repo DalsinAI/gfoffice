@@ -367,6 +367,8 @@ static void forward(sched *s)
         case OWF_CON_FNLT: { owf_ptime b = add(c, t->constraint_date, -dur); if (b < es) es = b; } break;
         default: break;
         }
+        if (t->level_delay > 0 && t->constraint != OWF_CON_MSO && t->constraint != OWF_CON_MFO && !s->alap_fixed[x])
+            es = t->level_delay_elapsed || !c ? es + t->level_delay : add(c, owf_pcal_next_start(c, es), t->level_delay);
         if (s->alap_fixed[x]) es = s->alap_start[x];
         if (dur > 0 && c) es = owf_pcal_next_start(c, es);
         if (t->has_actual_start) es = t->actual_start;   /* what happened wins over links and constraints */

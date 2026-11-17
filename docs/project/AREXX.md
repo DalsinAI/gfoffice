@@ -51,7 +51,20 @@ Amiga (start GFOpenProject, then `rx project.rexx RAM:`).
 | LINK | `ROW/A/N,COUNT/N` | links COUNT rows (2 when not given) one to the next, finish to start |
 | UNLINK | `ROW/A/N,COUNT/N` | |
 | UNDO, REDO | | |
-| BASELINE | `ROW/N,COUNT/N,CLEAR/S` | sets (or with CLEAR clears) the baseline; no ROW: the whole plan |
+| BASELINE | `ROW/N,COUNT/N,CLEAR/S,NUMBER/K/N` | sets (or with CLEAR clears) the baseline; no ROW: the whole plan. NUMBER=1 to 10: Baseline 1 to 10 (0, the default, is Baseline) |
+| BASELINES | | the baselines some task has saved, as `0 3 10`, or `none` |
+| REPLACE | `ROW/A/N,FROM/A,TO/A,UNITS/K` | Assign Resources' Replace: the row's assignment of FROM goes to TO, keeping its units unless UNITS gives them ("50%", "2.5", "120.00") |
+| LEVEL | `WITHINSLACK/S` | Level Resources: delays tasks until no work resource is over-allocated where a move can mend it; how many tasks were delayed. WITHINSLACK: only within each task's slack |
+| CLEARLEVELING | | every task's Leveling Delay back to 0 |
+| SORT | `BY/A,DESC/S,THEN/K,THENDESC/S,LAST/K,LASTDESC/S` | Project > Sort, renumbering the tasks and keeping the outline: by up to three columns, each ascending unless its DESC is given |
+| FIND | `TEXT/A,COLUMN/K,FROM/K/N,BACK/S,EXACT/S,BEGINS/S,RESOURCES/S` | Edit > Find: the next row (after FROM, or from the top) whose COLUMN (default Name) holds TEXT, case ignored, going round the end; EXACT: the whole cell, BEGINS: its start; BACK: upwards; RESOURCES: on the resource sheet. RC 5 when none |
+| REPLACETEXT | `COLUMN/A,FIND/A,WITH/A,ROW/K/N` | Edit > Replace All (or only ROW): FIND becomes WITH in that column's cells, case ignored, as one edit; how many cells changed. When a cell wouldn't take its new text, nothing changes |
+| UPDATETASK | `ROW/A/N,PERCENT/K,ACTUAL/K,REMAINING/K,START/K,FINISH/K` | Tools > Tracking > Update Tasks for one task, as one edit: the actual START, then the ACTUAL and REMAINING durations (`1d`: an actual duration sets % Complete against the duration; a remaining one makes the duration the actual plus it), then PERCENT, then the actual FINISH, each as typed in its cell. A summary takes only PERCENT |
+| PROGRESSLINES | `ON/S,OFF/S` | View > Progress Lines in the window: a line down the Gantt chart at the status date (Update Project's) that jags to each task under way, or due to be, at how far it has got. Gives 1 when shown. RC 5 with no window |
+| FILTER | `NAME/A,COLUMN/K,TEXT/K,EXACT/S,BEGINS/S,SUMMARIES/S` | Project > Filtered For in the window: NAME is All, Critical, Milestones, Incomplete, Completed, Summary, Unstarted, or AutoFilter (COLUMN's cell contains TEXT; EXACT equals it, BEGINS starts with it; no TEXT keeps every task). SUMMARIES also shows the summaries above the tasks kept. Gives how many tasks are shown. RC 5 with no window |
+| GROUP | `BY/K,DESC/S` | Project > Group By a column (no BY: no group). The summaries go, and the tasks sit under a heading for each value, in the column's order (DESC: the other way). Gives how many groups |
+| LINES | | how many lines the window shows: the tasks the filter keeps, and the group headings |
+| LINE | `LINE/A/N` | a line's task number, or a heading's text, `Duration: 2 days` |
 | RESOURCES | | how many resources |
 | ADDRESOURCE | `NAME/A` | the new resource's number |
 | DELETERESOURCE | `ROW/A/N,COUNT/N` | |
@@ -61,12 +74,17 @@ Amiga (start GFOpenProject, then `rx project.rexx RAM:`).
 | USAGE | `RESOURCE/A,FROM/A,TO/A` | the resource's work between two dates, `12h` |
 | FINISH | | the plan's finish, `Fri 20/11/26 17:00` |
 | CRITICAL | | the critical rows (not summaries), `1 2 3` |
-| COLUMN | `COLUMN/A,SHOW/S,HIDE/S` | `1` when the window's table shows the column, after SHOW or HIDE; 5 when it would hide the last column shown, or there is no window; 10 for no such column. The column by its title (`"Resource Names"`) or a short name (`Resources`, `Percent`, `StartVariance`, `Constraint`) |
+| COLUMN | `COLUMN/A,SHOW/S,HIDE/S` | `1` when the window's table shows the column, after SHOW or HIDE; 5 when it would hide the last column shown, or there is no window; 10 for no such column. The column by its title (`"Resource Names"`) or a short name (`Resources`, `Percent`, `StartVariance`, `Constraint`, `ActualStart`, `ActualFinish`, `ActualDuration`, `Remaining`) |
+| CALENDARS | | how many base calendars |
+| ADDCALENDAR | `NAME/A,FROM/K` | a new calendar's number; a copy of calendar FROM (its week and holidays), or Standard's hours. 10 for a name in use, empty, or a number |
+| WORKTIME | `CALENDAR/A,DAY/A,TO/K,HOURS/F` | Change Working Time. DAY is a weekday (`Mon`, `Friday`: every week) or a date (that day, or through TO). HOURS is `08:00-12:00, 13:00-17:00`, `off`, or for dates `DEFAULT` (back to the week's hours). Without HOURS: the day's hours, `08:00-12:00, 13:00-17:00` or `off`. CALENDAR by name or number |
+| SETCALENDAR | `CALENDAR/A,ROW/K/N` | the plan's calendar, or with ROW that task's own (CALENDAR `""` or `-`: the plan's again) |
+| UPDATE | `STATUS/A,WHOLE/S` | Update Project: work complete through STATUS (a date; 17:00 when no time is given), how many tasks changed. WHOLE: 0% or 100% only |
 
 Columns are named by their titles, with case, spaces and punctuation ignored. For example `Name`,
 `"Task Name"`, `Duration`, `Start`, `Finish`, `Predecessors`, `"% Complete"` or `percent`, `WBS`,
-`"Resource Names"` or `resources`, `"Baseline Start"`, `"Baseline Finish"`, `"Start Var."` and
-`"Finish Var."`.
+`"Resource Names"` or `resources`, `"Baseline Start"`, `"Baseline Finish"`, `"Start Var."`,
+`"Finish Var."`, and the worked-out `Work`, `"Actual Work"`, `"Remaining Work"`, `Cost` and `"Actual Cost"`.
 
 On the resource sheet: `Name`, `Type`, `Initials`, `Group`, `"Max. Units"` or `max`,
 `"Std. Rate"` or `rate`, `Work` and `Cost`.

@@ -1,6 +1,6 @@
 # Microsoft Publisher's .pub format: the clean-room notes
 
-GFOpenPublisher's record of what we know about .pub and where each fact came
+GFOpenPressmaster's record of what we know about .pub and where each fact came
 from. Microsoft never published a specification of .pub. Everything below
 was worked out from sample files only: their bytes, their structure, and
 what Publisher itself shows for them (the thumbnail Publisher saves in each
@@ -225,6 +225,27 @@ page height [V 24]. In halloween-flyer it holds one shape, which the
 thumbnail doesn't show. This is the scratch area, the space around the page
 [H].
 
+Masters needn't have 0x10 = 3 [V tdf100639 (2010); tdf67299, tdf69080 x2
+(2002/2003)]: their 0x10 is 1 (or 0), and only the pages naming them in
+0x0D show they are masters. In tdf100639 the page list starts with two
+pages named "A" (0x0E) whose 0x10 is 1 and 0, and the 13 pages' 0x0D name
+them in turn, the first page the 0x10 = 1 one. Those masters carry the
+0x03 field the pages lack, and no 0x0D. The reader takes a page as a master
+when its 0x10 is 3 or another page of the list names it in 0x0D.
+
+Such a pair is one two-page master: 0x10 = 1 is its right page and 0 its
+left, and both have the same name (0x0F) [V 3: tdf69080's pair is named
+"Default Master" with the letters (0x0E) "R" on the 0x10 = 1 page and "L"
+on the 0 one; in tdf69080, tdf67299 and tdf100639 page 1, the first right
+page, takes the 0x10 = 1 one, and the pages after it take the two in
+turn]. tdf100639 and tdf67299 give both halves the letter "A". The reader
+pairs a left and a right master of one name (a half without its pair is a
+one-page master) and then shows the pages as facing; the writer writes a
+pair's 0x10 as 1 and 0 and both halves with one letter. Whether a
+publication can face its pages without a two-page master is not known. Each of tdf100639's
+two masters holds a right-aligned text box near the foot whose text is " #"
+in the dump [H: a page number field, not decoded yet].
+
 The rule the reader uses [V 24, on the page counts the samples show: Sample
 2, SampleBrochure 2, SampleNewsletter 4, the others 1]: a page is the
 document's when it is not a master, its field 0x06's first u32 is not 0,
@@ -328,6 +349,9 @@ one page and chunk to the next. The fields seen:
 | 0x22D | set on SampleBrochure's en dashes | unknown |
 | 0x21E | underline: type 0x10, its low byte 1 for a single line (0: none); the high byte 8 or 4, unknown. Only 1 has been seen: the reader takes any low byte but 0 as a single line, so other kinds (double, dotted), if Publisher has them, read as single | [V 2: every hyperlink's text in Sample (2007, 2010, 2000, 98) and the Link files has 0x801, as Publisher underlines its links; govdocs1-923566's e-mail addresses and its "New Positions" headings have 0x401]; read as underline from 0.3.29 |
 | 0x244 | the colour: a block whose 0x200 is a place in the text's colour list, `PL` (6.9) | [V 3: christmas's "C", "Toy" (place 2, red 0xFF) and "Drive" (place 4, 0x6600 green) as its thumbnail shows them; Sample's hyperlinks (place 1, scheme place 5, #0066FF blue); halloween-flyer's "..." (0xC0, dark red)]; 0xFFFFFFFE seen too: not known, left as the default; read from 0.3.30 |
+| 0x200 (type 0x10) | the run's field: its low byte 5 is a page number. The run is the one character "#" (what Publisher shows for the field on a master), and 0x222 = 0xFFFFFFFF is beside it. The high byte is 0 or 0xFF, unknown. The reader makes one page number field of the run's characters; the writer writes "#" with 0x200 = 5 and 0x222 | [V 3: tdf100639's two masters' " #" (Publisher 2010, 0x0005); SampleNewsletter's and govdocs1-923566's "Page #" headers (2003, 0xFF05)]; read and written from 0.3.33 |
+| 0x200, low byte 6 | on a "#" that starts a paragraph in Sample, after its "page two" line (0x0006, 0x6D06 in its 2010 saves), beside 0x21E and 0x244 | unknown ([H]: a link's field); left as text |
+| 0x222 | 0xFFFFFFFF beside every page number's 0x200 | unknown ([H]: the number's format, -1 the section's) |
 | 0x248, 0x22E, 0x200 | on Sample's hyperlinks (0x248 a block holding 0x200 = 1; the 2000 form 0x22E = 0xE0E40005) | unknown ([H]: 0x248 a followed link's colour; 0x22E the 98/2000 colour) |
 
 A run's fields are laid over its paragraph style's (6.6): Sample's plain
@@ -598,13 +622,17 @@ our reader; whether Publisher checks them is not known). Groups: an F003
 container whose first shape has F009 (the group's rectangle, set to its own
 box about the page centre, so its frames' F00F boxes are the same numbers)
 and flags 0x201; its frames follow with flag 0x2 and their Contents chunks
-have the group's chunk as parent. Shape numbers are the file's own for the
+have the group's chunk as parent. Groups nest 16 deep at most (the reader
+reads 24 containers); frames deeper are left out with a note. Shape numbers are the file's own for the
 2002-or-later forms (202 for text boxes). WordArt: its shape number, and its
 text in 0xC0C0 (UTF-16, paragraphs apart by CR, a NUL), not in Quill. The
-default style (STSH 1, style 0) gets the first WordArt's size and typeface,
-and its colour when every run written has a colour of its own; every run
-writes its own size and typeface, so only WordArt takes the default's.
-Not written yet, named in the report: the scratch area. PL holds 255 text colours; runs past them keep the automatic colour,
+default style (STSH 1, style 0) gets the first WordArt's size, typeface and
+colour, each only when every run written has its own (runs from our reader
+always do; new text may not, and would take the default's instead).
+Not written yet, named in the report: the scratch area (the reader keeps only
+its count). GFOpenPressmaster's own pages reach the writer through
+`opp_deck_to_pub` (src/pub/opp_export.c), the inverse of `opp_pub_to_deck`:
+frames sharing a text flow share one story, boxes are kept in twips. PL holds 255 text colours; runs past them keep the automatic colour,
 with a note. tests/pub/test_pub_save.py reads every generated file back through
 our own reader; whether Publisher itself opens these files has not been
 checked yet.
@@ -629,8 +657,8 @@ checked yet.
 ## 13. PageStream
 
 PageStream (Soft-Logik, later Grasshopper) is the Amiga's desktop
-publisher: versions 1-2 (the `.pgs` era), 3, 4 and 5. GFOpenPublisher will
-import it (Design-OpenPublisher.md, section 9).
+publisher: versions 1-2 (the `.pgs` era), 3, 4 and 5. GFOpenPressmaster will
+import it (Design-OpenPressmaster.md, section 9).
 
 No PageStream document was found on GitHub, the only place this session's
 shell reaches (tests/pub/CORPUS.md). So nothing is known yet: no container,

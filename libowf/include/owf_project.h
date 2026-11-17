@@ -47,6 +47,8 @@ void owf_pcal_standard(owf_pcal *cal);
 int owf_pcal_set_week(owf_pcal *cal, int weekday, int nspans, const unsigned short *pairs);
 /* A day off (nspans 0) or a day with its own hours; replaces an exception on that day. */
 int owf_pcal_set_exception(owf_pcal *cal, long day, int nspans, const unsigned short *pairs);
+/* Takes away day's exception, so it works the week's hours again; no exception there is no change. */
+void owf_pcal_clear_exception(owf_pcal *cal, long day);
 void owf_pcal_free(owf_pcal *cal);
 /* The working hours of the day holding t. */
 const owf_pday *owf_pcal_day(const owf_pcal *cal, long day);
@@ -76,6 +78,14 @@ typedef struct {
     int lag_percent;                     /* 1: lag is a percentage */
 } owf_plink;
 
+/* A saved baseline: Baseline 0 is kept in the task's own baseline_ fields, Baselines 1 to 10 here. */
+typedef struct {
+    owf_ptime start, finish;
+    long duration, work, cost;
+} owf_pbaseline;
+
+#define OWF_NBASELINES 11                /* Baseline 0 (MS Project's "Baseline") and Baselines 1 to 10 */
+
 typedef struct {
     char *name;
     char *notes;
@@ -102,11 +112,18 @@ typedef struct {
     int baselined;
     owf_ptime baseline_start, baseline_finish;
     long baseline_duration, baseline_work, baseline_cost;
+    unsigned short more_baselined;       /* bit n set: Baseline n (1..10) is saved in more_baselines[n - 1] */
+    owf_pbaseline more_baselines[OWF_NBASELINES - 1];
     /* tracking: what really happened (owf_project_set_actual, owf_project_update); the scheduler starts a
      * task with an actual start there, whatever its links and constraint, and ends one with an actual
      * finish there */
     int has_actual_start, has_actual_finish;
     owf_ptime actual_start, actual_finish;
+    /* levelling (owf_project_level): the scheduler starts the task this much later than its links and
+     * constraint allow; working minutes on its calendar, or every minute with level_delay_elapsed (MSPDI's
+     * "edays"). Not for a task that must start or finish on a date, or an ALAP one. */
+    long level_delay;
+    int level_delay_elapsed;
 } owf_ptask;
 
 /* ---- Resources and assignments (owf_presource.c) ---- */
@@ -208,10 +225,34 @@ void owf_project_resources_update(owf_project *p);
  * as their baseline, MS Project's Set Baseline; schedule first. */
 void owf_project_set_baseline(owf_project *p, int first, int count);
 void owf_project_clear_baseline(owf_project *p, int first, int count);
+/* The same for Baseline n, 0..10 (0 is the one above); n out of range does nothing. */
+void owf_project_set_baseline_n(owf_project *p, int n, int first, int count);
+void owf_project_clear_baseline_n(owf_project *p, int n, int first, int count);
+/* Baseline n of a task into *out; 1 when it is saved, else 0 (and *out zeroed). */
+int owf_ptask_baseline(const owf_ptask *t, int n, owf_pbaseline *out);
+/* ---- Levelling (owf_presource.c) ---- */
+
+/* MS Project's Level Resources: clears every task's leveling delay, then delays tasks until no work
+ * resource has more assigned at once than its max units, where moving a task can mend it. These keep
+ * their place: summaries, milestones, tasks with an actual start, tasks that must start or finish on a
+ * date, ALAP tasks. At a clash the tasks that start earlier, then have less total slack, then come first
+ * in the plan keep theirs; the next is moved to where one of them finishes, until it fits. within_slack:
+ * a task is only moved within the total slack it had (MS Project's "Level only within available slack").
+ * Schedules p. How many tasks it delayed; -1 when the plan won't schedule (a loop) or for memory. */
+int owf_project_level(owf_project *p, int within_slack);
+/* Every task's leveling delay back to 0, and schedules p; OWF_OK or what owf_project_schedule gave. */
+int owf_project_clear_leveling(owf_project *p);
+
 /* A task's variance from its baseline, now less then; 0 with no baseline. Start and finish in working
  * minutes on the task's calendar (later is above 0), duration and work in minutes, cost in hundredths. */
 enum { OWF_VAR_START, OWF_VAR_FINISH, OWF_VAR_DURATION, OWF_VAR_WORK, OWF_VAR_COST };
 long owf_ptask_variance(const owf_project *p, int task, int which);
+/* Earned value at status, in hundredths of the currency, against Baseline 0 (a summary: its subtasks'):
+ * BCWS the baseline cost of the work planned by status (in proportion to the baseline's working time),
+ * BCWP the baseline cost times % complete, ACWP the cost times % complete (GFOpenProject keeps no
+ * separate actual cost yet), SV = BCWP - BCWS, CV = BCWP - ACWP. 0 with no baseline. */
+enum { OWF_EV_BCWS, OWF_EV_BCWP, OWF_EV_ACWP, OWF_EV_SV, OWF_EV_CV };
+long owf_ptask_earned(const owf_project *p, int task, owf_ptime status, int which);
 
 /* ---- Tracking (owf_project.c) ---- */
 

@@ -54,6 +54,7 @@
 #include <time.h>
 #include <clib/alib_protos.h>
 
+#include "owf_ifform.h"
 #include "openwrite_core.h"
 #include "owf_open.h"
 #include "ow_layout.h"
@@ -79,7 +80,7 @@ struct Library *GadToolsBase = NULL, *AslBase = NULL, *OpenFontTextBase = NULL, 
 struct Library *DataTypesBase = NULL, *CyberGfxBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenWrite 2.0.47 (16.11.2026)"
+#define VERSION_TEXT "GFOpenWrite 2.0.50 (16.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -112,11 +113,13 @@ enum {
     M_TB_BOTH, M_TB_ICONS, M_TB_TEXT,
     M_TRACK, M_CHANGE_NEXT, M_CHANGE_PREV, M_CHANGE_ACCEPT, M_CHANGE_REJECT, M_CHANGE_ACCEPT_ALL,
     M_CHANGE_REJECT_ALL, M_REVIEW_AUTHOR, M_SHOW_CHANGES,
+    M_HIDDEN, M_SHOW_HIDDEN,                         /* 2.0.46 */
     M_COMMENT, M_COMMENT_NEXT, M_COMMENT_PREV, M_COMMENT_REPLY, M_COMMENT_EDIT, M_COMMENT_DONE, M_COMMENT_DELETE,
     M_COMMENT_FILTER,                                /* 2.0.39 */
     M_FIELD_TITLE, M_FIELD_AUTHOR, M_FIELD_SUBJECT, M_FIELD_FILENAME, M_FIELD_WORDS, M_FIELD_CHAPTER, M_FIELD_USER,
     M_CROSS_REF, M_DOC_INFO, M_USER_FIELDS, M_UPDATE_FIELDS, M_FIELD_SEQ,
-    M_FIELD_FILLIN, M_FILL_IN,                       /* 2.0.47 */
+    M_FIELD_IF,                                      /* 2.0.48 */
+    M_FIELD_FILLIN, M_FILL_IN,                       /* 2.0.50 */
     M_FOOTNOTE, M_ENDNOTE, M_NOTE_NEXT, M_NOTE_PREV, M_NOTE_EDIT, M_NOTE_CONVERT, M_NOTE_DELETE, M_NOTE_NUMBERING,
     M_MERGE_SOURCE, M_MERGE_FIELD, M_MERGE_NEXT, M_MERGE_PREV, M_MERGE_NAMES, M_MERGE_DOC, M_MERGE_FILES,
     M_INDEX_ENTRY, M_INDEX,
@@ -165,6 +168,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Navigator", NULL, CHECKIT | CHECKED, 0, (APTR)M_NAV },
     { NM_ITEM, "Inspector", NULL, CHECKIT | CHECKED, 0, (APTR)M_INSPECTOR },
+    { NM_ITEM, "Hidden Text", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)M_SHOW_HIDDEN },   /* 2.0.46 */
     { NM_ITEM, "Zoom in", "+", 0, 0, (APTR)M_ZOOM_IN },
     { NM_ITEM, "Zoom out", "-", 0, 0, (APTR)M_ZOOM_OUT },
     { NM_ITEM, "Actual size (100%)", "0", 0, 0, (APTR)M_ZOOM_100 },
@@ -210,7 +214,8 @@ static struct NewMenu menus[] = {
     { NM_SUB, "Chapter", NULL, 0, 0, (APTR)M_FIELD_CHAPTER },
     { NM_SUB, "User Field...", NULL, 0, 0, (APTR)M_FIELD_USER },
     { NM_SUB, "Number Range...", NULL, 0, 0, (APTR)M_FIELD_SEQ },   /* 2.0.43: Figure 1, Table 2 */
-    { NM_SUB, "Input Field...", NULL, 0, 0, (APTR)M_FIELD_FILLIN },  /* 2.0.47: Word's FILLIN */
+    { NM_SUB, "Conditional Text...", NULL, 0, 0, (APTR)M_FIELD_IF }, /* 2.0.48: Word's IF */
+    { NM_SUB, "Input Field...", NULL, 0, 0, (APTR)M_FIELD_FILLIN },  /* 2.0.50: Word's FILLIN */
     { NM_SUB, "Fill In Fields...", NULL, 0, 0, (APTR)M_FILL_IN },
     { NM_ITEM, "Cross-reference...", NULL, 0, 0, (APTR)M_CROSS_REF },
 
@@ -218,6 +223,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Bold", "B", 0, 0, (APTR)M_BOLD },
     { NM_ITEM, "Italic", "I", 0, 0, (APTR)M_ITALIC },
     { NM_ITEM, "Underline", "U", 0, 0, (APTR)M_UNDERLINE },
+    { NM_ITEM, "Hidden", NULL, 0, 0, (APTR)M_HIDDEN },   /* 2.0.46: Word's hidden text */
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Style", NULL, 0, 0, NULL },
     { NM_SUB, "Body Text", NULL, 0, 0, (APTR)M_STYLE_BODY },
@@ -481,9 +487,11 @@ static void pages_changed(void);
 /* 2.0.37: Tools > Track Changes > Show Changes off: the final view (deletions hidden, no change colours); the
  * window's, kept across documents, not saved in them */
 static int show_changes = 1;
+/* 2.0.46: View > Hidden Text: hidden text shown (underlined); the window's, kept across documents, not saved */
+static int show_hidden = 0;
 static unsigned layout_view(void)
 {
-    return show_changes ? 0u : OW_LAYOUT_FINAL;
+    return (show_changes ? 0u : OW_LAYOUT_FINAL) | (show_hidden ? OW_LAYOUT_SHOW_HIDDEN : 0u);
 }
 static void pages_free(void);
 static void fields_update(void);
@@ -892,6 +900,7 @@ static void set_document(owf_doc *newdoc, const char *path, const char *fmt)
     doc = newdoc;
     editor = doc ? ow_editor_new(doc) : NULL;
     if (editor) ow_editor_set_final_view(editor, !show_changes);   /* 2.0.37 */
+    if (editor) ow_editor_set_show_hidden(editor, show_hidden);    /* 2.0.46 */
     if (editor) {
         review_author_init();
         ow_editor_set_review_author(editor, review_author);
@@ -4663,7 +4672,7 @@ static char *comment_utf8(const char *latin1);
 
 /* 2.0.43 (libowf 1.12.6): Insert > Fields > Number Range...: a numbered field of a name (Figure, Table), its number
  * the count of that name's fields up to it, renumbered as they move */
-/* 2.0.47 (libowf 1.15): Insert > Field > Input Field...: a field that asks its prompt and shows the answer */
+/* 2.0.50 (libowf 1.19): Insert > Field > Input Field...: a field that asks its prompt and shows the answer */
 static void do_input_field(void)
 {
     static char last[96] = "Name:";
@@ -4685,7 +4694,7 @@ static void do_input_field(void)
     free(ua);
 }
 
-/* 2.0.47: Insert > Field > Fill In Fields...: each input field's prompt asked in turn, its answer given (Cancel
+/* 2.0.50: Insert > Field > Fill In Fields...: each input field's prompt asked in turn, its answer given (Cancel
  * stops; each answer is one undo) */
 static void do_fill_in(void)
 {
@@ -4705,6 +4714,39 @@ static void do_fill_in(void)
     }
     pages_changed();
     editor_repaint(done ? "Input fields filled in." : "No input field changed.");
+}
+
+/* 2.0.48 (libowf 1.16): Insert > Field > Conditional Text...: an IF field on a user field (or a mail merge
+ * column, "MERGEFIELD name"): its value compared with a text, one text shown when it holds, another when not */
+static void do_conditional_text(void)
+{
+    static char field[64] = "", op[4] = "=", value[64] = "", yes[96] = "", no[96] = "";
+    char form[400], code[80];
+    owf_if_form f;
+    char *u;
+    if (!editor) return;
+    if (!text_requester("Conditional Text", "If user field (or MERGEFIELD column):", field, field, sizeof field) ||
+        !field[0] || !text_requester("Conditional Text", "is (= <> < > <= >=):", op, op, sizeof op) ||
+        !text_requester("Conditional Text", "this value:", value, value, sizeof value) ||
+        !text_requester("Conditional Text", "show:", yes, yes, sizeof yes) ||
+        !text_requester("Conditional Text", "otherwise show:", no, no, sizeof no))
+        return;
+    memset(&f, 0, sizeof f);
+    if (!strncasecmp(field, "MERGEFIELD ", 11)) snprintf(code, sizeof code, "MERGEFIELD %s", field + 11);
+    else snprintf(code, sizeof code, "DOCVARIABLE \"%s\"", field);
+    snprintf(f.a, sizeof f.a, "%s", code);
+    f.a_field = 1;
+    f.op[0] = op[0];                                 /* (two characters at most: <> <= >=) */
+    f.op[1] = op[0] ? op[1] : 0;
+    snprintf(f.b, sizeof f.b, "%s", value);
+    snprintf(f.yes, sizeof f.yes, "%s", yes);
+    snprintf(f.no, sizeof f.no, "%s", no);
+    owf_if_format(&f, form, sizeof form);
+    if (!(u = comment_utf8(form))) { DisplayBeep(scr); return; }
+    if (editor_result(ow_editor_insert_field_arg(editor, OWF_FIELD_IF, u),
+                      "Conditional text inserted.")) fields_update();
+    else editor_repaint("Conditional text: the operator is one of = <> < > <= >=.");
+    free(u);
 }
 
 static void do_number_range(void)
@@ -5481,6 +5523,10 @@ static void menu_action(ULONG id)
     case M_BOLD: editor_result(ow_editor_toggle_char_flags(editor, OWF_BOLD), "Bold."); break;
     case M_ITALIC: editor_result(ow_editor_toggle_char_flags(editor, OWF_ITALIC), "Italic."); break;
     case M_UNDERLINE: editor_result(ow_editor_toggle_char_flags(editor, OWF_UNDERLINE), "Underline."); break;
+    case M_HIDDEN:                               /* 2.0.46 */
+        editor_result(ow_editor_toggle_char_flags(editor, OWF_HIDDEN),
+                      show_hidden ? "Hidden text." : "Hidden text: View > Hidden Text shows it.");
+        break;
     case M_ALIGN_LEFT: set_paragraph_alignment(OWF_ALIGN_LEFT); break;
     case M_ALIGN_CENTRE: set_paragraph_alignment(OWF_ALIGN_CENTRE); break;
     case M_ALIGN_RIGHT: set_paragraph_alignment(OWF_ALIGN_RIGHT); break;
@@ -5542,7 +5588,8 @@ static void menu_action(ULONG id)
     case M_USER_FIELDS: do_user_field(0); break;
     case M_CROSS_REF: do_cross_reference(); break;
     case M_FIELD_SEQ: do_number_range(); break;
-    case M_FIELD_FILLIN: do_input_field(); break;    /* 2.0.47 */
+    case M_FIELD_IF: do_conditional_text(); break;   /* 2.0.48 */
+    case M_FIELD_FILLIN: do_input_field(); break;    /* 2.0.50 */
     case M_FILL_IN: do_fill_in(); break;
     case M_DOC_INFO: do_doc_info(); break;
     case M_UPDATE_FIELDS:
@@ -5566,6 +5613,13 @@ static void menu_action(ULONG id)
         pages_free();                            /* laid out again in the new view */
         pages_changed();
         editor_repaint(show_changes ? "Changes shown." : "Changes hidden: the document as it is with them accepted.");
+        break;
+    case M_SHOW_HIDDEN:                          /* 2.0.46 */
+        show_hidden = !show_hidden;
+        if (editor) ow_editor_set_show_hidden(editor, show_hidden);
+        pages_free();
+        pages_changed();
+        editor_repaint(show_hidden ? "Hidden text shown." : "Hidden text not shown.");
         break;
     case M_TRACK: if (editor) { ow_editor_set_track_changes(editor, !ow_editor_track_changes(editor)); sync_track_menu(); editor_repaint(ow_editor_track_changes(editor) ? "Recording changes." : "Changes no longer recorded."); } break;
     case M_CHANGE_NEXT: do_next_change(0); break;
@@ -5802,7 +5856,7 @@ static int rexx_do_command(const char *command, char **result_out)
     else if(starts_word_ci(command,"FIND",&arg)){if(!*arg){ok=0;snprintf(result,sizeof result,"Missing search text");}else{int f=ow_editor_find(editor,arg,0,0,1);ok=f>0;if(ok)bring_focus_into_view();else{request_document_redraw();rc_fail=RX_WARN;}snprintf(result,sizeof result,"%s",ok?"Found":"Not found");}}
     else if(starts_word_ci(command,"GETTEXT",&arg)){dynamic=document_plain_text();if(!dynamic){ok=0;rc_fail=RX_UNKNOWN;snprintf(result,sizeof result,"Out of memory");}}
     else if(starts_word_ci(command,"COMMAND",&arg)){
-        if(!strcasecmp(arg,"BOLD"))menu_action(M_BOLD);else if(!strcasecmp(arg,"ITALIC"))menu_action(M_ITALIC);else if(!strcasecmp(arg,"UNDERLINE"))menu_action(M_UNDERLINE);else if(!strcasecmp(arg,"PAGEBREAK"))menu_action(M_PAGE_BREAK);else if(!strcasecmp(arg,"UNDO"))menu_action(M_UNDO);else if(!strcasecmp(arg,"REDO"))menu_action(M_REDO);else{ok=0;snprintf(result,sizeof result,"Unknown COMMAND");}
+        if(!strcasecmp(arg,"BOLD"))menu_action(M_BOLD);else if(!strcasecmp(arg,"ITALIC"))menu_action(M_ITALIC);else if(!strcasecmp(arg,"UNDERLINE"))menu_action(M_UNDERLINE);else if(!strcasecmp(arg,"HIDDEN"))menu_action(M_HIDDEN);else if(!strcasecmp(arg,"SHOWHIDDEN"))menu_action(M_SHOW_HIDDEN);else if(!strcasecmp(arg,"PAGEBREAK"))menu_action(M_PAGE_BREAK);else if(!strcasecmp(arg,"UNDO"))menu_action(M_UNDO);else if(!strcasecmp(arg,"REDO"))menu_action(M_REDO);else{ok=0;snprintf(result,sizeof result,"Unknown COMMAND");}
         if(ok&&!result[0])snprintf(result,sizeof result,"OK");
     }
     /* 2.0.27: tracked changes. TRACKCHANGES [ON|OFF] answers 1 or 0; CHANGES the count; NEXTCHANGE and PREVCHANGE
@@ -5991,10 +6045,11 @@ static int rexx_do_command(const char *command, char **result_out)
         while(*rest&&*rest!=' '&&n<15){kind[n++]=(char)toupper((unsigned char)*rest++);}kind[n]=0;rest=skip_space(rest);
         for(k=0;k<13&&strcmp(kinds[k],kind);++k);
         if(k==13&&!strcmp(kind,"SEQ"))k=OWF_FIELD_SEQ;   /* 2.0.43: INSERTFIELD SEQ name, a number range */
-        if(k==13&&!strcmp(kind,"FILLIN"))k=OWF_FIELD_FILLIN;   /* 2.0.47: INSERTFIELD FILLIN prompt (FILLIN n answer gives it one) */
-        if(!editor||k==13){ok=0;snprintf(result,sizeof result,"INSERTFIELD takes PAGE PAGES DATE TIME TITLE AUTHOR SUBJECT FILENAME WORDS CHAPTER, or USER, REF, REFPAGE, SEQ or FILLIN and a name");}
+        if(k==13&&!strcmp(kind,"FILLIN"))k=OWF_FIELD_FILLIN;   /* 2.0.50: INSERTFIELD FILLIN prompt (FILLIN n answer gives it one) */
+        if(k==13&&!strcmp(kind,"IF"))k=OWF_FIELD_IF;     /* 2.0.48: INSERTFIELD IF form, Word's ({DOCVARIABLE x} = "1" "yes" "no") */
+        if(!editor||k==13){ok=0;snprintf(result,sizeof result,"INSERTFIELD takes PAGE PAGES DATE TIME TITLE AUTHOR SUBJECT FILENAME WORDS CHAPTER, or USER, REF, REFPAGE, SEQ or FILLIN and a name, or IF and its form");}
         else{if(*rest)u=comment_utf8(rest);rc=ow_editor_insert_field_arg(editor,(owf_field)k,u&&*u?u:NULL);free(u);if(rc==OWF_ERR_FORMAT){ok=0;snprintf(result,sizeof result,"%s",k==OWF_FIELD_SEQ&&*rest?"A number range's name is a letter, then letters, digits and _, 40 at most":k>=10?"That field needs a name":"That field takes no name");}else{ok=editor_result(rc,"Field inserted.");if(ok)fields_update();snprintf(result,sizeof result,"%s",ok?"OK":"Failed");}}}
-    /* 2.0.47: FILLIN: how many input fields; FILLIN n: its answer; FILLIN n answer: gives it that answer */
+    /* 2.0.50: FILLIN: how many input fields; FILLIN n: its answer; FILLIN n answer: gives it that answer */
     else if(starts_word_ci(command,"FILLIN",&arg)){const char *rest=arg,*prompt,*answer;char *end;long k;
         if(!editor){ok=0;snprintf(result,sizeof result,"No document");}
         else if(!*rest)snprintf(result,sizeof result,"%d",ow_editor_fill_in_count(editor));

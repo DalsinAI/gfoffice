@@ -21,6 +21,8 @@ docs/gfoffice/Impress-Parity.md.
 | 12 Nov 2026 | 0.6.32 | 84% | P9: Export as Pictures (PNG, IFF ILBM); Phase 2 done |
 | 16 Nov 2026 | 0.6.32 | 85% | WMF and EMF pictures drawn on the slide and in the PDF (#232, #267, #278, #279): charts' and objects' replacement pictures and clip art from PPTX and ODP show as drawn, not left out |
 | 16 Nov 2026 (2) | 0.6.33 | 88% | Spelling: Tools > Spelling..., underlining as you type and ARexx SPELL (#337, #342, #344, #352); slide charts kept as charts with their data, saved to PPTX and ODP, with an editing core and Undo (#348, #354, #355, #356, #358); the show on a screen of its own (#281) |
+| 16 Nov 2026 (3) | 0.6.34 | 89% | Gradient fills (linear and radial) read, saved, printed and shown (gap 2.8) |
+| 16 Nov 2026 (4) | 0.6.35 | 89% | Gradient slide and master backgrounds (gap 2.8) |
 
 Phase 1 target: 76% after P1 to P5. Phase 2 (P6 to P9) aims at 84%.
 
@@ -45,14 +47,12 @@ pictures in libowf. This one adds:
   low-colour Workbench, the show opens its own screen in the slide's
   shape. Show > Show On picks Automatic, Its Own Screen or the Workbench.
 
-**Waiting to merge, not scored:** #248 > #253 > #262 (gradient fills from
-ODP and PPTX, in the PDF and on screen, and gradient slide backgrounds;
-being brought up to main now that gfopenlayout #66 has merged), #291
-(clipping in WMF and EMF pictures), and the chart editor window.
+**Waiting to merge, not scored:** #291 (clipping in WMF and EMF pictures)
+and the chart editor window.
 
 **Largest gaps, workflow-weighted:**
-1. Fills: gradient (above), hatching, bitmap and transparency on objects
-   and backgrounds, and shadows.
+1. Fills: hatching, bitmap and transparency on objects and backgrounds,
+   and shadows (gradients done).
 2. Charts: a window to edit them, and drawing them as charts on the slide
    and in the PDF; OLE objects other than charts are still kept only.
 3. Tables: merged cells, row heights, designs and banding. Also no

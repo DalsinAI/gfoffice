@@ -158,7 +158,7 @@ test: inflate-test
 check: inflate-check
 
 # The compound file writer (libowf/src/owf_cfbw.c), the container for
-# GFOpenPublisher's .pub save; tests/cfb/test_cfbw.c reads what it writes
+# GFOpenPressmaster's .pub save; tests/cfb/test_cfbw.c reads what it writes
 # back through owf_cfb.c.
 $(OUT)/test-cfbw: $(OWF_SRC) libowf/src/owf_internal.h tests/cfb/test_cfbw.c
 	mkdir -p $(OUT)
@@ -502,7 +502,7 @@ check: deck-edit-check deck-show-check
 .PHONY: deck-edit-test deck-edit-check deck-show-test deck-show-check
 endif
 
-# GFOpenPublisher's .pub reader (libowf/src/in_pub.c): tests/pub/test_pub.py
+# GFOpenPressmaster's .pub reader (libowf/src/in_pub.c): tests/pub/test_pub.py
 # compares pub_dump's output with tests/pub/expected and reads cut-short and
 # changed copies of every sample (more of them under ASan/UBSan). The samples
 # are made by tools/pubgen/make_pub.py: no outside .pub files are kept.
@@ -543,17 +543,28 @@ pub-test: $(OUT)/pub-dump $(OUT)/pub-resave $(PUB_MADE)
 	python3 tests/pub/test_pubgen.py
 	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub.py $(OUT)/pub-dump 40
 	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub_save.py $(OUT)/pub-resave $(OUT)/pub-dump
+	python3 tests/pub/test_pub_long_list.py $(OUT)/pub-dump
+	python3 tests/pub/test_pub_many_masters.py $(OUT)/pub-dump
 
 pub-check: $(OUT)/pub-dump-asan $(OUT)/pub-resave-asan $(PUB_MADE)
 	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub.py $(OUT)/pub-dump-asan 150
 	PUB_SAMPLES=$(PUB_SAMPLES) python3 tests/pub/test_pub_save.py $(OUT)/pub-resave-asan $(OUT)/pub-dump-asan
+	python3 tests/pub/test_pub_long_list.py $(OUT)/pub-dump-asan
+	python3 tests/pub/test_pub_many_masters.py $(OUT)/pub-dump-asan
 
 test: pub-test
 check: pub-check
 
-# GFOpenPublisher's mail merge on the page model (src/pub/opp_merge.c)
+# the publishing app's name, ARexx port and old-name alias (renamed from GFOpenPublisher, 16 Nov 2026)
+pressmaster-name-check:
+	python3 tests/pub/test_pressmaster_name.py
+
+test: pressmaster-name-check
+check: pressmaster-name-check
+
+# GFOpenPressmaster's mail merge on the page model (src/pub/opp_merge.c)
 PUB_MERGE_DEPS = $(OWF_SRC) src/pub/opp_merge.c src/core/ow_merge.c tests/pub/test_pub_merge.c \
-	include/openpublisher_merge.h include/ow_merge.h libowf/include/owf_deck.h
+	include/openpressmaster_merge.h include/ow_merge.h libowf/include/owf_deck.h
 
 $(OUT)/test-publisher-merge: $(PUB_MERGE_DEPS)
 	mkdir -p $(OUT)
@@ -566,20 +577,20 @@ $(OUT)/test-publisher-merge-asan: $(PUB_MERGE_DEPS)
 		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) src/pub/opp_merge.c \
 		src/core/ow_merge.c tests/pub/test_pub_merge.c -lz -o $@
 
-publisher-merge-test: $(OUT)/test-publisher-merge
+pressmaster-merge-test: $(OUT)/test-publisher-merge
 	$(OUT)/test-publisher-merge
 
-publisher-merge-check: $(OUT)/test-publisher-merge-asan
+pressmaster-merge-check: $(OUT)/test-publisher-merge-asan
 	$(OUT)/test-publisher-merge-asan
 
-test: publisher-merge-test
-check: publisher-merge-check
+test: pressmaster-merge-test
+check: pressmaster-merge-check
 
-.PHONY: publisher-merge-test publisher-merge-check
+.PHONY: pressmaster-merge-test pressmaster-merge-check
 
-# GFOpenPublisher's built-in publication templates (src/pub/opp_template.c)
+# GFOpenPressmaster's built-in publication templates (src/pub/opp_template.c)
 PUB_TEMPLATE_DEPS = $(OWF_SRC) src/pub/opp_template.c src/pub/opp_merge.c src/core/ow_merge.c \
-	tests/pub/test_pub_template.c include/openpublisher_template.h include/openpublisher_merge.h \
+	tests/pub/test_pub_template.c include/openpressmaster_template.h include/openpressmaster_merge.h \
 	include/ow_merge.h libowf/include/owf_deck.h
 
 $(OUT)/test-publisher-template: $(PUB_TEMPLATE_DEPS)
@@ -593,16 +604,16 @@ $(OUT)/test-publisher-template-asan: $(PUB_TEMPLATE_DEPS)
 		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src $(OWF_SRC) src/pub/opp_template.c \
 		src/pub/opp_merge.c src/core/ow_merge.c tests/pub/test_pub_template.c -lz -o $@
 
-publisher-template-test: $(OUT)/test-publisher-template
+pressmaster-template-test: $(OUT)/test-publisher-template
 	$(OUT)/test-publisher-template
 
-publisher-template-check: $(OUT)/test-publisher-template-asan
+pressmaster-template-check: $(OUT)/test-publisher-template-asan
 	$(OUT)/test-publisher-template-asan
 
-test: publisher-template-test
-check: publisher-template-check
+test: pressmaster-template-test
+check: pressmaster-template-check
 
-.PHONY: publisher-template-test publisher-template-check
+.PHONY: pressmaster-template-test pressmaster-template-check
 
 ifneq ($(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c),)
 # merge fields shown by the page layout and kept by ODP and PPTX (tests/pub/test_pub_merge_show.c)
@@ -619,23 +630,49 @@ $(OUT)/test-publisher-merge-show-asan: $(PUB_MERGE_SHOW_DEPS)
 		-Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) src/pub/opp_merge.c src/core/ow_merge.c \
 		tests/pub/test_pub_merge_show.c -lz -o $@
 
-publisher-merge-show-test: $(OUT)/test-publisher-merge-show
+pressmaster-merge-show-test: $(OUT)/test-publisher-merge-show
 	$(OUT)/test-publisher-merge-show
 
-publisher-merge-show-check: $(OUT)/test-publisher-merge-show-asan
+pressmaster-merge-show-check: $(OUT)/test-publisher-merge-show-asan
 	$(OUT)/test-publisher-merge-show-asan
 
-test: publisher-merge-show-test
-check: publisher-merge-show-check
-publisher-merge-test: publisher-merge-show-test
-publisher-merge-check: publisher-merge-show-check
+test: pressmaster-merge-show-test
+check: pressmaster-merge-show-check
 
-.PHONY: publisher-merge-show-test publisher-merge-show-check
+# GFOpenPressmaster's master pages (the shared Master view) and Insert > Page Number (src/pub/opp_pagenum.c)
+PUB_MASTERS_SRC = src/pub/opp_pagenum.c src/pub/opp_merge.c src/pub/opp_template.c src/core/ow_merge.c
+PUB_MASTERS_DEPS = $(PUB_MERGE_SHOW_DEPS) $(PUB_MASTERS_SRC) tests/pub/test_pub_masters.c \
+	include/openpressmaster_pagenum.h include/openpressmaster_template.h
+
+$(OUT)/test-pressmaster-masters: $(PUB_MASTERS_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) $(CFLAGS) -DOWF_HAVE_ZLIB -Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) $(PUB_MASTERS_SRC) \
+		tests/pub/test_pub_masters.c -lz -o $@
+
+$(OUT)/test-pressmaster-masters-asan: $(PUB_MASTERS_DEPS)
+	mkdir -p $(OUT)
+	$(CC) $(WARN) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -DOWF_HAVE_ZLIB \
+		-Ilibowf/include -Ilibowf/src $(DECK_LAYOUT) $(OWF_SRC) $(PUB_MASTERS_SRC) tests/pub/test_pub_masters.c -lz -o $@
+
+pressmaster-masters-test: $(OUT)/test-pressmaster-masters
+	$(OUT)/test-pressmaster-masters
+
+pressmaster-masters-check: $(OUT)/test-pressmaster-masters-asan
+	$(OUT)/test-pressmaster-masters-asan
+
+test: pressmaster-masters-test
+check: pressmaster-masters-check
+
+.PHONY: pressmaster-masters-test pressmaster-masters-check
+pressmaster-merge-test: pressmaster-merge-show-test
+pressmaster-merge-check: pressmaster-merge-show-check
+
+.PHONY: pressmaster-merge-show-test pressmaster-merge-show-check
 endif
 
 ifneq ($(wildcard $(OPENLAYOUT_SRC)/src/openlayout.c),)
-PUB_CORE_SRC = src/pub/opp_import.c src/deck/opr_layout.c src/deck/opr_pdf.c src/core/ow_layout.c
-PUB_CORE_DEPS = $(PUB_DEPS) $(PUB_CORE_SRC) include/openpublisher_core.h include/openpresentation_core.h \
+PUB_CORE_SRC = src/pub/opp_import.c src/pub/opp_export.c src/deck/opr_layout.c src/deck/opr_pdf.c src/core/ow_layout.c
+PUB_CORE_DEPS = $(PUB_DEPS) $(PUB_CORE_SRC) include/openpressmaster_core.h include/openpresentation_core.h \
 	libowf/include/owf_deck.h $(OPENLAYOUT_ENGINE_SRC)
 
 $(OUT)/test-publisher-core: $(PUB_CORE_DEPS) tests/pub/test_pub_core.c
@@ -649,16 +686,16 @@ $(OUT)/test-publisher-core-asan: $(PUB_CORE_DEPS) tests/pub/test_pub_core.c
 		-DOWF_HAVE_ZLIB -Iinclude -Ilibowf/include -Ilibowf/src -I$(OPENLAYOUT_SRC)/include \
 		-DPUB_SAMPLES='"$(PUB_SAMPLES)"' $(OWF_SRC) $(PUB_CORE_SRC) $(OPENLAYOUT_ENGINE_SRC) tests/pub/test_pub_core.c -lz -o $@
 
-publisher-core-test: $(OUT)/test-publisher-core $(PUB_MADE)
+pressmaster-core-test: $(OUT)/test-publisher-core $(PUB_MADE)
 	$(OUT)/test-publisher-core
 
-publisher-core-check: $(OUT)/test-publisher-core-asan $(PUB_MADE)
+pressmaster-core-check: $(OUT)/test-publisher-core-asan $(PUB_MADE)
 	$(OUT)/test-publisher-core-asan
 
-test: publisher-core-test
-check: publisher-core-check
+test: pressmaster-core-test
+check: pressmaster-core-check
 
-.PHONY: publisher-core-test publisher-core-check
+.PHONY: pressmaster-core-test pressmaster-core-check
 endif
 
 .PHONY: pub-test pub-check
@@ -785,3 +822,14 @@ test: markdown-test
 check: markdown-check
 
 .PHONY: markdown-test markdown-check
+
+# the target names from before the app was renamed from GFOpenPublisher (16 Nov 2026), kept so old scripts still work
+publisher-core-check: pressmaster-core-check
+publisher-core-test: pressmaster-core-test
+publisher-merge-check: pressmaster-merge-check
+publisher-merge-test: pressmaster-merge-test
+publisher-merge-show-check: pressmaster-merge-show-check
+publisher-merge-show-test: pressmaster-merge-show-test
+publisher-template-check: pressmaster-template-check
+publisher-template-test: pressmaster-template-test
+.PHONY: publisher-core-check publisher-core-test publisher-merge-check publisher-merge-test publisher-merge-show-check publisher-merge-show-test publisher-template-check publisher-template-test

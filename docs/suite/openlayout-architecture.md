@@ -9,7 +9,7 @@ flowchart TB
         Writer[OpenWriter]
         Calc[OpenCalc]
         Present[OpenPresentation]
-        Publisher[OpenPublisher]
+        Publisher[OpenPressmaster]
     end
 
     subgraph Shared[Shared office libraries]

@@ -1,6 +1,6 @@
-/* GFOpenPublisher's mail merge on the shared page model (include/openpublisher_merge.h).
+/* GFOpenPressmaster's mail merge on the shared page model (include/openpressmaster_merge.h).
  * MIT, Copyright (c) 2026 AmiCradle Team. */
-#include "openpublisher_merge.h"
+#include "openpressmaster_merge.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -96,15 +96,14 @@ static int run_room(owf_para *p)
     return 0;
 }
 
-int opp_merge_insert_field_at(owf_obj *obj, int para, size_t offset, const char *column)
+/* A field run (kind; column: a merge field's column, else NULL) put at a place in an object's text. */
+static int insert_field_at(owf_obj *obj, int para, size_t offset, owf_field kind, const char *column)
 {
     owf_para *p;
     owf_run field;
     size_t cum = 0;
     int j, at = -1;
     char *tail = NULL;
-    if (!obj || !column || !*column) return OWF_ERR_FORMAT;
-    if (!obj->text.nparas && para == 0 && offset == 0) return opp_merge_insert_field(obj, -1, column, NULL);
     if (para < 0 || para >= obj->text.nparas) return OWF_ERR_FORMAT;
     p = &obj->text.paras[para];
     for (j = 0; j < p->nruns && at < 0; ++j) {       /* the run the place is in, or after */
@@ -122,14 +121,17 @@ int opp_merge_insert_field_at(owf_obj *obj, int para, size_t offset, const char 
     }
     memset(&field, 0, sizeof field);
     field.kind = OWF_RUN_FIELD;
-    field.field = OWF_FIELD_MERGE;
+    field.field = kind;
     if (at > 0) field.fmt = p->runs[at - 1].fmt;
     else if (p->nruns) field.fmt = p->runs[0].fmt;
     else owf_charfmt_init(&field.fmt);
     if (tail) field.fmt = p->runs[at].fmt;
-    field.href = text_copy(column, strlen(column));
-    field.text = shown(NULL, -1, column);
-    if (!field.href || !field.text || run_room(p) < 0) goto memory;
+    if (column) {
+        field.href = text_copy(column, strlen(column));
+        field.text = shown(NULL, -1, column);
+        if (!field.href || !field.text) goto memory;
+    }
+    if (run_room(p) < 0) goto memory;
     if (tail) {                                      /* text, field, rest of the text: two more runs */
         owf_run rest = p->runs[at];
         if (p->nruns + 2 > p->capruns) {
@@ -157,6 +159,19 @@ memory:
     owf_free(field.text);
     owf_free(tail);
     return OWF_ERR_MEMORY;
+}
+
+int opp_merge_insert_field_at(owf_obj *obj, int para, size_t offset, const char *column)
+{
+    if (!obj || !column || !*column) return OWF_ERR_FORMAT;
+    if (!obj->text.nparas && para == 0 && offset == 0) return opp_merge_insert_field(obj, -1, column, NULL);
+    return insert_field_at(obj, para, offset, OWF_FIELD_MERGE, column);
+}
+
+int opp_insert_page_field_at(owf_obj *obj, int para, size_t offset, owf_field which)
+{
+    if (!obj || (which != OWF_FIELD_PAGE && which != OWF_FIELD_PAGES)) return OWF_ERR_FORMAT;
+    return insert_field_at(obj, para, offset, which, NULL);
 }
 
 int opp_merge_load_file(const char *path, ow_merge_table **table)

@@ -1,12 +1,12 @@
 /*
- * GFOpenPublisher's mail merge on the shared page model (src/pub/opp_merge.c).
+ * GFOpenPressmaster's mail merge on the shared page model (src/pub/opp_merge.c).
  * The data source is the suite's merge table (include/ow_merge.h), the same
  * one GFOpenWrite reads. A merge field is a field run (OWF_RUN_FIELD,
  * OWF_FIELD_MERGE) in a frame's text: its href is the column, its text the
  * value shown. MIT, Copyright (c) 2026 AmiCradle Team.
  */
-#ifndef OPENPUBLISHER_MERGE_H
-#define OPENPUBLISHER_MERGE_H
+#ifndef OPENPRESSMASTER_MERGE_H
+#define OPENPRESSMASTER_MERGE_H
 
 #include "owf_deck.h"
 #include "ow_merge.h"
@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define OPP_MERGE_VERSION "0.2.0"
+#define OPP_MERGE_VERSION "0.3.0"
 
 /* A merge field for column put at the end of paragraph para of an object's
  * text (para -1: the last; a paragraph is added when there is none). It
@@ -30,6 +30,13 @@ int opp_merge_insert_field(owf_obj *obj, int para, const char *column, const owf
  * of the text before it and goes after any field already there. OWF_OK,
  * OWF_ERR_FORMAT (no object, no column, no such place) or OWF_ERR_MEMORY. */
 int opp_merge_insert_field_at(owf_obj *obj, int para, size_t offset, const char *column);
+
+/* A page number (OWF_FIELD_PAGE) or the number of pages (OWF_FIELD_PAGES)
+ * put at a place in an object's text, as opp_merge_insert_field_at puts a
+ * merge field. Each page shows its own number, also when the field is on a
+ * master. OWF_OK, OWF_ERR_FORMAT (no object, another field, no such place)
+ * or OWF_ERR_MEMORY. */
+int opp_insert_page_field_at(owf_obj *obj, int para, size_t offset, owf_field which);
 
 /* A data source read from a CSV file (at most OW_MERGE_MAX_BYTES). OWF_OK
  * with *table set; OWF_ERR_IO (not read), OWF_ERR_UNSUPPORTED (too big),

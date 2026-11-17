@@ -1,4 +1,4 @@
-# The .pub corpus (OpenPublisher, phase 0)
+# The .pub corpus (OpenPressmaster, phase 0)
 
 Sample Microsoft Publisher files for learning the format and testing the
 reader (`libowf/src/in_pub.c`). Only the files were taken from these
@@ -104,6 +104,20 @@ for running on a PC; it downloads them as they are and extracts nothing.
   help archive on an Amiga cover CD, on discmaster.textfiles.com
   (`EnigmA AMIGA RUN 02 (1995)`, `earcd/patch/ps3b3.lha`).
   No PageStream document was found on GitHub.
+
+## The Document Foundation's bug tracker (16 November 2026)
+
+Seventeen .pub attachments of the Publisher-import bugs on
+bugs.documentfoundation.org, found by searching the tracker for
+Publisher and listing each bug's attachments; `fetch_samples.sh` fetches
+them as `tdfBUG-ATTACHMENT.pub`. Only the files are used: the bugs'
+discussions are about another implementation and are not read for the
+format. One (bug 59355's `ru.pub`) is `fdo59355-1.pub` above; 16 are new:
+Publisher 2002/2003 to 2010 files, among them the first samples whose
+masters hold frames (bug 100639: a page number box on a two-part master
+used by 13 pages; bug 89063: two frames on a master), two four-page
+folded greeting cards (bug 69080), and a Publisher 2.0 file (bug 89993)
+the reader doesn't know yet.
 
 ## Needed
 

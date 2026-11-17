@@ -1,14 +1,14 @@
-/* tests/arexx/publisher-catalog.rexx: GFOpenPublisher's catalog merge through its ARexx port (ARexx-RULE.md
+/* tests/arexx/pressmaster-catalog.rexx: GFOpenPressmaster's catalog merge through its ARexx port (ARexx-RULE.md
    return codes 0/5/10/20, no requester holds up a command): the first page's first text box gets a Name field
    and is the item, repeated twice down the page, one record each.
-   rx tests/arexx/publisher-catalog.rexx csv   (a fresh GFOpenPublisher with a publication open whose first page
+   rx tests/arexx/pressmaster-catalog.rexx csv   (a fresh GFOpenPressmaster with a publication open whose first page
    has a text box; csv: a data source with a Name column and 2 records; prints PASS/FAIL lines, then ALL PASS
    or n FAILED) */
 OPTIONS RESULTS
 PARSE ARG csv
-port = 'GFOPENPUBLISHER'
+port = 'GFOPENPRESSMASTER'
 IF ~SHOW('P', port) THEN DO
-    SAY 'FAIL' port 'is not there: start GFOpenPublisher first'
+    SAY 'FAIL' port 'is not there: start GFOpenPressmaster first'
     EXIT 20
 END
 ADDRESS VALUE port

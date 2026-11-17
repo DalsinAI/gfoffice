@@ -109,7 +109,8 @@ enum {
     M_AUTOFILTER, M_FILTER_ACTIVE, M_FILTER_CLEAR, M_VALIDITY, M_VALIDITY_CLEAR, M_GOAL_SEEK, M_SUBTOTALS,
     M_PIVOT_SUMMARY, M_PIVOT_REFRESH, M_PIVOT_DETAILS, M_MULTIPLE_OPS, M_MULTIPLE_REFRESH, M_SOLVER, M_SCENARIOS, M_CONSOLIDATE, M_CONSOLIDATE_REFRESH, M_NAME_MANAGE, M_ADV_FILTER,
     M_TEXT_COLUMNS, M_REMOVE_DUPS,
-    M_PROTECT_SHEET, M_UNPROTECT_SHEET, M_CELL_PROTECT, M_PROTECT_BOOK, M_UNPROTECT_BOOK, M_EDIT_LINKS
+    M_PROTECT_SHEET, M_UNPROTECT_SHEET, M_CELL_PROTECT, M_PROTECT_BOOK, M_UNPROTECT_BOOK, M_EDIT_LINKS,
+    M_TRACK, M_CHANGES_MANAGE, M_CHANGES_ACCEPT_ALL, M_CHANGES_REJECT_ALL, M_CHANGES_AUTHOR
 };
 
 static struct NewMenu menus[] = {
@@ -147,6 +148,14 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Select Rows", NULL, 0, 0, (APTR)M_SELECT_ROWS },
     { NM_ITEM, "Select Columns", NULL, 0, 0, (APTR)M_SELECT_COLS },
     { NM_ITEM, "Go To...", NULL, 0, 0, (APTR)M_GOTO },
+    { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_ITEM, "Track Changes", NULL, 0, 0, NULL },
+    { NM_SUB, "Record Changes", NULL, CHECKIT | MENUTOGGLE, 0, (APTR)M_TRACK },
+    { NM_SUB, "Manage Changes...", NULL, 0, 0, (APTR)M_CHANGES_MANAGE },
+    { NM_SUB, "Accept All", NULL, 0, 0, (APTR)M_CHANGES_ACCEPT_ALL },
+    { NM_SUB, "Reject All", NULL, 0, 0, (APTR)M_CHANGES_REJECT_ALL },
+    { NM_SUB, NM_BARLABEL, NULL, 0, 0, NULL },
+    { NM_SUB, "Changes Author...", NULL, 0, 0, (APTR)M_CHANGES_AUTHOR },
 
     { NM_TITLE, "View", NULL, 0, 0, NULL },
     { NM_ITEM, "Freeze Panes", NULL, 0, 0, (APTR)M_FREEZE },
@@ -393,6 +402,7 @@ static int tab_first, tab_end, tab_scroll, tab_shown_sheet = -1;
 
 static void draw_all(void);
 static void refresh(void);
+static void sync_track_menu(void);
 static void pick_from_list(int bx, int by, int bw, int bh);
 static void relayout(void);
 static void menu_action(ULONG id);
@@ -1098,6 +1108,7 @@ static LONG role_pen(int role, unsigned long rgb)
     case OC_ROLE_NOTE: return rgb_pen(0xFFFFE1UL);           /* and its comment's pale yellow */
     case OC_ROLE_NOTE_LINE: return rgb_pen(0x808080UL);
     case OC_ROLE_SCENARIO: return rgb_pen(0x6B7F99UL);       /* the shown scenario's frame and tab */
+    case OC_ROLE_CHANGE: return rgb_pen(0xC05800UL);         /* a tracked change's frame (LibreOffice's first author colour's like) */
     }
     return rgb_pen(0xFFFFFFUL);                      /* the paper, behind typing */
 }
@@ -2182,6 +2193,7 @@ static void open_book(const char *path)
     snprintf(current_format, sizeof current_format, "%s", used ? used->name : "");
     sc_first[0] = sc_first[1] = (unsigned)-1;
     snprintf(msg, sizeof msg, "%s opened.", leaf(path));
+    sync_track_menu();
     set_status(msg);
     show_report("Open workbook", report);
     owf_report_free(report);
@@ -2316,6 +2328,7 @@ static void new_book(void)
 {
     if (!confirm_discard_changes()) return;
     if (!result(oc_core_set_book(core, NULL), "New workbook.")) return;
+    sync_track_menu();
     current_path[0] = 0;
     current_format[0] = 0;
 }
@@ -4746,6 +4759,205 @@ static void do_edit_links(void)
     }
 }
 
+/* ---- Edit > Track Changes: recording, and the Manage Changes window ---- */
+
+static char track_author[64];                   /* Latin-1, as the requester shows it */
+
+/* The name changes are made under: ENV USER (or USERNAME) until Changes Author... names one. */
+static void track_author_init(void)
+{
+    char buf[64];
+    char *u;
+    if (GetVar((STRPTR)"USER", (STRPTR)buf, sizeof buf, 0) > 0 ||
+        GetVar((STRPTR)"USERNAME", (STRPTR)buf, sizeof buf, 0) > 0)
+        snprintf(track_author, sizeof track_author, "%s", buf);
+    u = track_author[0] ? from_latin1(track_author) : NULL;
+    oc_core_set_track_author(core, u);
+    owf_free(u);
+}
+
+/* Record Changes' tick follows the book (a file can arrive recording). */
+static void sync_track_menu(void)
+{
+    struct Menu *m;
+    struct MenuItem *it, *sub;
+    int on = core && oc_core_track_changes(core);
+    if (!menu) return;
+    if (win) ClearMenuStrip(win);
+    for (m = menu; m; m = m->NextMenu)
+        for (it = m->FirstItem; it; it = it->NextItem)
+            for (sub = it->SubItem; sub; sub = sub->NextItem)
+                if ((ULONG)GTMENUITEM_USERDATA(sub) == M_TRACK) {
+                    if (on) sub->Flags |= CHECKED; else sub->Flags &= ~CHECKED;
+                }
+    if (win) ResetMenuStrip(win, menu);
+}
+
+/* Recording on or off: 1 when it changed. Off drops the changes not yet accepted or rejected (the sheet
+ * stays as it is), so it asks first when there are any, unless force. */
+static int set_track(int on, int force)
+{
+    int n = oc_core_change_count(core);
+    char text[300];
+    if (!on == !oc_core_track_changes(core)) return 1;
+    if (!on && n && !force) {
+        snprintf(text, sizeof text, "Stop recording changes?\n\nThe %d change%s not yet accepted or rejected %s "
+                 "dropped; the sheet stays as it is. Undo starts afresh.", n, n == 1 ? "" : "s", n == 1 ? "is" : "are");
+        if (ask_window("Track Changes", text, "Stop Recording|Cancel") != 1) { sync_track_menu(); return 0; }
+    }
+    if (!result(oc_core_set_track_changes(core, on),
+                on ? "Recording changes: Edit > Track Changes > Manage Changes... lists them."
+                   : "Changes are no longer recorded.")) { sync_track_menu(); return 0; }
+    sync_track_menu();
+    return 1;
+}
+
+typedef struct {
+    struct Node node;
+    char label[200];
+} cg_line;
+
+/* The changes as the window's list, Latin-1. */
+static cg_line *cg_list(struct List *list, int *count)
+{
+    int n = oc_core_change_count(core), i;
+    cg_line *lines = n ? calloc((size_t)n, sizeof *lines) : NULL;
+    NewList(list);
+    *count = lines ? n : 0;
+    for (i = 0; i < *count; i++) {
+        char u[400];
+        oc_core_change_line(core, i, u, sizeof u);
+        to_latin1(u, strlen(u), lines[i].label, sizeof lines[i].label);
+        lines[i].node.ln_Name = (STRPTR)lines[i].label;
+        AddTail(list, &lines[i].node);
+    }
+    return lines;
+}
+
+static void changes_all(int accept)
+{
+    int n = oc_core_change_count(core);
+    char text[120];
+    if (!n) { set_status("The workbook has no changes."); return; }
+    snprintf(text, sizeof text, "%s all %d change%s? It is one Undo step.", accept ? "Accept" : "Reject", n, n == 1 ? "" : "s");
+    if (ask_window("Track Changes", text, accept ? "Accept All|Cancel" : "Reject All|Cancel") != 1) return;
+    if (result(accept ? oc_core_accept_all_changes(core) : oc_core_reject_all_changes(core),
+               accept ? "Every change accepted." : "Every change rejected."))
+        refresh();
+}
+
+/* Edit > Track Changes > Manage Changes...: the list; picking one shows its place; Accept, Reject, all. */
+static void do_manage_changes(void)
+{
+    struct Gadget *glist = NULL, *last, *glv, *gacc, *grej, *gaccall, *grejall, *gclose;
+    struct NewGadget ng;
+    struct Window *rw = NULL;
+    struct List list;
+    cg_line *lines = NULL;
+    int done = 0, sel = -1, ww = 520, wh, lh = fh + 6, count = 0, rc;
+    if (!scr || !vi) return;
+    rc = oc_edit_commit(core, OC_MOVE_NONE);
+    if (rc == OC_INVALID) { validation_alert(); return; }
+    if (!oc_core_change_count(core)) {
+        set_status(oc_core_track_changes(core) ? "No changes recorded yet." :
+                   "The workbook has no changes: Edit > Track Changes > Record Changes starts recording.");
+        return;
+    }
+    lines = cg_list(&list, &count);
+    if (!lines) { result(OWF_ERR_MEMORY, NULL); return; }
+    memset(&ng, 0, sizeof ng);
+    ng.ng_TextAttr = &font_attr; ng.ng_VisualInfo = vi;
+    last = CreateContext(&glist);
+    ng.ng_Flags = PLACETEXT_ABOVE;
+    ng.ng_LeftEdge = 10; ng.ng_TopEdge = 8 + fh + 4; ng.ng_Width = ww - 20; ng.ng_Height = lh * 10 + 4;
+    ng.ng_GadgetText = (STRPTR)"Changes not yet accepted or rejected"; ng.ng_GadgetID = 1;
+    last = glv = CreateGadget(LISTVIEW_KIND, last, &ng, GTLV_Labels, (ULONG)&list, GTLV_ShowSelected, 0, TAG_DONE);
+    ng.ng_Flags = 0; ng.ng_TopEdge += ng.ng_Height + 8; ng.ng_Height = fh + 8; ng.ng_Width = 90;
+    ng.ng_GadgetText = (STRPTR)"Accept"; ng.ng_GadgetID = 2;
+    last = gacc = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 106; ng.ng_GadgetText = (STRPTR)"Reject"; ng.ng_GadgetID = 3;
+    last = grej = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 202; ng.ng_GadgetText = (STRPTR)"Accept All"; ng.ng_GadgetID = 4;
+    last = gaccall = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = 298; ng.ng_GadgetText = (STRPTR)"Reject All"; ng.ng_GadgetID = 5;
+    last = grejall = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    ng.ng_LeftEdge = ww - 100; ng.ng_GadgetText = (STRPTR)"Close"; ng.ng_GadgetID = 6;
+    last = gclose = CreateGadget(BUTTON_KIND, last, &ng, TAG_DONE);
+    if (!glv || !gacc || !grej || !gaccall || !grejall || !gclose) goto out;
+    wh = ng.ng_TopEdge + ng.ng_Height + 10;
+    rw = OpenWindowTags(NULL,
+        WA_Title, (ULONG)"Manage Changes", WA_PubScreen, (ULONG)scr,
+        WA_InnerWidth, ww, WA_InnerHeight, wh,
+        WA_Left, (scr->Width - ww) / 2, WA_Top, (scr->Height - wh) / 2,
+        WA_Gadgets, (ULONG)glist, WA_DragBar, TRUE, WA_DepthGadget, TRUE,
+        WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | LISTVIEWIDCMP | BUTTONIDCMP,
+        TAG_DONE);
+    if (!rw) goto out;
+    GT_RefreshWindow(rw, NULL);
+    while (!done) {
+        struct IntuiMessage *msg;
+        Wait(1UL << rw->UserPort->mp_SigBit);
+        while ((msg = GT_GetIMsg(rw->UserPort))) {
+            ULONG cls = msg->Class;
+            UWORD code = msg->Code;
+            UWORD id = cls == IDCMP_GADGETUP && msg->IAddress ? ((struct Gadget *)msg->IAddress)->GadgetID : 0;
+            int relist = 0;
+            GT_ReplyIMsg(msg);
+            if (cls == IDCMP_CLOSEWINDOW || (cls == IDCMP_VANILLAKEY && code == 27)) { done = 1; break; }
+            if (cls == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(rw); GT_EndRefresh(rw, TRUE); continue; }
+            if (cls != IDCMP_GADGETUP) continue;
+            if (id == 1 && (int)code < count) {
+                sel = code;
+                if (oc_core_change_go(core, sel) == OWF_OK) refresh();   /* the sheet behind shows its place */
+            } else if ((id == 2 || id == 3) && sel >= 0 && sel < count) {
+                rc = id == 2 ? oc_core_accept_change(core, sel) : oc_core_reject_change(core, sel);
+                if (rc == OWF_ERR_UNSUPPORTED) set_status("That change cannot be rejected: the workbook keeps its last sheet.");
+                else if (result(rc, id == 2 ? "Change accepted." : "Change rejected; Undo brings it back.")) {
+                    relist = 1;
+                    refresh();
+                }
+            } else if (id == 2 || id == 3) {
+                DisplayBeep(scr);                       /* nothing picked */
+            } else if (id == 4 || id == 5) {
+                if (result(id == 4 ? oc_core_accept_all_changes(core) : oc_core_reject_all_changes(core),
+                           id == 4 ? "Every change accepted." : "Every change rejected; Undo brings them back.")) {
+                    relist = 1;
+                    refresh();
+                }
+            } else if (id == 6) {
+                done = 1;
+            }
+            if (relist && !done) {
+                GT_SetGadgetAttrs(glv, rw, NULL, GTLV_Labels, ~0UL, TAG_DONE);
+                free(lines);
+                lines = cg_list(&list, &count);
+                sel = -1;
+                if (!count) { done = 1; break; }        /* nothing left to manage */
+                GT_SetGadgetAttrs(glv, rw, NULL, GTLV_Labels, (ULONG)&list, GTLV_Selected, ~0UL, TAG_DONE);
+            }
+            if (done) break;
+        }
+    }
+out:
+    if (rw) CloseWindow(rw);
+    if (glist) FreeGadgets(glist);
+    free(lines);
+}
+
+static void do_changes_author(void)
+{
+    char name[64];
+    char *u;
+    if (!text_requester("Changes Author", "Name (empty: Unknown Author)", track_author, name, sizeof name)) return;
+    snprintf(track_author, sizeof track_author, "%s", trim_text(name));
+    u = track_author[0] ? from_latin1(track_author) : NULL;
+    if (track_author[0] && !u) { result(OWF_ERR_MEMORY, NULL); return; }
+    result(oc_core_set_track_author(core, u), track_author[0] ? "Changes are now made under that name."
+                                                              : "Changes now have no author.");
+    owf_free(u);
+}
+
 static void do_cell_protection(void)
 {
     char words[64], why[120];
@@ -6148,6 +6360,11 @@ static void menu_action(ULONG id)
     case M_PROTECT_SHEET: do_protect_sheet(); break;
     case M_PROTECT_BOOK: do_protect_book(); break;
     case M_EDIT_LINKS: do_edit_links(); break;
+    case M_TRACK: set_track(!oc_core_track_changes(core), 0); break;
+    case M_CHANGES_MANAGE: do_manage_changes(); break;
+    case M_CHANGES_ACCEPT_ALL: changes_all(1); break;
+    case M_CHANGES_REJECT_ALL: changes_all(0); break;
+    case M_CHANGES_AUTHOR: do_changes_author(); break;
     case M_UNPROTECT_BOOK: do_unprotect_book(); break;
     case M_UNPROTECT_SHEET: do_unprotect_sheet(); break;
     case M_CELL_PROTECT: do_cell_protection(); break;
@@ -6794,7 +7011,7 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if (starts_word_ci(command, "HELP", &arg))
         snprintf(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE OPEN SAVE SAVEAS EXPORT GETCELL GETFORMULA "
                  "SETCELL GOTO SHEET SHEETS ADDSHEET RENAMESHEET RECALC COMMAND FONTCHECK CHARTCHECK CHARTSELECT CHARTMOVE "
-                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO PIVOTDETAILS PIVOTSET SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER MULTIOP TEXTTOCOLUMNS REMOVEDUPS CONDFMT PROTECT UNPROTECT CELLPROTECT ISPROTECTED PROTECTBOOK UNPROTECTBOOK ISBOOKPROTECTED LINKS UPDATELINK QUIT");
+                 "VALIDCHECK GETCOMMENT PIVOT PIVOTREFRESH PIVOTINFO PIVOTDETAILS PIVOTSET SOLVE SCENARIO CONSOLIDATE NAMES NAMEDEFINE NAMERENAME NAMEDELETE ADVFILTER MULTIOP TEXTTOCOLUMNS REMOVEDUPS CONDFMT PROTECT UNPROTECT CELLPROTECT ISPROTECTED PROTECTBOOK UNPROTECTBOOK ISBOOKPROTECTED LINKS UPDATELINK TRACKCHANGES CHANGES CHANGE SHOWCHANGE ACCEPTCHANGE REJECTCHANGE CHANGEAUTHOR QUIT");
     else if (starts_word_ci(command, "FAULT", &arg)) {   /* a DOS error code's text, as every Open app's port */
         if (!*arg) { ok = 0; snprintf(result_text, sizeof result_text, "FAULT needs a code"); }
         else Fault(atol(arg), NULL, (STRPTR)result_text, sizeof result_text);
@@ -6937,6 +7154,82 @@ static int rexx_do_command(const char *command, char **result_out)
         snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : rc == OC_WRONG_PASSWORD ? "Wrong password"
                  : rc == OWF_ERR_UNSUPPORTED ? (on ? "The workbook is protected already" : "The workbook is not protected")
                  : owf_error_text(rc));
+    } else if (starts_word_ci(command, "TRACKCHANGES", &arg)) {
+        /* TRACKCHANGES [ON | OFF [FORCE]]: "1" or "0"; OFF with changes not yet accepted or rejected drops
+         * them, so it wants FORCE then (RC 5 without) */
+        char which[16], force[16];
+        const char *more = rexx_word(arg, which, sizeof which);
+        rexx_word(more, force, sizeof force);
+        if (!which[0]) {
+            snprintf(result_text, sizeof result_text, "%d", oc_core_track_changes(core) ? 1 : 0);
+        } else if (strcasecmp(which, "ON") && strcasecmp(which, "OFF")) {
+            ok = 0;
+            snprintf(result_text, sizeof result_text, "TRACKCHANGES: ON or OFF");
+        } else {
+            int on = !strcasecmp(which, "ON"), n = oc_core_change_count(core), rc;
+            if (!on && n && strcasecmp(force, "FORCE")) {
+                ok = 0;
+                rc_fail = RX_NOW;
+                snprintf(result_text, sizeof result_text, "%d change%s would be dropped: TRACKCHANGES OFF FORCE", n,
+                         n == 1 ? "" : "s");
+            } else {
+                rc = on == !!oc_core_track_changes(core) ? OWF_OK : oc_core_set_track_changes(core, on);
+                ok = rc == OWF_OK;
+                sync_track_menu();
+                if (ok) refresh();
+                snprintf(result_text, sizeof result_text, "%s", ok ? (on ? "1" : "0") : owf_error_text(rc));
+            }
+        }
+    } else if (starts_word_ci(command, "CHANGEAUTHOR", &arg)) {
+        /* CHANGEAUTHOR [name]: the name changes are made under from now on (none: Unknown Author) */
+        char *u;
+        int rc;
+        snprintf(track_author, sizeof track_author, "%s", arg);
+        trim_text(track_author);
+        u = track_author[0] ? from_latin1(track_author) : NULL;
+        rc = track_author[0] && !u ? OWF_ERR_MEMORY : oc_core_set_track_author(core, u);
+        owf_free(u);
+        ok = rc == OWF_OK;
+        snprintf(result_text, sizeof result_text, "%s", ok ? "OK" : owf_error_text(rc));
+    } else if (starts_word_ci(command, "CHANGES", &arg)) {
+        /* CHANGES: how many changes are not yet accepted or rejected */
+        snprintf(result_text, sizeof result_text, "%d", oc_core_change_count(core));
+    } else if (starts_word_ci(command, "CHANGE", &arg)) {
+        /* CHANGE n: change n (from 1) as Manage Changes lists it, with its author and time */
+        char t[400];
+        int i = atoi(arg) - 1;
+        if (i < 0 || i >= oc_core_change_count(core)) {
+            ok = 0;
+            rc_fail = RX_NOW;
+            snprintf(result_text, sizeof result_text, "There is no change %s", arg);
+        } else {
+            oc_core_change_line(core, i, t, sizeof t);
+            to_latin1(t, strlen(t), result_text, sizeof result_text);
+        }
+    } else if (starts_word_ci(command, "SHOWCHANGE", &arg)) {
+        /* SHOWCHANGE n: its sheet shown and its cell made the active one */
+        ok = oc_core_change_go(core, atoi(arg) - 1) == OWF_OK;
+        if (ok) refresh();
+        else { rc_fail = RX_NOW; snprintf(result_text, sizeof result_text, "There is no change %s", arg); }
+    } else if (starts_word_ci(command, "ACCEPTCHANGE", &arg) || starts_word_ci(command, "REJECTCHANGE", &arg)) {
+        /* ACCEPTCHANGE n | ALL, REJECTCHANGE n | ALL: each an Undo step; the result is how many are left */
+        char which[16];
+        int accept = toupper((unsigned char)command[0]) == 'A', rc;
+        rexx_word(arg, which, sizeof which);
+        if (!strcasecmp(which, "ALL"))
+            rc = !oc_core_change_count(core) ? OWF_ERR_UNSUPPORTED
+                 : accept ? oc_core_accept_all_changes(core) : oc_core_reject_all_changes(core);
+        else
+            rc = accept ? oc_core_accept_change(core, atoi(which) - 1) : oc_core_reject_change(core, atoi(which) - 1);
+        ok = rc == OWF_OK;
+        if (ok) {
+            refresh();
+            snprintf(result_text, sizeof result_text, "%d", oc_core_change_count(core));
+        } else {
+            if (rc == OWF_ERR_UNSUPPORTED) rc_fail = RX_NOW;
+            snprintf(result_text, sizeof result_text, "%s", rc == OWF_ERR_UNSUPPORTED
+                     ? "No such change, or one that cannot be undone (the last sheet)" : owf_error_text(rc));
+        }
     } else if (starts_word_ci(command, "LINKS", &arg)) {
         /* LINKS: the links to other workbooks, "name=target" each, by commas */
         size_t at = 0;
@@ -7975,6 +8268,7 @@ static int window_main(int argc, char **argv)
     read_theme_choice();
     oc_draw_list_init(&dl);
     if (!(core = oc_core_new(NULL))) { rc = 20; goto out; }
+    track_author_init();
 
     if (argc > 1) snprintf(first, sizeof first, "%s", argv[1]);
     else if (argc == 0) {

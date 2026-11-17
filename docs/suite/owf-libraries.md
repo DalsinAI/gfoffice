@@ -20,7 +20,7 @@ stay where they are: no file moves (section 6).
 | --- | --- | --- |
 | `owfwrite.library` | GFOpenWrite | The document model (`owf_doc.c`) and its formats (`owf_format.c`'s table): DOCX and ODT in and out, flat ODT, Final Writer, Wordworth, ProWrite, IFF FTXT, ANSI, text, HTML out, and PDF out (`out_pdf.c`). RTF has no reader in libowf yet; when it gets one, it goes here. |
 | `owfcalc.library` | GFOpenCalc | The workbook model (`owf_book.c`, `owf_booknum.c`), XLSX, ODS, flat ODS, XLS and CSV (with `owf_xlformula.c` and `owf_xlfunc.c`), charts (`owf_chart.c`), the formula engine (`libowf/calc`), and the library's own doubles and maths (`owf_softdouble.c`, `owf_libm.c`). |
-| `owfpub.library` | GFOpenPublisher | The `.pub` reader (`in_pub.c`) and its compound-file reader (`owf_cfb.c`), with the document model its stories use. |
+| `owfpub.library` | GFOpenPressmaster | The `.pub` reader (`in_pub.c`) and its compound-file reader (`owf_cfb.c`), with the document model its stories use. |
 | `owfpresent.library` | GFOpenPresentation | The deck model (`owf_deck.c`), ODP and flat ODP (`in_odp.c`, `out_odp.c`, and W138's coming `in_pptx.c`), and the page PDF writer (`owf_pdf.c`, `owf_pdffonts.c`), with the document model its text frames use. |
 
 These lists are not kept anywhere. Each library is built from one small file
@@ -111,7 +111,7 @@ These changes are small, and they don't change behaviour:
 | `owfwrite.library` | `OWFWriteBase` | 3.3 | 40 | `<proto/owfwrite.h>` |
 | `owfcalc.library` | `OWFCalcBase` | 3.9 | 98 | `<proto/owfcalc.h>` |
 | `owfpub.library` | `OWFPubBase` | 3.2 | 37 | `<proto/owfpub.h>` |
-| `owfpresent.library` | `OWFPresentBase` | 3.13 | 81 | `<proto/owfpresent.h>` |
+| `owfpresent.library` | `OWFPresentBase` | 3.16 | 81 | `<proto/owfpresent.h>` |
 
 **Version 3 for all four.** The four libraries continue owf.library 2, so
 their versions go on from it. GFOpenUp's GFOffice part takes its version from
@@ -237,7 +237,7 @@ it uses all four, and loads only the ones a conversion needs.
 | `tools/owc_doc.c` | `OWF_USE_WRITE_LIBRARY` | Documents, and `owf_file_kind` |
 | `tools/owc_book.c` | `OWF_USE_CALC_LIBRARY` | Workbooks |
 | `tools/owc_deck.c` | `OWF_USE_PRESENT_LIBRARY` | Presentations, and their PDFs through GFOpenLayout (`src/deck`, compiled for the same library) |
-| `tools/owc_pub.c` | `OWF_USE_PUB_LIBRARY` | `.pub` files: their version and pages. OWConvert can't convert them until GFOpenPublisher saves something. |
+| `tools/owc_pub.c` | `OWF_USE_PUB_LIBRARY` | `.pub` files: their version and pages. OWConvert can't convert them until GFOpenPressmaster saves something. |
 
 **How a conversion is chosen:**
 

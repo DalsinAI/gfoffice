@@ -9,6 +9,7 @@
  * region; a deleted paragraph end joins the two paragraphs, as ODF has it.
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
+#include "owf_ifform.h"
 #include "owf_internal.h"
 #include "owf_comment.h"
 #include "owf_note.h"
@@ -210,6 +211,8 @@ static void put_text_props(owf_buf *out, const owf_doc *doc, const owf_charfmt *
                           " style:text-underline-color=\"font-color\"");
     if (f->flags & OWF_STRIKE)
         owf_buf_puts(out, " style:text-line-through-style=\"solid\"");
+    if (f->flags & OWF_HIDDEN)
+        owf_buf_puts(out, " text:display=\"none\"");   /* 1.14 */
     if (f->flags & OWF_SUPER)
         owf_buf_puts(out, " style:text-position=\"super 58%\"");
     else if (f->flags & OWF_SUB)
@@ -607,15 +610,75 @@ static void put_sequence_decls(owf_buf *out, const owf_doc *doc)
     free((void *)seen);
 }
 
+/* 1.16: an IF operand in an ODF condition: a document variable as its user field's name, a number as it is,
+ * text quoted; 0 for one ODF can't name (a merge field, a reference) */
+static int odf_operand(owf_buf *out, const char *v, int field)
+{
+    int cmp;
+    if (field) {
+        const char *name = v;
+        size_t n;
+        if (strncmp(name, "DOCVARIABLE", 11) || (name[11] != ' ' && name[11] != '"')) return 0;
+        name += 11;
+        while (*name == ' ') ++name;
+        n = strlen(name);
+        if (*name == '"') { ++name; n = strcspn(name, "\""); }
+        else n = strcspn(name, " ");
+        if (!n || memchr(name, ' ', n)) return 0;    /* ODF's variable names have no spaces */
+        owf_buf_put_xml(out, name, n);
+        return 1;
+    }
+    if (owf_if_numbers(v, "0", &cmp)) { owf_buf_puts_xml(out, v); return 1; }   /* a number as it is */
+    owf_buf_puts(out, "&quot;");
+    owf_buf_puts_xml(out, v);
+    owf_buf_puts(out, "&quot;");
+    return 1;
+}
+
+/* 1.16: conditional text as text:conditional-text, its condition in ODF's form; its shown text alone when
+ * ODF can't say the condition */
+static void put_conditional(owf_buf *out, const owf_run *run)
+{
+    owf_if_form f;
+    owf_buf cond;
+    const char *shown = run->text ? run->text : "";
+    int ok;
+    owf_buf_init(&cond);
+    ok = owf_if_parse(run->href, &f);
+    if (ok) {
+        owf_buf_puts(&cond, "ooow:");
+        ok = odf_operand(&cond, f.a, f.a_field);
+        owf_buf_puts(&cond, !strcmp(f.op, "=") ? " == " : !strcmp(f.op, "<>") ? " != " : " ");
+        if (strcmp(f.op, "=") && strcmp(f.op, "<>")) { owf_buf_puts_xml(&cond, f.op); owf_buf_puts(&cond, " "); }
+        ok = ok && odf_operand(&cond, f.b, f.b_field) && !cond.failed;
+    }
+    if (!ok) {
+        owf_buf_puts_xml(out, shown);
+        owf_buf_free(&cond);
+        return;
+    }
+    owf_buf_puts(out, "<text:conditional-text text:condition=\"");
+    owf_buf_put(out, (const char *)cond.data, cond.length);
+    owf_buf_puts(out, "\" text:string-value-if-true=\"");
+    owf_buf_puts_xml(out, f.yes);
+    owf_buf_puts(out, "\" text:string-value-if-false=\"");
+    owf_buf_puts_xml(out, f.no);
+    owf_buf_printf(out, "\" text:current-value=\"%s\">", strcmp(shown, f.yes) ? "false" : "true");
+    owf_buf_puts_xml(out, shown);
+    owf_buf_puts(out, "</text:conditional-text>");
+    owf_buf_free(&cond);
+}
+
 /* 1.7: a field with a shown value, as its ODF element */
 static void put_field(owf_buf *out, const owf_doc *doc, const owf_run *run)
 {
     static const char *const names[] = { "title", "initial-creator", "subject", "file-name", "word-count",
                                          "chapter", "user-field-get", "bookmark-ref", "bookmark-ref",
-                                         "database-display", "alphabetical-index-mark", "sequence",
+                                         "database-display", "alphabetical-index-mark", "sequence", NULL,
                                          "text-input" };
     const char *name = run->field >= OWF_FIELD_TITLE && run->field <= OWF_FIELD_LAST
                      ? names[run->field - OWF_FIELD_TITLE] : NULL;
+    if (run->field == OWF_FIELD_IF) { put_conditional(out, run); return; }   /* 1.16 */
     if (!name) return;
     if (run->field == OWF_FIELD_INDEX) {             /* 1.10: a point mark, Main:Sub as key1 and its value */
         const char *e = run->href ? run->href : "", *colon = strchr(e, ':');
@@ -649,7 +712,7 @@ static void put_field(owf_buf *out, const owf_doc *doc, const owf_run *run)
         }
         owf_buf_puts(out, "+1\" style:num-format=\"1\"");
     }
-    if (run->field == OWF_FIELD_FILLIN && run->href && *run->href) {   /* 1.15: its prompt */
+    if (run->field == OWF_FIELD_FILLIN && run->href && *run->href) {   /* 1.19: its prompt */
         owf_buf_puts(out, " text:description=\"");
         owf_buf_puts_xml(out, run->href);
         owf_buf_puts(out, "\"");

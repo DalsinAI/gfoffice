@@ -438,6 +438,87 @@ static void test_baseline(void)
     owf_project_free(p);
 }
 
+/* Earned value against Baseline 0: a 4-day task A (Dale at 20.00 an hour: 640.00) and a 1-day B after
+ * it, under a summary; status Wed 18 at 17:00 (A's third day done as planned). */
+static void test_earned_value(void)
+{
+    owf_project *p = plan();
+    int ph = owf_project_add_task(p, "Phase", 0), a = owf_project_add_task(p, "A", 4 * D);
+    int b = owf_project_add_task(p, "B", D), dale = owf_project_add_resource(p, "Dale");
+    owf_ptime status = AT(18, 17, 0);
+    TASK(p, a)->level = TASK(p, b)->level = 2;
+    owf_project_link(p, a, b, OWF_LINK_FS, 0, 0);
+    p->resources[dale].rate = 2000;
+    owf_project_assign(p, a, dale, 100);
+    owf_project_assign(p, b, dale, 100);
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    CHECK_N(TASK(p, a)->cost, 64000);
+    CHECK_N(owf_ptask_earned(p, a, status, OWF_EV_BCWS), 0);         /* no baseline yet */
+    owf_project_set_baseline(p, 0, -1);
+    CHECK_N(owf_ptask_earned(p, a, status, OWF_EV_BCWS), 48000);     /* 3 of 4 days planned */
+    CHECK_N(owf_ptask_earned(p, b, status, OWF_EV_BCWS), 0);         /* not planned to start yet */
+    CHECK_N(owf_ptask_earned(p, a, AT(30, 8, 0), OWF_EV_BCWS), 64000); /* after its finish: all of it */
+    CHECK_N(owf_ptask_earned(p, a, AT(16, 8, 0), OWF_EV_BCWS), 0);
+    /* Half done: BCWP 320.00, behind plan by 160.00; A's cost grows a day, ACWP 400.00 at 50%. */
+    TASK(p, a)->percent = 50;
+    TASK(p, a)->duration = 5 * D;
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    CHECK_N(owf_ptask_earned(p, a, status, OWF_EV_BCWP), 32000);
+    CHECK_N(owf_ptask_earned(p, a, status, OWF_EV_SV), -16000);
+    CHECK_N(owf_ptask_earned(p, a, status, OWF_EV_ACWP), 40000);
+    CHECK_N(owf_ptask_earned(p, a, status, OWF_EV_CV), -8000);
+    /* The summary adds its subtasks. */
+    TASK(p, b)->percent = 100;
+    CHECK_N(owf_ptask_earned(p, ph, status, OWF_EV_BCWP), 32000 + 16000);
+    CHECK_N(owf_ptask_earned(p, ph, status, OWF_EV_BCWS), 48000);
+    CHECK_N(owf_ptask_earned(p, ph, status, OWF_EV_ACWP), 40000 + 16000);
+    CHECK_N(owf_ptask_earned(p, ph, status, 9), 0);
+    CHECK_N(owf_ptask_earned(p, 7, status, OWF_EV_BCWP), 0);
+    CHECK_N(owf_ptask_earned(NULL, 0, status, OWF_EV_BCWP), 0);
+    owf_project_free(p);
+}
+
+/* Baselines 1 to 10 beside Baseline 0: each saved and cleared on its own, read back by number. */
+static void test_more_baselines(void)
+{
+    owf_project *p = plan();
+    int a = owf_project_add_task(p, "A", 2 * D), b = owf_project_add_task(p, "B", D);
+    owf_pbaseline got;
+    owf_project_link(p, a, b, OWF_LINK_FS, 0, 0);
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    CHECK(!owf_ptask_baseline(TASK(p, a), 0, &got) && got.start == 0);
+    owf_project_set_baseline_n(p, 0, 0, -1);                          /* Baseline 0: the old fields */
+    CHECK(TASK(p, a)->baselined && TASK(p, a)->more_baselined == 0);
+    CHECK(owf_ptask_baseline(TASK(p, a), 0, &got));
+    CHECK_T(got.finish, AT(17, 17, 0));
+    /* A slips a day; Baseline 3 keeps the new plan, Baseline 0 the old. */
+    TASK(p, a)->duration = 3 * D;
+    CHECK(owf_project_schedule(p) == OWF_OK);
+    owf_project_set_baseline_n(p, 3, 0, -1);
+    CHECK_N(TASK(p, a)->more_baselined, 1 << 3);
+    CHECK(owf_ptask_baseline(TASK(p, b), 3, &got));
+    CHECK_T(got.start, AT(19, 8, 0));
+    CHECK_N(got.duration, D);
+    CHECK(owf_ptask_baseline(TASK(p, b), 0, &got));
+    CHECK_T(got.start, AT(18, 8, 0));
+    CHECK(!owf_ptask_baseline(TASK(p, b), 2, &got));
+    /* Baseline 10 for B alone; clearing 3 leaves 10 and 0. */
+    owf_project_set_baseline_n(p, 10, b, 1);
+    CHECK(owf_ptask_baseline(TASK(p, b), 10, NULL) && !owf_ptask_baseline(TASK(p, a), 10, NULL));
+    owf_project_clear_baseline_n(p, 3, 0, -1);
+    CHECK(!owf_ptask_baseline(TASK(p, b), 3, &got) && got.duration == 0);
+    CHECK(owf_ptask_baseline(TASK(p, b), 10, NULL) && TASK(p, b)->baselined);
+    owf_project_clear_baseline_n(p, 0, 0, -1);
+    CHECK(!TASK(p, b)->baselined && owf_ptask_baseline(TASK(p, b), 10, NULL));
+    /* Out of range does nothing. */
+    owf_project_set_baseline_n(p, 11, 0, -1);
+    owf_project_set_baseline_n(p, -1, 0, -1);
+    owf_project_set_baseline_n(p, 2, 5, 1);
+    CHECK_N(TASK(p, a)->more_baselined, 0);
+    CHECK(!owf_ptask_baseline(TASK(p, a), 11, NULL) && !owf_ptask_baseline(NULL, 1, NULL));
+    owf_project_free(p);
+}
+
 /* Tracking: actual dates pin a task where it really ran; Update Project brings work up to a status date.
  * A 3-day task A (Mon 16 to Wed 18), B (2 days) after it, C (1 day) after B, and a summary over them. */
 static void test_actuals(void)
@@ -551,6 +632,94 @@ static void test_peak_cap(void)
     owf_project_free(p);
 }
 
+/* Levelling: Dale on A (2d) and B (1d, then C) at once, Ann on E and F (1d each) at once, Bob alone. */
+static void test_leveling(void)
+{
+    owf_project *p = plan();
+    int a = owf_project_add_task(p, "A", 2 * D), b = owf_project_add_task(p, "B", D), c = owf_project_add_task(p, "C", D);
+    int e = owf_project_add_task(p, "E", D), f = owf_project_add_task(p, "F", D), g = owf_project_add_task(p, "G", D);
+    int dale = owf_project_add_resource(p, "Dale"), ann = owf_project_add_resource(p, "Ann");
+    int bob = owf_project_add_resource(p, "Bob");
+    owf_project_link(p, b, c, OWF_LINK_FS, 0, 0);
+    owf_project_assign(p, a, dale, 100);
+    owf_project_assign(p, b, dale, 100);
+    owf_project_assign(p, e, ann, 100);
+    owf_project_assign(p, f, ann, 100);
+    owf_project_assign(p, g, bob, 100);
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK(p->resources[dale].overallocated && p->resources[ann].overallocated);
+
+    /* within slack: A and B have none (B, C end with A on Tuesday), so only F moves, to Tuesday */
+    CHECK_N(owf_project_level(p, 1), 1);
+    CHECK_N(TASK(p, f)->level_delay, D);
+    CHECK_T(TASK(p, f)->early_start, AT(17, 8, 0));
+    CHECK_T(TASK(p, e)->early_start, AT(16, 8, 0));
+    CHECK_N(TASK(p, b)->level_delay, 0);
+    CHECK(p->resources[dale].overallocated && !p->resources[ann].overallocated);
+
+    /* everywhere: B waits for A (Wednesday) and C after it (Thursday); Bob's G stays */
+    CHECK_N(owf_project_level(p, 0), 2);
+    CHECK_N(TASK(p, b)->level_delay, 2 * D);
+    CHECK_T(TASK(p, b)->early_start, AT(18, 8, 0));
+    CHECK_T(TASK(p, c)->early_start, AT(19, 8, 0));
+    CHECK_T(TASK(p, a)->early_start, AT(16, 8, 0));
+    CHECK_T(TASK(p, g)->early_start, AT(16, 8, 0));
+    CHECK_T(TASK(p, f)->early_start, AT(17, 8, 0));
+    CHECK(!p->resources[dale].overallocated && !p->resources[ann].overallocated);
+    CHECK_N(p->resources[dale].peak, 100);
+    CHECK_T(p->finish, AT(19, 17, 0));
+    /* levelling again starts from no delays: the same answer */
+    CHECK_N(owf_project_level(p, 0), 2);
+    CHECK_T(TASK(p, c)->early_start, AT(19, 8, 0));
+
+    /* Clear Leveling */
+    CHECK_N(owf_project_clear_leveling(p), OWF_OK);
+    CHECK_N(TASK(p, b)->level_delay + TASK(p, f)->level_delay, 0);
+    CHECK_T(TASK(p, b)->early_start, AT(16, 8, 0));
+    CHECK(p->resources[dale].overallocated);
+
+    /* a task that must start on a date keeps it: A moves after B instead */
+    TASK(p, b)->constraint = OWF_CON_MSO;
+    TASK(p, b)->constraint_date = AT(16, 8, 0);
+    CHECK_N(owf_project_level(p, 0), 2);
+    CHECK_N(TASK(p, b)->level_delay, 0);
+    CHECK_T(TASK(p, a)->early_start, AT(17, 8, 0));
+    CHECK(!p->resources[dale].overallocated);
+    /* a delay on a task that must start on a date is not used */
+    TASK(p, b)->level_delay = D;
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_T(TASK(p, b)->early_start, AT(16, 8, 0));
+
+    /* what no move mends: Bob at 200% on G alone; levelling ends and leaves it */
+    owf_project_assign(p, g, bob, 200);
+    CHECK_N(owf_project_level(p, 0), 2);
+    CHECK(p->resources[bob].overallocated);
+    CHECK_T(TASK(p, g)->early_start, AT(16, 8, 0));
+    CHECK_N(owf_project_level(NULL, 0), -1);
+    CHECK_N(owf_project_clear_leveling(NULL), OWF_ERR_FORMAT);
+    owf_project_free(p);
+}
+
+/* A leveling delay in elapsed time (MSPDI's "edays") counts every minute: a day from Monday 08:00 is
+ * Tuesday 08:00 whatever the calendar. */
+static void test_leveling_elapsed(void)
+{
+    owf_project *p = plan();
+    int a = owf_project_add_task(p, "A", D);
+    TASK(p, a)->level_delay = 3 * 1440;
+    TASK(p, a)->level_delay_elapsed = 1;
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_T(TASK(p, a)->early_start, AT(19, 8, 0));
+    TASK(p, a)->level_delay_elapsed = 0;
+    TASK(p, a)->level_delay = 3 * D;
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_T(TASK(p, a)->early_start, AT(19, 8, 0));
+    TASK(p, a)->level_delay = 5 * D;                                       /* over the weekend */
+    CHECK_N(owf_project_schedule(p), OWF_OK);
+    CHECK_T(TASK(p, a)->early_start, AT(23, 8, 0));
+    owf_project_free(p);
+}
+
 static void test_summary_back_to_task(void)
 {
     owf_project *p = plan();
@@ -582,7 +751,11 @@ int main(void)
     test_loop_and_holiday();
     test_resources();
     test_baseline();
+    test_earned_value();
+    test_more_baselines();
     test_actuals();
+    test_leveling();
+    test_leveling_elapsed();
     test_summary_back_to_task();
     test_peak_cap();
     if (fails) {

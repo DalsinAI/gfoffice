@@ -321,6 +321,7 @@ static void pdf_story_para(owf_buf *out, const owf_doc *doc, const owf_para *p,
         for (j = 0; j < p->nruns; ++j) {
             const owf_run *r = &p->runs[j];
             char field[32]; const char *text = NULL; size_t n = 0;
+            if (r->fmt.flags & OWF_HIDDEN) continue;   /* 1.14: hidden text is not printed */
             int size = r->fmt.size ? pdf_points(r->fmt.size) : 9;
             if (r->kind == OWF_RUN_TEXT && r->text) { text = r->text; n = strlen(text); }
             else if (r->kind == OWF_RUN_TAB) { text = "    "; n = 4; }
@@ -515,6 +516,7 @@ static int pdf_layout_para(pdf_layout *l, const owf_para *p, int i)
         pdf_line_reset(&line);
         for(j=0;j<p->nruns;++j){
             const owf_run *r=&p->runs[j];
+            if((r->fmt.flags&OWF_HIDDEN)&&r->note<=0&&!r->comment)continue;   /* 1.14: hidden text is not printed */
             if(r->kind==OWF_RUN_TEXT&&r->note>0&&r->note<=l->doc->nnotes&&l->note_marks){
                 /* 1.8: a note's mark, raised; the notes follow the text */
                 owf_run fake=*r;fake.text=l->note_marks[r->note-1];fake.fmt.flags|=OWF_SUPER;

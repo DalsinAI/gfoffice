@@ -342,6 +342,11 @@ void ow_editor_set_track_changes(ow_editor *editor, int on);
  * step over it, never stopping inside it. The window's setting: not saved with the document. */
 void ow_editor_set_final_view(ow_editor *editor, int on);
 int ow_editor_final_view(const ow_editor *editor);
+/* 2.0.46: hidden text (OWF_HIDDEN, Word's w:vanish) shown: off (the default), it is not shown
+ * (ow_layout_new_view without OW_LAYOUT_SHOW_HIDDEN), caret moves, Backspace and Delete step over it as the
+ * final view's do over deletions, and text typed beside it isn't hidden. The window's setting: not saved. */
+void ow_editor_set_show_hidden(ow_editor *editor, int on);
+int ow_editor_show_hidden(const ow_editor *editor);
 int ow_editor_track_changes(const ow_editor *editor);
 /* The name new changes are made under; NULL or "" for none (an unknown author). */
 int ow_editor_set_review_author(ow_editor *editor, const char *utf8);
@@ -465,7 +470,7 @@ int ow_editor_set_note_restart(ow_editor *editor, int endnote, int restart);
 int ow_editor_insert_field_arg(ow_editor *editor, owf_field field, const char *name);
 /* Fields worked out again and laid out: how many changed (0: none), or an OWF_ERR_ */
 int ow_editor_update_fields(ow_editor *editor);
-/* 2.0.47 (libowf 1.15): input fields (Word's FILLIN, ODF's text-input): a prompt, and the answer the field
+/* 2.0.50 (libowf 1.19): input fields (Word's FILLIN, ODF's text-input): a prompt, and the answer the field
  * shows, which only the person gives (update_fields keeps it). insert_fill_in puts one at the caret (undoable)
  * with a prompt and its answer; fill_in_count and fill_in_at list them (body, headers, footers, text boxes),
  * the strings valid until the next edit; set_fill_in gives the index-th one a new answer (undoable). */
