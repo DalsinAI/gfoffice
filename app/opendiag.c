@@ -561,10 +561,10 @@ static unsigned char *page_picture(void *user, const owf_dnum box[4], int width,
         oldraw_free(pd);
         /* ReadPixelArray says how many pixels it read; fewer than the whole page is no picture, not one with
          * whatever was in the memory (a planar screen's bitmap reads through cybergraphics' emulation) */
-        if ((rgb = (unsigned char *)malloc((size_t)width * (size_t)height * 3)) != NULL &&
+        if ((rgb = (unsigned char *)owf_malloc((size_t)width * (size_t)height * 3)) != NULL &&
             ReadPixelArray(rgb, 0, 0, (UWORD)(width * 3), &rp, 0, 0, (UWORD)width, (UWORD)height, RECTFMT_RGB) <
                 (ULONG)width * (ULONG)height) {
-            free(rgb);
+            owf_free(rgb);
             rgb = NULL;
         }
     }

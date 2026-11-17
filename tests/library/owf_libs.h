@@ -1,5 +1,5 @@
 /*
- * OWFLibsTest (owf_libs_test.c): GFOffice's four libraries from LIBS:, as
+ * OWFLibsTest (owf_libs_test.c): GFOffice's five libraries from LIBS:, as
  * programs use them (docs/suite/owf-libraries.md). Each library's calls are
  * in a file of their own, built for that library (owf_proto.h: one
  * library's calls per file), which gives the test one of these.
@@ -29,6 +29,6 @@ typedef struct {
     void (*run)(const owf_libs_env *env);     /* its checks: the shared calls', then its own */
 } owf_libs_unit;
 
-extern const owf_libs_unit owf_libs_write, owf_libs_calc, owf_libs_pub, owf_libs_present;
+extern const owf_libs_unit owf_libs_write, owf_libs_calc, owf_libs_pub, owf_libs_present, owf_libs_diag;
 
 #endif

@@ -15,6 +15,7 @@
 #include <stddef.h>
 
 #include "owf.h"
+#include "owf_shape.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -38,9 +39,8 @@ const char *owf_dattrs_get(const owf_dattrs *a, const char *name);
 int owf_dattrs_set(owf_dattrs *a, const char *name, const char *value);
 void owf_dattrs_free(owf_dattrs *a);
 
-typedef struct {
-    owf_dnum x, y;
-} owf_dpoint;
+/* x, y: owf_shape.h's point, so the diagram's points and the shared shapes' are one type */
+typedef owf_spoint owf_dpoint;
 
 /* owf_dgeometry.flags */
 #define OWF_DGEO_HAS          0x01u      /* the cell has an mxGeometry */
@@ -179,25 +179,17 @@ int owf_dpage_bounds(const owf_dpage *p, owf_dnum box[4]);
  * shape is named in its style as draw.io names it ("shape=cylinder3;", "shape=mxgraph.flowchart.delay;"), and
  * turned with direction=south, west or north and flipped with flipH=1 and flipV=1. */
 
-#define OWF_DSHAPE_POINTS 160
-#define OWF_DSHAPE_PARTS 12
-#define OWF_DSHAPE_CLOSED 0x01u          /* the part's last point joins its first */
-#define OWF_DSHAPE_FILL   0x02u          /* filled with the fill colour */
-#define OWF_DSHAPE_LINE   0x04u          /* drawn round with the line colour */
-#define OWF_DSHAPE_INK    0x08u          /* filled with the line colour (a dot, a light, a socket) */
-#define OWF_DSHAPE_DASHED 0x10u          /* its line dashed whatever the style says (a lifeline) */
+/* The shapes are owf_shape.h's (owf_shape.c builds them; GFOffice's one copy of shape geometry). */
+#define OWF_DSHAPE_POINTS OWF_SHAPE_POINTS
+#define OWF_DSHAPE_PARTS OWF_SHAPE_PARTS
+#define OWF_DSHAPE_CLOSED OWF_SHAPE_CLOSED   /* the part's last point joins its first */
+#define OWF_DSHAPE_FILL   OWF_SHAPE_FILL     /* filled with the fill colour */
+#define OWF_DSHAPE_LINE   OWF_SHAPE_LINE     /* drawn round with the line colour */
+#define OWF_DSHAPE_INK    OWF_SHAPE_INK      /* filled with the line colour (a dot, a light, a socket) */
+#define OWF_DSHAPE_DASHED OWF_SHAPE_DASHED   /* its line dashed whatever the style says (a lifeline) */
 
-typedef struct {
-    int first, n;                        /* its points: points[first .. first + n - 1] */
-    unsigned flags;                      /* OWF_DSHAPE_ */
-} owf_dshape_part;
-
-typedef struct {
-    owf_dpoint points[OWF_DSHAPE_POINTS];   /* on the page, in hundredths */
-    int npoints;
-    owf_dshape_part parts[OWF_DSHAPE_PARTS];   /* in drawing order */
-    int nparts;
-} owf_dshape;
+typedef owf_shape_part owf_dshape_part;  /* first, n: points[first .. first + n - 1]; flags: OWF_DSHAPE_ */
+typedef owf_shape owf_dshape;            /* points (on the page, in hundredths), npoints, parts, nparts */
 
 /* The outline of the shape a style names, in box (x, y, width, height), into s: 1 when it is one of these shapes,
  * 0 when not (a rectangle, ellipse or another shape the drawing code has itself; s is then empty). */
@@ -285,6 +277,13 @@ int owf_dexcal_write(const owf_diagram *d, int page, unsigned char **data, size_
 
 #ifdef __cplusplus
 }
+#endif
+
+/* On owfdiag.library (OWF_USE_DIAG_LIBRARY): its calls, once the editing core's headers (GFOpenDiag's include/,
+ * opendiag_proto.h) have declared theirs too. */
+#define OWF_DIAGRAM_H_DONE
+#if defined(OWF_USE_DIAG_LIBRARY) && !defined(OWF_LIBRARY_BUILD)
+#include "opendiag_proto.h"
 #endif
 
 #endif

@@ -198,7 +198,8 @@ void opj_date_text(owf_ptime t, int with_time, char *out);
 int opj_date_parse(const char *s, int default_minute, owf_ptime *t);
 
 /* Tools > Level Resources: owf_project_level (within_slack: only within each task's slack) as one edit;
- * how many tasks it delayed in *delayed (when not NULL). Clear Leveling: every delay back to 0. */
+ * how many tasks it delayed in *delayed (when not NULL). Clear Leveling: every delay back to 0 (with none,
+ * nothing changes and there is no Undo step). */
 int opj_level(opj_doc *doc, int within_slack, int *delayed);
 int opj_clear_leveling(opj_doc *doc);
 
@@ -372,6 +373,8 @@ void opj_assign_line(const opj_doc *doc, int task, int resource, char *out, size
 /* Assign: the resource on the task at units (NULL or "": the assignment's own units, else 100%, or one
  * unit of a material; a cost resource needs its amount), as one edit. */
 int opj_assign_resource(opj_doc *doc, int task, int resource, const char *units);
+/* The resource named (any case, blanks around it skipped), or a row number from 1; -1 when there is none. */
+int opj_find_resource(const opj_doc *doc, const char *name);
 /* Remove: the resource's assignment on the task, as one edit; OWF_ERR_FORMAT when there is none. */
 int opj_remove_resource(opj_doc *doc, int task, int resource);
 /* Replace: the task's assignment of from goes to to, keeping its place and, with units NULL or "", its

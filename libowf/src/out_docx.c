@@ -209,7 +209,7 @@ static void put_ppr_props(owf_buf *out, const owf_parafmt *f, const char *style)
         owf_buf_printf(out, "<w:jc w:val=\"%s\"/>", jc[f->align]);
 }
 
-/* 1.20: fc is the paragraph's tracked format change (w:pPrChange, last, the format before in its own w:pPr),
+/* 1.21: fc is the paragraph's tracked format change (w:pPrChange, last, the format before in its own w:pPr),
  * style_before the style it names there */
 static void put_ppr(owf_buf *out, const owf_doc *doc, const owf_parafmt *f, const char *style,
                     int section_end, const owf_para *section, int next_break,
@@ -713,7 +713,7 @@ static void build_comments_extended(owf_buf *out, const owf_doc *doc)
 static void field_instr(const owf_run *run, char *out, size_t size)
 {
     static const char *const word[] = { "PAGE", "NUMPAGES", "DATE", "TIME", "TITLE", "AUTHOR", "SUBJECT", "FILENAME",
-                                         "NUMWORDS", "STYLEREF", "DOCVARIABLE", "REF", "PAGEREF", "MERGEFIELD", "XE", "SEQ", "IF", "FILLIN" };
+                                         "NUMWORDS", "STYLEREF", "DOCVARIABLE", "REF", "PAGEREF", "MERGEFIELD", "XE", "SEQ", "IF", "FILLIN", "IF" };
     const char *arg = run->href ? run->href : "";
     int f = (int)run->field >= 0 && (int)run->field <= OWF_FIELD_LAST ? (int)run->field : 0;
     if (f == OWF_FIELD_CHAPTER) snprintf(out, size, " STYLEREF 1 ");
@@ -782,10 +782,10 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
     char instr[320];
     char style[16], ostyle[16];
     const char *pstyle = NULL, *opstyle = NULL;
-    const owf_para_format_change *pfc = OWF_DOC_PARA_FORMAT_CHANGE(doc, para->para_format_change);   /* 1.20 */
+    const owf_para_format_change *pfc = OWF_DOC_PARA_FORMAT_CHANGE(doc, para->para_format_change);   /* 1.21 */
     docx_marks mk;
     size_t at = 0;
-    int j;
+    int j, hidden_para = para->table_id < 0 && owf_para_hidden(para);   /* 1.20 (a table's cell is never hidden) */
     if (para->fmt.heading >= 1 && para->fmt.heading <= 6) {
         snprintf(style, sizeof style, "Heading%d", para->fmt.heading); pstyle = style;
     } else if (own_style(para->style)) {
@@ -808,7 +808,16 @@ static void put_para(owf_buf *out, const owf_doc *doc, const owf_story *story,
     }
     for (j = 0; j < para->nruns; ++j) {
         const owf_run *run=&para->runs[j];
-        int link = run->kind == OWF_RUN_TEXT && run->href && story == &doc->body;
+        owf_run vanished;
+        int link;
+        if (run->kind == OWF_RUN_FIELD && run->field == OWF_FIELD_HIDE_PARA) {
+            /* 1.20: Word has no hidden paragraph: its condition goes (noted), its text is written w:vanish while
+             * it holds */
+            owf_report_add(report, OWF_NOTE_APPROX, "A hidden paragraph is saved as hidden text, without its condition");
+            continue;
+        }
+        if (hidden_para) { vanished = *run; vanished.fmt.flags |= OWF_HIDDEN; run = &vanished; }
+        link = run->kind == OWF_RUN_TEXT && run->href && story == &doc->body;
         if (run->comment) {                          /* 1.6 */
             put_comment_mark(out, doc, run->comment);
             continue;
