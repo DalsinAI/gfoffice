@@ -57,9 +57,7 @@ The host tests link `owf_spell.c` directly. No Amiga program links a copy:
 | GFOpenPresentation | Spelling, as you type, ARexx SPELL | yes |
 | GFOpenPressmaster | the same, through Presentation's core | yes |
 | GFOpenCalc | Edit > Spelling..., ARexx SPELL (`src/calc/oc_spell.c`) | yes |
-| GFOpenProject | Edit > Spelling..., ARexx SPELL: task names and notes (`src/project/opj_spell.c`) | yes |
-| GFOpenDiag, GFOpenBase | none yet | next, one PR each |
-| GFOpenDraw | none: a paint program, with no text of its own | - |
+| GFOpenDiag, GFOpenBase, GFOpenProject, GFOpenDraw | none yet | next, one PR each |
 
 ## Tests
 
@@ -72,9 +70,6 @@ The host tests link `owf_spell.c` directly. No Amiga program links a copy:
 - `make calc-spell-test` and `make calc-spell-check` (ASan) run
   `tests/calc_core/test_calc_spell.c`: Calc's walk over typed text only,
   wrapping round, Change with Undo, and ARexx SPELL.
-- `make project-spell-test` and `make project-spell-check` run
-  `tests/project/test_opj_spell.c`: names then notes row by row, wrapping
-  round, a change as one Undo step, and ARexx SPELL.
 - `make sfd-check` checks owfspell_lib.sfd against owf_spell.h, the
   generated glue and the SDK's offsets.
 - `OWFSpellTest`, built by `build-library.sh` into `tests/`, opens the
