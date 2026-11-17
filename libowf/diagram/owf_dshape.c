@@ -1,7 +1,10 @@
 /*
  * owf_dshape.c: the outlines of GFOpenDiag's shapes beyond the first flowchart set (owf_diagram.h, "Shapes"),
  * worked out once for the canvas and every writer (SVG, PDF, EPS) to draw: closed outlines to fill and stroke,
- * and lines to stroke. The basic and flowchart sets, UML's, and the network set as flat drawings of our own. Integer arithmetic only: curves are runs of short lines from a 64-step sine table.
+ * and lines to stroke. The basic and flowchart sets, UML's, and the network set as flat drawings of our own. Integer
+ * arithmetic only. The geometry (the pen that turns and flips a shape into its box, arcs, boxes, lines, ovals and
+ * the 64-step sine) is GFOffice's one copy in libowf/src/owf_geo.c; what is here is which shape a style names and
+ * how each one is drawn.
  * The shapes are drawn in our own way from their plain geometric descriptions; only their names (draw.io's
  * style words, "shape=cylinder3", "shape=note", and its direction, flipH and flipV keys) are taken from the
  * .drawio format, so that a file made here opens in diagrams.net as the same shapes and one made there opens
@@ -9,31 +12,15 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "owf_diag_int.h"
+#include "owf_geo.h"
 
 #include <string.h>
 
 typedef long long wide;
 
-/* sin of k/64 of a turn, k 0 to 16 (a quarter), times 10000 */
-static const int quarter[17] = { 0, 980, 1951, 2903, 3827, 4714, 5556, 6344, 7071, 7730, 8315, 8819, 9239, 9569,
-                                 9808, 9952, 10000 };
-
-/* sin of a/64 of a turn, times 10000; a turns clockwise on the page (y down), 0 east, 16 south */
-static int sin64(int a)
-{
-    a %= 64;
-    if (a < 0)
-        a += 64;
-    if (a <= 16) return quarter[a];
-    if (a <= 32) return quarter[32 - a];
-    if (a <= 48) return -quarter[a - 32];
-    return -quarter[64 - a];
-}
-
-static int cos64(int a)
-{
-    return sin64(a + 16);
-}
+/* the curves' sine, owf_geo.c's: sin and cos of a/64 of a turn, times 10000 */
+#define sin64(a) owf_geo_sin64(a)
+#define cos64(a) owf_geo_cos64(a)
 
 /* ---- The table of shapes ---- */
 
@@ -136,64 +123,13 @@ const char *owf_dshape_name(const char *style)
 
 /* ---- Building an outline ---- */
 
-typedef struct {
-    owf_dshape *s;
-    owf_dnum bx, by, bw, bh;             /* the box on the page */
-    owf_dnum w, h;                       /* the shape as built, pointing east: w across, h down */
-    int turn;                            /* quarter turns clockwise: 0 east, 1 south, 2 west, 3 north */
-    int flip_h, flip_v;
-    int full;                            /* out of room */
-} build;
+/* A shape is built with owf_geo.c's pen: pointing east, w across and h down, then turned and flipped into the box
+ * (owf_geo_pen: s, bx, by, bw, bh, w, h, turn, flip_h, flip_v, full). */
+typedef owf_geo_pen build;
 
-static void start(build *b, unsigned flags)
-{
-    owf_dshape *s = b->s;
-    if (s->nparts == OWF_DSHAPE_PARTS) {
-        b->full = 1;
-        return;
-    }
-    s->parts[s->nparts].first = s->npoints;
-    s->parts[s->nparts].n = 0;
-    s->parts[s->nparts].flags = flags;
-    s->nparts++;
-}
-
-/* A point of the shape as built, onto the page. */
-static void pt(build *b, owf_dnum x, owf_dnum y)
-{
-    owf_dshape *s = b->s;
-    owf_dnum px, py;
-    if (b->full || !s->nparts || s->npoints == OWF_DSHAPE_POINTS) {
-        b->full = 1;
-        return;
-    }
-    switch (b->turn) {
-    case 1: px = b->h - y; py = x; break;             /* south: east turns to point down */
-    case 2: px = b->w - x; py = b->h - y; break;      /* west */
-    case 3: px = y; py = b->w - x; break;             /* north */
-    default: px = x; py = y; break;
-    }
-    if (b->flip_h) px = b->bw - px;
-    if (b->flip_v) py = b->bh - py;
-    s->points[s->npoints].x = b->bx + px;
-    s->points[s->npoints].y = b->by + py;
-    s->npoints++;
-    s->parts[s->nparts - 1].n++;
-}
-
-/* An arc of the ellipse round cx, cy from angle a0 to a1 (64ths of a turn, either way), a point each step. */
-static void arc(build *b, owf_dnum cx, owf_dnum cy, owf_dnum rx, owf_dnum ry, int a0, int a1, int step)
-{
-    int a = a0, dir = a1 >= a0 ? step : -step;
-    for (;;) {
-        pt(b, cx + (owf_dnum)((wide)rx * cos64(a) / 10000), cy + (owf_dnum)((wide)ry * sin64(a) / 10000));
-        if (a == a1)
-            break;
-        a += dir;
-        if ((dir > 0 && a > a1) || (dir < 0 && a < a1))
-            a = a1;
-    }
-}
+#define start(b, flags) owf_geo_start(b, flags)
+#define pt(b, x, y) owf_geo_point(b, x, y)
+#define arc(b, cx, cy, rx, ry, a0, a1, step) owf_geo_arc(b, cx, cy, rx, ry, a0, a1, step)
 
 static owf_dnum clamp(owf_dnum v, owf_dnum lo, owf_dnum hi)
 {
@@ -231,26 +167,11 @@ static owf_dnum smaller(owf_dnum a, owf_dnum b)
 #define BOTH (OWF_DSHAPE_CLOSED | OWF_DSHAPE_FILL | OWF_DSHAPE_LINE)
 #define INKED (OWF_DSHAPE_CLOSED | OWF_DSHAPE_INK | OWF_DSHAPE_LINE)
 
-/* A box from x0, y0 to x1, y1 as one part. */
-static void rect(build *b, unsigned flags, owf_dnum x0, owf_dnum y0, owf_dnum x1, owf_dnum y1)
-{
-    start(b, flags);
-    pt(b, x0, y0); pt(b, x1, y0); pt(b, x1, y1); pt(b, x0, y1);
-}
-
-/* A line from x0, y0 to x1, y1 as one part. */
-static void line(build *b, unsigned flags, owf_dnum x0, owf_dnum y0, owf_dnum x1, owf_dnum y1)
-{
-    start(b, OWF_DSHAPE_LINE | flags);
-    pt(b, x0, y0); pt(b, x1, y1);
-}
-
-/* A whole ellipse as one part, a point each step 64ths of a turn. */
-static void oval(build *b, unsigned flags, owf_dnum cx, owf_dnum cy, owf_dnum rx, owf_dnum ry, int step)
-{
-    start(b, flags);
-    arc(b, cx, cy, rx, ry, 0, 64 - step, step);
-}
+/* A box from x0, y0 to x1, y1 as one part; a line as one; a whole ellipse as one, a point each step 64ths of a
+ * turn (owf_geo.c). */
+#define rect(b, flags, x0, y0, x1, y1) owf_geo_rect(b, flags, x0, y0, x1, y1)
+#define line(b, flags, x0, y0, x1, y1) owf_geo_line(b, flags, x0, y0, x1, y1)
+#define oval(b, flags, cx, cy, rx, ry, step) owf_geo_oval(b, flags, cx, cy, rx, ry, step)
 
 /* A short drum from y to y + h (the cylinder's, its ends a high): the side and bottom, then the top's near edge. */
 static void drum(build *b, owf_dnum y, owf_dnum w, owf_dnum h, owf_dnum a, int step)
@@ -684,25 +605,17 @@ int owf_dshape_outline(const char *style, const owf_dnum box[4], owf_dshape *s)
 {
     build b;
     char v[16];
-    int turned, kind = kind_of(style, &turned);
+    int turned, kind = kind_of(style, &turned), turn = 0;
     memset(s, 0, sizeof *s);
     if (kind == S_NONE || box[2] <= 0 || box[3] <= 0)
         return 0;
-    memset(&b, 0, sizeof b);
-    b.s = s;
-    b.bx = box[0];
-    b.by = box[1];
-    b.bw = box[2];
-    b.bh = box[3];
     if (owf_dstyle_get(style, "direction", v, sizeof v)) {
-        if (!strcmp(v, "south")) b.turn = 1;
-        else if (!strcmp(v, "west")) b.turn = 2;
-        else if (!strcmp(v, "north")) b.turn = 3;
+        if (!strcmp(v, "south")) turn = 1;
+        else if (!strcmp(v, "west")) turn = 2;
+        else if (!strcmp(v, "north")) turn = 3;
     }
-    b.flip_h = owf_dstyle_get(style, "flipH", v, sizeof v) && !strcmp(v, "1");
-    b.flip_v = owf_dstyle_get(style, "flipV", v, sizeof v) && !strcmp(v, "1");
-    b.w = b.turn % 2 ? box[3] : box[2];  /* built pointing east, then turned to fill the box */
-    b.h = b.turn % 2 ? box[2] : box[3];
+    owf_geo_pen_init(&b, s, box, turn, owf_dstyle_get(style, "flipH", v, sizeof v) && !strcmp(v, "1"),
+                       owf_dstyle_get(style, "flipV", v, sizeof v) && !strcmp(v, "1"));
     make(&b, style, kind);
     return 1;
 }
