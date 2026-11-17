@@ -4779,7 +4779,7 @@ bad:
 
 static sqlite3_stmt *plan_prepare(ob_project *p, const qplan *pl, const char *const *params, const char *fmt);
 
-static const char *const qkind_names[OB_QKINDS] = { "Select", "Update", "Append", "Delete" };
+static const char *const qkind_names[OB_QKINDS] = { "Select", "Update", "Append", "Delete", "Union" };
 
 const char *ob_qkind_name(ob_qkind k)
 {
@@ -4789,7 +4789,7 @@ const char *ob_qkind_name(ob_qkind k)
 /* "an Update", "an Append", "a Delete": the kind with its article. */
 static const char *a_kind(ob_qkind k)
 {
-    static const char *const a[OB_QKINDS] = { "a Select", "an Update", "an Append", "a Delete" };
+    static const char *const a[OB_QKINDS] = { "a Select", "an Update", "an Append", "a Delete", "a Union" };
     return (unsigned)k < OB_QKINDS ? a[k] : "a";
 }
 
@@ -5141,12 +5141,140 @@ bad:
     return NULL;
 }
 
-/* A query made ready: one that reads (select_plan), or one that changes rows. */
+/* ---- Union queries (core 0.16) ---- */
+
+/* One part of a union made ready: the saved Select query, or the table (every field), of that name. part is
+ * room for the query. NULL with the reason. */
+static qplan *union_part(ob_project *p, const ob_query *q, const char *name, ob_query *part)
+{
+    qplan *pl;
+    if (query_exists(p, name)) {
+        if (!ob_query_get(p, name, part)) return NULL;
+        if (part->kind == OB_QK_UNION) {
+            fail(p, "%s: %s is a union itself: add its tables and queries instead", qname(q), part->name);
+            return NULL;
+        }
+        if (part->kind != OB_QK_SELECT) {
+            fail(p, "%s: %s is %s query: it changes rows, so a union can't read it", qname(q), part->name, a_kind(part->kind));
+            return NULL;
+        }
+    } else if (table_exists(p, name)) {
+        ob_query_init(part, name);
+        if (ob_query_add_table(part, name) < 0 || !ob_query_add_column(part, name, "*")) {
+            fail(p, "%s: %s can't be read", qname(q), name);
+            return NULL;
+        }
+    } else {
+        fail(p, "%s: there is no table or query named %s", qname(q), name);
+        return NULL;
+    }
+    if (!(pl = select_plan(p, part))) return NULL;          /* the reason is the part's own */
+    if (pl->nparams) {
+        plan_free(pl);
+        fail(p, "%s: %s asks a question: a union's parts ask none", qname(q), part->name);
+        return NULL;
+    }
+    return pl;
+}
+
+/* The type a union's column is shown as, from two parts': the same; text with text the first's; whole numbers
+ * Integer; numbers Number; an expression (-1) with a field the field's (but not a Datatype object's, which is
+ * shown by its length). -2: they don't go together. */
+static int union_type(int a, int b)
+{
+    if (a == b) return a;
+    if (a < 0 || b < 0) return (a < 0 ? b : a) == OB_OBJECT ? -2 : a < 0 ? b : a;
+    if (holds_text((ob_type)a) && holds_text((ob_type)b)) return a;
+    if ((a == OB_INTEGER || a == OB_COUNTER) && (b == OB_INTEGER || b == OB_COUNTER)) return OB_INTEGER;
+    if ((a == OB_INTEGER || a == OB_COUNTER || a == OB_NUMBER) && (b == OB_INTEGER || b == OB_COUNTER || b == OB_NUMBER))
+        return OB_NUMBER;
+    return -2;
+}
+
+static qplan *union_plan(ob_project *p, const ob_query *q)
+{
+    qplan *pl = calloc(1, sizeof *pl), *part_plan = NULL;
+    ob_query *part = malloc(sizeof *part);
+    sqlite3_str *s = sqlite3_str_new(NULL);
+    int i, c, sorted = 0;
+    if (!pl || !part || !s) { fail(p, "Not enough memory"); goto bad; }
+    if (q->sql_only) {
+        fail(p, "%s: a union is made of tables and queries; SQL typed as SQL says UNION itself, in a Select query", qname(q));
+        goto bad;
+    }
+    if (q->ntables < 2 || q->ntables > OB_QUERY_TABLES) {
+        fail(p, "%s: a union reads two or more tables or queries: add %s", qname(q), q->ntables == 1 ? "another" : "them");
+        goto bad;
+    }
+    if (q->ncolumns < 0 || q->ncolumns > OB_QUERY_COLUMNS) { fail(p, "%s: too many columns", qname(q)); goto bad; }
+    for (i = 0; i < q->ntables; i++) {
+        if (!(part_plan = union_part(p, q, q->tables[i], part))) goto bad;
+        if (i == 0) {
+            pl->nout = part_plan->nout;
+            memcpy(pl->out, part_plan->out, sizeof pl->out);
+        } else {
+            if (part_plan->nout != pl->nout) {
+                fail(p, "%s: %s shows %d column%s and %s shows %d: a union's parts show the same number", qname(q),
+                     q->tables[0], pl->nout, pl->nout == 1 ? "" : "s", q->tables[i], part_plan->nout);
+                goto bad;
+            }
+            for (c = 0; c < pl->nout; c++) {
+                int t = union_type(pl->out[c].type, part_plan->out[c].type);
+                if (t == -2) {
+                    fail(p, "%s: column %d is %s in %s and %s in %s: a union's parts line up kind for kind", qname(q), c + 1,
+                         pl->out[c].type < 0 ? "an expression" : ob_type_name((ob_type)pl->out[c].type),
+                         i == 1 ? q->tables[0] : "the parts before",
+                         part_plan->out[c].type < 0 ? "an expression" : ob_type_name((ob_type)part_plan->out[c].type),
+                         q->tables[i]);
+                    goto bad;
+                }
+                pl->out[c].type = t;
+            }
+        }
+        sqlite3_str_appendf(s, "%sSELECT * FROM (%s)", i == 0 ? "" : q->union_all ? " UNION ALL " : " UNION ", part_plan->sql);
+        plan_free(part_plan);
+        part_plan = NULL;
+    }
+    /* its columns only sort, each by a result heading */
+    for (c = 0; c < q->ncolumns; c++) {
+        const ob_qcolumn *qc = &q->columns[c];
+        const char *name = qc->table[0] ? qc->field : *skip_space(qc->expr) ? skip_space(qc->expr) : qc->heading;
+        if (qc->sort == OB_SORT_NONE) continue;
+        for (i = 0; i < pl->nout && !same(pl->out[i].heading, name); i++) ;
+        if (i == pl->nout) { fail(p, "%s has no column %s to sort by", qname(q), name[0] ? name : "(no name)"); goto bad; }
+        if (pl->out[i].type == OB_OBJECT) { fail(p, "%s holds Datatype objects: it can't be sorted", pl->out[i].heading); goto bad; }
+        sqlite3_str_appendf(s, "%s%d%s%s", sorted++ ? ", " : " ORDER BY ", i + 1,
+                            pl->out[i].type >= 0 && holds_text((ob_type)pl->out[i].type) ? " COLLATE NOCASE" : "",
+                            qc->sort == OB_SORT_DOWN ? " DESC" : "");
+    }
+    pl->sql = sqlite3_str_finish(s);
+    s = NULL;
+    if (!pl->sql) { fail(p, "Not enough memory"); goto bad; }
+    {
+        sqlite3_stmt *st = NULL;
+        int rc = sqlite3_prepare_v2(p->db, pl->sql, -1, &st, NULL);
+        if (rc != SQLITE_OK) { fail(p, "%s: %s", qname(q), sqlite3_errmsg(p->db)); sqlite3_finalize(st); goto bad; }
+        if (!sqlite3_stmt_readonly(st)) { sqlite3_finalize(st); fail(p, "%s: a query only reads", qname(q)); goto bad; }
+        sqlite3_finalize(st);
+    }
+    pl->kind = OB_QK_UNION;
+    free(part);
+    return pl;
+bad:
+    sqlite3_free(sqlite3_str_finish(s));
+    plan_free(part_plan);
+    free(part);
+    plan_free(pl);
+    return NULL;
+}
+
+/* A query made ready: one that reads (select_plan, union_plan), or one that changes rows. */
 static qplan *plan_make(ob_project *p, const ob_query *q)
 {
     qplan *pl;
     if (q->kind == OB_QK_SELECT) return select_plan(p, q);
     if ((unsigned)q->kind >= OB_QKINDS) { fail(p, "%s: a query of no kind", qname(q)); return NULL; }
+    if (q->kind == OB_QK_UNION) return union_plan(p, q);
     if (q->sql_only) {
         if (!(pl = calloc(1, sizeof *pl))) { fail(p, "Not enough memory"); return NULL; }
         pl = sql_action_plan(p, q, pl);
@@ -5262,7 +5390,7 @@ static ob_int action_go(ob_project *p, const ob_query *q, const char *const *par
     ob_int n = -1;
     int rc = SQLITE_ERROR, capture = 0, good;
     if (undoable) *undoable = 0;
-    if (q->kind == OB_QK_SELECT) { fail(p, "%s reads rows: open it to see them", qname(q)); return -1; }
+    if (q->kind == OB_QK_SELECT || q->kind == OB_QK_UNION) { fail(p, "%s reads rows: open it to see them", qname(q)); return -1; }
     if (p->readonly) { fail(p, "The project is open read-only"); return -1; }
     if (!(pl = plan_make(p, q))) return -1;
     if (!(t = malloc(sizeof *t)) || !ob_table_get(p, pl->target, t)) {
@@ -5433,7 +5561,7 @@ static sqlite3_stmt *plan_prepare(ob_project *p, const qplan *pl, const char *co
 /* An action query's rows aren't shown: it is run (ob_query_run). */
 static int reads(ob_project *p, const ob_query *q)
 {
-    if (q->kind == OB_QK_SELECT) return 1;
+    if (q->kind == OB_QK_SELECT || q->kind == OB_QK_UNION) return 1;
     return fail(p, "%s is %s query: it %s rows, so it is run, not opened", qname(q), a_kind(q->kind),
                 q->kind == OB_QK_APPEND ? "adds" : q->kind == OB_QK_DELETE ? "deletes" : "changes");
 }
@@ -5574,13 +5702,16 @@ static char *grid_text(const ob_query *q)
 {
     sqlite3_str *s = sqlite3_str_new(NULL);
     int i, r;
-    int action = q->kind != OB_QK_SELECT;
-    sqlite3_str_appendall(s, action ? "oadb query 3\n" : q->njoins > 0 ? "oadb query 2\n" : "oadb query 1\n");
-    if (action) {
+    int un = q->kind == OB_QK_UNION;
+    int action = q->kind != OB_QK_SELECT && !un;
+    sqlite3_str_appendall(s, un ? "oadb query 4\n" : action ? "oadb query 3\n" : q->njoins > 0 ? "oadb query 2\n"
+                                                                                                : "oadb query 1\n");
+    if (action || un) {
         sqlite3_str_appendf(s, "kind\t%d", (int)q->kind);
         put_escaped(s, q->target);
         sqlite3_str_appendall(s, q->sql_only ? "\nsql\n" : "\n");
     }
+    if (un && q->union_all) sqlite3_str_appendall(s, "all\n");
     for (i = 0; i < q->ntables; i++) {
         sqlite3_str_appendall(s, "table");
         put_escaped(s, q->tables[i]);
@@ -5632,7 +5763,9 @@ static int grid_read(const char *text, ob_query *q)
 {
     const char *s = text;
     char word[16], num[16];
-    if (strncmp(s, "oadb query 1\n", 13) && strncmp(s, "oadb query 2\n", 13) && strncmp(s, "oadb query 3\n", 13)) return 0;
+    if (strncmp(s, "oadb query 1\n", 13) && strncmp(s, "oadb query 2\n", 13) && strncmp(s, "oadb query 3\n", 13)
+        && strncmp(s, "oadb query 4\n", 13))
+        return 0;
     s += 13;
     while (*s) {
         grid_cell(&s, word, sizeof word);
@@ -5660,6 +5793,8 @@ static int grid_read(const char *text, ob_query *q)
             grid_cell(&s, q->target, sizeof q->target);
         } else if (!strcmp(word, "sql")) {
             q->sql_only = 1;
+        } else if (!strcmp(word, "all")) {
+            q->union_all = 1;
         } else if (!strcmp(word, "join") && q->njoins < OB_QUERY_JOINS) {
             ob_qjoin *k = &q->joins[q->njoins++];
             memset(k, 0, sizeof *k);
@@ -5744,8 +5879,10 @@ int ob_query_rename(ob_project *p, const char *old_name, const char *new_name)
     if (!query_exists(p, old_name)) return fail(p, "There is no query named %s", old_name);
     if (!query_name_ok(p, new_name, old_name)) return 0;
     if (!step_begin(p)) return 0;
+    /* queries_follow: the unions that read it (no other grid query can name a query: no table has its name) */
     return step_end(p, runf(p, "UPDATE oadb_queries SET name = %Q WHERE name = %Q", new_name, old_name)
-                       && buttons_follow(p, OB_FA_RUNQUERY, old_name, new_name)) && ok(p);
+                       && buttons_follow(p, OB_FA_RUNQUERY, old_name, new_name)
+                       && queries_follow(p, old_name, new_name)) && ok(p);
 }
 
 int ob_query_delete(ob_project *p, const char *name)

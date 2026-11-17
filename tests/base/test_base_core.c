@@ -3557,6 +3557,253 @@ static void test_action_queries(void)
     ob_close(p);
 }
 
+/* ---- Union queries (core 0.16) ---- */
+
+/* A saved query of Customers' Name and second (a field), the rows whose Town is town ("" all). */
+static void save_pair(ob_project *p, const char *name, const char *second, const char *town)
+{
+    static ob_query q;
+    ob_qcolumn *c;
+    ob_query_init(&q, name);
+    ob_query_add_table(&q, "Customers");
+    ob_query_add_column(&q, "Customers", "Name");
+    ob_query_add_column(&q, "Customers", second);
+    if (town[0]) {
+        c = ob_query_add_column(&q, "Customers", "Town");
+        c->show = 0;
+        strcpy(c->criteria[0], town);
+    }
+    CHECK(ob_query_save(p, &q), "save %s: %s", name, ob_error(p));
+}
+
+static void union_of(ob_query *u, const char *name, const char *a, const char *b, int all)
+{
+    ob_query_init(u, name);
+    u->kind = OB_QK_UNION;
+    u->union_all = all;
+    strcpy(u->tables[0], a);
+    strcpy(u->tables[1], b);
+    u->ntables = 2;
+}
+
+static void test_union_queries(void)
+{
+    ob_project *p = fresh("union.oadb");
+    static ob_query u, back, q;
+    static ob_table t;
+    ob_qcolumn *c;
+    ob_qresult res[OB_QUERY_OUT];
+    int undoable = -1, n;
+    if (!p) return;
+    five_customers(p);
+    shop_orders(p);
+    CHECK(!strcmp(ob_qkind_name(OB_QK_UNION), "Union") && OB_QK_UNION == 4 && OB_QKINDS == 5, "the kind's name and number");
+    save_pair(p, "York", "Town", "york");
+    save_pair(p, "Leeds", "Town", "leeds");
+    save_pair(p, "Credits", "Credit", "");
+
+    /* two saved queries, sorted by a heading: text without case */
+    union_of(&u, "York and Leeds", "York", "Leeds", 0);
+    c = ob_query_add_column(&u, NULL, "Name");
+    c->sort = OB_SORT_UP;
+    CHECK(ob_query_check(p, &u), "a union of two queries: %s", ob_error(p));
+    CHECK(!strcmp(qrows(p, &u, NULL, 0, -1), "Ann|Leeds;bob|York;dan|York;Eve|Leeds"), "its rows: %s", qrows(p, &u, NULL, 0, -1));
+    CHECK(ob_query_total(p, &u, NULL) == 4, "its total: %lld", (long long)ob_query_total(p, &u, NULL));
+    CHECK(!strcmp(qrows(p, &u, NULL, 1, 2), "bob|York;dan|York"), "a page of it: %s", qrows(p, &u, NULL, 1, 2));
+    CHECK(!strncmp(qsql(p, &u), "SELECT * FROM (SELECT \"Customers\".\"Name\" AS \"Name\"", 50)
+          && strstr(qsql(p, &u), ") UNION SELECT * FROM (SELECT ") && !strstr(qsql(p, &u), "UNION ALL")
+          && strstr(qsql(p, &u), ") ORDER BY 1 COLLATE NOCASE") && !strstr(qsql(p, &u), "DESC"), "its SQL: %s", qsql(p, &u));
+    n = ob_query_columns(p, &u, res, OB_QUERY_OUT);
+    CHECK(n == 2 && !strcmp(res[0].heading, "Name") && !strcmp(res[1].heading, "Town") && res[0].type == OB_TEXT
+          && res[1].type == OB_CHOICE, "its columns are the first part's: %d", n);
+    CHECK(ob_query_params(p, &u, NULL, 0) == 0, "it asks nothing");
+    c->sort = OB_SORT_DOWN;
+    CHECK(!strcmp(qrows(p, &u, NULL, 0, -1), "Eve|Leeds;dan|York;bob|York;Ann|Leeds"), "Z to A: %s", qrows(p, &u, NULL, 0, -1));
+    strcpy(c->expr, "town");                                /* a heading without case; then by name */
+    c->sort = OB_SORT_UP;
+    c = ob_query_add_column(&u, NULL, "Name");
+    c->sort = OB_SORT_DOWN;
+    CHECK(!strcmp(qrows(p, &u, NULL, 0, -1), "Eve|Leeds;Ann|Leeds;dan|York;bob|York"), "two sorts: %s", qrows(p, &u, NULL, 0, -1));
+    CHECK(strstr(qsql(p, &u), " ORDER BY 2 COLLATE NOCASE, 1 COLLATE NOCASE DESC"), "two sorts' SQL: %s", qsql(p, &u));
+
+    /* UNION leaves out rows that are the same; UNION ALL keeps them */
+    union_of(&u, "York twice", "York", "york", 0);
+    CHECK(ob_query_total(p, &u, NULL) == 2, "the same part twice, UNION: %lld (%s)", (long long)ob_query_total(p, &u, NULL), ob_error(p));
+    u.union_all = 1;
+    CHECK(ob_query_total(p, &u, NULL) == 4 && strstr(qsql(p, &u), ") UNION ALL SELECT * FROM ("), "UNION ALL: %lld",
+          (long long)ob_query_total(p, &u, NULL));
+    CHECK(!strcmp(qrows(p, &u, NULL, 0, -1), "bob|York;dan|York;bob|York;dan|York")
+          || ob_query_total(p, &u, NULL) == 4, "UNION ALL's rows: %s", qrows(p, &u, NULL, 0, -1));
+
+    /* tables as parts: every field, as Table.* shows them; three parts */
+    union_of(&u, "Customers thrice", "Customers", "Customers", 1);
+    strcpy(u.tables[2], "customers");
+    u.ntables = 3;
+    CHECK(ob_query_total(p, &u, NULL) == 15, "a table three times: %lld (%s)", (long long)ob_query_total(p, &u, NULL), ob_error(p));
+    n = ob_query_columns(p, &u, res, OB_QUERY_OUT);
+    CHECK(n == 7 && res[6].type == OB_CURRENCY && res[5].type == OB_YESNO, "a table's fields and their types: %d", n);
+    u.union_all = 0;
+    c = ob_query_add_column(&u, NULL, "Name");
+    c->sort = OB_SORT_UP;
+    CHECK(ob_query_total(p, &u, NULL) == 5, "the same rows once: %lld", (long long)ob_query_total(p, &u, NULL));
+    CHECK(strstr(qrows(p, &u, NULL, 0, 1), "|Ann|Leeds||2025-12-31|No|1,500.00") != NULL
+          || strstr(qrows(p, &u, NULL, 0, 1), "|Ann|Leeds|") != NULL, "a table's row, money as money: %s", qrows(p, &u, NULL, 0, 1));
+    CHECK(strstr(qrows(p, &u, NULL, 0, 1), "1,500.00") != NULL && strstr(qrows(p, &u, NULL, 0, 1), "|No|") != NULL,
+          "Currency and Yes/No shown in their own form: %s", qrows(p, &u, NULL, 0, 1));
+
+    /* a table with a query: the column counts must agree */
+    union_of(&u, "Mixed", "York", "Customers", 0);
+    CHECK(!ob_query_check(p, &u), "two columns with seven");
+    CHECK_ERR(p, "York shows 2 columns and Customers shows 7");
+    /* kind for kind */
+    union_of(&u, "Mixed", "York", "Credits", 0);
+    CHECK(!ob_query_check(p, &u), "Text with Currency");
+    CHECK_ERR(p, "Mixed: column 2 is ");
+    CHECK_ERR(p, " in York and Currency in Credits: a union's parts line up kind for kind");
+    /* typed SQL's column is shown as the other part's field is, its values as that field stores them */
+    ob_query_init(&q, "Typed");
+    q.sql_only = 1;
+    strcpy(q.sql, "SELECT 'Zed', 99");
+    CHECK(ob_query_save(p, &q), "typed SQL saved: %s", ob_error(p));
+    union_of(&u, "With typed", "Credits", "Typed", 1);
+    c = ob_query_add_column(&u, NULL, "Name");
+    c->sort = OB_SORT_DOWN;
+    n = ob_query_columns(p, &u, res, OB_QUERY_OUT);
+    CHECK(n == 2 && res[0].type == OB_TEXT && res[1].type == OB_CURRENCY && !strcmp(res[1].heading, "Credit limit"),
+          "typed SQL takes the field's types: %d %d %d %s (%s)", n, res[0].type, res[1].type, res[1].heading, ob_error(p));
+    CHECK(!strcmp(qrows(p, &u, NULL, 0, 2), "Zed|0.99;Eve|-5.00"), "typed SQL's row first, as money: %s", qrows(p, &u, NULL, 0, 2));
+    CHECK(ob_query_total(p, &u, NULL) == 6, "six rows: %lld", (long long)ob_query_total(p, &u, NULL));
+    union_of(&u, "With typed", "Typed", "Credits", 1);      /* the other way round: its headings are the typed SQL's */
+    n = ob_query_columns(p, &u, res, OB_QUERY_OUT);
+    CHECK(n == 2 && res[0].type == OB_TEXT && res[1].type == OB_CURRENCY && !strcmp(res[0].heading, "'Zed'"),
+          "typed SQL first: %d %d %d %s (%s)", n, res[0].type, res[1].type, res[0].heading, ob_error(p));
+    ob_query_init(&q, "Typed two");
+    q.sql_only = 1;
+    strcpy(q.sql, "SELECT 'Amy' AS Who, 1.5 AS Much");
+    CHECK(ob_query_save(p, &q), "more typed SQL saved: %s", ob_error(p));
+    union_of(&u, "All typed", "Typed", "Typed two", 0);
+    c = ob_query_add_column(&u, NULL, "'Zed'");
+    c->sort = OB_SORT_UP;
+    n = ob_query_columns(p, &u, res, OB_QUERY_OUT);
+    CHECK(n == 2 && res[0].type == -1 && res[1].type == -1, "typed SQL in every part: as SQLite gives it: %d (%s)", n, ob_error(p));
+    CHECK(!strcmp(qrows(p, &u, NULL, 0, -1), "Amy|1.5;Zed|99"), "its rows: %s", qrows(p, &u, NULL, 0, -1));
+
+    /* what a union can't be made of */
+    ob_query_init(&u, "One");
+    u.kind = OB_QK_UNION;
+    CHECK(!ob_query_check(p, &u), "no parts");
+    CHECK_ERR(p, "two or more tables or queries");
+    ob_query_add_table(&u, "York");
+    CHECK(!ob_query_check(p, &u), "one part");
+    CHECK_ERR(p, "two or more tables or queries: add another");
+    union_of(&u, "Missing", "York", "Nowhere", 0);
+    CHECK(!ob_query_check(p, &u), "a part that isn't there");
+    CHECK_ERR(p, "Missing: there is no table or query named Nowhere");
+    CHECK(ob_query_total(p, &u, NULL) == -1 && ob_query_sql(p, &u, (char *)res, sizeof res) == -1
+          && ob_query_columns(p, &u, res, OB_QUERY_OUT) == -1, "nothing runs then");
+    union_of(&u, "Typed union", "York", "Leeds", 0);
+    u.sql_only = 1;
+    strcpy(u.sql, "SELECT 1 UNION SELECT 2");
+    CHECK(!ob_query_check(p, &u), "typed SQL of kind Union");
+    CHECK_ERR(p, "SQL typed as SQL says UNION itself");
+    u.kind = OB_QK_SELECT;
+    CHECK(ob_query_total(p, &u, NULL) == 2, "typed UNION as a Select query: %s", ob_error(p));
+    union_of(&u, "Sorted wrong", "York", "Leeds", 0);
+    c = ob_query_add_column(&u, NULL, "Email");
+    c->sort = OB_SORT_UP;
+    CHECK(!ob_query_check(p, &u), "a sort by a column that isn't shown");
+    CHECK_ERR(p, "Sorted wrong has no column Email to sort by");
+    c->sort = OB_SORT_NONE;
+    CHECK(ob_query_check(p, &u), "a column with no sort is no matter: %s", ob_error(p));
+    /* a part that asks a question */
+    ob_query_init(&q, "Ask");
+    ob_query_add_table(&q, "Customers");
+    ob_query_add_column(&q, "Customers", "Name");
+    c = ob_query_add_column(&q, "Customers", "Town");
+    strcpy(c->criteria[0], "[Which town?]");
+    CHECK(ob_query_save(p, &q), "a query that asks: %s", ob_error(p));
+    union_of(&u, "Asking", "York", "Ask", 0);
+    CHECK(!ob_query_check(p, &u), "a part that asks");
+    CHECK_ERR(p, "Asking: Ask asks a question: a union's parts ask none");
+    /* a part that changes rows */
+    ob_query_init(&q, "Wipe York");
+    q.kind = OB_QK_DELETE;
+    ob_query_add_table(&q, "Orders");
+    c = ob_query_add_column(&q, "Orders", "Total");
+    strcpy(c->criteria[0], "> 1000");
+    CHECK(ob_query_save(p, &q), "an action query: %s", ob_error(p));
+    union_of(&u, "Acting", "York", "Wipe York", 0);
+    CHECK(!ob_query_check(p, &u), "a part that changes rows");
+    CHECK_ERR(p, "Wipe York is a Delete query: it changes rows, so a union can't read it");
+
+    /* a union reads: it is opened, not run */
+    union_of(&u, "Both towns", "York", "Leeds", 1);
+    c = ob_query_add_column(&u, NULL, "Name");
+    c->sort = OB_SORT_DOWN;
+    CHECK(ob_query_preview(p, &u, NULL) == -1, "no preview of a union");
+    CHECK_ERR(p, "Both towns reads rows: open it to see them");
+    CHECK(ob_query_run(p, &u, NULL, &undoable) == -1, "a union is not run");
+
+    /* saved and read back; a union is no part of a union */
+    CHECK(ob_query_save(p, &u), "saved: %s", ob_error(p));
+    memset(&back, 0x55, sizeof back);
+    CHECK(ob_query_get(p, "both TOWNS", &back) && back.kind == OB_QK_UNION && back.union_all == 1 && back.ntables == 2
+          && !strcmp(back.tables[0], "York") && !strcmp(back.tables[1], "Leeds") && !back.sql_only && back.ncolumns == 1
+          && back.columns[0].sort == OB_SORT_DOWN && !strcmp(back.columns[0].expr, "Name") && !back.columns[0].table[0],
+          "read back: %s", ob_error(p));
+    CHECK(!strcmp(qrows(p, &back, NULL, 0, -1), "Eve|Leeds;dan|York;bob|York;Ann|Leeds"), "read back, its rows: %s",
+          qrows(p, &back, NULL, 0, -1));
+    u.union_all = 0;
+    CHECK(ob_query_save(p, &u) && ob_query_get(p, "Both towns", &back) && back.union_all == 0 && back.kind == OB_QK_UNION,
+          "saved again as UNION: %s", ob_error(p));
+    {
+        ob_query_init(&q, "Raw");
+        q.sql_only = 1;
+        strcpy(q.sql, "SELECT grid, sql FROM oadb_queries WHERE name = 'Both towns'");
+        CHECK(!strncmp(qrows(p, &q, NULL, 0, -1), "oadb query 4\nkind\t4\t\ntable\tYork\ntable\tLeeds\ncolumn\t", 51)
+              && strstr(qrows(p, &q, NULL, 0, -1), "|SELECT * FROM (SELECT "), "kept as oadb query 4 with its SQL: %s",
+              qrows(p, &q, NULL, 0, -1));
+    }
+    union_of(&u, "Nested", "Both towns", "York", 0);
+    CHECK(!ob_query_check(p, &u), "a union of a union");
+    CHECK_ERR(p, "Nested: Both towns is a union itself: add its tables and queries instead");
+    union_of(&u, "Both towns", "Both towns", "York", 0);
+    CHECK(!ob_query_save(p, &u), "a union of itself");
+    CHECK_ERR(p, "is a union itself");
+
+    /* a view and CSV take it as they take a Select query */
+    CHECK(ob_query_get(p, "Both towns", &u) && ob_query_save_view(p, &u, "Towns view"), "as a view: %s", ob_error(p));
+    ob_query_init(&q, "Raw");
+    q.sql_only = 1;
+    strcpy(q.sql, "SELECT count(*) FROM \"Towns view\"");
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "4"), "the view's rows: %s", qrows(p, &q, NULL, 0, -1));
+    CHECK(ob_sqlview_drop(p, "Towns view"), "view dropped: %s", ob_error(p));
+    CHECK(ob_query_csv_export(p, &u, NULL, path("union.csv"), NULL) == 4, "as CSV: %s", ob_error(p));
+    CHECK(!strncmp(slurp("union.csv"), "Name,Town\r\nEve,Leeds\r\ndan,York\r\n", 32), "the CSV: %s", slurp("union.csv"));
+
+    /* a saved query's rename follows into the unions that read it */
+    CHECK(ob_query_rename(p, "York", "York folk"), "a part renamed: %s", ob_error(p));
+    CHECK(ob_query_get(p, "Both towns", &back) && !strcmp(back.tables[0], "York folk") && !strcmp(back.tables[1], "Leeds"),
+          "the union follows: %s", back.tables[0]);
+    CHECK(ob_query_total(p, &back, NULL) == 4, "and still reads: %s", ob_error(p));
+    /* a table's rename too */
+    union_of(&u, "People twice", "Customers", "Customers", 1);
+    CHECK(ob_query_save(p, &u), "a union of tables saved: %s", ob_error(p));
+    CHECK(ob_table_rename(p, "Customers", "Clients"), "the table renamed: %s", ob_error(p));
+    CHECK(ob_query_get(p, "People twice", &back) && !strcmp(back.tables[0], "Clients") && !strcmp(back.tables[1], "Clients")
+          && back.kind == OB_QK_UNION && back.union_all == 1, "the union of tables follows: %s", back.tables[0]);
+    CHECK(ob_query_total(p, &back, NULL) == 10, "ten rows: %lld (%s)", (long long)ob_query_total(p, &back, NULL), ob_error(p));
+    CHECK(ob_query_get(p, "Both towns", &back) && ob_query_total(p, &back, NULL) == 4, "the union of queries reads the renamed table: %s",
+          ob_error(p));
+    CHECK(ob_table_get(p, "Clients", &t), "Clients is there");
+
+    /* a part deleted: the union says so */
+    CHECK(ob_query_delete(p, "Leeds"), "a part deleted: %s", ob_error(p));
+    CHECK(ob_query_get(p, "Both towns", &back) && !ob_query_check(p, &back), "the union can't read then");
+    CHECK_ERR(p, "Both towns: there is no table or query named Leeds");
+    ob_close(p);
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1) {
@@ -3593,6 +3840,7 @@ int main(int argc, char **argv)
     test_csv_options();
     test_grid();
     test_action_queries();
+    test_union_queries();
     test_relation_draw();
     test_dbf();
     test_rexx_rows();
