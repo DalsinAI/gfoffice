@@ -126,8 +126,9 @@ int opr_gradient_band(const int *xy, int n, int x, int y, int w, int h, int kind
  * kind (OPR_HATCH_SINGLE, _DOUBLE: and at right angles, _TRIPLE: and at 45 degrees between) inside the
  * closed outline xy (n points), at angle (tenths anticlockwise, 0 left to right) and distance apart, the
  * pattern running through (x, y), so it stays put as the shape moves with its box. Into out as x1, y1,
- * x2, y2 for each line (at most cap lines); the count, or -1 when out is too small. At most 4097 lines
- * each way. */
+ * x2, y2 for each line (at most cap lines); the count. When more lines would cross the outline than out
+ * holds, the lines are spaced twice as far apart (then four times, and so on) until they fit; -1 only when
+ * even that cannot fit them (out too small for one line of each set). */
 #define OPR_HATCH_SINGLE 1
 #define OPR_HATCH_DOUBLE 2
 #define OPR_HATCH_TRIPLE 3

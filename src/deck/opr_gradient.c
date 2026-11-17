@@ -191,13 +191,17 @@ static int hatch_set(const int *xy, int n, int x, int y, int angle, int distance
 
 int opr_hatch_lines(const int *xy, int n, int x, int y, int kind, int angle, int distance, int *out, int cap)
 {
-    int m = 0;
-    if (kind < OPR_HATCH_SINGLE || kind > OPR_HATCH_TRIPLE || !out || cap < 0)
+    int m = -1, tries;
+    if (kind < OPR_HATCH_SINGLE || kind > OPR_HATCH_TRIPLE || !out || cap < 0 || distance <= 0)
         return 0;
-    m = hatch_set(xy, n, x, y, angle, distance, out, cap, m);
-    if (m >= 0 && kind >= OPR_HATCH_DOUBLE)
-        m = hatch_set(xy, n, x, y, angle + 900, distance, out, cap, m);
-    if (m >= 0 && kind == OPR_HATCH_TRIPLE)
-        m = hatch_set(xy, n, x, y, angle + 450, distance, out, cap, m);
+    /* more lines than out holds (a tiny distance on a big shape): twice as far apart each time, through
+     * the same (x, y), so every other line stays where it was, rather than none drawn at all */
+    for (tries = 0; m < 0 && tries < 24 && distance > 0; tries++, distance = distance > 0x3FFFFFFF ? 0 : distance * 2) {
+        m = hatch_set(xy, n, x, y, angle, distance, out, cap, 0);
+        if (m >= 0 && kind >= OPR_HATCH_DOUBLE)
+            m = hatch_set(xy, n, x, y, angle + 900, distance, out, cap, m);
+        if (m >= 0 && kind == OPR_HATCH_TRIPLE)
+            m = hatch_set(xy, n, x, y, angle + 450, distance, out, cap, m);
+    }
     return m;
 }

@@ -75,7 +75,14 @@ static void test_lines(void)
         if (out[k * 4] != 0 || out[k * 4 + 2] != 1000 || out[k * 4 + 1] != k * 100 || out[k * 4 + 3] != k * 100) ok = 0;
     CHECK(ok, "each from the left edge to the right one");
     CHECK(opr_hatch_lines(square, 4, 0, 0, OPR_HATCH_DOUBLE, 0, 100, out, 64) == 20, "double: and ten down");
-    CHECK(opr_hatch_lines(square, 4, 0, 0, OPR_HATCH_SINGLE, 0, 100, out, 5) == -1, "too few: -1");
+    /* room for 5 of the 10: twice as far apart, every other line kept where it was */
+    n = opr_hatch_lines(square, 4, 0, 0, OPR_HATCH_SINGLE, 0, 100, out, 5);
+    for (k = 0, ok = n == 5; ok && k < n; k++)
+        if (out[k * 4 + 1] != k * 200 || out[k * 4] != 0 || out[k * 4 + 2] != 1000) ok = 0;
+    CHECK(ok, "too many for out: 200 apart instead, not none");
+    n = opr_hatch_lines(square, 4, 0, 0, OPR_HATCH_DOUBLE, 0, 1, out, 64);
+    CHECK(n > 0 && n <= 64, "a hairline apart on the square, double: widened until they fit");
+    CHECK(opr_hatch_lines(square, 4, 0, 0, OPR_HATCH_SINGLE, 0, 100, out, 0) == -1, "no room at all: -1");
     CHECK(opr_hatch_lines(square, 4, 0, 0, OPR_HATCH_SINGLE, 0, 0, out, 64) == 0, "no distance: nothing");
     CHECK(opr_hatch_lines(square, 4, 0, 0, 0, 0, 100, out, 64) == 0, "not a hatch: nothing");
     n = opr_hatch_lines(square, 4, 50, 50, OPR_HATCH_SINGLE, 0, 100, out, 64);
@@ -170,11 +177,44 @@ static void test_pdf_alpha(void)
     owf_pdf_free(pdf);
 }
 
+/* a see-through gradient: its 48 overlapping bands go opaque into one transparency group, which the
+ * page paints once at the alpha, so 50% stays 50% where bands overlap (not 48 layers of 50%) */
+static void test_pdf_gradient_alpha(void)
+{
+    static const int box[8] = {0, 0, 2000, 0, 2000, 1000, 0, 1000};
+    owf_pdf *pdf = owf_pdf_new();
+    unsigned char *data = NULL;
+    size_t length = 0;
+    CHECK(pdf && owf_pdf_page(pdf, 4000, 4000) == 0, "a page");
+    owf_pdf_alpha(pdf, 50);
+    CHECK(owf_pdf_gradient(pdf, box, 4, 0, 0, 2000, 1000, OWF_PDF_GRADIENT_LINEAR, 0, OWF_SHADE(0xFF0000),
+                           OWF_SHADE(0x0000FF)) == 0, "a linear gradient, half see-through");
+    CHECK(owf_pdf_gradient(pdf, box, 4, 0, 0, 2000, 1000, OWF_PDF_GRADIENT_RADIAL, 0, OWF_SHADE(0xFF0000),
+                           OWF_SHADE(0x0000FF)) == 0, "a radial one");
+    owf_pdf_alpha(pdf, 100);
+    CHECK(owf_pdf_gradient(pdf, box, 4, 0, 2000, 2000, 1000, OWF_PDF_GRADIENT_LINEAR, 0, OWF_SHADE(0xFF0000),
+                           OWF_SHADE(0x0000FF)) == 0, "an opaque one, drawn on the page as before");
+    CHECK(owf_pdf_finish(pdf, "g", &data, &length, NULL) == OWF_OK && data, "finished");
+    if (data) {
+        CHECK(count(data, length, " gs\n") == 2 && count(data, length, "/GA50 gs\n/Fm1 Do") == 1 &&
+              count(data, length, "/GA50 gs\n/Fm2 Do") == 1, "the alpha set once for each gradient, not per band");
+        CHECK(count(data, length, "/Subtype /Form") == 2 &&
+              count(data, length, "/Group << /Type /Group /S /Transparency >>") == 2, "each a transparency group");
+        CHECK(count(data, length, "/Fm1 ") == 2 && count(data, length, "/Fm2 ") == 2, "both in the page's resources");
+        CHECK(count(data, length, " rg\n") == 48 * 3,
+              "48 bands each, opaque, in the groups and on the page");
+        CHECK(count(data, length, "/GA50 << /ca 0.50 /CA 0.50 >>") == 1, "the alpha named once");
+    }
+    free(data);
+    owf_pdf_free(pdf);
+}
+
 int main(void)
 {
     test_lines();
     test_layout_and_pdf();
     test_pdf_alpha();
+    test_pdf_gradient_alpha();
     printf("fills-draw: %d checks, %d failed\n", checks, failures);
     return failures != 0;
 }
