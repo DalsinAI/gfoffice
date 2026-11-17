@@ -1,240 +1,165 @@
 # GFOffice
 
-GFOffice is a native office suite for AmigaOS 3.2. Its programs are small
-68040 C applications with no FPU requirement, and they share one document
-library, **libowf**, for every file format, PDF and printing.
+## A complete, native office suite for the Amiga
 
-The suite aims at the features of Apache OpenOffice and the other desktop
-programs named below. It is written from the file formats' published
-specifications, from samples and from our own code, never from OpenOffice's,
-LibreOffice's or any other suite's source. The designs are in `docs/gfoffice/`.
+GFOffice brings everyday office work back to the Amiga. Seven applications,
+written from scratch in C for AmigaOS 3.x, open the documents the rest of the
+world sends you, let you edit them properly, and save them so the rest of the
+world can read them again.
 
-![GFOpenWrite on AmigaOS 3.2.3: a Word document written in Word, opened as it is](docs/screenshot.png)
+Word processing, spreadsheets, presentations, desktop publishing, databases,
+project planning and diagrams: all native, all fast on a 68040, all sharing
+one document engine, and all free and open source under the MIT licence.
 
-*GFOpenWrite on AmigaOS 3.2.3 (an AmiCradle instance with GFOpenRTG and the Open look), opening a DOCX written in Word.*
+![GFOpenWrite on AmigaOS 3.2.3, showing a DOCX document exactly as it was written](docs/screenshot.png)
 
-## The programs
+*GFOpenWrite on AmigaOS 3.2.3, opening a DOCX document as it was written.*
 
-| Program | What it is | Version | Parity (16 Nov 2026) |
-| --- | --- | --- | --- |
-| **GFOpenWrite** | Word processor | 2.0.48 | 85% of OpenOffice Writer |
-| **GFOpenCalc** | Spreadsheet | 0.1.78 | 80% of OpenOffice Calc |
-| **GFOpenPresentation** | Slides and slide shows | 0.6.35 | 89% of OpenOffice Impress |
-| **GFOpenPressmaster** | Desktop publishing | 0.3.36 | 71% of Microsoft Publisher 2021 |
-| **GFOpenBase** | Database | 0.15.0 | 64% of OpenOffice Base |
-| **GFOpenProject** | Project planner | 0.1.20 | 64% of ProjectLibre 1.9 |
-| **GFOpenDiag** | Diagram editor | 0.1.0 | 66% of draw.io, 72% of Dia |
-| **OWConvert** | Shell converter, `C:OWConvert` | | |
+## Why GFOffice
 
-Parity is a practical, workflow-weighted score: whether an ordinary user can
-finish the comparator's usual work, with editing, Undo, save and reload. Only
-merged work is scored. Each program's sheet, with every feature row, is in
-`docs/parity/`; the method is in `docs/openoffice-parity-plan.md` and the
-9 November gap analysis, `docs/gfoffice/PARITY-GAPS-2026-11-09.md`.
+- **Your files, both ways.** OpenDocument and Microsoft Office formats open
+  and save: ODT, DOCX, RTF, XLSX, ODS, CSV, ODP and PPTX. Publisher `.pub`
+  files open in GFOpenPressmaster, and older Excel `.xls` workbooks open in
+  GFOpenCalc.
+- **Built for the Amiga.** Real Amiga windows, menus and gadgets, Amiga
+  datatypes for pictures, the clipboard, printer.device, and an ARexx port in
+  every application for scripting and automation.
+- **Light on hardware.** A 68040 is enough, no FPU is needed, and small
+  documents are happy in 8 MB of Fast RAM. RTG screens are used when they are
+  there, and AGA works too.
+- **One engine, shared.** Every application sits on libowf, the suite's
+  document library, also available as four shared Amiga libraries
+  (`owfwrite`, `owfcalc`, `owfpresent` and `owfpub`), so programs share code
+  and memory instead of each carrying its own.
+- **Print and PDF everywhere.** Every application exports searchable PDF and
+  prints through GFOpenPrint.
+- **Clean room and open.** Written from the published file format
+  specifications and real sample files, never from another suite's source.
+  MIT licensed.
 
-GFOpenPressmaster was called GFOpenPublisher until 16 November 2026; its
-ARexx port answers to both names. GFOpenDraw, the suite's paint editor, has
-its own repository, `DalsinAI/gfopendraw`, and the suite build pins it.
-This repository was called `openamigawrite` until 25 October 2026, and GitHub
-redirects the old name.
+## The applications
 
-## GFOpenWrite
+### GFOpenWrite: word processor
 
-GFOpenWrite 2.0.48 is the suite's word processor (GFOpenWrite 1.0.7, the 1.0
-line, is still built as `GFOpenWrite1`).
+A full word processor that keeps up with modern documents: styles, tables,
+pictures with text wrap, headers and footers, columns and sections, footnotes,
+a linked table of contents, tracked changes and comments, fields, spelling
+with an en_GB dictionary, autosave and recovery. Opens and saves DOCX, ODT,
+RTF and Markdown, exports HTML and PDF, and opens classic Amiga documents
+from ProWrite, Final Writer, Final Copy and Wordworth.
 
-- Editing with grouped Undo and Redo; character and paragraph formatting,
-  styles, bullets and numbering, tabs and the ruler.
-- Tables with row and column editing, cell fills and borders; inline and
-  floating pictures with text wrapping; anchored text boxes.
-- Headers and footers, page setup, newspaper columns and mixed-column
-  sections, page breaks, a linked Table of Contents.
-- Track changes, comments in the margin, footnotes and endnotes, fields
-  (IF, SEQ and references), hidden text.
-- Find and Replace, spelling (en_GB plus a user dictionary), autosave and
-  recovery, and an ARexx port.
-- Searchable PDF export and printing through GFOpenPrint.
+### GFOpenCalc: spreadsheet
 
-The architecture is in `docs/architecture/NATIVE_CORE.md`, the interaction
-design in `docs/UX_DESIGN.md`.
+A real spreadsheet with a full formula engine: sorting and filtering,
+conditional formats with colour scales, data bars and icon sets, validation,
+named ranges, Goal Seek, Subtotals, Multiple Operations, Consolidation,
+scenarios, pivot tables with drill-down, tracked changes, and live charts with
+trendlines, error bars and secondary axes. Opens and saves XLSX, ODS and CSV,
+and opens Excel 97-2003 workbooks.
 
-## GFOpenCalc
+### GFOpenPresentation: slides and slide shows
 
-GFOpenCalc 0.1.78 is the spreadsheet. Its portable core is `src/calc` and its
-formula engine is in `libowf/calc` (`docs/CALC_ENGINE.md`).
+![GFOpenPresentation's slide sorter with a PowerPoint deck open](docs/screenshots/gfopenpresentation.png)
 
-- Editing, fill, insert and delete, styles, merged cells, comments, named
-  ranges, sheets reordered, hidden and copied, with Undo throughout.
-- Sort on up to eight keys, AutoFilter and Standard Filter, validation,
-  conditional formats (colour scales, data bars and icon sets).
-- Goal Seek, Multiple Operations, Subtotals, Consolidation, scenarios,
-  pivot tables with subtotals and drill-down, tracked changes.
-- Charts (column, bar, line, area, pie, scatter) with titles, axes, series
-  styles, trendlines, error bars and a secondary axis, all saved in XLSX and ODS.
-- PDF export and printing through GFOpenPrint.
+Build and edit slides with text, pictures, tables, charts and masters, with
+solid, gradient and hatched fills and shadows. Rearrange them in the slide
+sorter, then present full screen with transitions and timings. Opens and saves
+ODP and PPTX.
 
-## GFOpenPresentation
+### GFOpenPressmaster: desktop publishing
 
-GFOpenPresentation 0.6.35 is the slide program (`docs/gfoffice/Design-OpenPresentation.md`).
+Lay out newsletters, flyers and booklets with linked text frames, columns,
+text wrap round pictures and shapes, master pages and page numbers, grids and
+guides. Mail and catalog merge, built-in templates, and print-ready PDF with
+crop marks and bleed. Opens Publisher `.pub` files and saves ODP and PDF.
 
-- Slide sorter, slide editing and text editing with Undo; pictures with crop;
-  tables; charts; masters; solid, gradient and hatched fills, see-through
-  fills and shadows.
-- Cut, Copy and Paste of text and of whole objects, shared with Pressmaster.
-- A full-screen show with transitions, timings and loops (F5, Shift-F5).
-- PDF export and printing through GFOpenPrint.
+### GFOpenBase: database
 
-## GFOpenPressmaster
+Design tables, keys and relationships, browse and edit in a datasheet, build
+queries visually or in SQL, and create forms and grouped, totalled reports
+with a print preview. Imports and exports CSV, dBASE, ODS and XLSX, and makes
+reports as ODT, DOCX or PDF.
 
-GFOpenPressmaster 0.3.36 is the desktop publisher (`docs/gfoffice/Design-OpenPressmaster.md`).
-It opens Microsoft Publisher `.pub` files into its own model and edits them
-with the shared page editor it has with Presentation.
+### GFOpenProject: project planner
 
-- `.pub` pages, text with its original formatting, linked frames and columns,
-  tables, pictures, master pages (one-page and two-page) and page numbers.
-- Text boxes linked into stories, text wrap round pictures and shapes,
-  columns, frame margins, grid and guide snapping, tables.
-- Mail and catalog merge from the Mailings menu, eight built-in templates.
-- PDF export with crop marks and bleed, booklet printing through GFOpenPrint,
-  and spelling as you type.
-- Saving as `.pub` is held until it is checked in Microsoft Publisher; the
-  publication saves as ODP and PDF today. The `.pub` format notes are in
-  `docs/gfoffice/PUB-FORMAT.md`.
+Plan tasks, milestones and dependencies, see the critical path, and follow the
+work in Gantt, Tracking Gantt, Network Diagram and usage views. Assign and
+level resources, set baselines, record actuals and track earned value. Reads
+and writes Microsoft Project XML and CSV, and reads MPX and GanttProject files.
 
-## GFOpenBase
+### GFOpenDiag: diagrams
 
-GFOpenBase 0.15.0 is the database (`docs/gfoffice/Design-OpenBase.md`). A
-project is an `.oadb` file, an SQLite database with its own checks.
+Flowcharts, UML, network diagrams and mind maps, with connectors that stay
+attached, layers, grouping and alignment. It opens and saves `.drawio` files and
+exports SVG, PNG, PDF, EPS,
+Mermaid, DOT, GraphML and Excalidraw.
 
-- Table designer with keys, indexes and relationships; a datasheet that sorts
-  and filters, with a row editor and Undo.
-- Queries designed in a grid with joins drawn, or typed as SQL, kept as views.
-- Forms with subforms, Find and Filter by Form, and a form designer with
-  buttons and ARexx events.
-- Reports grouped and totalled on three levels, with a print preview, made as
-  ODT, DOCX, PDF or text.
-- CSV, dBASE III and IV, ODS and XLSX in and out; ARexx reads and changes rows.
+## Getting started
 
-## GFOpenProject
+1. Download the latest `GFOffice-…-AmigaOS3.zip` from
+   [Releases](https://github.com/DalsinAI/gfoffice/releases).
+2. Unpack it to a drawer on your hard disk, for example `Work:GFOffice`.
+3. Double-click an application to start it, or drop a document on it.
 
-GFOpenProject 0.1.20 is the project planner.
+The `library` drawer holds the shared libraries for the library builds; copy
+them to `LIBS:` if you use those. GFOpenPrint is needed for printing laid-out
+pages, and the ARexx examples are in the `Rexx` drawer.
 
-- Task sheet with summaries, milestones, WBS numbers and Undo; links of all
-  four kinds with lags; constraints; critical path and slack.
-- Gantt chart, Tracking Gantt, Network Diagram, Task Usage, Resource Usage
-  and Resource Graph views; a column chooser; sort, filter and group.
-- Resources and assignments, levelling, working time, baselines, actuals and
-  earned value.
-- Gantt printing and PDF export.
+**Requirements:** AmigaOS 3.2 or later, a 68040 (no FPU needed), 8 MB of Fast
+RAM for small documents and 16 to 32 MB for comfortable everyday work.
 
-## GFOpenDiag
+## Status
 
-GFOpenDiag 0.1.0 is the diagram editor. Its native file is `.drawio`, which
-round-trips with diagrams.net.
+Each application is measured against the everyday workflow of the popular
+free office suites and their companion tools. The full scorecards are in
+[`docs/parity/`](docs/parity/).
 
-- Shapes from Flowchart, Basic, UML and network sets; connectors that stay
-  glued, with elbow routing and labels; layers; a Style window.
-- Cut, Copy, Paste, Duplicate, drawing order, Group, Align and Distribute.
-- Mind maps with their keys, and outlines in and out.
-- Export as SVG and PNG (with the diagram inside), PDF, EPS, Mermaid, DOT,
-  GraphML and Excalidraw.
+| Application | Version | Everyday feature coverage |
+| --- | --- | --- |
+| GFOpenWrite | 2.0.48 | 85% |
+| GFOpenCalc | 0.1.78 | 80% |
+| GFOpenPresentation | 0.6.35 | 89% |
+| GFOpenPressmaster | 0.3.36 | 71% |
+| GFOpenBase | 0.15.0 | 64% |
+| GFOpenProject | 0.1.20 | 64% |
+| GFOpenDiag | 0.1.0 | 66% to 72% |
 
-## Formats
+GFOpenWrite 2.0.48 is the most complete of the seven and is the one to try
+first. GFOpenPresentation 0.6.35 is close behind. GFOpenPressmaster was
+called GFOpenPublisher before 16 November 2026.
 
-| Program | Opens and saves | Opens only | Saves only |
-| --- | --- | --- | --- |
-| GFOpenWrite | ODT, OTT, flat ODT; DOCX, DOTX; RTF; Markdown; text | ProWrite; Final Writer and Final Copy; Wordworth; IFF FTXT; ANSI text | HTML, PDF |
-| GFOpenCalc | XLSX; ODS, flat ODS; CSV | Excel 97-2003 XLS | PDF |
-| GFOpenPresentation | ODP, flat ODP; PPTX | | PDF |
-| GFOpenPressmaster | | Publisher `.pub`, 98 to 2013 and later | ODP, PDF |
-| GFOpenBase | `.oadb`; CSV; dBASE III and IV; ODS; XLSX | | ODT, DOCX, PDF, text reports |
-| GFOpenProject | `.gfproj`; MS Project XML (MSPDI); CSV | MPX; GanttProject `.gan` | PDF |
-| GFOpenDiag | `.drawio`; outlines | | SVG, PNG, PDF, EPS, Mermaid, DOT, GraphML, Excalidraw |
+## Building from source
 
-Word 97-2003 `.doc`, `.xlsb` and password-protected Office files are
-recognised with a clear message. Every format, what is kept and where the
-knowledge comes from is in `docs/FORMATS.md`. Imports report what they could
-only approximate instead of pretending it was kept.
-
-ODT, DOCX, XLSX and ODS are zip packages. libowf reads them through
-z.library when it is in LIBS:, and otherwise with its own inflater
-(`libowf/src/owf_inflate.c`, written from RFC 1951). Without z.library, files
-are saved stored, which every reader accepts.
-
-## Requirements
-
-- AmigaOS 3.2 or later.
-- A 68040; no FPU is needed.
-- Around 8 MB of Fast RAM for small documents; 16 to 32 MB is comfortable.
-- GFOpenPrint for printing laid-out pages (without it, GFOpenWrite prints its
-  text through printer.device), and Amiga datatypes for pictures.
-- GFOpenGadTools and the Open look for the interface; GFOpenRTG where it is
-  available, with AGA and planar screens as the fallback.
-
-## Building and testing
-
-On Linux, with Python 3 and zlib, the host build and tests are:
+On Linux, with Python 3 and zlib, the host tools and every unit test:
 
 ```
-make            # the host tools: owconvert, book-dump and the rest
-make test       # every unit test
+make            # host tools
+make test       # all unit tests
 make check      # the same under AddressSanitizer and UBSan
 ```
 
-Each part has its own pair of targets as well, for example `make calc-test`,
-`make deck-test`, `make pressmaster-core-test`, `make base-test`,
-`make project-test`, `make diagram-test` and `make library-test`, each with a
-`-check` twin under the sanitizers. Layout and deck PDF tests need
-GFOpenLayout (`DalsinAI/gfopenlayout`) checked out beside this repository, or
-`OPENLAYOUT_SRC` pointing at it. `make attribution-check` and `make docs-test`
-check the tree and this README.
-
-For AmigaOS, with the os32-gcc16 stove (GFOpenAmigaGCC 16; set `OS32_GCC16`
-if it is not in `~/AmiCradle/stoves/os32-gcc16`):
+For AmigaOS, with the os32-gcc16 cross compiler (GFOpenAmigaGCC 16) and
+[GFOpenLayout](https://github.com/DalsinAI/gfopenlayout) checked out beside
+this repository:
 
 ```
-./build-os3.sh                 # libowf linked into each program
-OWF=library ./build-os3.sh     # each program on its own shared library
+./build-os3.sh                 # each program with libowf linked in
+OWF=library ./build-os3.sh     # each program on its shared library
 ./build-library.sh [OUT_DIR]   # the shared libraries alone
 ```
 
-`build/os3/` then holds GFOpenWrite, GFOpenWrite1, GFOpenCalc,
-GFOpenPresentation, GFOpenPressmaster, GFOpenBase, GFOpenProject, GFOpenDiag,
-OWConvert, the toolbar images and the ARexx examples.
-
-### The shared libraries
-
-libowf 1.18.0 is split along the programs' lines into four Amiga libraries
-(`docs/suite/owf-libraries.md`):
-
-| Library | For | Holds |
-| --- | --- | --- |
-| `owfwrite.library` | GFOpenWrite | documents and their formats, PDF out |
-| `owfcalc.library` | GFOpenCalc | workbooks, their formats, charts, the formula engine |
-| `owfpub.library` | GFOpenPressmaster | the `.pub` reader |
-| `owfpresent.library` | GFOpenPresentation | decks, ODP and PPTX, the page PDF writer |
-
-Each is built from its SFD (`libowf/library/<name>_lib.sfd`) with its calls in
-`<name>_calls.h`, made by `scripts/gen-lib-calls.py`; the SDK headers are made
-by `scripts/gen-sdk.sh`. A program calls `owf_open()`, which opens its library
-and refuses one whose shared structures differ in size. The libraries carry
-their own C calls and soft double arithmetic, so they need no FPU and no
-maths library. `OWFLibsTest` checks all four on an Amiga, and
-`make sfd-check` checks the SFDs, the glue and the SDK. The older single
-`owf.library` 2.5 is still built until GFOpenUp ships the four.
+Set `OS32_GCC16` to the compiler's folder and `OPENLAYOUT_SRC` to the
+GFOpenLayout checkout if they are elsewhere. The programs land in
+`build/os3/`. The formats, designs and architecture are documented in
+[`docs/`](docs/), starting with [`docs/FORMATS.md`](docs/FORMATS.md) and
+[`docs/suite/owf-libraries.md`](docs/suite/owf-libraries.md).
 
 ## Licence
 
-MIT, Copyright (c) 2026 AmiCradle Team (`LICENSE`).
-
-Third-party components and data keep their own licences and notices; see
-`THIRD_PARTY.md` and `licenses/`.
-
-If you use or build on this work, we ask, but do not require, that you credit
-the AmiCradle Team, for example: "based on GFOffice by the AmiCradle Team".
-
-## Contributors
+MIT, Copyright (c) 2026 AmiCradle Team. Third-party components keep their own
+licences; see [`THIRD_PARTY.md`](THIRD_PARTY.md) and `licenses/`.
 
 GFOffice is created and maintained by
-[SacredTrees](https://github.com/SacredTrees), copyright AmiCradle Team.
-Everyone whose work it includes is credited in `CONTRIBUTORS.md`.
+[SacredTrees](https://github.com/SacredTrees) and the AmiCradle Team.
+Everyone whose work it includes is credited in
+[`CONTRIBUTORS.md`](CONTRIBUTORS.md).
