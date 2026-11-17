@@ -233,7 +233,7 @@ static void test_sine_and_blend(void)
     CHECK(owf_fill_blend(0x000000, 0xFFFFFF, 0, 2) == 0x000000);
     CHECK(owf_fill_blend(0x000000, 0xFFFFFF, 2, 2) == 0xFFFFFF);
     CHECK(owf_fill_blend(0x000000, 0xFFFFFF, 1, 2) == 0x7F7F7F);
-    CHECK(owf_fill_blend(0xFF0000, 0x0000FF, 1, 4) == 0xBF003F);
+    CHECK(owf_fill_blend(0xFF0000, 0x0000FF, 1, 4) == 0xC0003F);   /* 255 - 255 / 4, 255 / 4: each part truncated */
 }
 
 /* a band's points stay inside the box, and the bands cover the shape: band 0 of a radial is the box's ellipse
