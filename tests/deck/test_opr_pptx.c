@@ -13,6 +13,7 @@
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "openpresentation_core.h"
+#include "owf_internal.h"   /* owf_zip_fix_time */
 
 #include <stdio.h>
 #include <stdlib.h>
