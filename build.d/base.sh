@@ -28,8 +28,10 @@ if [ -f "$OPENSQLITE/lib/libsqlite3.a" ] && [ -f "$OPENSQLITE/include/sqlite3.h"
     # Reports (4.3) write documents through libowf: GFOpenWrite's part of it ($OWFSRC_DOCS and $OWF_WRITE,
     # so OWF=library uses owfwrite.library as GFOpenWrite does). Their print preview lays the pages out as
     # GFOpenWrite does (src/core/ow_layout.c and GFOpenLayout, $OL_C).
-    "$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_WRITE -I"$HERE/include" -I"$HERE/app" \
+    # Spelling (src/base/spell) is GFOffice's one spell checker, owfspell.library ($SPELL, $SPELL_SRC).
+    "$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_WRITE $SPELL -I"$HERE/include" -I"$HERE/app" \
         -I"$OPENLAYOUT_SRC/include" -I"$OPENSQLITE/include" "$HERE"/src/base/*.c "$HERE"/src/base/report/*.c \
+        "$HERE/src/base/spell/ob_spell.c" $SPELL_SRC \
         "$HERE"/src/base/preview/*.c "$HERE/src/core/ow_layout.c" $OL_C $OB_SHEET $OWFSRC_DOCS $OB_BOOK \
         "$HERE/app/openbase.c" "$HERE/app/ob_reportwin.c" "$HERE/app/ob_previewwin.c" "$HERE/app/ow_stack.c" \
         -L"$OPENSQLITE/lib" -lsqlite3 -lm -lamiga -o "$OUT/GFOpenBase"
