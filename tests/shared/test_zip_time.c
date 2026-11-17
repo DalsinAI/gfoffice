@@ -2,9 +2,11 @@
  * that save twice and compare the bytes.
  *   - owf_zip_fix_time: every entry's DOS time and date are the fixed one's,
  *     and two zips of the same files are the same bytes;
- *   - SOURCE_DATE_EPOCH (the host's owf_sys_now): seconds since 1970, UTC;
+ *   - OWF_ZIP_EPOCH (the host's owf_sys_zip_epoch): seconds since 1970, UTC;
  *     one that is not a number is the clock's time again;
- *   - owf_zip_fix_time(NULL) gives the clock back.
+ *   - owf_zip_fix_time(NULL) gives the clock back;
+ *   - the clock itself (owf_sys_now, Calc's TODAY and NOW) stays the real
+ *     time while a zip's time is fixed either way.
  *
  * MIT, Copyright (c) 2026 AmiCradle Team. */
 #define _POSIX_C_SOURCE 200112L
@@ -19,7 +21,7 @@ static int failures, checks;
 #define CHECK(cond, ...) do { checks++; if (!(cond)) { failures++; printf("FAIL %s:%d: ", __FILE__, __LINE__); \
     printf(__VA_ARGS__); printf("\n"); } } while (0)
 
-/* 14 November 2023, 22:13:20 (SOURCE_DATE_EPOCH 1700000000 in UTC) */
+/* 14 November 2023, 22:13:20 (OWF_ZIP_EPOCH 1700000000 in UTC) */
 #define DOS_TIME ((22u << 11) | (13u << 5) | (20u / 2))
 #define DOS_DATE (((2023u - 1980u) << 9) | (11u << 5) | 14u)
 
@@ -56,7 +58,7 @@ int main(void)
     owf_time t = { 2023, 11, 14, 22, 13, 20 };
     owf_buf a, b;
 
-    unsetenv("SOURCE_DATE_EPOCH");
+    unsetenv("OWF_ZIP_EPOCH");
     owf_zip_fix_time(&t);
     CHECK(zip_of(&a) && zip_of(&b), "two zips");
     stamped(&a, DOS_TIME, DOS_DATE, "fixed");
@@ -65,18 +67,26 @@ int main(void)
     owf_buf_free(&b);
 
     owf_zip_fix_time(NULL);
-    setenv("SOURCE_DATE_EPOCH", "1700000000", 1);
-    CHECK(zip_of(&a), "a zip (SOURCE_DATE_EPOCH)");
-    stamped(&a, DOS_TIME, DOS_DATE, "SOURCE_DATE_EPOCH");
+    setenv("OWF_ZIP_EPOCH", "1700000000", 1);
+    CHECK(zip_of(&a), "a zip (OWF_ZIP_EPOCH)");
+    stamped(&a, DOS_TIME, DOS_DATE, "OWF_ZIP_EPOCH");
     owf_buf_free(&a);
 
-    setenv("SOURCE_DATE_EPOCH", "soon", 1);
-    CHECK(zip_of(&a), "a zip (SOURCE_DATE_EPOCH not a number)");
+    /* the clock (TODAY) is still now, both ways of fixing a zip's time on */
+    owf_zip_fix_time(&t);
+    {
+        owf_time now = { 0, 0, 0, 0, 0, 0 };
+        CHECK(owf_sys_now(&now) && now.year >= 2026, "the clock with a zip's time fixed: year %d", now.year);
+    }
+    owf_zip_fix_time(NULL);
+
+    setenv("OWF_ZIP_EPOCH", "soon", 1);
+    CHECK(zip_of(&a), "a zip (OWF_ZIP_EPOCH not a number)");
     CHECK(a.length > 30 && (le16(&a, 12) >> 9) + 1980 >= 2026, "not a number: the clock's year (%u)",
           a.length > 30 ? (le16(&a, 12) >> 9) + 1980 : 0);
     owf_buf_free(&a);
 
-    unsetenv("SOURCE_DATE_EPOCH");
+    unsetenv("OWF_ZIP_EPOCH");
     CHECK(zip_of(&a), "a zip (the clock)");
     CHECK(a.length > 30 && (le16(&a, 12) >> 9) + 1980 >= 2026, "the clock's year (%u)",
           a.length > 30 ? (le16(&a, 12) >> 9) + 1980 : 0);

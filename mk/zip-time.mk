@@ -1,4 +1,4 @@
-# The time a zip is stamped with, fixed for tests that save twice (owf_zip_fix_time, SOURCE_DATE_EPOCH):
+# The time a zip is stamped with, fixed for tests that save twice (owf_zip_fix_time, OWF_ZIP_EPOCH):
 #   make zip-time-test / zip-time-check    tests/shared/test_zip_time.c
 ZIP_TIME_SRC = $(OWF_SRC) libowf/src/owf_internal.h tests/shared/test_zip_time.c
 
