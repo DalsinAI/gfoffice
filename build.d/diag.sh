@@ -3,7 +3,8 @@
 # (app/opendiag.c, src/diag/odg_view.c, odg_edit.c) and GFOpenLayout's drawing (draw/oldraw.c with its Amiga target,
 # amiga/oldraw_amiga.c: lines, polygons and ellipses need gfopenlayout 34472a1 or later, deps/openamigalayout.ref)
 # are its own. The diagram model and files (libowf/diagram), the editing core and ARexx commands (the rest of
-# src/diag) and the PNG and ILBM writers EXPORT uses (src/deck/ow_picture.c) are owfdiag.library's
+# src/diag) and the PNG and ILBM writers EXPORT uses (src/deck/ow_picture.c, libowf's owf_picture.c by its old
+# names) are owfdiag.library's
 # (scripts/owfdiag-sources.sh): linked in with libowf (OWF=linked), or opened from LIBS: (OWF=library,
 # OWF_USE_DIAG_LIBRARY; docs/suite/owf-libraries.md section 9). Integer arithmetic only: no FPU, no maths library.
 # MIT, Copyright (c) 2026 AmiCradle Team.
@@ -12,7 +13,10 @@ if [ "$OWF" = library ]; then
     OWF_DIAG="-DOWF_USE_DIAG_LIBRARY"
 else
     . "$HERE/scripts/owfdiag-sources.sh"
-    DIAGSRC="$OWFSRC_DOCS $HERE/libowf/src/owf_pdf.c $HERE/libowf/src/owf_pdffonts.c $OWFDIAG_SRC"
+    # owf_fill.c and owf_picture.c: the shared fills and picture writers (owf_fill.h, owf_picture.h), which
+    # owf_pdf.c and ow_picture.c call; OWFSRC_DOCS leaves them out
+    DIAGSRC="$OWFSRC_DOCS $HERE/libowf/src/owf_pdf.c $HERE/libowf/src/owf_pdffonts.c $HERE/libowf/src/owf_fill.c"
+    DIAGSRC="$DIAGSRC $HERE/libowf/src/owf_picture.c $OWFDIAG_SRC"
     OWF_DIAG=""
 fi
 if [ ! -f "$OPENLAYOUT_SRC/draw/oldraw.c" ] || [ ! -f "$OPENLAYOUT_SRC/amiga/oldraw_amiga.c" ] ||

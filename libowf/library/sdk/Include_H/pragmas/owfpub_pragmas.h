@@ -46,5 +46,23 @@
 #pragma libcall OWFPubBase owf_pub_read ea a90804
 #pragma libcall OWFPubBase owf_pub_read_file f0 a9803
 #pragma libcall OWFPubBase owf_pub_free f6 801
+#pragma libcall OWFPubBase ow_merge_table_parse fc 90803
+#pragma libcall OWFPubBase ow_merge_table_from_text 102 90803
+#pragma libcall OWFPubBase ow_merge_table_free 108 801
+#pragma libcall OWFPubBase ow_merge_column 10e 9802
+#pragma libcall OWFPubBase ow_merge_value 114 90803
+#pragma libcall OWFPubBase opp_merge_insert_field 11a a90804
+#pragma libcall OWFPubBase opp_merge_insert_field_at 120 910804
+#pragma libcall OWFPubBase opp_insert_page_field_at 126 210804
+#pragma libcall OWFPubBase opp_merge_load_file 12c 9802
+#pragma libcall OWFPubBase opp_merge_fields 132 a9803
+#pragma libcall OWFPubBase opp_merge_show 138 a09804
+#pragma libcall OWFPubBase opp_merge_pages 13e 109804
+#pragma libcall OWFPubBase opp_merge_catalog 144 b21a09807
+#pragma libcall OWFPubBase opp_template_count 14a 00
+#pragma libcall OWFPubBase opp_template_info_at 150 001
+#pragma libcall OWFPubBase opp_template_find 156 801
+#pragma libcall OWFPubBase opp_template_new 15c 8002
+#pragma libcall OWFPubBase owf_deck_free 162 801
 
 #endif /* PRAGMAS_OWFPUB_PRAGMAS_H */

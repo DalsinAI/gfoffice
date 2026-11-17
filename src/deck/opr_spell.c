@@ -1,13 +1,13 @@
 /*
  * GFOpenPresentation's core: spelling through a deck (see
  * openpresentation_core.h, "Spelling"). Each slide's typeable objects in
- * order, then its notes, checked with GFOpenWrite's dictionary and word
- * rules (src/core/ow_spell_dict.c). A placeholder still showing its prompt
+ * order, then its notes, checked with GFOffice's one dictionary and word
+ * rules (owfspell.library, libowf/include/owf_spell.h). A placeholder still showing its prompt
  * is not checked: the prompt is not the author's text.
  * Plain C99. MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "openpresentation_core.h"
-#include "ow_spell_dict.h"
+#include "owf_spell.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -30,24 +30,14 @@ static int spell_compare(int slide, int obj, int para, size_t offset,
     return 0;
 }
 
-int opr_spell_words(ow_spell *spell, const char *text, size_t length,
+int opr_spell_words(owf_spell *spell, const char *text, size_t length,
                     opr_spell_range *ranges, int max_ranges)
 {
-    size_t from = 0, a, b;
-    int n = 0;
-    if (!spell || !text) return 0;
-    while (from < length && ow_spell_scan(spell, text, from, length, &a, &b)) {
-        if (n < max_ranges && ranges) {
-            ranges[n].start = a;
-            ranges[n].end = b;
-        }
-        n++;
-        from = b;
-    }
-    return n;
+    if (!spell) return 0;   /* on the Amiga the call goes through owfspell.library */
+    return owf_spell_words(spell, text, length, ranges, max_ranges);
 }
 
-int opr_spell_next(const owf_deck *deck, ow_spell *spell, int start_slide, int start_obj,
+int opr_spell_next(const owf_deck *deck, owf_spell *spell, int start_slide, int start_obj,
                    opr_pos start, opr_find_result *result, char *word, size_t word_size)
 {
     opr_find_result first, after;
@@ -70,7 +60,7 @@ int opr_spell_next(const owf_deck *deck, ow_spell *spell, int start_slide, int s
                 size_t n, from = 0, a, b;
                 char *text = opr_para_text(&o->text.paras[para], &n);
                 if (!text) return -1;
-                while (from < n && ow_spell_scan(spell, text, from, n, &a, &b)) {
+                while (from < n && owf_spell_scan(spell, text, from, n, &a, &b)) {
                     opr_find_result found;
                     found.slide = slide;
                     found.obj = obj;
@@ -108,7 +98,7 @@ int opr_spell_next(const owf_deck *deck, ow_spell *spell, int start_slide, int s
     return 1;
 }
 
-int opr_spell_marks(const owf_deck *deck, ow_spell *spell, int slide, int obj, const opr_pos *caret,
+int opr_spell_marks(const owf_deck *deck, owf_spell *spell, int slide, int obj, const opr_pos *caret,
                     opr_spell_mark *marks, int max_marks)
 {
     const owf_obj *o;
@@ -120,7 +110,7 @@ int opr_spell_marks(const owf_deck *deck, ow_spell *spell, int slide, int obj, c
         size_t len, from = 0, a, b;
         char *text = opr_para_text(&o->text.paras[para], &len);
         if (!text) return -1;
-        while (from < len && ow_spell_scan(spell, text, from, len, &a, &b)) {
+        while (from < len && owf_spell_scan(spell, text, from, len, &a, &b)) {
             from = b;
             /* the word being typed: the caret in it or just after it */
             if (caret && caret->para == para && caret->offset >= a && caret->offset <= b) continue;
@@ -141,7 +131,7 @@ int opr_spell_marks(const owf_deck *deck, ow_spell *spell, int slide, int obj, c
 typedef int (*spell_word_fn)(void *user, int slide, int obj, const char *word, size_t length);
 
 /* Every misspelt word of the deck in order, slides' objects then notes; how many, -1 no memory. */
-static int spell_walk(const owf_deck *deck, ow_spell *spell, spell_word_fn fn, void *user)
+static int spell_walk(const owf_deck *deck, owf_spell *spell, spell_word_fn fn, void *user)
 {
     int n = 0, slide, k;
     for (slide = 0; slide < deck->nslides; ++slide) {
@@ -154,7 +144,7 @@ static int spell_walk(const owf_deck *deck, ow_spell *spell, spell_word_fn fn, v
                 size_t len, from = 0, a, b;
                 char *text = opr_para_text(&o->text.paras[para], &len);
                 if (!text) return -1;
-                while (from < len && ow_spell_scan(spell, text, from, len, &a, &b)) {
+                while (from < len && owf_spell_scan(spell, text, from, len, &a, &b)) {
                     if (fn) fn(user, slide, obj, text + a, b - a);
                     n++;
                     from = b;
@@ -222,7 +212,7 @@ static void rx_spell_arg(const char *s, char *out, size_t size)
     out[k] = 0;
 }
 
-int opr_spell_rexx(const owf_deck *deck, ow_spell *spell, const char *args, char *out, size_t size)
+int opr_spell_rexx(const owf_deck *deck, owf_spell *spell, const char *args, char *out, size_t size)
 {
     const char *rest = "";
     char word[96];
@@ -252,10 +242,10 @@ int opr_spell_rexx(const owf_deck *deck, ow_spell *spell, const char *args, char
         rx_spell_arg(rest, word, sizeof word);
         if (!word[0]) { snprintf(out, size, "SPELL %s needs a word", verbs[v]); return 10; }
         if (v == 0) {
-            snprintf(out, size, "%d", ow_spell_word_ok(spell, word, strlen(word)));
+            snprintf(out, size, "%d", owf_spell_word_ok(spell, word, strlen(word)));
         } else if (v == 1) {
             char sugg[8][48];
-            int n = ow_spell_suggest(spell, word, sugg, 8), i;
+            int n = owf_spell_suggest(spell, word, sugg[0], 8), i;
             size_t used = 0;
             for (i = 0; i < n; i++) {
                 size_t m = strlen(sugg[i]);
@@ -266,8 +256,8 @@ int opr_spell_rexx(const owf_deck *deck, ow_spell *spell, const char *args, char
                 out[used] = 0;
             }
         } else if (v == 2) {
-            if (!ow_spell_add(spell, word)) { snprintf(out, size, "The word could not be saved"); return 10; }
-        } else if (!ow_spell_ignore(spell, word)) {
+            if (!owf_spell_add(spell, word)) { snprintf(out, size, "The word could not be saved"); return 10; }
+        } else if (!owf_spell_ignore(spell, word)) {
             snprintf(out, size, "Not enough memory");
             return 20;
         }

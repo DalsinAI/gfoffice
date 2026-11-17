@@ -70,13 +70,18 @@
  * owf_para_hidden) and hidden text: ODT text:hidden-paragraph and text:hidden-text in and out; a hidden
  * paragraph is left out of Markdown, HTML and PDF and is DOCX w:vanish while it holds. No new calls and no
  * structure grew, so owfpub and owfpresent stay.
+ * 3.24: libowf 1.21 (numbered 3.18, libowf 1.13, until 3.19 to 3.23 and libowf 1.14 to 1.20 merged first),
+ * tracked paragraph format changes (owf_para.para_format_change, owf_doc.para_format_changes,
+ * owf_para_format_change): DOCX w:pPrChange in and out; other formats the format as it is now (accepted). No new
+ * calls; owf_para and owf_doc grew, so the three libraries go together again (owfpub.library 3.7,
+ * owfpresent.library 3.17).
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 23
-#define OWF_LIB_VERS "3.23"
+#define OWF_LIB_REVISION 24
+#define OWF_LIB_VERS "3.24"
 #define OWF_LIB_DATE "17.11.2026"
 #define OWF_LIB_CALLS_H "owfwrite_calls.h"
 #include "owf_libbase.h"

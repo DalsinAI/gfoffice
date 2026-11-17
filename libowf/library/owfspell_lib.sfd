@@ -1,0 +1,28 @@
+==id $Id: owfspell_lib.sfd 1.0 (17.11.2026) $
+* "owfspell.library" 1.0: GFOffice's one spell checker, for every GFOffice
+* program (docs/suite/owf-spell.md): the word list, loaded once for every
+* program that opens the same file, the word rules, suggestions, the
+* user's own words and Ignore All. Its source is libowf/src/owf_spell.c.
+* Copyright (c) 2026 AmiCradle Team. MIT licence (see LICENSE).
+* The calls are libowf's, with its names and types; new calls go at the end.
+* It has none of the four document libraries' 17 shared calls, so a file
+* can use it beside any of them.
+==base _OWFSpellBase
+==basetype struct Library *
+==libname owfspell.library
+==bias 30
+==public
+==include <exec/types.h>
+==include <owf_spell.h>
+==version 1
+owf_spell *owf_spell_open(const char *primary_path, const char *user_path, char *status, size_t status_size) (a0,a1,a2,d0)
+owf_spell *owf_spell_open_default(char *status, size_t status_size) (a0,d0)
+void owf_spell_close(owf_spell *spell) (a0)
+int owf_spell_add(owf_spell *spell, const char *word) (a0,a1)
+int owf_spell_ignore(owf_spell *spell, const char *word) (a0,a1)
+int owf_spell_suggest(owf_spell *spell, const char *word, char *slots, int max) (a0,a1,a2,d0)
+int owf_spell_word_ok(owf_spell *spell, const char *word, size_t length) (a0,a1,d0)
+int owf_spell_scan(owf_spell *spell, const char *text, size_t from, size_t to, size_t *start, size_t *end) (a0,a1,d0,d1,a2,a3)
+int owf_spell_words(owf_spell *spell, const char *text, size_t length, owf_spell_range *ranges, int max_ranges) (a0,a1,d0,a2,d1)
+int owf_spell_count(const owf_spell *spell) (a0)
+==end

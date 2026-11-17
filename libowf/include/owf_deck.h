@@ -93,7 +93,7 @@ typedef struct {
     unsigned char shadow_transparency; /* percent, as transparency */
     int shadow_dx, shadow_dy;    /* twips the shadow lies right of and below the object */
     unsigned long shadow_colour; /* OWF_SHADE(0xRRGGBB); 0: grey 808080 */
-    /* Picture fills (owfpresent.library 3.18, appended): a text box or shape whose picture is
+    /* Picture fills (owfpresent.library 3.19, appended): a text box or shape whose picture is
        owf_obj.image (a background's: background_image) is filled with it, over its fill colour. */
     unsigned char picture;       /* OWF_PICTURE_...; NONE: no picture fill */
     int tile_width, tile_height; /* TILE: twips of one tile; 0: the picture's own size */
@@ -334,7 +334,7 @@ typedef struct {
     unsigned char background_hatch;
     int background_hatch_angle, background_hatch_distance;
     unsigned long background_hatch_colour;
-    /* A tiled picture background (owfpresent.library 3.18, appended): background_image repeated
+    /* A tiled picture background (owfpresent.library 3.19, appended): background_image repeated
        background_tile_width by _height twips (0: its own size); 0: stretched over the page. */
     unsigned char background_tile;
     int background_tile_width, background_tile_height;
@@ -354,7 +354,7 @@ typedef struct {
     unsigned char background_hatch;
     int background_hatch_angle, background_hatch_distance;
     unsigned long background_hatch_colour;
-    unsigned char background_tile;           /* as owf_slide's (owfpresent.library 3.18, appended) */
+    unsigned char background_tile;           /* as owf_slide's (owfpresent.library 3.19, appended) */
     int background_tile_width, background_tile_height;
 } owf_master;
 
@@ -435,7 +435,7 @@ void owf_deck_free(owf_deck *deck);
  * object stays good until the next one is added to the same array. */
 owf_slide *owf_deck_add_slide(owf_deck *deck, int at, int layout);
 /* A picture's own size in twips, from its PNG or JPEG header (its resolution, else 96 dots an inch);
-   0 when it is not known (owfpresent.library 3.18). */
+   0 when it is not known (owfpresent.library 3.19). */
 int owf_deck_image_size(const owf_image *image, int *width, int *height);   /* at -1: the end; layout -1: none */
 /* A deep copy of index, inserted at (outside 0..n: the end). Pictures,
  * imported XML and package parts remain shared by their immutable deck
