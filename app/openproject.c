@@ -44,18 +44,19 @@
 #include <string.h>
 
 #include "openproject_core.h"
+#include "ow_print.h"
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenProject 0.1.23 (17.11.2026)"
+#define VERSION_TEXT "GFOpenProject 0.1.24 (17.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenProject, the project planner of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
 /* ---- Menus ---- */
 
 enum {
-    M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_XML, M_EXPORT_CSV, M_EXPORT_PDF, M_PRINT, M_ABOUT, M_QUIT,
+    M_NEW = 1, M_OPEN, M_SAVE, M_SAVEAS, M_EXPORT_XML, M_EXPORT_CSV, M_EXPORT_PDF, M_PRINT, M_REPORTS, M_ABOUT, M_QUIT,
     M_UNDO, M_REDO, M_EDIT, M_INSERT, M_DELETE, M_INDENT, M_OUTDENT, M_LINK, M_UNLINK,
     M_DAYS, M_WEEKS, M_MONTHS, M_QUARTERS, M_SHOW_BASELINE, M_RESOURCES, M_START, M_GANTT, M_USAGE, M_NETWORK, M_TASK_USAGE, M_GRAPH, M_TRACKING,
     M_SET_BASELINE, M_CLEAR_BASELINE, M_ASSIGN, M_LEVEL, M_CLEAR_LEVELING, M_UPDATE_PROJECT, M_WORKTIME, M_PLAN_CALENDAR, M_TASK_CALENDAR,
@@ -91,6 +92,7 @@ static struct NewMenu menus[] = {
     { NM_ITEM, "Export PDF...", NULL, 0, 0, (APTR)M_EXPORT_PDF },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "Print...", "P", 0, 0, (APTR)M_PRINT },
+    { NM_ITEM, "Reports...", NULL, 0, 0, (APTR)M_REPORTS },
     { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
     { NM_ITEM, "About...", "?", 0, 0, (APTR)M_ABOUT },
     { NM_ITEM, "Quit", "Q", 0, 0, (APTR)M_QUIT },
@@ -1352,6 +1354,119 @@ static void assign_window(void)
 
 /* ---- Menus, mouse and keys ---- */
 
+/* ---- Project > Reports... ---- */
+
+/* The Reports requester, as MS Project's Reports dialog: one of the plan's reports (owf_preport.c, built as
+ * a libowf document), then Print (the suite's print route: GFOpenPrint when it is there, else
+ * printer.device), Save (PDF, ODT, DOCX, RTF, HTML or text by the name's extension; PDF with none) or
+ * Cancel. The report stays chosen for the next time. 1 Print, 2 Save, 0 Cancel. */
+static int report_kind = OWF_PREPORT_SUMMARY;
+
+static int reports_dialog(void)
+{
+    static STRPTR names[OWF_PREPORT_N + 1];
+    struct Window *aw;
+    struct Gadget *eg = NULL, *g;
+    struct NewGadget ng;
+    int i, done = 0, answer = 0, kind = report_kind, lw = fw * 7 + 12, w = fw * 48, h = (fh + 8) * 3 + 16;
+    for (i = 0; i < OWF_PREPORT_N; i++) names[i] = (STRPTR)owf_preport_name(i);
+    names[OWF_PREPORT_N] = NULL;
+    aw = OpenWindowTags(NULL, WA_Title, (ULONG)"Reports", WA_PubScreen, (ULONG)scr,
+        WA_Left, win->LeftEdge + 40, WA_Top, win->TopEdge + 30, WA_InnerWidth, w, WA_InnerHeight, h,
+        WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SmartRefresh, TRUE,
+        WA_AutoAdjust, TRUE,
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_GADGETUP | IDCMP_REFRESHWINDOW | IDCMP_VANILLAKEY | BUTTONIDCMP |
+                  CYCLEIDCMP,
+        TAG_DONE);
+    if (!aw) return 0;
+    if (!(g = CreateContext(&eg))) { CloseWindow(aw); return 0; }
+    memset(&ng, 0, sizeof ng);
+    ng.ng_VisualInfo = vi;
+    ng.ng_TextAttr = &font_attr;
+    ng.ng_Height = fh + 6;
+    ng.ng_Flags = PLACETEXT_LEFT;
+    ng.ng_LeftEdge = aw->BorderLeft + 8 + lw;
+    ng.ng_TopEdge = aw->BorderTop + 8;
+    ng.ng_Width = w - 16 - lw;
+    ng.ng_GadgetText = (UBYTE *)"Report";
+    ng.ng_GadgetID = 10;
+    g = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)names, GTCY_Active, (ULONG)kind, TAG_DONE);
+    ng.ng_Flags = PLACETEXT_IN;
+    ng.ng_LeftEdge = aw->BorderLeft + 8;
+    ng.ng_TopEdge = aw->Height - aw->BorderBottom - 6 - (fh + 6);
+    ng.ng_Width = (w - 32) / 3;
+    ng.ng_GadgetText = (UBYTE *)"Print";
+    ng.ng_GadgetID = 1;
+    g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+    ng.ng_LeftEdge += ng.ng_Width + 8;
+    ng.ng_GadgetText = (UBYTE *)"Save...";
+    ng.ng_GadgetID = 2;
+    g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+    ng.ng_LeftEdge += ng.ng_Width + 8;
+    ng.ng_GadgetText = (UBYTE *)"Cancel";
+    ng.ng_GadgetID = 3;
+    g = CreateGadget(BUTTON_KIND, g, &ng, TAG_DONE);
+    if (!g) { FreeGadgets(eg); CloseWindow(aw); return 0; }
+    AddGList(aw, eg, ~0, -1, NULL);
+    RefreshGList(eg, aw, NULL, -1);
+    GT_RefreshWindow(aw, NULL);
+    while (!done) {
+        struct IntuiMessage *m;
+        WaitPort(aw->UserPort);
+        while ((m = GT_GetIMsg(aw->UserPort)) != NULL) {
+            ULONG class = m->Class;
+            UWORD code = m->Code;
+            struct Gadget *gg = (struct Gadget *)m->IAddress;
+            GT_ReplyIMsg(m);
+            if (class == IDCMP_CLOSEWINDOW || (class == IDCMP_VANILLAKEY && code == 27)) done = 1;
+            else if (class == IDCMP_VANILLAKEY && code == 13) answer = 1, done = 1;
+            else if (class == IDCMP_REFRESHWINDOW) { GT_BeginRefresh(aw); GT_EndRefresh(aw, TRUE); }
+            else if (class == IDCMP_GADGETUP && gg->GadgetID == 10) kind = code;
+            else if (class == IDCMP_GADGETUP && gg->GadgetID >= 1 && gg->GadgetID <= 3)
+                answer = gg->GadgetID == 3 ? 0 : gg->GadgetID, done = 1;
+        }
+    }
+    if (answer) report_kind = kind >= 0 && kind < OWF_PREPORT_N ? kind : OWF_PREPORT_SUMMARY;
+    RemoveGList(aw, eg, -1);
+    FreeGadgets(eg);
+    CloseWindow(aw);
+    return answer;
+}
+
+/* The chosen report printed or saved; the plan is kept scheduled by every edit, so its dates are current. */
+static void reports(void)
+{
+    char path[512], msg[256];
+    owf_doc *doc = NULL;
+    int how, rc;
+    if (rexx_busy) return;
+    how = reports_dialog();
+    redraw();
+    if (!how) return;
+    if (how == 2) {
+        if (!ask_file("Save the report as", TRUE, "#?.(pdf|odt|docx|rtf|html|txt)", path, sizeof path)) return;
+        if (!strchr(leaf(path), '.') && strlen(path) + 4 < sizeof path) strcat(path, ".pdf");
+    }
+    if (owf_project_report(DOC->plan, report_kind, &doc) != OWF_OK) { tell("Reports: not enough memory"); return; }
+    if (how == 1) {
+        if (!ow_print_document_named(doc, owf_preport_name(report_kind), msg, sizeof msg)) tell(msg);
+        else set_status("Report printed");
+    } else {
+        rc = owf_export_file(doc, path, NULL, NULL);
+        if (rc == OWF_OK) {
+            snprintf(msg, sizeof msg, "Saved %.60s as %.80s", owf_preport_name(report_kind), leaf(path));
+            set_status(msg);
+        } else if (rc == OWF_ERR_FORMAT || rc == OWF_ERR_UNSUPPORTED) {
+            snprintf(msg, sizeof msg, "A report can't be saved as %.100s (PDF, ODT, DOCX, RTF, HTML or TXT)", leaf(path));
+            tell(msg);
+        } else {
+            snprintf(msg, sizeof msg, "Could not write %.120s", leaf(path));
+            tell(msg);
+        }
+    }
+    owf_doc_free(doc);
+}
+
 /* ---- Tools > Level Resources... ---- */
 
 /* The Level Resources requester, as ProjectLibre's and MS Project's Resource Leveling dialog: the leveling
@@ -1867,6 +1982,7 @@ static void menu_action(ULONG id, struct MenuItem *item)
     case M_EXPORT_XML: export_as("MSPDI", "#?.xml"); return;
     case M_EXPORT_CSV: export_as("CSV", "#?.csv"); return;
     case M_EXPORT_PDF: export_as("PDF", "#?.pdf"); return;
+    case M_REPORTS: reports(); return;
     case M_PRINT:
         if (!print_plan(why, sizeof why)) tell(why);
         else set_status(why);
