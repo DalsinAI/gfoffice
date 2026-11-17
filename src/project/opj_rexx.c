@@ -468,9 +468,9 @@ static int save_sheet(opj_rexx *rx, const char *name, const char *file, const ch
     if (rx->view) v = *rx->view;
     else opj_view_init(&v, rx->doc, 0, 0, 16, OPJ_ZOOM_DAYS);
     if (!v.lines && rx->lines) v.lines = rx->lines;
-    if (opj_sheet_document(rx->doc, &v, which, &sheet) != OWF_OK) {
-        put(rx->lasterror, sizeof rx->lasterror, "SAVESHEET: out of memory");
-        return OPJ_RX_FAIL;
+    if ((rc = opj_sheet_document(rx->doc, &v, which, &sheet)) != OWF_OK) {
+        put(rx->lasterror, sizeof rx->lasterror, rc == OWF_ERR_MEMORY ? "SAVESHEET: out of memory" : "SAVESHEET: not possible");
+        return rc == OWF_ERR_MEMORY ? OPJ_RX_FAIL : OPJ_RX_ERROR;
     }
     rc = owf_export_file(sheet, file, format ? f : NULL, NULL);
     owf_doc_free(sheet);
