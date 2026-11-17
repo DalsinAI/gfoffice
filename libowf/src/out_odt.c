@@ -1046,6 +1046,7 @@ static void put_story(owf_buf *out, const owf_doc *doc, const owf_story *story, 
         }else if(p->table_id>=0){int id=p->table_id,row=-1;owf_buf_printf(out,"<table:table table:name=\"Table%d\">",id+1);
             while(i<story->nparas&&story->paras[i].table_id==id){p=&story->paras[i];
                 if(change_kind(doc,p->row_revision)==OWF_REV_DELETE){++i;continue;}   /* 1.12: saved accepted */
+                if(!p->row_revision&&change_kind(doc,p->cell_revision)==OWF_REV_DELETE){++i;continue;}   /* 1.22: so too a deleted cell */
                 if(p->table_row!=row){if(row>=0)owf_buf_puts(out,"</table:table-row>");owf_buf_puts(out,"<table:table-row>");row=p->table_row;}if(OWF_SHADE_SET(p->cell_shading))owf_buf_printf(out,"<table:table-cell table:style-name=\"Cell%06lX\" office:value-type=\"string\">",OWF_SHADE_RGB(p->cell_shading));else owf_buf_puts(out,"<table:table-cell office:value-type=\"string\">");put_para_odt(out,doc,p,s);owf_buf_puts(out,"</table:table-cell>");++i;}
             if(row>=0)owf_buf_puts(out,"</table:table-row>");
             owf_buf_puts(out,"</table:table>");

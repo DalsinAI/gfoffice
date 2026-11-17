@@ -821,7 +821,9 @@ static int add_table(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node 
     for (i = first; i < end; ++i) {
         const owf_para *p = &story->paras[i];
         int c = p->table_col < 0 ? 0 : (p->table_col >= cols ? cols - 1 : p->table_col);
-        const owf_revision *rv = OWF_DOC_REVISION(doc, p->row_revision);
+        /* (2.0.53: or a tracked cell by itself, its column put in or deleted: the same, the cell alone) */
+        int rnum = p->row_revision ? p->row_revision : p->cell_revision;
+        const owf_revision *rv = OWF_DOC_REVISION(doc, rnum);
         /* 2.0.38: a tracked row: edged in its author's colour, or (the final view) a deleted one left out */
         unsigned long change_rgb = 0;
         if (rv && l && (l->view & OW_LAYOUT_FINAL)) {
@@ -838,7 +840,7 @@ static int add_table(ow_layout *l, const owf_doc *doc, ol_document *od, ol_node 
                 continue;
             }
         } else if (rv) {
-            change_rgb = change_colour(doc, p->row_revision) | 0x1000000UL;   /* (nonzero even for black) */
+            change_rgb = change_colour(doc, rnum) | 0x1000000UL;   /* (nonzero even for black) */
         }
         if (!have_row || p->table_row != row_value) {
             /* the last row's missing cells, then a new row */

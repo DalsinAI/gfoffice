@@ -2058,6 +2058,14 @@ static void table(docx *d, const owf_xml_node *t)
             p->table_id=table_id;p->table_row=row_index;p->table_col=col;p->table_cols=cols;p->row_revision=row_rev;
             { const owf_xml_node *shd = wchild(d, wchild(d, cell, "tcPr"), "shd");
               p->cell_shading = shd ? docx_fill(d, shd) : cell_style_shading(d); }
+            {   /* 1.22: the cell put in or deleted by itself (w:tcPr/w:cellIns, w:cellDel) */
+                const owf_xml_node *tcpr = wchild(d, cell, "tcPr"), *ci = wchild(d, tcpr, "cellIns"),
+                                   *cd = wchild(d, tcpr, "cellDel"), *chg = cd ? cd : ci;
+                if (chg && !row_rev &&
+                    !(p->cell_revision = owf_track_add(d->doc, cd ? OWF_REV_DELETE : OWF_REV_INSERT,
+                                                       owf_xml_attr(chg, d->w, "author"), owf_xml_attr(chg, d->w, "date"))))
+                    d->failed = 1;
+            }
             ++col;
         }
         ++row_index;

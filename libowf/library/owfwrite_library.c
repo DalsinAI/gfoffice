@@ -75,13 +75,16 @@
  * owf_para_format_change): DOCX w:pPrChange in and out; other formats the format as it is now (accepted). No new
  * calls; owf_para and owf_doc grew, so the three libraries go together again (owfpub.library 3.7,
  * owfpresent.library 3.17).
+ * 3.25: libowf 1.22 (3.24, libowf 1.21, is #2's: tracked paragraph formats), tracked table cells (owf_para.cell_revision): a column
+ * put in or deleted while recording is a change cell by cell, DOCX w:tcPr/w:cellIns and w:cellDel in and
+ * out, ODT saves them accepted. No new calls; owf_para grew, so owfpub (3.9) and owfpresent (3.20) go too.
  *
  * Copyright (c) 2026 AmiCradle Team. MIT.
  */
 #define OWF_LIB_NAME "owfwrite.library"
 #define OWF_LIB_VERSION 3
-#define OWF_LIB_REVISION 24
-#define OWF_LIB_VERS "3.24"
+#define OWF_LIB_REVISION 25
+#define OWF_LIB_VERS "3.25"
 #define OWF_LIB_DATE "17.11.2026"
 #define OWF_LIB_CALLS_H "owfwrite_calls.h"
 #include "owf_libbase.h"
