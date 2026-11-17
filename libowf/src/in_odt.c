@@ -769,10 +769,20 @@ static void text_box_story(odt *o, const owf_xml_node *box, owf_story *into)
     void *marks = malloc(sizeof o->marks);           /* 2.0.21: the paragraph's own bookmarks, round the box's */
     if (marks) memcpy(marks, o->marks, sizeof o->marks);
     else nmarks = 0;
+    /* 1.22.1: the outer paragraph's format changes wait too: its paragraph change's number, and a run
+     * change open across the box (the box's own paragraphs have their own) */
+    int para_fc = o->para_fc, fc_open = o->fc_open;
+    const char *fc_id = o->fc_id;
+    const owf_xml_node *fc_chg = o->fc_chg;
+    owf_charfmt fc_fmt = o->fc_fmt;
+    owf_format_span fspan = o->fspan;
     memcpy(pending, o->pending, sizeof pending);     /* the body's page frames wait for the body's paragraph */
     o->current_href = NULL;
     o->npending = 0;
     o->nmarks = 0;
+    o->para_fc = 0;
+    o->fc_open = 0;
+    o->fc_id = NULL;
     owf_builder_init(&b, o->doc, into);
     o->b = &b;
     blocks(o, box, -1, NULL);
@@ -786,6 +796,12 @@ static void text_box_story(odt *o, const owf_xml_node *box, owf_story *into)
     if (marks) memcpy(o->marks, marks, sizeof o->marks);
     free(marks);
     o->nmarks = nmarks;
+    o->para_fc = para_fc;                            /* 1.22.1 */
+    o->fc_open = fc_open;
+    o->fc_id = fc_id;
+    o->fc_chg = fc_chg;
+    o->fc_fmt = fc_fmt;
+    o->fspan = fspan;
 }
 
 /* A frame (a picture, or a text box) as GFOpenWrite's: its size, its place from its anchor's style and its

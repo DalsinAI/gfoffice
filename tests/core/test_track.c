@@ -1286,6 +1286,43 @@ static const char *para_format_changes_dump(const owf_doc *doc)
     return buf;
 }
 
+/* 1.22.1: a paragraph with a tracked paragraph format change that also holds a text box keeps the change
+ * through ODT (the box's own paragraphs must not take or clear it), and every change has a paragraph */
+static void test_para_format_box(void)
+{
+    static const char *const text[] = { "Alpha", "Omega" };
+    owf_doc *doc = doc_of(text, 2), *back = NULL;
+    owf_parafmt before;
+    ow_editor *ed;
+    int number, i, named = 0;
+    const char *odt = "/tmp/openwrite-parachange-box.odt";
+    if (!doc || !(ed = ow_editor_new(doc))) { CHECK(0, "document"); owf_doc_free(doc); return; }
+    caret(ed, 0, 2);
+    CHECK(ow_editor_insert_text_box(ed, "Box", 2880, 1440, OWF_WRAP_SQUARE) == OWF_OK && doc->nframes == 1, "a text box");
+    ow_editor_free(ed);
+    before = doc->body.paras[0].fmt;
+    before.space_after = 240;
+    doc->body.paras[0].fmt.align = OWF_ALIGN_CENTRE;
+    number = owf_track_para_format_add(doc, "Ida", "2026-11-17T10:00:00", NULL, &before);
+    CHECK(number == 1, "a paragraph format change");
+    doc->body.paras[0].para_format_change = number;
+    CHECK(owf_export_file(doc, odt, "odt", NULL) == OWF_OK &&
+          owf_import_file(odt, NULL, &back, NULL, NULL) == OWF_OK && back, "odt and back");
+    if (back) {
+        const owf_para_format_change *fc = back->body.nparas
+            ? OWF_DOC_PARA_FORMAT_CHANGE(back, back->body.paras[0].para_format_change) : NULL;
+        CHECK(back->nframes == 1 && back->npara_format_changes == 1, "one box, one change");
+        CHECK(fc && fc->author && !strcmp(fc->author, "Ida") && fc->before.space_after == 240 &&
+              back->body.paras[0].fmt.align == OWF_ALIGN_CENTRE, "the boxed paragraph keeps its change");
+        for (i = 0; i < back->body.nparas; ++i) if (back->body.paras[i].para_format_change) named++;
+        for (i = 0; back->nframes && i < back->frames[0].story.nparas; ++i)
+            if (back->frames[0].story.paras[i].para_format_change) named += 10;
+        CHECK(named == 1, "the body's paragraph names it, the box's don't");
+        owf_doc_free(back);
+    }
+    owf_doc_free(doc);
+}
+
 /* 2.0.52: document compare: the revised text as tracked changes by an author; one undo; the same: nothing */
 static const char *plain(const owf_doc *doc)
 {
@@ -1614,6 +1651,7 @@ int main(void)
     test_odf_format_change();
     test_format_changes();
     test_para_format_changes();
+    test_para_format_box();
     test_para_format_editor();
     test_final_view();
     test_pictures();
