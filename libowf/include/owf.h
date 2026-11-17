@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define OWF_VERSION "1.14.0"
+#define OWF_VERSION "1.18.0"
 
 /* Any of GFOffice's four libraries is a library (owf_open.h, owf_proto.h). */
 #if defined(OWF_USE_WRITE_LIBRARY) || defined(OWF_USE_CALC_LIBRARY) || defined(OWF_USE_PUB_LIBRARY) || \
@@ -94,8 +94,12 @@ typedef enum { OWF_FIELD_PAGE, OWF_FIELD_PAGES, OWF_FIELD_DATE, OWF_FIELD_TIME,
                OWF_FIELD_INDEX,
                /* 1.12.6: a number range: href is its name ("Figure", "Table"), text the number last shown, the
                 * count of its name's fields up to it (DOCX SEQ, ODF text:sequence) */
-               OWF_FIELD_SEQ } owf_field;
-#define OWF_FIELD_LAST OWF_FIELD_SEQ
+               OWF_FIELD_SEQ,
+               /* 1.16: conditional text: href is Word's form after IF, two operands, an operator and the two
+                * texts ({DOCVARIABLE Gender} = "F" "Ms" "Mr"; owf_ifform.h), text the one last shown (DOCX IF,
+                * ODF text:conditional-text) */
+               OWF_FIELD_IF } owf_field;
+#define OWF_FIELD_LAST OWF_FIELD_IF
 
 typedef struct {
     owf_run_kind kind;
@@ -731,6 +735,34 @@ typedef struct {
     owf_sheet *sheets;
 } owf_extbook;
 
+/* owf.library 2.7: a book's tracked changes (GFOpenCalc's Edit > Track Changes; ODF's table:tracked-changes, Excel's
+ * revision log), oldest first. Places are where things are in the book now: a cell's row and column; rows or
+ * columns inserted, from row (col) for count; rows or columns deleted, where they would come back (before row or
+ * col) and how many. A change's text is UTF-8 from malloc: author and date (ISO 8601, "2026-11-16T06:30:00") may
+ * be NULL; a cell's before and after are its content as typed ("=A1*2", "'0123", "5"), NULL when empty; a sheet
+ * renamed has its old and new names there, a sheet inserted its name as after. A deletion keeps what it took:
+ * cells (their row or column counted from the first deleted one) and the changes there were in it (the same). */
+enum {
+    OWF_CHANGE_CELL, OWF_CHANGE_INSERT_ROWS, OWF_CHANGE_INSERT_COLS, OWF_CHANGE_DELETE_ROWS, OWF_CHANGE_DELETE_COLS,
+    OWF_CHANGE_INSERT_SHEET, OWF_CHANGE_RENAME_SHEET
+};
+typedef struct {
+    unsigned row, col;
+    char *input;                 /* as typed, never NULL */
+} owf_changecell;
+typedef struct owf_change {
+    int kind;                    /* OWF_CHANGE_... */
+    int id;                      /* 1, 2...: its number, kept in the file */
+    int sheet;
+    unsigned row, col, count;
+    char *author, *date;
+    char *before, *after;
+    int ncells;
+    owf_changecell *cells;
+    int nchildren;
+    struct owf_change *children;
+} owf_change;
+
 typedef struct owf_book {
     int nsheets, capsheets;
     owf_sheet *sheets;
@@ -755,6 +787,13 @@ typedef struct owf_book {
                                     table:protection-key; or NULL */
     int nextbooks, capextbooks;  /* the other books the formulas refer to, and their values last seen */
     owf_extbook *extbooks;
+    /* owf.library 2.7: changes are being recorded (ODF's table:track-changes, a shared Excel workbook), and the
+       ones not yet accepted or rejected (owf_change) */
+    int track_changes;
+    int nchanges, capchanges;
+    owf_change *changes;
+    int changes_as_made;         /* a reader's: the changes' places are as each was made (Excel's log), not the
+                                    book's now; the program works them out (GFOpenCalc on opening) */
 } owf_book;
 
 owf_book *owf_book_new(void);

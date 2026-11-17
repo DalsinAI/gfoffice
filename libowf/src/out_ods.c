@@ -3144,36 +3144,44 @@ static void put_link_tables(ods_out *w, owf_buf *b)
 
 /* ---- Scenarios: each a scenario table after its sheet, holding the scenario's cells ---- */
 
-static void put_scenario_cell(ods_out *w, owf_buf *b, const char *input)
+/* A cell as typed (input: "=A1*2", "5", "TRUE", "'0123", text; "" empty) as element el: a scenario's
+ * table:table-cell, a tracked change's table:change-track-table-cell. */
+static void put_input_cell(ods_out *w, owf_buf *b, const char *el, const char *input)
 {
     double v;
     size_t n = strlen(input);
     if (!n) {
-        owf_buf_puts(b, "<table:table-cell/>");
+        owf_buf_printf(b, "<%s/>", el);
     } else if (input[0] == '=') {
         char *of = of_expr(w, input + 1);
         if (!of) {
-            owf_report_add(w->report, OWF_NOTE_LOST, "A scenario's formula could not be written: its cell is left empty");
-            owf_buf_puts(b, "<table:table-cell/>");
+            owf_report_add(w->report, OWF_NOTE_LOST, "A scenario's or tracked change's formula could not be written: "
+                                                     "its cell is left empty");
+            owf_buf_printf(b, "<%s/>", el);
             return;
         }
-        owf_buf_puts(b, "<table:table-cell table:formula=\"of:=");
+        owf_buf_printf(b, "<%s table:formula=\"of:=", el);
         attr(w, b, of);
         owf_buf_puts(b, "\"/>");
         free(of);
     } else if (input[0] != '\'' && owf_number_parse(input, n, &v)) {
         char num[48];
         owf_number_text(v, num);
-        owf_buf_printf(b, "<table:table-cell office:value-type=\"float\" office:value=\"%s\"/>", num);
+        owf_buf_printf(b, "<%s office:value-type=\"float\" office:value=\"%s\"/>", el, num);
     } else if (!strcmp(input, "TRUE") || !strcmp(input, "FALSE")) {
-        owf_buf_printf(b, "<table:table-cell office:value-type=\"boolean\" office:boolean-value=\"%s\"/>",
+        owf_buf_printf(b, "<%s office:value-type=\"boolean\" office:boolean-value=\"%s\"/>", el,
                        input[0] == 'T' ? "true" : "false");
     } else {
         const char *t = input[0] == '\'' ? input + 1 : input;
-        owf_buf_puts(b, "<table:table-cell office:value-type=\"string\"><text:p>");
+        owf_buf_printf(b, "<%s office:value-type=\"string\"><text:p>", el);
         put_xml(b, t, strlen(t), 0, &w->dropped);
-        owf_buf_puts(b, "</text:p></table:table-cell>");
+        owf_buf_printf(b, "</text:p></%s>", el);
     }
+}
+
+static void put_scenario_cell(ods_out *w, owf_buf *b, const char *input)
+{
+    put_input_cell(w, b, "table:table-cell", input);
 }
 
 /* The cell of a scenario at row, col: its value's index, or -1. */
@@ -3312,12 +3320,135 @@ static void put_book_protection(ods_out *w, owf_buf *b)
                        "without one");
 }
 
+/* ---- Tracked changes (table:tracked-changes) ----
+ * Each change as ODF's: a cell's (table:cell-content-change, its old content in table:previous; the new is the
+ * cell's), rows, columns or a sheet inserted (table:insertion), rows or columns deleted (table:deletion, one for
+ * each, as LibreOffice writes them, with what they held and the changes in them named in table:deletions). A
+ * sheet renamed has no ODF element: gfocalc:table-rename. Places are the book's as it is now; a deletion's
+ * changes are where they were before it. */
+static int track_top_id(const owf_change *list, int n)
+{
+    int i, id = 0, k;
+    for (i = 0; i < n; i++) {
+        if (list[i].id > id)
+            id = list[i].id;
+        if ((k = track_top_id(list[i].children, list[i].nchildren)) > id)
+            id = k;
+    }
+    return id;
+}
+
+static void put_change_info(ods_out *w, owf_buf *b, const owf_change *c)
+{
+    owf_buf_puts(b, "<office:change-info><dc:creator>");
+    attr(w, b, c->author ? c->author : "Unknown Author");
+    owf_buf_puts(b, "</dc:creator><dc:date>");
+    attr(w, b, c->date ? c->date : "1970-01-01T00:00:00");
+    owf_buf_puts(b, "</dc:date></office:change-info>");
+}
+
+static void put_track_address(owf_buf *b, int sheet, unsigned row, unsigned col)
+{
+    owf_buf_printf(b, "<table:cell-address table:column=\"%u\" table:row=\"%u\" table:table=\"%d\"/>", col, row, sheet);
+}
+
+/* A list of changes; a deletion's own are counted from its place (at, on axis 0 rows or 1 columns; -1: none:
+ * the book's own list). */
+static void put_change_list(ods_out *w, owf_buf *b, const owf_change *list, int n, int axis, unsigned at, int *next)
+{
+    int i, k, j;
+    for (i = 0; i < n && !w->failed; i++) {
+        owf_change c = list[i];
+        int cols = c.kind == OWF_CHANGE_INSERT_COLS || c.kind == OWF_CHANGE_DELETE_COLS;
+        if (axis == 0)                               /* a deletion's: each has a place on its axis */
+            c.row += at;
+        else if (axis == 1)
+            c.col += at;
+        switch (c.kind) {
+        case OWF_CHANGE_CELL:
+            owf_buf_printf(b, "<table:cell-content-change table:id=\"ct%d\">", c.id);
+            put_track_address(b, c.sheet, c.row, c.col);
+            put_change_info(w, b, &c);
+            owf_buf_puts(b, "<table:previous>");
+            put_input_cell(w, b, "table:change-track-table-cell", c.before ? c.before : "");
+            owf_buf_puts(b, "</table:previous></table:cell-content-change>");
+            break;
+        case OWF_CHANGE_INSERT_ROWS:
+        case OWF_CHANGE_INSERT_COLS:
+        case OWF_CHANGE_INSERT_SHEET:
+            owf_buf_printf(b, "<table:insertion table:id=\"ct%d\" table:type=\"%s\" table:position=\"%u\"", c.id,
+                           c.kind == OWF_CHANGE_INSERT_SHEET ? "table" : cols ? "column" : "row",
+                           c.kind == OWF_CHANGE_INSERT_SHEET ? (unsigned)c.sheet : cols ? c.col : c.row);
+            if (c.kind != OWF_CHANGE_INSERT_SHEET)
+                owf_buf_printf(b, " table:count=\"%u\" table:table=\"%d\"", c.count, c.sheet);
+            owf_buf_putc(b, '>');
+            put_change_info(w, b, &c);
+            owf_buf_puts(b, "</table:insertion>");
+            break;
+        case OWF_CHANGE_DELETE_ROWS:
+        case OWF_CHANGE_DELETE_COLS: {
+            int ax = cols, own = ax ? 1 : 0;
+            unsigned p = ax ? c.col : c.row;
+            /* one deletion for each row (column), each at p as it was when it went, LibreOffice's way: the
+               changes that were in it first, at p too, then it, naming them */
+            for (k = 0; k < (int)c.count; k++) {
+                for (j = 0; j < c.nchildren; j++)
+                    if ((ax ? c.children[j].col : c.children[j].row) == (unsigned)k)
+                        put_change_list(w, b, &c.children[j], 1, own, p - (unsigned)k, next);
+                owf_buf_printf(b, "<table:deletion table:id=\"ct%d\" table:type=\"%s\" table:position=\"%u\" "
+                                  "table:table=\"%d\">", k ? (*next)++ : c.id, ax ? "column" : "row", p, c.sheet);
+                put_change_info(w, b, &c);
+                owf_buf_puts(b, "<table:deletions>");
+                for (j = 0; j < c.ncells; j++) {
+                    const owf_changecell *cell = &c.cells[j];
+                    if ((ax ? cell->col : cell->row) != (unsigned)k)
+                        continue;
+                    owf_buf_puts(b, "<table:cell-content-deletion>");
+                    put_track_address(b, c.sheet, ax ? cell->row : p + (unsigned)k, ax ? p + (unsigned)k : cell->col);
+                    put_input_cell(w, b, "table:change-track-table-cell", cell->input);
+                    owf_buf_puts(b, "</table:cell-content-deletion>");
+                }
+                for (j = 0; j < c.nchildren; j++)
+                    if ((ax ? c.children[j].col : c.children[j].row) == (unsigned)k)
+                        owf_buf_printf(b, "<table:change-deletion table:id=\"ct%d\"/>", c.children[j].id);
+                owf_buf_puts(b, "</table:deletions></table:deletion>");
+            }
+            break;
+        }
+        case OWF_CHANGE_RENAME_SHEET:
+            owf_buf_printf(b, "<gfocalc:table-rename table:id=\"ct%d\" table:table=\"%d\" gfocalc:old-name=\"", c.id,
+                           c.sheet);
+            attr(w, b, c.before ? c.before : "");
+            owf_buf_puts(b, "\" gfocalc:new-name=\"");
+            attr(w, b, c.after ? c.after : "");
+            owf_buf_puts(b, "\">");
+            put_change_info(w, b, &c);
+            owf_buf_puts(b, "</gfocalc:table-rename>");
+            break;
+        }
+    }
+}
+
+static void put_tracked_changes(ods_out *w, owf_buf *b)
+{
+    const owf_book *book = w->book;
+    int next;
+    if (!book->track_changes && !book->nchanges)
+        return;
+    next = track_top_id(book->changes, book->nchanges) + 1;
+    owf_buf_puts(b, book->track_changes ? "<table:tracked-changes>"
+                                        : "<table:tracked-changes table:track-changes=\"false\">");
+    put_change_list(w, b, book->changes, book->nchanges, -1, 0, &next);
+    owf_buf_puts(b, "</table:tracked-changes>");
+}
+
 static void body(ods_out *w, owf_buf *b)
 {
     int i;
     owf_buf_puts(b, "<office:body><office:spreadsheet");
     put_book_protection(w, b);
     owf_buf_putc(b, '>');
+    put_tracked_changes(w, b);
     if (w->book->date1904)
         owf_buf_puts(b, "<table:calculation-settings><table:null-date table:date-value=\"1904-01-01\"/></table:calculation-settings>");
     put_validations(w, b);

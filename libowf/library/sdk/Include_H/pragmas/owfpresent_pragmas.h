@@ -94,5 +94,6 @@
 #pragma libcall OWFPresentBase owf_deck_new_obj_id 20a 801
 #pragma libcall OWFPresentBase owf_slide_add_anim 210 10803
 #pragma libcall OWFPresentBase owf_slide_delete_anim 216 0802
+#pragma libcall OWFPresentBase owf_pdf_gradient 21c a76543210980b
 
 #endif /* PRAGMAS_OWFPRESENT_PRAGMAS_H */

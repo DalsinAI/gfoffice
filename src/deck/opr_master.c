@@ -155,7 +155,11 @@ opr_master_view *opr_master_view_open(owf_deck *deck)
         memset(s, 0, sizeof *s);
         s->master = i;
         s->layout = -1;
-        s->background = m->background;
+        {
+            owf_look bg;           /* the whole background: gradient, hatching, transparency too */
+            OWF_BACKGROUND_LOOK(m, &bg);
+            OWF_BACKGROUND_SET(s, &bg);
+        }
         s->background_image = m->background_image;
         s->keep_timing = -2 - i;
         owf_obj_init(&s->notes, OWF_OBJ_TEXT);
@@ -232,7 +236,11 @@ int opr_master_view_commit(opr_master_view *v, opr_undo *u)
         masters[i].name = copy_string(s->name);
         if (s->name && !masters[i].name)
             goto fail;
-        masters[i].background = s->background;
+        {
+            owf_look bg;
+            OWF_BACKGROUND_LOOK(s, &bg);
+            OWF_BACKGROUND_SET(&masters[i], &bg);
+        }
         masters[i].background_image = s->background_image;
         if (!copy_objs(&masters[i].objs, &masters[i].nobjs, &masters[i].capobjs, s->objs, s->nobjs))
             goto fail;

@@ -1,5 +1,5 @@
 /*
- * GFOpenPresentation's and GFOpenPublisher's gradient fills as plain polygons (openpresentation_core.h,
+ * GFOpenPresentation's and GFOpenPressmaster's gradient fills as plain polygons (openpresentation_core.h,
  * opr_gradient_band), for screens that fill polygons but cannot clip to one: each band of the gradient is
  * the shape's outline cut by the band's own edges (two parallel lines for a linear gradient, an ellipse
  * for a radial one), with the band's colour. The PDF clips instead (owf_pdf_gradient). Integer only.
@@ -70,7 +70,7 @@ static int keep_side(const int *in, int n, long long a, long long b, long long c
 int opr_gradient_band(const int *xy, int n, int x, int y, int w, int h, int kind, int angle, unsigned long from,
                       unsigned long to, int band, int bands, int *out, int cap, unsigned long *colour)
 {
-    int a[2 * (OL_MAX_SHAPE_POINTS + RING_SIDES + 2)], b[2 * (OL_MAX_SHAPE_POINTS + RING_SIDES + 2)];
+    int a[2 * OPR_GRADIENT_MAX_POINTS], b[2 * OPR_GRADIENT_MAX_POINTS];
     int cur = n, i, k;
     long long cx = (long long)x * 2 + w, cy = (long long)y * 2 + h;   /* doubled: the centre to half a unit */
     if (!xy || n < 3 || n > OL_MAX_SHAPE_POINTS || bands < 1 || band < 0 || band >= bands || !out || !colour ||
@@ -96,7 +96,7 @@ int opr_gradient_band(const int *xy, int n, int x, int y, int w, int h, int kind
             long long la = py - qy, lb = qx - px, lc = la * px + lb * py;
             /* keep the side the centre is on */
             if (la * mx + lb * my < lc) { la = -la; lb = -lb; lc = -lc; }
-            cur = keep_side(k & 1 ? b : a, cur, la, lb, lc, k & 1 ? a : b, OL_MAX_SHAPE_POINTS + RING_SIDES + 2);
+            cur = keep_side(k & 1 ? b : a, cur, la, lb, lc, k & 1 ? a : b, OPR_GRADIENT_MAX_POINTS);
             if (cur < 0) return -1;
         }
         if (cur < 3) return 0;
@@ -118,9 +118,9 @@ int opr_gradient_band(const int *xy, int n, int x, int y, int w, int h, int kind
         t0 = lo + (hi - lo) * band / bands;
         t1 = lo + (hi - lo) * (band + 1) / bands;
         *colour = blend(from, to, (long)band * 2 + 1, (long)bands * 2);
-        cur = keep_side(a, n, ux, uy, band ? t0 : lo - 1, b, OL_MAX_SHAPE_POINTS + 4);
+        cur = keep_side(a, n, ux, uy, band ? t0 : lo - 1, b, OPR_GRADIENT_MAX_POINTS);
         if (cur < 3) return cur < 0 ? -1 : 0;
-        cur = keep_side(b, cur, -ux, -uy, band + 1 < bands ? -t1 - 16384 : -hi - 1, a, OL_MAX_SHAPE_POINTS + 4);
+        cur = keep_side(b, cur, -ux, -uy, band + 1 < bands ? -t1 - 16384 : -hi - 1, a, OPR_GRADIENT_MAX_POINTS);
         if (cur < 3) return cur < 0 ? -1 : 0;
         if (cur > cap) return -1;
         memcpy(out, a, (size_t)cur * 2 * sizeof *out);

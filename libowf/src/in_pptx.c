@@ -551,6 +551,65 @@ static int gradient_of(const colours *cc, const owf_xml_node *f, unsigned long *
     return 1;
 }
 
+/* How much of what is behind shows through the colour inside n (a:solidFill, a:gs, a:bgClr, a:outerShdw):
+ * the colour element's a:alpha (100000ths opaque) as percent see-through; 0 when it has none. */
+static int see_through(const owf_xml_node *n)
+{
+    const owf_xml_node *c, *a;
+    long long v;
+    for (c = n ? n->first : NULL; c && (c->type != OWF_XML_ELEMENT || !ns_a(c->ns)); c = c->next)
+        ;
+    if (!c || !(a = achild(c, "alpha")) || !number_att(a, "val", &v))
+        return 0;
+    return v >= 100000 ? 0 : v <= 0 ? 100 : (int)(100 - (v + 500) / 1000);
+}
+
+/* a:pattFill's preset as hatching: lines across (horz), up (vert), rising (upDiag), falling (dnDiag), a
+ * grid (cross) or a diagonal grid (diagCross), close together for the narrow and small ones. Other
+ * presets (percentages, dots, bricks, waves) are not lines: 0, with *percent how much of the foreground a
+ * colour mixed from the two should have. */
+static int pattern_hatch(const char *prst, owf_look *g, int *percent)
+{
+    static const struct { const char *name; unsigned char hatch; short angle; short distance; } lines[] = {
+        { "horz", 1, 0, 0 }, { "ltHorz", 1, 0, 0 }, { "dkHorz", 1, 0, 0 }, { "dashHorz", 1, 0, 0 },
+        { "narHorz", 1, 0, 57 }, { "wdHorz", 1, 0, 0 },
+        { "vert", 1, 900, 0 }, { "ltVert", 1, 900, 0 }, { "dkVert", 1, 900, 0 }, { "dashVert", 1, 900, 0 },
+        { "narVert", 1, 900, 57 }, { "wdVert", 1, 900, 0 },
+        { "upDiag", 1, 450, 0 }, { "ltUpDiag", 1, 450, 0 }, { "dkUpDiag", 1, 450, 0 }, { "wdUpDiag", 1, 450, 0 },
+        { "dashUpDiag", 1, 450, 0 },
+        { "dnDiag", 1, 1350, 0 }, { "ltDnDiag", 1, 1350, 0 }, { "dkDnDiag", 1, 1350, 0 }, { "wdDnDiag", 1, 1350, 0 },
+        { "dashDnDiag", 1, 1350, 0 },
+        { "cross", 2, 0, 0 }, { "lgGrid", 2, 0, 0 }, { "smGrid", 2, 0, 57 }, { "dotGrid", 2, 0, 0 },
+        { "diagCross", 2, 450, 0 }, { "openDmnd", 2, 450, 0 }, { "dotDmnd", 2, 450, 0 },
+    };
+    size_t i;
+    *percent = 50;
+    if (!prst)
+        return 0;
+    for (i = 0; i < sizeof lines / sizeof lines[0]; i++)
+        if (!strcmp(prst, lines[i].name)) {
+            g->hatch = lines[i].hatch;
+            g->hatch_angle = lines[i].angle;
+            g->hatch_distance = lines[i].distance;
+            return 1;
+        }
+    if (!strncmp(prst, "pct", 3) && prst[3] >= '0' && prst[3] <= '9')
+        *percent = (int)number(prst + 3, 50);
+    if (*percent > 100) *percent = 100;
+    return 0;
+}
+
+static unsigned long mix(unsigned long fg, unsigned long bg, int percent)
+{
+    unsigned long out = 0;
+    int shift;
+    for (shift = 0; shift <= 16; shift += 8) {
+        long a = (long)(fg >> shift & 0xFF), b = (long)(bg >> shift & 0xFF);
+        out |= (unsigned long)((a * percent + b * (100 - percent) + 50) / 100) << shift;
+    }
+    return out;
+}
+
 /* A fill: a:solidFill, a:gradFill (into g when given, else its first
  * stop), a:pattFill (its foreground), a:noFill. 1 with *fill (OWF_SHADE, 0
  * for none) when n holds one. */
@@ -565,18 +624,55 @@ static int fill_of(reader *x, const colours *cc, const owf_xml_node *n, unsigned
         }
         if (isa(f, "solidFill")) {
             *fill = colour_of(cc, f, &rgb) ? OWF_SHADE(rgb) : 0;
+            if (g && *fill)
+                g->transparency = (unsigned char)see_through(f);
             return 1;
         }
         if (isa(f, "gradFill")) {
             const owf_xml_node *gs = achild(achild(f, "gsLst"), "gs");
-            if (g && gradient_of(cc, f, fill, g))
+            if (g && gradient_of(cc, f, fill, g)) {
+                const owf_xml_node *k;
+                int sum = 0, n = 0, first = -1, differ = 0;
+                for (k = achild(f, "gsLst") ? achild(f, "gsLst")->first : NULL; k; k = k->next)
+                    if (isa(k, "gs")) {
+                        int t = see_through(k);
+                        if (first < 0) first = t;
+                        else if (t != first) differ = 1;
+                        sum += t;
+                        n++;
+                    }
+                g->transparency = (unsigned char)(n ? sum / n : 0);
+                if (differ)
+                    owf_report_add(x->report, OWF_NOTE_APPROX, "Graded transparency is drawn even all over");
                 return 1;
+            }
             *fill = gs && colour_of(cc, gs, &rgb) ? OWF_SHADE(rgb) : 0;
             owf_report_add(x->report, OWF_NOTE_APPROX, "Gradient and pattern fills are drawn in one colour");
             return 1;
         }
         if (isa(f, "pattFill")) {
-            *fill = colour_of(cc, achild(f, "fgClr"), &rgb) ? OWF_SHADE(rgb) : 0;
+            unsigned long fg = 0, bg = 0xFFFFFF;
+            int has_fg = colour_of(cc, achild(f, "fgClr"), &fg), has_bg = colour_of(cc, achild(f, "bgClr"), &bg);
+            int percent, bg_clear = has_bg && see_through(achild(f, "bgClr")) >= 100;
+            owf_look h;
+            memset(&h, 0, sizeof h);
+            if (!has_fg) fg = 0;
+            if (g && pattern_hatch(att(f, "prst"), &h, &percent)) {
+                /* the lines are the foreground, the fill the background (none when it is clear) */
+                g->hatch = h.hatch;
+                g->hatch_angle = h.hatch_angle;
+                g->hatch_distance = h.hatch_distance;
+                g->hatch_colour = OWF_SHADE(fg);
+                *fill = bg_clear ? 0 : OWF_SHADE(bg);
+                g->transparency = (unsigned char)see_through(achild(f, bg_clear ? "fgClr" : "bgClr"));
+                return 1;
+            }
+            if (g) {
+                *fill = OWF_SHADE(mix(fg, bg, percent));
+                owf_report_add(x->report, OWF_NOTE_APPROX, "Pattern fills other than lines are drawn in one colour");
+                return 1;
+            }
+            *fill = has_fg ? OWF_SHADE(fg) : 0;
             owf_report_add(x->report, OWF_NOTE_APPROX, "Gradient and pattern fills are drawn in one colour");
             return 1;
         }
@@ -1620,6 +1716,37 @@ static void read_ids(objctx *c, owf_obj *obj, const owf_xml_node *shape)
 
 /* The fill and line of a shape: its own, else its placeholders', else its
  * style's references to the theme. */
+/* a:effectLst's a:outerShdw as the look's shadow: dist (EMU) along dir (60000ths of a degree clockwise from
+ * left to right), its colour and alpha. 1 when the list was there (an empty one: no shadow). */
+static int read_shadow(reader *x, const colours *cc, const owf_xml_node *effects, owf_look *look)
+{
+    const owf_xml_node *sh = achild(effects, "outerShdw");
+    unsigned long rgb = OWF_SHADOW_COLOUR;
+    long long dist = 0, dir = 0, blur = 0;
+    int tenths;
+    if (!effects)
+        return 0;
+    if (!sh) {
+        if (achild(effects, "innerShdw") || achild(effects, "prstShdw"))
+            owf_report_add(x->report, OWF_NOTE_APPROX, "Inner and preset shadows are left out");
+        return 1;
+    }
+    number_att(sh, "dist", &dist);
+    number_att(sh, "dir", &dir);
+    tenths = (int)((dir / 6000) % 3600);
+    dist = dist / EMU_PER_TWIP;
+    if (dist > 5670) dist = 5670;
+    look->shadow = 1;
+    look->shadow_dx = (int)(dist * owf_deck_cos(tenths) / 16384);
+    look->shadow_dy = (int)(dist * owf_deck_sin(tenths) / 16384);
+    colour_of(cc, sh, &rgb);
+    look->shadow_colour = OWF_SHADE(rgb);
+    look->shadow_transparency = (unsigned char)see_through(sh);
+    if (number_att(sh, "blurRad", &blur) && blur > 0)
+        owf_report_add(x->report, OWF_NOTE_APPROX, "Soft shadows are drawn with a sharp edge");
+    return 1;
+}
+
 static void read_look(objctx *c, owf_obj *obj, const owf_xml_node *shape, const owf_xml_node *lph,
                       const owf_xml_node *mph, int line_only)
 {
@@ -1652,6 +1779,17 @@ static void read_look(objctx *c, owf_obj *obj, const owf_xml_node *shape, const 
         obj->look.gradient_angle = grad.gradient_angle;
         obj->look.fill2 = grad.fill2;
     }
+    if (!line_only && grad.hatch) {
+        obj->look.hatch = grad.hatch;
+        obj->look.hatch_angle = grad.hatch_angle;
+        obj->look.hatch_distance = grad.hatch_distance;
+        obj->look.hatch_colour = grad.hatch_colour;
+    }
+    if (!line_only && OWF_LOOK_FILLED(&obj->look))
+        obj->look.transparency = grad.transparency;
+    for (i = 0; i < 3 && !line_only; i++)
+        if (from[i] && read_shadow(&c->x->r, &c->cc, achild(from[i], "effectLst"), &obj->look))
+            break;
     for (i = 0; i < 3 && !ln; i++)
         ln = achild(from[i], "ln");
     if (ln) {
@@ -2017,14 +2155,32 @@ static unsigned long tint(unsigned long rgb, long long v)
 static void read_table(objctx *c, int index, const owf_xml_node *tbl)
 {
     const owf_xml_node *tblPr = achild(tbl, "tblPr"), *grid = achild(tbl, "tblGrid"), *g, *tr, *tc;
-    int widths[TABLE_MAX_COLS], ncols = 0, nrows = 0, merged = 0, i;
+    int widths[TABLE_MAX_COLS], ncols = 0, nrows = 0, i;
     int styled = achild(tblPr, "tableStyleId") != NULL;
     int first_row = same(att(tblPr, "firstRow"), "1"), bands = same(att(tblPr, "bandRow"), "1");
+    const owf_xml_node *style_id = achild(tblPr, "tableStyleId");
     unsigned long accent = c->master ? c->master->th.scheme[C_ACC1] : 0x4F81BD;
     unsigned long white = c->master ? c->master->th.scheme[C_LT1] : 0xFFFFFF;
     owf_obj *obj = &(*c->objs)[index];
 
     obj->kind = OWF_OBJ_TABLE;
+    obj->table_design = (first_row ? OWF_TABLE_FIRST_ROW : 0) | (bands ? OWF_TABLE_BANDED_ROWS : 0) |
+                        (same(att(tblPr, "lastRow"), "1") ? OWF_TABLE_LAST_ROW : 0) |
+                        (same(att(tblPr, "firstCol"), "1") ? OWF_TABLE_FIRST_COL : 0) |
+                        (same(att(tblPr, "lastCol"), "1") ? OWF_TABLE_LAST_COL : 0) |
+                        (same(att(tblPr, "bandCol"), "1") ? OWF_TABLE_BANDED_COLS : 0);
+    if (style_id) {
+        owf_buf id;
+        owf_buf_init(&id);
+        text_of(style_id, &id, 0);
+        if (id.failed || (id.length && id.length < 128 &&
+                          !(obj->table_style = owf_deck_strdup((const char *)id.data, id.length)))) {
+            owf_buf_free(&id);
+            c->x->r.failed = 1;
+            return;
+        }
+        owf_buf_free(&id);
+    }
     for (g = grid ? grid->first : NULL; g; g = g->next)
         if (isa(g, "gridCol") && ncols < TABLE_MAX_COLS)
             widths[ncols++] = clamp(emu_to_twips(number(att(g, "w"), 0)), 0, MAX_COORD);
@@ -2032,6 +2188,12 @@ static void read_table(objctx *c, int index, const owf_xml_node *tbl)
         int col = 0;
         if (!isa(tr, "tr"))
             continue;
+        obj = &(*c->objs)[index];
+        if (att(tr, "h") && owf_table_set_row_height(obj, nrows, clamp(emu_to_twips(number(att(tr, "h"), 0)), 0,
+                                                                         MAX_COORD)) < 0) {
+            c->x->r.failed = 1;
+            return;
+        }
         for (tc = tr->first; tc && !c->x->r.failed; tc = tc->next) {
             const owf_xml_node *tcPr;
             textjob j;
@@ -2039,8 +2201,14 @@ static void read_table(objctx *c, int index, const owf_xml_node *tbl)
             int before, k, header;
             if (!isa(tc, "tc") || col >= TABLE_MAX_COLS)
                 continue;
-            if (att(tc, "gridSpan") || att(tc, "rowSpan") || att(tc, "hMerge") || att(tc, "vMerge"))
-                merged = 1;
+            if (att(tc, "gridSpan") || att(tc, "rowSpan")) {   /* the merge's first cell; hMerge, vMerge: covered */
+                int span_c = (int)number(att(tc, "gridSpan"), 1), span_r = (int)number(att(tc, "rowSpan"), 1);
+                obj = &(*c->objs)[index];
+                if (owf_table_add_merge(obj, nrows, col, span_r, span_c) < 0) {
+                    c->x->r.failed = 1;
+                    return;
+                }
+            }
             tcPr = achild(tc, "tcPr");
             header = styled && first_row && nrows == 0;
             if (!fill_of(&c->x->r, &c->cc, tcPr, &fill, NULL) && styled) {
@@ -2086,6 +2254,8 @@ static void read_table(objctx *c, int index, const owf_xml_node *tbl)
         nrows++;
     }
     obj = &(*c->objs)[index];
+    if (obj->nrows > 0 && obj->nrows < nrows && owf_table_set_row_height(obj, nrows - 1, 0) < 0)
+        c->x->r.failed = 1;   /* rows past the last with a height: as their text needs */
     for (i = 0; i < obj->text.nparas; i++)
         obj->text.paras[i].table_cols = ncols;
     obj->ncols = ncols;
@@ -2098,8 +2268,6 @@ static void read_table(objctx *c, int index, const owf_xml_node *tbl)
                 obj->col_widths[i] = i < TABLE_MAX_COLS && grid ? widths[i] : 0;
     }
     obj->inset[0] = obj->inset[1] = obj->inset[2] = obj->inset[3] = 0;
-    if (merged)
-        owf_report_add(c->x->r.report, OWF_NOTE_APPROX, "Merged table cells are shown apart");
     if (styled)
         owf_report_add(c->x->r.report, OWF_NOTE_APPROX, "Table styles are drawn as PowerPoint's default one");
 }
@@ -2209,7 +2377,7 @@ static void read_tree(objctx *c, const owf_xml_node *tree, int parent, int depth
 
 /* A p:cSld's p:bg onto *colour and *image; 0 when it has none. */
 static int read_background(pptx *x, const colours *cc, const rels *r, const owf_xml_node *cSld,
-                           unsigned long *colour, int *image)
+                           unsigned long *colour, int *image, owf_look *g)
 {
     const owf_xml_node *bg = pchild(cSld, "bg"), *pr, *ref;
     unsigned long rgb, fill;
@@ -2218,10 +2386,14 @@ static int read_background(pptx *x, const colours *cc, const rels *r, const owf_
     if ((pr = pchild(bg, "bgPr"))) {
         const owf_xml_node *blip = achild(achild(pr, "blipFill"), "blip");
         if (blip) {
+            const owf_xml_node *amt = achild(blip, "alphaModFix");
+            long long v;
             *image = load_picture(x, r, ratt(blip, "embed"), x->deck->width, x->deck->height, NULL);
+            if (g && amt && number_att(amt, "amt", &v) && v < 100000)
+                g->transparency = (unsigned char)(v <= 0 ? 100 : 100 - (v + 500) / 1000);
             return 1;
         }
-        if (fill_of(&x->r, cc, pr, &fill, NULL)) {
+        if (fill_of(&x->r, cc, pr, &fill, g)) {
             *colour = fill ? fill : OWF_SHADE(0xFFFFFF);
             return 1;
         }
@@ -2388,8 +2560,20 @@ static int get_master(pptx *x, const char *name)
     memcpy(c.cc.map, mp->map, sizeof c.cc.map);
     c.slide = -1;
     m->background = OWF_SHADE(mp->th.scheme[mp->map[0]]);
-    read_background(x, &c.cc, &mp->rels, cSld, &x->deck->masters[index].background,
-                    &x->deck->masters[index].background_image);
+    {
+        owf_look g;
+        memset(&g, 0, sizeof g);
+        read_background(x, &c.cc, &mp->rels, cSld, &x->deck->masters[index].background,
+                        &x->deck->masters[index].background_image, &g);
+        x->deck->masters[index].background_gradient = g.gradient;
+        x->deck->masters[index].background_angle = g.gradient_angle;
+        x->deck->masters[index].background2 = g.fill2;
+        x->deck->masters[index].background_transparency = g.transparency;
+        x->deck->masters[index].background_hatch = g.hatch;
+        x->deck->masters[index].background_hatch_angle = g.hatch_angle;
+        x->deck->masters[index].background_hatch_distance = g.hatch_distance;
+        x->deck->masters[index].background_hatch_colour = g.hatch_colour;
+    }
     m = &x->deck->masters[index];
     c.objs = &m->objs;
     c.n = &m->nobjs;
@@ -2581,10 +2765,22 @@ static void read_slide(pptx *x, const char *name)
             read_map(ov, c.cc.map);
     }
     c.slide = index;
-    if (!read_background(x, &c.cc, &r, cSld, &x->deck->slides[index].background,
-                         &x->deck->slides[index].background_image) && lp)
-        read_background(x, &c.cc, &lp->rels, pchild(lp->root, "cSld"), &x->deck->slides[index].background,
-                        &x->deck->slides[index].background_image);
+    {
+        owf_look g;
+        memset(&g, 0, sizeof g);
+        if (!read_background(x, &c.cc, &r, cSld, &x->deck->slides[index].background,
+                             &x->deck->slides[index].background_image, &g) && lp)
+            read_background(x, &c.cc, &lp->rels, pchild(lp->root, "cSld"), &x->deck->slides[index].background,
+                            &x->deck->slides[index].background_image, &g);
+        x->deck->slides[index].background_gradient = g.gradient;
+        x->deck->slides[index].background_angle = g.gradient_angle;
+        x->deck->slides[index].background2 = g.fill2;
+        x->deck->slides[index].background_transparency = g.transparency;
+        x->deck->slides[index].background_hatch = g.hatch;
+        x->deck->slides[index].background_hatch_angle = g.hatch_angle;
+        x->deck->slides[index].background_hatch_distance = g.hatch_distance;
+        x->deck->slides[index].background_hatch_colour = g.hatch_colour;
+    }
     s = &x->deck->slides[index];
     c.objs = &s->objs;
     c.n = &s->nobjs;

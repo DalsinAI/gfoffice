@@ -29,6 +29,12 @@ void owf_deck_free_story(owf_story *story);
 /* A copy of text (malloc), or NULL. */
 char *owf_deck_strdup(const char *s, size_t length);
 
+/* A table's merged cell and its rows' heights, for the readers (owf_obj's nmerges, merges, nrows, row_heights).
+ * A merge of one cell, one outside rows and columns of 1 to 1024, or past OWF_TABLE_MAX_MERGES is left out
+ * (0); -1 when memory ran out. A row's height below 0 is taken as 0 (as its text needs). */
+int owf_table_add_merge(owf_obj *obj, int row, int col, int rows, int cols);
+int owf_table_set_row_height(owf_obj *obj, int row, int twips);
+
 /* sin and cos of tenths of a degree, times 16384 (no floating point). */
 long owf_deck_sin(int tenths);
 long owf_deck_cos(int tenths);
