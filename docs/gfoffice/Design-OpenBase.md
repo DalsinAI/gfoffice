@@ -697,10 +697,10 @@ The soft-float flavour goes into gfopensqlite as a second build
 
 **On `sqlite.library` (`SQLITE=library`).** gfopensqlite also builds SQLite
 as one shared library with a link library (`build-library.sh`,
-`docs/sqlite.library.md` there). `build.d/base.sh` takes `SQLITE=static`
-(the default, the build above) or `SQLITE=library`, which links the
-soft-float `libsqlite3_link.a` and leaves SQLite's code out of GFOpenBase
-(about 900 KB; the build checks it). No source in `src/base` changes: the
+`docs/sqlite.library.md` there). `build.d/base.sh` takes `SQLITE=library`
+(the default since 18 November 2026), which links the soft-float
+`libsqlite3_link.a` and leaves SQLite's code out of GFOpenBase (about
+900 KB; the build checks it), or `SQLITE=static` (the build above). No source in `src/base` changes: the
 calls are the same. GFOpenBase opens the library itself before its window
 (`app/ob_sqlitelib.c`) and, when it is missing or too old, says "GFOpenBase
 needs sqlite.library 1 or later in LIBS:" (a requester from Workbench, a
@@ -710,8 +710,12 @@ library's SQLite is serialized (one semaphore per call, where the static
 one has no mutexes at all) and has JSON; its temporary files go to `T:`;
 the 64 KB stack is still asked for, and a caller with less gets a stack of
 its own from the library. `SQLITE=library` needs `sqlite.library` in
-`LIBS:`, so it becomes the default only when the GFOffice release installs
-it.
+`LIBS:`, so the GFOffice build ships it: `deps/gfopensqlite.ref` names a
+gfopensqlite release and its `.zip`'s SHA-256, `scripts/fetch-gfopensqlite.sh`
+fetches and checks it, GFOpenBase is linked with that release's link
+library, and `build-amiga.sh` puts its `sqlite.library` beside GFOffice's
+own libraries for the package's `Libs`. A newer library is taken by
+changing that one line.
 
 ### 11.3 Size, memory and speed
 

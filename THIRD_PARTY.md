@@ -11,6 +11,7 @@ own licences.
 | GFOpenGadTools (`DalsinAI/gfopengadtools`) | Native UI/theme drawing | MIT, AmiCradle Team | Source copy under `third_party/opengadtools` |
 | zlib | ZIP containers used by ODT and DOCX, in the PC build and tests | zlib | The system zlib, linked into the PC build only; the Amiga build uses our z.library (`DalsinAI/amicradle-guest` `libraries/openzlib`) and carries no zlib source |
 | SCOWL/Aspell English word list | Bundled `en_GB.words` spelling dictionary | SCOWL/Aspell word-list permissions and upstream component notices | Shipped as data; full notice in `licenses/SCOWL-ASPELL-English.txt` |
+| SQLite 3.53.4, as `sqlite.library` (`DalsinAI/gfopensqlite`) | GFOpenBase's database engine | SQLite: public domain; the Amiga library around it: MIT, AmiCradle Team | Not in this repository: the build takes the release `deps/gfopensqlite.ref` names, links GFOpenBase with its link library and ships its `sqlite.library` in `Libs` |
 
 ## Test data only (not shipped)
 

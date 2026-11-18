@@ -1,8 +1,8 @@
 #!/bin/sh
 # build.d/base.sh's SQLITE switch, with a compiler that only writes down its arguments:
-#   SQLITE unset or static   today's line: -I and -L of the static build, -lsqlite3, no OB_SQLITE_LIBRARY
-#   SQLITE=library           -DOB_SQLITE_LIBRARY, the link library's include/ and lib-soft/, -lsqlite3_link,
+#   SQLITE unset or library  -DOB_SQLITE_LIBRARY, the link library's include/ and lib-soft/, -lsqlite3_link,
 #                            and no -lsqlite3
+#   SQLITE=static            -I and -L of the static build, -lsqlite3, no OB_SQLITE_LIBRARY
 #   either, folder missing   GFOpenBase is left out and the build goes on
 #   SQLITE=library, SQLite's code in the program all the same: the build stops
 #   SQLITE=other             the build stops
@@ -43,28 +43,33 @@ run() {
 }
 has() { grep -qxF -- "$1" "$W/args"; }
 
-rc=0; run "" "$W/static" "$W/library" || rc=$?
-check "default: builds" '[ $rc = 0 ] && [ -f "$W/out/GFOpenBase" ]'
-check "default: static include" 'has "-I$W/static/include"'
-check "default: -lsqlite3 from the static folder" 'has "-L$W/static/lib" && has "-lsqlite3"'
-check "default: not the library" '! has "-DOB_SQLITE_LIBRARY" && ! has "-lsqlite3_link"'
-check "default: the helper is compiled" 'has "$HERE/app/ob_sqlitelib.c"'
-check "default: says which" 'grep -q "SQLITE=static" "$W/log"'
-cp "$W/args" "$W/args-default"
-
 rc=0; run static "$W/static" "$W/library" || rc=$?
-check "static: the same line as the default" '[ $rc = 0 ] && cmp -s "$W/args" "$W/args-default"'
+check "static: builds" '[ $rc = 0 ] && [ -f "$W/out/GFOpenBase" ]'
+check "static: static include" 'has "-I$W/static/include"'
+check "static: -lsqlite3 from the static folder" 'has "-L$W/static/lib" && has "-lsqlite3"'
+check "static: not the library" '! has "-DOB_SQLITE_LIBRARY" && ! has "-lsqlite3_link"'
+check "static: the helper is compiled" 'has "$HERE/app/ob_sqlitelib.c"'
+check "static: says which" 'grep -q "SQLITE=static" "$W/log"'
+
+rc=0; run "" "$W/static" "$W/library" || rc=$?
+check "default: builds, on the library" '[ $rc = 0 ] && [ -f "$W/out/GFOpenBase" ] && grep -q "SQLITE=library" "$W/log"'
+cp "$W/args" "$W/args-default"
+rc=0; run "" "$W/nowhere" "$W/library" || rc=$?
+check "default: needs no static build" '[ $rc = 0 ] && [ -f "$W/out/GFOpenBase" ]'
 
 rc=0; run library "$W/static" "$W/library" || rc=$?
 check "library: builds" '[ $rc = 0 ] && [ -f "$W/out/GFOpenBase" ]'
+check "library: the same line as the default" 'cmp -s "$W/args" "$W/args-default"'
 check "library: OB_SQLITE_LIBRARY and the link library include" 'has "-DOB_SQLITE_LIBRARY" && has "-I$W/library/include"'
 check "library: -lsqlite3_link, soft float" 'has "-L$W/library/lib-soft" && has "-lsqlite3_link"'
 check "library: no static SQLite" '! has "-lsqlite3" && ! has "-I$W/static/include" && ! has "-L$W/static/lib"'
 check "library: says which" 'grep -q "SQLITE=library" "$W/log"'
 
-rc=0; FAKE_TEXT="SQLite format 3" run library "$W/static" "$W/library" || rc=$?
+rc=0; FAKE_TEXT="malformed database schema (%s)" run library "$W/static" "$W/library" || rc=$?
 check "library: SQLite's code in the program stops the build" '[ $rc != 0 ] && grep -q "linked in" "$W/log"'
-rc=0; FAKE_TEXT="SQLite format 3" run static "$W/static" "$W/library" || rc=$?
+rc=0; FAKE_TEXT="SQLite format 3" run library "$W/static" "$W/library" || rc=$?
+check "library: libowf's own copy of the file header's text does not" '[ $rc = 0 ]'
+rc=0; FAKE_TEXT="malformed database schema (%s)" run static "$W/static" "$W/library" || rc=$?
 check "static: SQLite's code in the program is as it should be" '[ $rc = 0 ]'
 
 rc=0; run static "$W/nowhere" "$W/library" || rc=$?

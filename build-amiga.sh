@@ -15,6 +15,15 @@ STOVE=${STOVE:-$HOME/AmiCradle/stoves/os32-gcc16}
 DEPS=${DEPS:-$OUT/deps}
 GIT_BASE=${AMIGACHROME_GIT_BASE:-https://github.com/}
 mkdir -p "$DEPS"
+# sqlite.library for GFOpenBase (build.d/base.sh, SQLITE=library, the default): the release of
+# DalsinAI/gfopensqlite that deps/gfopensqlite.ref names, its .zip checked by SHA-256, gives the link library
+# GFOpenBase is built with and the sqlite.library that goes in the package's Libs. OPENSQLITE_LIB set by the
+# caller (a gfopensqlite out-library) is used instead.
+if [ -z "${OPENSQLITE_LIB:-}" ]; then
+    sh "$HERE/scripts/fetch-gfopensqlite.sh" "$DEPS/gfopensqlite"
+    OPENSQLITE_LIB=$DEPS/gfopensqlite
+fi
+export OPENSQLITE_LIB
 # GFOpenLayout pinned (Team 5, 25 October 2026): a build of a GFOffice commit always takes the same GFOpenLayout,
 # and a GFOffice pull request that needs a GFOpenLayout one names that one's head here, to be checked together.
 REF=master
@@ -51,6 +60,11 @@ OUT="$OUT/draw" STOVE="$STOVE" AMICRADLE_GIT_BASE="$GIT_BASE" \
 cp "$OUT/draw/GFOpenDraw" "$OUT/draw/GFOpenDrawOL" "$OUT/"
 mkdir -p "$OUT/sdk/gfopendraw"
 cp -a "$OUT/draw/sdk/Include_H" "$OUT/draw/sdk/Lib" "$OUT/sdk/gfopendraw/"
+# sqlite.library beside GFOffice's own libraries, for the package's Libs: GFOpenBase needs it in LIBS:
+if [ "${SQLITE:-library}" = library ]; then
+    cp "$OPENSQLITE_LIB/libs/sqlite.library" "$OUT/library/sqlite.library"
+    echo "$OUT/library/sqlite.library ($(wc -c < "$OUT/library/sqlite.library") bytes)"
+fi
 mkdir -p "$OUT/samples"
 for f in "$HERE"/samples/*.docx "$HERE"/samples/*.odt "$HERE"/samples/*.txt \
          "$HERE"/tests/book/fixtures/features-openpyxl.xlsx "$HERE"/tests/book/fixtures/charts-openpyxl.xlsx \
