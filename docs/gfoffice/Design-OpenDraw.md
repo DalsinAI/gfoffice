@@ -22,7 +22,7 @@ the former name.
 - Portable `libgfopendraw.a` with `gfopendraw.h`, normal and ASan/UBSan host
   tests. The Amiga build emits an m68k SDK archive; both front ends link it.
 
-GFOffice pins commit `ca07afc25e793e4c4fdc5ae16979bebccd203eaa` in
+GFOffice pins commit `c6e4ceba680458b6aef7c2da002a957ade0f8178` in
 `deps/gfopendraw.ref` so a suite build is reproducible.
 
 ## Do not duplicate OpenLayout

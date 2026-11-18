@@ -81,6 +81,7 @@ A program is added to `programs` in `tests/layout/check_library_calls.sh` when i
 | GFOpenBase | at start-up (24: its report preview's pages) | a requester, then ends |
 | OWConvert | only when a presentation is converted to PDF (24) | a line in the Shell; every other conversion runs without the library |
 | GFOpenDiag, GFOpenProject | at start-up (25: their canvas and views) | a requester, then ends |
+| GFOpenDrawOL (built from the gfopendraw pinned in `deps/gfopendraw.ref`) | at start-up (10: its window's GFOpenLayout UI) | a requester from Workbench, a line in a Shell, then ends |
 
 GFOpenProject's printing draws on a target of its own (`oldraw_new` with the program's calls): those calls are
 made from the library on the program's task.
