@@ -68,8 +68,7 @@ library to ask for.
 | 3 | GFOpenPresentation, GFOpenPressmaster, GFOpenBase's preview, OWConvert, the 1.x GFOpenWrite window | done |
 | 4 | The drawing layer into the library as version 25 (gfopenlayout #78, master 56a0f09b), then GFOpenDiag and GFOpenProject | done |
 | 5 | owfpub.library and owfpresent.library: nothing to convert. They carry no GFOpenLayout code (build-library.sh compiles none); their pages are drawn by the programs (src/deck, src/pub), converted in step 3 | not needed |
-| 6 | The library only: the switch and the compiled-in way removed from the Amiga builds | this change |
-| 7 | gfopenlayout.library 25 in the GFOffice package's `Libs`, for systems whose ROM has an older one | to do |
+| 6 | The library only: the switch and the compiled-in way removed from the Amiga builds; gfopenlayout.library 25 built into the package, for systems whose ROM has an older one | this change |
 
 A program is added to `programs` in `tests/layout/check_library_calls.sh` when it is converted.
 
@@ -88,11 +87,16 @@ made from the library on the program's task.
 
 ## Systems with an older library
 
-The ROM of today's OS images has library 23, so on them these programs show the requester and end. Until the ROM
-carries 25 (asked of Team 5), the GFOffice package is to carry `gfopenlayout.library` 25 in its `Libs` (step 7),
-built from the pinned GFOpenLayout with the OS's theme reader. The OS's loader starts the newer disk copy at the
-first open after a boot, so the install needs a restart. GFOffice must not be released from main between step 6
-and step 7, or the ROM pin, whichever is first.
+The ROM of today's OS images has library 23, so on its own such a system would show the requester. Until the ROM
+carries 25 (asked of Team 5), GFOffice carries the library: `build-amiga.sh` builds `gfopenlayout.library` from the
+GFOpenLayout pinned in `deps/openamigalayout.ref`, with GFOpenGadTools' theme reader at the commit
+`deps/gfopengadtools.ref` names (as the OS's own is built), into `library/` beside GFOffice's own libraries, and
+the package installs it to `LIBS:` with them. The OS's loader starts the newer disk copy at the first open after a
+boot, so an install on such a system needs a restart before the programs start. The start-up requester stays for
+a system where the copy is missing or the restart has not happened.
+
+The check holds this too: both refs are commits, `build-amiga.sh` builds the library with the theme reader, and
+the GFOpenLayout it is given builds a library no older than `app/ow_layoutlib.h` asks for.
 
 ## Lab
 

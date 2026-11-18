@@ -130,6 +130,21 @@ for f in "$HERE/build-os3.sh" "$HERE"/build.d/*.sh "$HERE/build-amiga.sh"; do
 done
 grep -q 'OL_PAGES_FLAGS="-DOW_LAYOUT_LIBRARY"' "$HERE/build-os3.sh" || say "build-os3.sh does not build the page programs for the library"
 
+# The package carries the library: build-amiga.sh builds gfopenlayout.library from the pinned GFOpenLayout, with
+# the theme reader, into the libraries' drawer, and that library is no older than the programs ask for.
+grep -q 'build-library.sh"$' "$HERE/build-amiga.sh" && grep -q 'OGT_ROOT="\$DEPS/gfopengadtools"' "$HERE/build-amiga.sh" &&
+    grep -q 'cp "\$DEPS/gfopenlayout-lib/lib/gfopenlayout.library" "\$OUT/library/gfopenlayout.library"' "$HERE/build-amiga.sh" ||
+    say "build-amiga.sh does not build gfopenlayout.library (with the theme reader) into \$OUT/library"
+for r in openamigalayout gfopengadtools; do
+    head -n 1 "$HERE/deps/$r.ref" 2>/dev/null | grep -qE '^[0-9a-f]{40}$' || say "deps/$r.ref is not a commit: the shipped library must be a fixed one"
+done
+asks=$(sed -n 's/^#define OW_LAYOUT_LIBRARY_VERSION \([0-9]*\)$/\1/p' "$HERE/app/ow_layoutlib.h" | sort -n | tail -n 1)
+[ -n "$asks" ] || say "app/ow_layoutlib.h names no OW_LAYOUT_LIBRARY_VERSION"
+if [ "$have_layout" = 1 ] && [ -n "$asks" ]; then
+    gives=$(sed -n 's/^#define LIB_VERSION \([0-9]*\)$/\1/p' "$LAYOUT/library/openlayout_lib.c")
+    [ -n "$gives" ] && [ "$gives" -ge "$asks" ] || say "the GFOpenLayout given builds library ${gives:-?}: the programs ask for $asks"
+fi
+
 [ "$fail" = 0 ] || exit 1
 if [ "$have_layout" = 1 ]; then
     echo "LAYOUT-LIBRARY-CALLS PASS $count programs, $total calls, all in gfopenlayout.library ($(wc -l < "$T/calls") given, $( [ "$have_draw" = 1 ] && wc -l < "$T/drawcalls" || echo 0) drawing)"
