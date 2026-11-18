@@ -137,7 +137,10 @@ grep -q 'build-library.sh"$' "$HERE/build-amiga.sh" && grep -q 'OGT_ROOT="\$DEPS
     say "build-amiga.sh does not build gfopenlayout.library (with the theme reader) into \$OUT/library"
 grep -q 'OGT_ROOT="\$DEPS/gfopengadtools" OPT=-Os ' "$HERE/build-amiga.sh" ||
     say "build-amiga.sh does not build gfopenlayout.library at -Os, as the ROM's is built"
-for r in openamigalayout gfopengadtools; do
+# GFOpenDraw and GFOpenDrawOL open gfopendraw.library: the package carries it with the other libraries.
+grep -q '^cp "\$OUT/draw/Libs/gfopendraw.library" "\$OUT/library/gfopendraw.library"$' "$HERE/build-amiga.sh" ||
+    say "build-amiga.sh does not put gfopendraw.library in \$OUT/library: GFOpenDraw and GFOpenDrawOL could not start"
+for r in openamigalayout gfopengadtools gfopendraw; do
     head -n 1 "$HERE/deps/$r.ref" 2>/dev/null | grep -qE '^[0-9a-f]{40}$' || say "deps/$r.ref is not a commit: the shipped library must be a fixed one"
 done
 asks=$(sed -n 's/^#define OW_LAYOUT_LIBRARY_VERSION \([0-9]*\)$/\1/p' "$HERE/app/ow_layoutlib.h" | sort -n | tail -n 1)

@@ -81,6 +81,7 @@ A program is added to `programs` in `tests/layout/check_library_calls.sh` when i
 | GFOpenBase | at start-up (24: its report preview's pages) | a requester, then ends |
 | OWConvert | only when a presentation is converted to PDF (24) | a line in the Shell; every other conversion runs without the library |
 | GFOpenDiag, GFOpenProject | at start-up (25: their canvas and views) | a requester, then ends |
+| GFOpenDrawOL (built from the gfopendraw pinned in `deps/gfopendraw.ref`) | at start-up (10: its window's GFOpenLayout UI) | a requester from Workbench, a line in a Shell, then ends |
 
 GFOpenProject's printing draws on a target of its own (`oldraw_new` with the program's calls): those calls are
 made from the library on the program's task.
@@ -97,6 +98,13 @@ a system where the copy is missing or the restart has not happened.
 
 The check holds this too: both refs are commits, `build-amiga.sh` builds the library with the theme reader at `-Os`, and
 the GFOpenLayout it is given builds a library no older than `app/ow_layoutlib.h` asks for.
+
+## The libraries the package carries for these programs
+
+`build-amiga.sh` leaves them in `library/`, and the package installs them to `LIBS:` with GFOffice's own:
+`gfopenlayout.library` (25, above) and `gfopendraw.library`, which GFOpenDraw and GFOpenDrawOL open since the
+gfopendraw pinned in `deps/gfopendraw.ref` builds them on it. The check fails when either copy is missing from
+`build-amiga.sh`.
 
 ## Lab
 

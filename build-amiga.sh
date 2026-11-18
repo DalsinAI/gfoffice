@@ -79,6 +79,10 @@ echo "build-amiga.sh: gfopendraw at $(git -C "$DEPS/gfopendraw" rev-parse --shor
 OUT="$OUT/draw" STOVE="$STOVE" AMICRADLE_GIT_BASE="$GIT_BASE" \
     sh "$DEPS/gfopendraw/build-amiga.sh"
 cp "$OUT/draw/GFOpenDraw" "$OUT/draw/GFOpenDrawOL" "$OUT/"
+# The two programs open gfopendraw.library (gfopendraw's build.sh builds them on it): it goes with the package's
+# other libraries, for LIBS:.
+cp "$OUT/draw/Libs/gfopendraw.library" "$OUT/library/gfopendraw.library"
+echo "$OUT/library/gfopendraw.library ($(wc -c < "$OUT/library/gfopendraw.library") bytes)"
 mkdir -p "$OUT/sdk/gfopendraw"
 cp -a "$OUT/draw/sdk/Include_H" "$OUT/draw/sdk/Lib" "$OUT/sdk/gfopendraw/"
 # sqlite.library beside GFOffice's own libraries, for the package's Libs: GFOpenBase needs it in LIBS:
