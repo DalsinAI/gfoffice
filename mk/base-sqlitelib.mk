@@ -24,11 +24,13 @@ base-sqlitelib-test: $(OUT)/test-base-sqlitelib
 	$(OUT)/test-base-sqlitelib
 	$(OUT)/test-base-sqlitelib-library
 	tests/base/test_base_build_switch.sh
+	tests/base/test_base_sqlite_fetch.sh
 
 base-sqlitelib-check: $(OUT)/test-base-sqlitelib-asan
 	$(OUT)/test-base-sqlitelib-asan
 	$(OUT)/test-base-sqlitelib-asan-library
 	tests/base/test_base_build_switch.sh
+	tests/base/test_base_sqlite_fetch.sh
 
 test: base-sqlitelib-test
 check: base-sqlitelib-check

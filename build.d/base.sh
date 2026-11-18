@@ -1,18 +1,20 @@
 # GFOpenBase (stream B, docs/openoffice-parity-plan.md section 4), sourced by build-os3.sh with its
 # variables set (CC, CFLAGS_COMMON, SPECS, HERE, OUT). SQLite comes one of two ways (SQLITE):
-#   SQLITE=static   (default) gfopensqlite's single-threaded soft-float SQLite linked in
+#   SQLITE=library  (default, Dale, 18 November 2026) sqlite.library at run time, through gfopensqlite's
+#                   link library: include/ and the soft-float lib-soft/libsqlite3_link.a. OPENSQLITE_LIB
+#                   names that folder: build-amiga.sh fills one from the release deps/gfopensqlite.ref pins
+#                   (scripts/fetch-gfopensqlite.sh), else it is a gfopensqlite beside this repository
+#                   (./build-library.sh there, which fills out-library/). GFOpenBase opens the library
+#                   itself before its window (app/ob_sqlitelib.c) and holds none of SQLite's code, which is
+#                   checked below. The library goes in the package's Libs (build-amiga.sh).
+#   SQLITE=static   gfopensqlite's single-threaded soft-float SQLite linked in
 #                   (DalsinAI/gfopensqlite: FLOAT=soft THREADSAFE=0 ./build.sh, which fills out-soft-st/);
 #                   OPENSQLITE names that folder, else a gfopensqlite beside this repository.
-#   SQLITE=library  sqlite.library at run time, through gfopensqlite's link library
-#                   (./build-library.sh there, which fills out-library/: include/ and the soft-float
-#                   lib-soft/libsqlite3_link.a); OPENSQLITE_LIB names that folder. GFOpenBase opens the
-#                   library itself before its window (app/ob_sqlitelib.c) and holds none of SQLite's code,
-#                   which is checked below.
 # Without the folder GFOpenBase is left out and the rest of the build goes on.
 # SQLite's REAL work goes through fpuauto (the stove's default, and the library's own), so the FPU is used
 # when there is one.
 # MIT, Copyright (c) 2026 AmiCradle Team.
-SQLITE=${SQLITE:-static}
+SQLITE=${SQLITE:-library}
 OB_SQL_OK=""
 case "$SQLITE" in
 static)
@@ -66,8 +68,9 @@ if [ -n "$OB_SQL_OK" ]; then
         "$HERE/app/openbase.c" "$HERE/app/ob_reportwin.c" "$HERE/app/ob_previewwin.c" "$HERE/app/ow_stack.c" \
         "$HERE/app/ob_sqlitelib.c" $OB_SQL_LINK -lm -lamiga -o "$OUT/GFOpenBase"
     echo "GFOpenBase: $(wc -c < "$OUT/GFOpenBase") bytes (SQLITE=$SQLITE)"
-    # on the library the program holds none of SQLite: its file header's text is in every copy of the engine
-    if [ "$SQLITE" = library ] && grep -q "SQLite format 3" "$OUT/GFOpenBase"; then
+    # on the library the program holds none of SQLite: this message is in every copy of the engine and nowhere
+    # else (the file header's text, "SQLite format 3", is also in libowf's owf_kind.c)
+    if [ "$SQLITE" = library ] && grep -q "malformed database schema" "$OUT/GFOpenBase"; then
         echo "build.d/base.sh: SQLITE=library, but GFOpenBase has SQLite's code linked in"
         exit 1
     fi
