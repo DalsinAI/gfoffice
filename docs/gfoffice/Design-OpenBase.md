@@ -620,9 +620,24 @@ Nothing asks; the reason for a refusal is in LASTERROR.
 | RUNQUERY name [ANSWER a]... | Runs an Update, Append or Delete, all or none: the rows changed. One step on the Undo list, unless more than 20,000 rows change, the table has triggers, or a delete cascades or clears: then the Undo list is emptied and RESULT is the count and the word NOUNDO (`25000 NOUNDO`; `PARSE VAR RESULT n undo .`). A query that reads is refused (COUNTQUERY and QUERYROW read it) |
 | FINDROW Field=Value [BACK] [FIRST] | The next row of the table shown, in its sort and filter, that holds the value (text contains, other fields equal) is chosen: its key, as NEXTROW gives. BACK looks before the row chosen, FIRST from the first row (with BACK, the last). 5 when no row has it |
 
+| QUERY [ROW n] [COUNT] [ANSWER a]... sql | Typed SQL that reads, one statement: row n's values (row 1 without ROW) with a tab between, so the first value alone for one column; COUNT gives the number of rows. 5 past the end |
+| EXEC [ANSWER a]... sql | One typed UPDATE, INSERT or DELETE on one of the project's tables, all or none: the rows changed, and NOUNDO after the count as RUNQUERY answers |
+| REPORTS | The kept reports' names, each in quotes |
+| REPORT name TO file [FORMAT f] [ANSWER a]... | Makes a kept report as a document: FORMAT odt, docx, pdf or text, left out to go by the file's name. OK |
+
+QUERY and EXEC (core 0.19.0, GFOpenBase 0.18.0) take their words first and
+the rest of the line as the SQL; one pair of quotes round all of it comes
+off. Values are bound, never pasted: each `?`, `?1` or `:name` in the SQL
+takes one ANSWER, in order (`QUERY ANSWER Leeds SELECT Name FROM People
+WHERE Town = ?`), so a quote in a value can't break the statement. STEM is
+not there yet: a script reads row by row with ROW. REPORTS and REPORT
+(report 0.3.0) are in src/base/report/ob_report.c, tested by
+`test_rexx_reports` in tests/base/test_base_report.c; QUERY and EXEC by
+`test_rexx_sql`.
+
 Each `[question]` a query asks gets one ANSWER, in the query's order; too
 few or too many is refused, with the first question named. While a form is
-open RUNQUERY and FINDROW are refused; the reading commands still answer.
+open RUNQUERY, EXEC and FINDROW are refused; the reading commands still answer.
 
 Tests: `test_rexx_queries` in tests/base/test_base_core.c; tests/arexx/base.rexx
 for the lab (owed while Cradle labs are paused).

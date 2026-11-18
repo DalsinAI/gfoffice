@@ -844,6 +844,76 @@ static void test_band_api(ob_project *p)
     CHECK(ob_report_check(p, &r, err, sizeof err) == 0, "every band of its own names: %s", err);
 }
 
+/* ARexx: REPORTS and REPORT (0.3.0) */
+static void test_rexx_reports(ob_project *p)
+{
+    ob_report r;
+    char err[OB_ERR_MAX] = "", out[600], cmd[900], small[8];
+    char *text;
+    size_t len = 0;
+
+    CHECK(ob_report_rexx(p, "GETROW", out, sizeof out) == -1 && ob_report_rexx(p, "REPORTED", out, sizeof out) == -1
+          && ob_report_rexx(p, NULL, out, sizeof out) == -1, "not these commands");
+    ob_report_init(&r, "RxSales");
+    strcpy(r.table, "Orders");
+    ob_report_add_column(&r, "Customer", OB_TOTAL_COUNT);
+    ob_report_add_column(&r, "Qty", OB_TOTAL_SUM);
+    CHECK(ob_report_store(p, &r, err, sizeof err) == 0, "store RxSales: %s", err);
+    ob_report_init(&r, "Rx Town");
+    strcpy(r.query, "OneTown");
+    ob_report_add_column(&r, "Customer", OB_TOTAL_COUNT);
+    ob_report_add_column(&r, "Qty", OB_TOTAL_SUM);
+    CHECK(ob_report_store(p, &r, err, sizeof err) == 0, "store Rx Town: %s", err);
+
+    CHECK(ob_report_rexx(p, "reports", out, sizeof out) == 0 && strstr(out, "\"RxSales\"") && strstr(out, "\"Rx Town\""), "REPORTS: %s", out);
+    CHECK(ob_report_rexx(p, "REPORTS now", out, sizeof out) == 10 && !strcmp(out, "REPORTS takes nothing"), "REPORTS with more: %s", out);
+    CHECK(ob_report_rexx(p, "REPORTS", small, sizeof small) == 5, "REPORTS that don't fit: %s", small);
+    CHECK(ob_report_rexx(NULL, "REPORTS", out, sizeof out) == 5 && ob_report_rexx(NULL, "REPORT x TO y", out, sizeof out) == 5, "no project: %s", out);
+    CHECK(ob_report_rexx(p, "REPORTS", out, 1) == 20 && ob_report_rexx(p, "REPORT x", out, 1) == 20, "no room at all");
+
+    /* a table's report, the format by the file's name */
+    remove(path("rx-sales.txt"));
+    snprintf(cmd, sizeof cmd, "REPORT RxSales TO \"%s\"", path("rx-sales.txt"));
+    CHECK(ob_report_rexx(p, cmd, out, sizeof out) == 0 && !strcmp(out, "OK"), "REPORT: %s", out);
+    text = slurp(path("rx-sales.txt"), &len);
+    CHECK(text && strstr(text, "RxSales") && strstr(text, "Customer\tQty") && strstr(text, "Count 4\tSum 12"), "its text:\n%s",
+          text ? text : "(none)");
+    free(text);
+    /* a query's report with its answer, the format named */
+    remove(path("rx-town.out"));
+    snprintf(cmd, sizeof cmd, "report \"Rx Town\" answer York format=txt to=\"%s\"", path("rx-town.out"));
+    CHECK(ob_report_rexx(p, cmd, out, sizeof out) == 0 && !strcmp(out, "OK"), "REPORT with an answer: %s", out);
+    text = slurp(path("rx-town.out"), &len);
+    CHECK(text && strstr(text, "Bob\t1\nDi\t4\nCount 2\tSum 5"), "its text:\n%s", text ? text : "(none)");
+    free(text);
+    remove(path("rx-sales.odt"));
+    snprintf(cmd, sizeof cmd, "REPORT RxSales TO \"%s\"", path("rx-sales.odt"));
+    CHECK(ob_report_rexx(p, cmd, out, sizeof out) == 0, "as .odt: %s", out);
+    text = slurp(path("rx-sales.odt"), &len);
+    CHECK(text && len > 200 && !memcmp(text, "PK", 2), "an .odt was written: %lu bytes", (unsigned long)len);
+    free(text);
+
+    /* refusals: nothing asks */
+    snprintf(cmd, sizeof cmd, "REPORT \"Rx Town\" TO \"%s\"", path("rx-none.txt"));
+    CHECK(ob_report_rexx(p, cmd, out, sizeof out) == 10 && !strcmp(out, "Rx Town asks 1 question: give an ANSWER for each, in order"),
+          "an answer owed: %s", out);
+    snprintf(cmd, sizeof cmd, "REPORT RxSales ANSWER x TO \"%s\"", path("rx-none.txt"));
+    CHECK(ob_report_rexx(p, cmd, out, sizeof out) == 10 && !strcmp(out, "RxSales asks nothing: leave ANSWER out"), "an answer too many: %s", out);
+    text = slurp(path("rx-none.txt"), &len);
+    CHECK(!text, "no file was made");
+    free(text);
+    CHECK(ob_report_rexx(p, "REPORT RxSales", out, sizeof out) == 10 && !strcmp(out, "REPORT takes TO, the file to make"), "no TO: %s", out);
+    CHECK(ob_report_rexx(p, "REPORT", out, sizeof out) == 10 && strstr(out, "REPORT takes a report's name"), "no name: %s", out);
+    CHECK(ob_report_rexx(p, "REPORT Nosuch TO x.txt", out, sizeof out) == 10 && out[0], "no such report: %s", out);
+    CHECK(ob_report_rexx(p, "REPORT RxSales PRINT", out, sizeof out) == 10 && !strcmp(out, "REPORT takes a name, TO, FORMAT and ANSWER"),
+          "a word it doesn't take: %s", out);
+    snprintf(cmd, sizeof cmd, "REPORT RxSales TO \"%s\" FORMAT nosuch", path("rx-bad.out"));
+    CHECK(ob_report_rexx(p, cmd, out, sizeof out) == 10 && out[0], "no such format: %s", out);
+    snprintf(cmd, sizeof cmd, "REPORT RxSales TO \"%s\"", path("no-such-dir/rx.txt"));
+    CHECK(ob_report_rexx(p, cmd, out, sizeof out) == 10 && out[0], "a file that can't be written: %s", out);
+    CHECK(ob_report_delete(p, "RxSales") && ob_report_delete(p, "Rx Town"), "tidy: %s", ob_error(p));
+}
+
 int main(int argc, char **argv)
 {
     ob_project *p;
@@ -869,6 +939,7 @@ int main(int argc, char **argv)
         test_bands(p);
         test_text_form_bands();
         test_band_api(p);
+        test_rexx_reports(p);
         ob_close(p);
     }
     printf("%s: %d checks, %d failed\n", fails ? "FAILED" : "base reports", checks, fails);

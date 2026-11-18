@@ -43,7 +43,7 @@
 extern "C" {
 #endif
 
-#define OB_REPORT_VERSION "0.2.1"
+#define OB_REPORT_VERSION "0.3.0"
 #define OB_REPORT_COLUMNS 16
 #define OB_REPORT_LEVELS 3        /* group levels: group, subgroup[0], subgroup[1] */
 #define OB_BAND_MAX 160            /* a band's text, with its 0 */
@@ -137,6 +137,19 @@ int ob_report_from_text(ob_report *r, const char *name, const char *text, char *
 int ob_report_store(ob_project *p, const ob_report *r, char *err, size_t errsize);
 /* The report kept as name (any case), named as it was kept: 0, or -1 with the reason in err. */
 int ob_report_load(ob_project *p, const char *name, ob_report *r, char *err, size_t errsize);
+
+/* ---- ARexx (0.3.0) ----
+ *   REPORTS                       the kept reports' names, each in quotes
+ *   REPORT name TO file [FORMAT f] [ANSWER a]...
+ *       makes the kept report as a document (ob_report_load, then
+ *       ob_report_save): FORMAT is libowf's name (odt, docx, pdf, text; txt too),
+ *       left out to go by the file's extension; a report on a query that
+ *       asks [questions] takes an ANSWER for each, in order. RESULT OK.
+ * Nothing asks. The answer, or the reason, goes in out; the return is
+ * ARexx's code (0 OK, 5 no project, 10 a bad command, name, answer or a
+ * file that could not be written, 20 out of memory), or -1 when command is
+ * neither. */
+int ob_report_rexx(ob_project *p, const char *command, char *out, size_t size);
 
 #ifdef __cplusplus
 }

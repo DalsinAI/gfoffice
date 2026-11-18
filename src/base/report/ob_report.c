@@ -1040,3 +1040,119 @@ int ob_report_load(ob_project *p, const char *name, ob_report *r, char *err, siz
     if (!ob_report_get_text(p, name, text, sizeof text)) return fail(err, errsize, "%s", ob_error(p));
     return ob_report_from_text(r, kept, text, err, errsize);
 }
+
+/* ---- ARexx: REPORTS and REPORT (report 0.3.0) ---- */
+
+static const char *rr_skip(const char *s)
+{
+    while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') s++;
+    return s;
+}
+
+/* s starts with word (any case), then a space, '=' or its end; *rest is what follows */
+static int rr_word(const char *s, const char *word, const char **rest)
+{
+    size_t n = strlen(word), i;
+    for (i = 0; i < n; i++) if (!s[i] || tolower((unsigned char)s[i]) != tolower((unsigned char)word[i])) return 0;
+    if (s[n] && s[n] != ' ' && s[n] != '\t' && s[n] != '=') return 0;
+    if (rest) *rest = rr_skip(s + n + (s[n] == '='));
+    return 1;
+}
+
+/* The next argument, "in quotes" ('or these') or one word, into out (cut to size). */
+static const char *rr_arg(const char *s, char *out, size_t size)
+{
+    size_t k = 0;
+    s = rr_skip(s);
+    if (*s == '"' || *s == '\'') {
+        char q = *s++;
+        for (; *s && *s != q; s++) if (k + 1 < size) out[k++] = *s;
+        if (*s == q) s++;
+    } else {
+        for (; *s && *s != ' ' && *s != '\t'; s++) if (k + 1 < size) out[k++] = *s;
+    }
+    out[k] = 0;
+    return rr_skip(s);
+}
+
+int ob_report_rexx(ob_project *p, const char *command, char *out, size_t size)
+{
+    const char *s, *answers[OB_QUERY_PARAMS];
+    ob_report *r = NULL;
+    ob_query *q = NULL;
+    char (*ans)[OB_VALUE_MAX] = NULL;
+    char name[OB_NAME_MAX] = "", path[512] = "", format[16] = "", err[OB_ERR_MAX] = "";
+    int rc = 0, na = 0, want = 0, i, n;
+    command = rr_skip(command ? command : "");
+    if (rr_word(command, "REPORTS", &s)) {
+        size_t k = 0;
+        if (!out || size < 2) return 20;
+        out[0] = 0;
+        if (!p) { snprintf(out, size, "No project is open: OPEN opens one"); return 5; }
+        if (*s) { snprintf(out, size, "REPORTS takes nothing"); return 10; }
+        n = ob_report_count(p);
+        for (i = 0; i < n; i++) {
+            const char *nm = ob_report_name(p, i);
+            size_t l = nm ? strlen(nm) : 0;
+            if (!nm) break;
+            if (k + l + 4 > size) { snprintf(out, size, "The reports are too many for the answer"); return 5; }
+            if (k) out[k++] = ' ';
+            out[k++] = '"';
+            memcpy(out + k, nm, l);
+            k += l;
+            out[k++] = '"';
+            out[k] = 0;
+        }
+        return 0;
+    }
+    if (!rr_word(command, "REPORT", &s)) return -1;       /* not one of these */
+    if (!out || size < 2) return 20;
+    out[0] = 0;
+    if (!p) { snprintf(out, size, "No project is open: OPEN opens one"); return 5; }
+    s = rr_arg(s, name, sizeof name);
+    if (!name[0]) { snprintf(out, size, "REPORT takes a report's name, then TO and the file to make"); return 10; }
+    r = (ob_report *)malloc(sizeof *r);
+    q = (ob_query *)malloc(sizeof *q);
+    ans = (char (*)[OB_VALUE_MAX])malloc(OB_QUERY_PARAMS * sizeof *ans);
+    if (!r || !q || !ans) { snprintf(out, size, "Not enough memory"); rc = 20; goto done; }
+    while (*s) {
+        const char *rest;
+        if (rr_word(s, "TO", &rest)) { s = rr_arg(rest, path, sizeof path); continue; }
+        if (rr_word(s, "FORMAT", &rest)) { s = rr_arg(rest, format, sizeof format); continue; }
+        if (rr_word(s, "ANSWER", &rest)) {
+            if (na >= OB_QUERY_PARAMS) { snprintf(out, size, "A query asks at most %d questions", OB_QUERY_PARAMS); rc = 10; goto done; }
+            s = rr_arg(rest, ans[na], sizeof ans[na]);
+            answers[na] = ans[na];
+            na++;
+            continue;
+        }
+        snprintf(out, size, "REPORT takes a name, TO, FORMAT and ANSWER");
+        rc = 10;
+        goto done;
+    }
+    if (ob_report_load(p, name, r, err, sizeof err) < 0) { snprintf(out, size, "%s", err); rc = 10; goto done; }
+    if (r->query[0]) {
+        if (!ob_query_get(p, r->query, q)) { snprintf(out, size, "%s", ob_error(p)); rc = 10; goto done; }
+        want = ob_query_params(p, q, NULL, 0);
+        if (want < 0) { snprintf(out, size, "%s", ob_error(p)); rc = 10; goto done; }
+    }
+    if (want != na) {
+        if (!want) snprintf(out, size, "%.60s asks nothing: leave ANSWER out", r->name);
+        else snprintf(out, size, "%.60s asks %d question%s: give an ANSWER for each, in order", r->name, want, want == 1 ? "" : "s");
+        rc = 10;
+        goto done;
+    }
+    if (!path[0]) { snprintf(out, size, "REPORT takes TO, the file to make"); rc = 10; goto done; }
+    if (same_name(format, "txt")) snprintf(format, sizeof format, "text");     /* libowf's name for it */
+    if (ob_report_save(p, r, na ? answers : NULL, path, format[0] ? format : NULL, NULL, err, sizeof err) < 0) {
+        snprintf(out, size, "%s", err[0] ? err : "The report could not be made");
+        rc = 10;
+        goto done;
+    }
+    snprintf(out, size, "OK");
+done:
+    free(ans);
+    free(q);
+    free(r);
+    return rc;
+}

@@ -4068,6 +4068,79 @@ static void test_rexx_queries(void)
     ob_close(p);
 }
 
+/* ---- SQL typed from ARexx (core 0.19.0) ---- */
+
+static void test_rexx_sql(void)
+{
+    ob_project *p = fresh("rexxsql.oadb");
+    char out[400], small[8], before[1024];
+    int changed = -1;
+    if (!p) return;
+    five_customers(p);
+    shop_orders(p);
+    snprintf(before, sizeof before, "%s", cust_rows(p));
+#define SQ(cmd) ob_rexx_sql(p, cmd, out, sizeof out, &changed)
+
+    CHECK(SQ("QUERIES") == -1 && SQ("QUERYROW x") == -1 && SQ("EXECUTE x") == -1 && SQ("") == -1
+          && ob_rexx_sql(p, NULL, out, sizeof out, NULL) == -1, "not these commands");
+    CHECK(ob_rexx_sql(NULL, "QUERY SELECT 1", out, sizeof out, NULL) == 5 && strstr(out, "No project"), "no project: %s", out);
+    CHECK(ob_rexx_sql(p, "QUERY SELECT 1", out, 1, NULL) == 20, "no room at all");
+
+    /* reading */
+    CHECK(SQ("QUERY SELECT count(*) FROM Customers") == 0 && !strcmp(out, "5") && changed == 0, "one value: %s", out);
+    CHECK(SQ("query select Name, Town from Customers order by Name collate nocase") == 0 && !strcmp(out, "Ann\tLeeds"),
+          "the first row: %s", out);
+    CHECK(SQ("QUERY ROW 4 SELECT Name, Town FROM Customers ORDER BY Name COLLATE NOCASE") == 0 && !strcmp(out, "dan\tYork"),
+          "ROW 4: %s", out);
+    CHECK(SQ("QUERY ROW=6 SELECT Name FROM Customers") == 5 && !strcmp(out, "No row 6"), "past the end: %s", out);
+    CHECK(SQ("QUERY ROW 0 SELECT 1") == 10 && strstr(out, "ROW takes a row's number from 1"), "row 0: %s", out);
+    CHECK(SQ("QUERY COUNT SELECT Name FROM Customers WHERE Town = 'York'") == 0 && !strcmp(out, "2"), "COUNT: %s", out);
+    CHECK(SQ("QUERY \"SELECT Name FROM Customers WHERE Town = 'Hull'\"") == 0 && !strcmp(out, "Cy"), "quotes round it all: %s", out);
+    CHECK(SQ("QUERY 'SELECT count(*) FROM \"Customers\"'") == 0 && !strcmp(out, "5"),
+          "single quotes round it: %s", out);
+    CHECK(SQ("QUERY SELECT \"Name\" FROM \"Customers\" WHERE \"Town\" = 'Hull'") == 0 && !strcmp(out, "Cy"),
+          "quotes inside stay: %s", out);
+    CHECK(SQ("QUERY") == 10 && !strcmp(out, "QUERY takes the SQL to run"), "no SQL: %s", out);
+    CHECK(SQ("QUERY ROW 2") == 10 && !strcmp(out, "QUERY takes the SQL to run"), "only words: %s", out);
+    CHECK(SQ("QUERY SELECT nothing FROM Nowhere") == 10 && out[0], "bad SQL: %s", out);
+    CHECK(SQ("QUERY DELETE FROM Customers") == 10 && out[0] && !strcmp(cust_rows(p), before), "QUERY only reads: %s", out);
+    CHECK(SQ("QUERY SELECT 1; SELECT 2") == 10 && out[0], "one statement: %s", out);
+    CHECK(ob_rexx_sql(p, "QUERY SELECT Name, Town, Email FROM Customers", small, sizeof small, NULL) == 5, "a row that doesn't fit: %s", small);
+
+    /* values are bound */
+    CHECK(SQ("QUERY ANSWER York COUNT SELECT Name FROM Customers WHERE Town = ?") == 0 && !strcmp(out, "2"), "one value: %s", out);
+    CHECK(SQ("QUERY ANSWER \"Leeds\" ANSWER=E% SELECT Name FROM Customers WHERE Town = ?1 AND Name LIKE ?2") == 0 && !strcmp(out, "Eve"),
+          "two values: %s", out);
+    CHECK(SQ("QUERY ANSWER \"x' OR '1'='1\" COUNT SELECT Name FROM Customers WHERE Town = :town") == 0 && !strcmp(out, "0"),
+          "a quote in a value is only a value: %s", out);
+    CHECK(SQ("QUERY SELECT Name FROM Customers WHERE Town = ?") == 10
+          && !strcmp(out, "The SQL takes 1 value: give an ANSWER for each before it, in order"), "a value owed: %s", out);
+    CHECK(SQ("QUERY ANSWER a ANSWER b SELECT Name FROM Customers WHERE Town = ?") == 10 && strstr(out, "takes 1 value"), "one too many: %s", out);
+    CHECK(SQ("QUERY ANSWER a SELECT 1") == 10 && !strcmp(out, "The SQL takes no values: leave ANSWER out"), "none wanted: %s", out);
+
+    /* changing rows */
+    CHECK(SQ("EXEC UPDATE Customers SET Town = 'Hull' WHERE Town = 'York'") == 0 && !strcmp(out, "2") && changed == 1, "EXEC: %s", out);
+    CHECK(!strcmp(cust_rows(p), "Ann|Leeds|1,500.00;bob|Hull|;Cy|Hull|99.99;dan|Hull|250.00;Eve|Leeds|-5.00"), "updated: %s", cust_rows(p));
+    CHECK(ob_undo(p) && !strcmp(cust_rows(p), before), "one step of Undo: %s", cust_rows(p));
+    CHECK(SQ("exec answer Hull answer bob update Customers set Town = ? where Name = ?") == 0 && !strcmp(out, "1"), "EXEC with values: %s", out);
+    CHECK(ob_undo(p) && !strcmp(cust_rows(p), before), "undone: %s", cust_rows(p));
+    CHECK(SQ("EXEC UPDATE Customers SET Town = 'Paris'") == 10 && out[0] && changed == 0 && !strcmp(cust_rows(p), before),
+          "a rule broken: all or none: %s", out);
+    CHECK(SQ("EXEC DELETE FROM Customers WHERE Name = 'dan'") == 10 && out[0] && !strcmp(cust_rows(p), before), "dan has orders: %s", out);
+    CHECK(SQ("EXEC SELECT 1") == 10 && !strcmp(out, "EXEC runs one UPDATE, INSERT or DELETE statement: QUERY reads rows"), "EXEC of a SELECT: %s", out);
+    CHECK(SQ("EXEC DROP TABLE Customers") == 10 && strstr(out, "EXEC runs one UPDATE"), "no DROP: %s", out);
+    CHECK(SQ("EXEC DELETE FROM Customers WHERE Name = 'bob'; DELETE FROM Orders") == 10 && out[0] && !strcmp(cust_rows(p), before),
+          "one statement: %s", out);
+    CHECK(SQ("EXEC") == 10 && !strcmp(out, "EXEC takes the SQL to run"), "no SQL: %s", out);
+    CHECK(SQ("EXEC ROW 1 DELETE FROM Customers") == 10 && strstr(out, "EXEC runs one UPDATE"), "EXEC has no ROW: %s", out);
+    CHECK(SQ("EXEC INSERT INTO Customers (Name, Town) VALUES ('Flo', 'Hull')") == 0 && !strcmp(out, "1") && ob_row_total(p, "Customers") == 6,
+          "INSERT: %s", out);
+    CHECK(ob_undo(p) && ob_row_total(p, "Customers") == 5, "insert undone: %s", ob_error(p));
+    CHECK(ob_rexx_form_refuses("EXEC DELETE FROM Customers") && !ob_rexx_form_refuses("QUERY SELECT 1"), "EXEC is refused while a form is open");
+#undef SQ
+    ob_close(p);
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1) {
@@ -4107,6 +4180,7 @@ int main(int argc, char **argv)
     test_union_queries();
     test_query_window();
     test_rexx_queries();
+    test_rexx_sql();
     test_relation_draw();
     test_dbf();
     test_rexx_rows();
