@@ -1,8 +1,8 @@
 # GFOpenDiag (amicradle-teams designs/GFOPENDIAG-20261113.md), sourced by build-os3.sh with its variables set (CC,
-# CFLAGS_COMMON, SPECS, HERE, OUT, OWF, OWFFLAGS, OWFSRC_DOCS, OPENLAYOUT_SRC). Its window, canvas and mouse
-# (app/opendiag.c, src/diag/odg_view.c, odg_edit.c) and GFOpenLayout's drawing (draw/oldraw.c with its Amiga target,
-# amiga/oldraw_amiga.c: lines, polygons and ellipses need gfopenlayout 34472a1 or later, deps/openamigalayout.ref)
-# are its own. The diagram model and files (libowf/diagram), the editing core and ARexx commands (the rest of
+# CFLAGS_COMMON, SPECS, HERE, OUT, OWF, OWFFLAGS, OWFSRC_DOCS, OPENLAYOUT_SRC, OL_DRAW, OL_DRAW_FLAGS). Its window,
+# canvas and mouse (app/opendiag.c, src/diag/odg_view.c, odg_edit.c) are its own. GFOpenLayout's drawing is
+# $OL_DRAW (build-os3.sh's OPENLAYOUT, docs/suite/layout-library.md): gfopenlayout.library 25's calls, or
+# draw/oldraw.c with its Amiga target compiled in. The diagram model and files (libowf/diagram), the editing core and ARexx commands (the rest of
 # src/diag) and the PNG and ILBM writers EXPORT uses (src/deck/ow_picture.c, libowf's owf_picture.c by its old
 # names) are owfdiag.library's
 # (scripts/owfdiag-sources.sh): linked in with libowf (OWF=linked), or opened from LIBS: (OWF=library,
@@ -24,10 +24,10 @@ if [ ! -f "$OPENLAYOUT_SRC/draw/oldraw.c" ] || [ ! -f "$OPENLAYOUT_SRC/amiga/old
     echo "build.d/diag.sh: no GFOpenLayout drawing with lines and ellipses in $OPENLAYOUT_SRC: GFOpenDiag left out"
 else
     # shellcheck disable=SC2086
-    "$CC" $CFLAGS_COMMON -DNO_FPUAUTO -DNO_GFMALLOC -DOLDRAW_AMIGA -m68040 -specs=$SPECS -O2 -Wno-pointer-sign \
-        $OWFFLAGS $OWF_DIAG $SPELL -I"$HERE/include" -I"$HERE/src/deck" -I"$OPENLAYOUT_SRC/include" -I"$OPENLAYOUT_SRC/draw" \
+    "$CC" $CFLAGS_COMMON -DNO_FPUAUTO -DNO_GFMALLOC $OL_DRAW_FLAGS -m68040 -specs=$SPECS -O2 -Wno-pointer-sign \
+        $OWFFLAGS $OWF_DIAG $SPELL -I"$HERE/include" -I"$HERE/src/deck" -I"$OPENLAYOUT_SRC/include" -I"$OPENLAYOUT_SRC/draw" -I"$HERE/app" \
         $DIAGSRC "$HERE/src/diag/odg_view.c" "$HERE/src/diag/odg_edit.c" "$HERE/src/diag/odg_spell.c" $SPELL_SRC \
-        "$OPENLAYOUT_SRC/draw/oldraw.c" "$OPENLAYOUT_SRC/amiga/oldraw_amiga.c" "$HERE/app/opendiag.c" -lamiga \
+        $OL_DRAW "$HERE/app/opendiag.c" -lamiga \
         -o "$OUT/GFOpenDiag"
     echo "GFOpenDiag: $(wc -c < "$OUT/GFOpenDiag") bytes"
 fi

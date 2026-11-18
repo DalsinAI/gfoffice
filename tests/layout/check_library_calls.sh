@@ -23,15 +23,18 @@ fail=0
 say() { echo "check_library_calls.sh: $*"; fail=1; }
 
 # Each converted program, a line: its name | the script with its compile | its main file | what its main file
-# says when the library is missing | the files of its own that call GFOpenLayout (globs from the repository).
+# says when the library is missing | the files of its own that call GFOpenLayout (globs from the repository) |
+# pages (the document calls: $OL_PAGES, library 24) or draw (GFOpenLayout drawing: $OL_DRAW, library 25).
 # OWConvert's compile is in parts ($OWC_PDF, $OWC_DECK), so its line names those two variables' lines instead.
 cat > "$T/programs" <<'EOF'
-GFOpenWrite|build-os3.sh|app/openwrite2.c|OW_LAYOUT_NEEDS|src/core/*.c app/openwrite2.c app/ow_autosave.c app/ow_print.c app/ow_spell.c app/ow_stack.c app/ow_fontwidths.c app/ow_clipboard.c
-GFOpenWrite1|build-os3.sh|app/openwrite.c|OW_LAYOUT_NEEDS|src/core/*.c app/openwrite.c
-GFOpenPresentation|build-os3.sh|app/openpresent.c|OW_LAYOUT_NEEDS|src/deck/*.c src/deckchart/*.c src/core/ow_layout.c app/openpresent.c app/opr_chartwin.c app/ow_clipboard.c
-GFOpenPressmaster|build-os3.sh|app/openpresent.c|OW_LAYOUT_NEEDS|src/deck/*.c src/pub/*.c libowf/pub/*.c src/core/ow_merge.c src/core/ow_layout.c app/openpresent.c app/ow_clipboard.c
-GFOpenBase|build.d/base.sh|app/openbase.c|OW_LAYOUT_NEEDS|src/base/*.c src/base/report/*.c src/base/preview/*.c src/core/ow_layout.c app/openbase.c app/ob_reportwin.c app/ob_previewwin.c
-OWConvert|build-os3.sh|tools/owc_deck.c|owc_missing("gfopenlayout.library"|src/deck/opr_layout.c src/deck/opr_pdf.c src/deck/opr_gradient.c src/core/ow_layout.c tools/owconvert.c tools/owc_*.c
+GFOpenWrite|build-os3.sh|app/openwrite2.c|OW_LAYOUT_NEEDS|src/core/*.c app/openwrite2.c app/ow_autosave.c app/ow_print.c app/ow_spell.c app/ow_stack.c app/ow_fontwidths.c app/ow_clipboard.c|pages
+GFOpenWrite1|build-os3.sh|app/openwrite.c|OW_LAYOUT_NEEDS|src/core/*.c app/openwrite.c|pages
+GFOpenPresentation|build-os3.sh|app/openpresent.c|OW_LAYOUT_NEEDS|src/deck/*.c src/deckchart/*.c src/core/ow_layout.c app/openpresent.c app/opr_chartwin.c app/ow_clipboard.c|pages
+GFOpenPressmaster|build-os3.sh|app/openpresent.c|OW_LAYOUT_NEEDS|src/deck/*.c src/pub/*.c libowf/pub/*.c src/core/ow_merge.c src/core/ow_layout.c app/openpresent.c app/ow_clipboard.c|pages
+GFOpenBase|build.d/base.sh|app/openbase.c|OW_LAYOUT_NEEDS|src/base/*.c src/base/report/*.c src/base/preview/*.c src/core/ow_layout.c app/openbase.c app/ob_reportwin.c app/ob_previewwin.c|pages
+OWConvert|build-os3.sh|tools/owc_deck.c|owc_missing("gfopenlayout.library"|src/deck/opr_layout.c src/deck/opr_pdf.c src/deck/opr_gradient.c src/core/ow_layout.c tools/owconvert.c tools/owc_*.c|pages
+GFOpenDiag|build.d/diag.sh|app/opendiag.c|OW_LAYOUT_NEEDS|src/diag/odg_view.c src/diag/odg_edit.c app/opendiag.c|draw
+GFOpenProject|build.d/project.sh|app/openproject.c|OW_LAYOUT_NEEDS|src/project/*.c app/openproject.c|draw
 EOF
 
 have_layout=0
@@ -44,11 +47,21 @@ if [ -n "$LAYOUT" ] && [ -f "$LAYOUT/library/link/gfopenlayout_link_core.c" ]; t
 else
     echo "check_library_calls.sh: no GFOpenLayout with library 24's link sources (OPENLAYOUT_SRC): calls not checked"
 fi
+have_draw=0
+if [ -n "$LAYOUT" ] && [ -f "$LAYOUT/library/link/gfopenlayout_link_draw.c" ]; then
+    have_draw=1
+    grep -E '^[a-z].*[ *]oldraw_[a-z0-9_]+\(' "$LAYOUT/library/link/gfopenlayout_link_draw.c" | grep -v ';$' |
+        sed -E 's/^.*[ *](oldraw_[a-z0-9_]+)\(.*$/\1/' | sort -u > "$T/drawcalls"
+else
+    echo "check_library_calls.sh: no GFOpenLayout with library 25's drawing link source: drawing calls not checked"
+fi
 
 count=0
 total=0
-while IFS='|' read -r p script mainfile needs files; do
+while IFS='|' read -r p script mainfile needs files kind; do
     count=$((count + 1))
+    if [ "$kind" = draw ]; then var=OL_DRAW; pre='oldraw'; given="$T/drawcalls"; have=$have_draw
+    else var=OL_PAGES; pre='(ol|olui)'; given="$T/calls"; have=$have_layout; fi
     # ---- the compile ----
     if [ "$p" = OWConvert ]; then
         grep -E '^OWC_(PDF|DECK)=' "$HERE/$script" > "$T/cc" || :
@@ -64,8 +77,10 @@ while IFS='|' read -r p script mainfile needs files; do
         say "no compile of $p found in $script"
     elif grep -q 'OL_C\b' "$T/cc"; then
         say "$p names \$OL_C: a converted program takes GFOpenLayout as \$OL_PAGES"
-    elif ! grep -q 'OL_PAGES\b' "$T/cc" || ! grep -q 'OL_PAGES_FLAGS\b' "$T/cc"; then
-        say "$p's compile in $script does not name \$OL_PAGES and \$OL_PAGES_FLAGS"
+    elif grep -q 'draw/oldraw\.c\|amiga/oldraw_amiga\.c\|DOLDRAW_AMIGA' "$T/cc"; then
+        say "$p names GFOpenLayout's drawing sources: a converted program takes them as \$OL_DRAW and \$OL_DRAW_FLAGS"
+    elif ! grep -q "$var\\b" "$T/cc" || ! grep -q "${var}_FLAGS\\b" "$T/cc"; then
+        say "$p's compile in $script does not name \$$var and \$${var}_FLAGS"
     fi
     # ---- the start-up ----
     open_at=$(grep -n 'ow_layout_open()' "$HERE/$mainfile" | head -n 1 | cut -d: -f1)
@@ -78,18 +93,18 @@ while IFS='|' read -r p script mainfile needs files; do
         say "$p ($mainfile) does not say what it needs and end with a failure when ow_layout_open() answers 0"
     fi
     # ---- the calls ----
-    [ "$have_layout" = 1 ] || continue
+    [ "$have" = 1 ] || continue
     : > "$T/src"
     for g in $files; do
         # shellcheck disable=SC2086
         cat "$HERE"/$g >> "$T/src"
     done
-    grep -oE '\b(ol|olui)_[a-z0-9_]+[[:space:]]*\(' "$T/src" | sed 's/[[:space:](]*$//' | sort -u > "$T/used"
+    grep -oE "\\b${pre}_[a-z0-9_]+[[:space:]]*\\(" "$T/src" | sed 's/[[:space:](]*$//' | sort -u > "$T/used"
     # the functions the program's own files define by such a name are its own
-    grep -E '^[a-z].*[ *](ol|olui)_[a-z0-9_]+\(' "$T/src" | grep -v ';$' |
-        sed -E 's/^.*[ *]((ol|olui)_[a-z0-9_]+)\(.*$/\1/' | sort -u > "$T/own"
+    { grep -E "^[a-z].*[ *]${pre}_[a-z0-9_]+\\(" "$T/src" || :; } | grep -v ';$' |
+        sed -E "s/^.*[ *](${pre}_[a-z0-9_]+)\\(.*\$/\\1/" | sort -u > "$T/own"
     comm -23 "$T/used" "$T/own" > "$T/need"
-    comm -23 "$T/need" "$T/calls" > "$T/missing"
+    comm -23 "$T/need" "$given" > "$T/missing"
     if [ -s "$T/missing" ]; then
         say "$p calls what gfopenlayout.library's link sources do not give:"
         sed 's/^/    /' "$T/missing"
@@ -128,7 +143,7 @@ esac
 
 [ "$fail" = 0 ] || exit 1
 if [ "$have_layout" = 1 ]; then
-    echo "LAYOUT-LIBRARY-CALLS PASS $count programs, $total calls, all in gfopenlayout.library ($(wc -l < "$T/calls") given)"
+    echo "LAYOUT-LIBRARY-CALLS PASS $count programs, $total calls, all in gfopenlayout.library ($(wc -l < "$T/calls") given, $( [ "$have_draw" = 1 ] && wc -l < "$T/drawcalls" || echo 0) drawing)"
 else
     echo "LAYOUT-LIBRARY-CALLS PASS $count programs (build lines and start-up only)"
 fi

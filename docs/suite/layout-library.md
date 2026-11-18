@@ -60,8 +60,8 @@ would fail on it; its main file asks `ow_layout_open()` and ends with a failure 
 |---|---|---|
 | 1 | gfopenlayout.library 24: the document calls (gfopenlayout #77, master d622316a) | done |
 | 2 | Build support, and GFOpenWrite (gfoffice #61) | done |
-| 3 | GFOpenPresentation, GFOpenPressmaster, GFOpenBase's preview, OWConvert, the 1.x GFOpenWrite window | this change |
-| 4 | The drawing layer (`oldraw_*`) into the library, then GFOpenDiag and GFOpenProject | to do |
+| 3 | GFOpenPresentation, GFOpenPressmaster, GFOpenBase's preview, OWConvert, the 1.x GFOpenWrite window | done |
+| 4 | The drawing layer (`oldraw_*`) into the library as version 25, then GFOpenDiag and GFOpenProject | this change |
 | 5 | Page drawing in owfpub.library and owfpresent.library through the library | to do |
 | 6 | After the ROM pin and the lab pass: the default becomes `library` | to do |
 | 7 | The `source` way removed from the Amiga builds | to do |
@@ -77,12 +77,19 @@ step's Amiga build is made both ways.
 | GFOpenPresentation, GFOpenPressmaster | at start-up | a requester, then ends |
 | GFOpenBase | at start-up (its report preview's pages) | a requester, then ends |
 | OWConvert | only when a presentation is converted to PDF | a line in the Shell; every other conversion runs without the library |
+| GFOpenDiag, GFOpenProject | at start-up (library 25: their canvas and views) | a requester, then ends |
 
 After step 3 no compile in `build-os3.sh` or `build.d/` names `$OL_C` itself, and the check fails if one does.
-GFOpenDiag and GFOpenProject draw with GFOpenLayout's drawing layer (`oldraw_*`), which is step 4.
+GFOpenDiag and GFOpenProject draw with GFOpenLayout's drawing layer (`oldraw_*`, `gfopenlayout_draw.h`), which
+came into the library in version 25. They name `$OL_DRAW` and `$OL_DRAW_FLAGS` where they named `draw/oldraw.c`
+and `amiga/oldraw_amiga.c`: with `OPENLAYOUT=library` that is the library's link source
+(`gfopenlayout_link_draw.c`) and `app/ow_layoutlib.c` asking for 25 (`OW_LAYOUT_DRAW`), with `source` the two
+files as before. GFOpenProject's printing draws on a target of its own (`oldraw_new` with the program's calls):
+with the library those calls are made from the library on the program's task. So the OS's library has to be 25
+for these two, where the page programs need 24.
 
 ## Lab
 
-Each converted program is owed a lab pass, built with `OPENLAYOUT=library`, on an OS build with library 24
+Each converted program is owed a lab pass, built with `OPENLAYOUT=library`, on an OS build with library 24 (25 for GFOpenDiag and GFOpenProject)
 before the default is flipped: open a document,
 page through it, edit, print to PDF, and compare with the same build before the step.
