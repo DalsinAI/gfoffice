@@ -90,12 +90,12 @@ made from the library on the program's task.
 The ROM of today's OS images has library 23, so on its own such a system would show the requester. Until the ROM
 carries 25 (asked of Team 5), GFOffice carries the library: `build-amiga.sh` builds `gfopenlayout.library` from the
 GFOpenLayout pinned in `deps/openamigalayout.ref`, with GFOpenGadTools' theme reader at the commit
-`deps/gfopengadtools.ref` names (as the OS's own is built), into `library/` beside GFOffice's own libraries, and
+`deps/gfopengadtools.ref` names and at `-Os` (as the OS's own is built), into `library/` beside GFOffice's own libraries, and
 the package installs it to `LIBS:` with them. The OS's loader starts the newer disk copy at the first open after a
 boot, so an install on such a system needs a restart before the programs start. The start-up requester stays for
 a system where the copy is missing or the restart has not happened.
 
-The check holds this too: both refs are commits, `build-amiga.sh` builds the library with the theme reader, and
+The check holds this too: both refs are commits, `build-amiga.sh` builds the library with the theme reader at `-Os`, and
 the GFOpenLayout it is given builds a library no older than `app/ow_layoutlib.h` asks for.
 
 ## Lab
