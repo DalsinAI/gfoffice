@@ -105,6 +105,14 @@ OL_C="$OPENLAYOUT_SRC/src/openlayout.c"
 for f in gfcss_parse gfcss_values gfcss_select openlayout_css; do
     [ -f "$OPENLAYOUT_SRC/src/$f.c" ] && OL_C="$OL_C $OPENLAYOUT_SRC/src/$f.c"
 done
+# A program that opens gfopenlayout.library instead (Dale, 17 November 2026: every GFOffice program, one step at a
+# time; docs/suite/layout-library.md) compiles GFOpenLayout's link sources, not its source: the same C calls, made
+# through the library (version 24 or later, in the OS's ROM or LIBS:), which the program's start-up opens. $OL_C
+# stays for the programs not yet converted; tests/layout/check_library_calls.sh holds each converted one to $OL_LIB.
+OL_LINK_DIR="$OPENLAYOUT_SRC/library/link"
+[ -f "$OL_LINK_DIR/gfopenlayout_link_core.c" ] || {
+    echo "GFOpenLayout at $OPENLAYOUT_SRC has no library 24 link sources (library/link/gfopenlayout_link_core.c)"; exit 2; }
+OL_LIB="$OL_LINK_DIR/gfopenlayout_link.c $OL_LINK_DIR/gfopenlayout_link_core.c $OL_LINK_DIR/gfopenlayout_link_base.c"
 
 # OWConvert: 68040, as every build, with presentations' PDFs through GFOpenPresentation's core (src/deck) on
 # GFOpenLayout. Its parts are one file per library (tools/owc.h, docs/suite/owf-libraries.md section 5): with
@@ -145,7 +153,7 @@ APP_COMMON="$HERE/app/ow_autosave.c $HERE/app/ow_print.c $HERE/app/ow_spell.c $H
 # their explicit -lm paths.
 "$CC" $CFLAGS_COMMON -DNO_FPUAUTO -DNO_GFMALLOC -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_WRITE $SPELL \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
-    $OWFSRC_DOCS "$HERE"/src/core/*.c $OL_C "$HERE/app/openwrite2.c" $APP_COMMON $SPELL_SRC \
+    $OWFSRC_DOCS "$HERE"/src/core/*.c $OL_LIB "$HERE/app/openwrite2.c" $APP_COMMON $SPELL_SRC \
     "$HERE"/third_party/opengadtools/*.c -lamiga \
     -o "$OUT/GFOpenWrite"
 
