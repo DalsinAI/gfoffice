@@ -61,7 +61,7 @@ would fail on it; its main file asks `ow_layout_open()` and ends with a failure 
 | 1 | gfopenlayout.library 24: the document calls (gfopenlayout #77, master d622316a) | done |
 | 2 | Build support, and GFOpenWrite (gfoffice #61) | done |
 | 3 | GFOpenPresentation, GFOpenPressmaster, GFOpenBase's preview, OWConvert, the 1.x GFOpenWrite window | done |
-| 4 | The drawing layer (`oldraw_*`) into the library as version 25, then GFOpenDiag and GFOpenProject | this change |
+| 4 | The drawing layer (`oldraw_*`) into the library as version 25 (gfopenlayout #78, master 56a0f09b), then GFOpenDiag and GFOpenProject | this change |
 | 5 | Page drawing in owfpub.library and owfpresent.library through the library | to do |
 | 6 | After the ROM pin and the lab pass: the default becomes `library` | to do |
 | 7 | The `source` way removed from the Amiga builds | to do |
