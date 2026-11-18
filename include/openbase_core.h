@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.18.1"
+#define OB_CORE_VERSION "0.19.0"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -308,6 +308,24 @@ int ob_rexx_rows(ob_project *p, const char *table, ob_int current, const char *c
  * one of these. *changed (if not NULL) is 1 when rows were changed. */
 int ob_rexx_queries(ob_project *p, const char *command, char *out, size_t size, int *changed);
 
+/* ---- SQL typed from ARexx (core 0.19.0, src/base/ob_rexx.c) ----
+ *   QUERY [ROW n] [COUNT] [ANSWER a]... sql
+ *       one statement that reads (SELECT, WITH, VALUES): row n's values
+ *       (row 1 without ROW) with a tab between, so the first value alone
+ *       when it shows one column; COUNT gives the number of rows instead.
+ *       5 with "No row n" past the end.
+ *   EXEC [ANSWER a]... sql
+ *       one UPDATE, INSERT or DELETE on one of the project's tables, as a
+ *       typed query that changes rows (5.6): all or none, RESULT the rows
+ *       changed, and NOUNDO after the count when it could not be made a
+ *       step of Undo, as RUNQUERY answers.
+ * The words before the SQL are taken first; the rest of the line is the
+ * SQL, and one pair of quotes round all of it comes off. Values are bound,
+ * never pasted: each ?, ?1 or :name in the SQL takes one ANSWER, in order,
+ * so a quote in a value can't break the statement. Returns as
+ * ob_rexx_queries does; -1 when command is neither. */
+int ob_rexx_sql(ob_project *p, const char *command, char *out, size_t size, int *changed);
+
 /* FINDROW Field=Value [BACK] [FIRST] (core 0.18.0): the next row of table,
  * in the sort and filter of view (NULL: key order), whose field holds the
  * value as ob_view_find finds it (text contains, any case; other fields
@@ -322,7 +340,8 @@ int ob_rexx_find(ob_project *p, const char *table, const struct ob_view *view, o
 
 /* 1 when command must be refused while a form window is open (core 0.14.3):
  * OPEN, QUIT, TABLE t, ROW n, FIRSTROW NEXTROW PREVROW LASTROW, ADDROW,
- * CHANGEROW and DELETEROW; RUNQUERY and FINDROW too (core 0.18.0). TABLE and ROW on their own, COUNTROWS, GETROW,
+ * CHANGEROW and DELETEROW; RUNQUERY and FINDROW too (core 0.18.0), and
+ * EXEC (core 0.19.0). TABLE and ROW on their own, COUNTROWS, GETROW,
  * GETFIELDS and the rest only read, so they still answer. */
 int ob_rexx_form_refuses(const char *command);
 

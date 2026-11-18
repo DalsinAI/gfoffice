@@ -1,7 +1,8 @@
 /*
  * GFOpenBase's ARexx row commands (core 0.10.0): ADDROW, CHANGEROW,
  * DELETEROW, GETROW and GETFIELDS on a table, and (core 0.18.0) QUERIES,
- * QUERYFIELDS, COUNTQUERY, QUERYROW, RUNQUERY and FINDROW, as the
+ * QUERYFIELDS, COUNTQUERY, QUERYROW, RUNQUERY and FINDROW, and (core
+ * 0.19.0) QUERY and EXEC with typed SQL, as the
  * GFOPENBASE port gets them (amicradle-teams ARexx-RULE.md). They live here rather than in the
  * app so that the host tests reach them. Nothing here asks: the answer, or
  * the reason, goes back as text with an ARexx return code.
@@ -420,6 +421,107 @@ done:
     return rc;
 }
 
+/* ---- SQL typed from ARexx (core 0.19.0) ---- */
+
+int ob_rexx_sql(ob_project *p, const char *command, char *out, size_t size, int *changed)
+{
+    const char *s, *answers[OB_QUERY_PARAMS];
+    ob_query *q = NULL;
+    char (*asks)[OB_VALUE_MAX] = NULL;
+    char *scratch = NULL, *w;
+    int exec, count = 0, na = 0, rc = 0, want;
+    long long rownum = 1;
+    size_t len;
+    if (changed) *changed = 0;
+    command = rx_skip(command ? command : "");
+    if (rx_word(command, "QUERY", &s)) exec = 0;
+    else if (rx_word(command, "EXEC", &s)) exec = 1;
+    else return -1;                                   /* not one of these */
+    if (!out || size < 2) return 20;
+    out[0] = 0;
+    if (!p) { snprintf(out, size, "No project is open: OPEN opens one"); return 5; }
+    q = (ob_query *)malloc(sizeof *q);
+    asks = (char (*)[OB_VALUE_MAX])malloc(OB_QUERY_PARAMS * sizeof *asks);
+    scratch = (char *)malloc(2 * strlen(s) + 8);
+    if (!q || !asks || !scratch) { snprintf(out, size, "Not enough memory"); rc = 20; goto done; }
+
+    /* before the SQL: ANSWER v for each value it takes, and for QUERY ROW n or COUNT */
+    w = scratch;
+    for (;;) {
+        const char *r;
+        if (rx_word(s, "ANSWER", &r)) {
+            if (na >= OB_QUERY_PARAMS) { snprintf(out, size, "SQL takes at most %d values", OB_QUERY_PARAMS); rc = 10; goto done; }
+            answers[na++] = w;
+            s = rx_skip(rx_take(r, &w));
+            continue;
+        }
+        if (!exec && rx_word(s, "ROW", &r)) {
+            char num[32], *end;
+            s = rx_arg(r, num, sizeof num);
+            rownum = strtoll(num, &end, 10);
+            if (!num[0] || *end || rownum < 1) { snprintf(out, size, "ROW takes a row's number from 1, not \"%.40s\"", num); rc = 10; goto done; }
+            continue;
+        }
+        if (!exec && rx_word(s, "COUNT", &r)) { count = 1; s = r; continue; }
+        break;
+    }
+    /* the rest is the SQL; one pair of quotes round all of it comes off */
+    len = strlen(s);
+    while (len && rx_space(s[len - 1])) len--;
+    if (len >= 2 && (s[0] == '"' || s[0] == '\'') && s[len - 1] == s[0]) { s++; len -= 2; }
+    if (!len) { snprintf(out, size, "%s takes the SQL to run", exec ? "EXEC" : "QUERY"); rc = 10; goto done; }
+    if (len >= OB_SQL_MAX) { snprintf(out, size, "The SQL is too long: %d characters at most", OB_SQL_MAX - 1); rc = 10; goto done; }
+    ob_query_init(q, "");
+    q->sql_only = 1;
+    memcpy(q->sql, s, len);
+    q->sql[len] = 0;
+    if (exec) {
+        const char *t = rx_skip(q->sql);
+        if (rx_word(t, "UPDATE", NULL)) q->kind = OB_QK_UPDATE;
+        else if (rx_word(t, "INSERT", NULL)) q->kind = OB_QK_APPEND;
+        else if (rx_word(t, "DELETE", NULL)) q->kind = OB_QK_DELETE;
+        else { snprintf(out, size, "EXEC runs one UPDATE, INSERT or DELETE statement: QUERY reads rows"); rc = 10; goto done; }
+    }
+    want = ob_query_params(p, q, asks, OB_QUERY_PARAMS);
+    if (want < 0) { snprintf(out, size, "%s", ob_error(p)); rc = 10; goto done; }
+    if (want != na) {
+        if (!want) snprintf(out, size, "The SQL takes no values: leave ANSWER out");
+        else snprintf(out, size, "The SQL takes %d value%s: give an ANSWER for each before it, in order", want, want == 1 ? "" : "s");
+        rc = 10;
+        goto done;
+    }
+    if (exec) {
+        int undoable = 0;
+        ob_int t = ob_query_run(p, q, na ? answers : NULL, &undoable);
+        if (t < 0) { snprintf(out, size, "%s", ob_error(p)); rc = 10; goto done; }
+        if (changed) *changed = 1;
+        snprintf(out, size, undoable ? "%lld" : "%lld NOUNDO", (long long)t);
+    } else if (count) {
+        ob_int t = ob_query_total(p, q, na ? answers : NULL);
+        if (t < 0) { snprintf(out, size, "%s", ob_error(p)); rc = 10; goto done; }
+        snprintf(out, size, "%lld", (long long)t);
+    } else {
+        struct rx_get g;
+        memset(&g, 0, sizeof g);
+        g.key = (ob_int)(rownum - 1);
+        g.field = -1;
+        g.out = out;
+        g.size = size;
+        if (ob_query_rows(p, q, na ? answers : NULL, (ob_int)(rownum - 1), 1, rx_get_cb, &g) < 0) {
+            snprintf(out, size, "%s", ob_error(p));
+            rc = 10;
+            goto done;
+        }
+        if (!g.found) { snprintf(out, size, "No row %lld", rownum); rc = 5; goto done; }
+        if (g.over) { snprintf(out, size, "The row is too long for the answer: ask for fewer columns"); rc = 5; }
+    }
+done:
+    free(scratch);
+    free(asks);
+    free(q);
+    return rc;
+}
+
 /* ---- FINDROW (core 0.18.0) ---- */
 
 int ob_rexx_find(ob_project *p, const char *table, const ob_view *view, ob_int current, const char *command,
@@ -477,7 +579,7 @@ done:
 int ob_rexx_form_refuses(const char *command)
 {
     static const char *const moves[] = { "OPEN", "QUIT", "FIRSTROW", "NEXTROW", "PREVROW", "LASTROW",
-                                         "ADDROW", "CHANGEROW", "DELETEROW", "RUNQUERY", "FINDROW" };
+                                         "ADDROW", "CHANGEROW", "DELETEROW", "RUNQUERY", "FINDROW", "EXEC" };
     const char *rest = "";
     size_t i;
     if (!command) return 0;

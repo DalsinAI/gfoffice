@@ -53,13 +53,14 @@
 #include "owf.h"
 #include "owf_open.h"   /* OWF=library: reports write through owfwrite.library */
 #include "openbase_sheet.h"
+#include "openbase_report.h"   /* ob_report_rexx: REPORTS and REPORT */
 #include "ob_reportwin.h"
 #include "ow_stack.h"
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenBase 0.17.1 (17.11.2026)"
+#define VERSION_TEXT "GFOpenBase 0.18.0 (17.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenBase, the database of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -5797,11 +5798,13 @@ static int rexx_rows(const char *command, char *out, size_t size)
 }
 
 /* QUERIES QUERYFIELDS COUNTQUERY QUERYROW RUNQUERY (ob_rexx_queries) on the
- * project's saved queries; after a RUNQUERY the datasheet shows the table's
- * rows as they now are. -1 when command isn't one of these. */
+ * project's saved queries, and QUERY and EXEC with typed SQL (ob_rexx_sql);
+ * after a RUNQUERY or an EXEC the datasheet shows the table's rows as they
+ * now are. -1 when command isn't one of these. */
 static int rexx_queries(const char *command, char *out, size_t size)
 {
     int changed = 0, rc = ob_rexx_queries(proj, command, out, size, &changed);
+    if (rc < 0) rc = ob_rexx_sql(proj, command, out, size, &changed);
     if (rc < 0) return -1;
     if (changed) {
         if (q_on) {
@@ -5851,7 +5854,7 @@ static int rexx_do_command(const char *command, char **result_out)
     else if (starts_word_ci(command, "HELP", &arg))
         put_text(result_text, sizeof result_text, "VERSION HELP ACTIVATE DEACTIVATE FAULT LASTERROR ISDIRTY GETFILE "
                  "OPEN TABLES TABLE FORMS SPELL ROW FIRSTROW NEXTROW PREVROW LASTROW COUNTROWS FINDROW GETFIELDS GETROW ADDROW CHANGEROW DELETEROW "
-                 "QUERIES QUERYFIELDS COUNTQUERY QUERYROW RUNQUERY QUIT");
+                 "QUERIES QUERYFIELDS COUNTQUERY QUERYROW RUNQUERY QUERY EXEC REPORTS REPORT QUIT");
     else if (starts_word_ci(command, "DEACTIVATE", &arg)) {
         rc = RX_NOW; put_text(result_text, sizeof result_text, "DEACTIVATE: GFOpenBase has no icon to go to");
     } else if (starts_word_ci(command, "SPELL", &arg)) {   /* the saved forms' words (openbase_spell.h) */
@@ -5914,6 +5917,8 @@ static int rexx_do_command(const char *command, char **result_out)
     } else if ((r = rexx_queries(command, result_text, sizeof result_text)) >= 0) {
         rc = r;
     } else if ((r = rexx_find(command, result_text, sizeof result_text)) >= 0) {
+        rc = r;
+    } else if ((r = ob_report_rexx(proj, command, result_text, sizeof result_text)) >= 0) {   /* REPORTS, REPORT */
         rc = r;
     } else if ((r = rexx_rows(command, result_text, sizeof result_text)) >= 0) {
         rc = r;

@@ -85,6 +85,17 @@ CALL want 'COUNTQUERY "no such query"', 10
 CALL want 'QUERYROW', 10
 CALL want 'RUNQUERY', 10
 CALL want 'RUNQUERY "no such query"', 10
+CALL want 'QUERY COUNT SELECT * FROM Customers', 0
+SAY '     QUERY COUNT:' res
+CALL want 'QUERY ANSWER "ARexx Test" SELECT Town FROM Customers WHERE Name = ?', 0
+CALL same 'QUERY with an ANSWER', res, 'Hull'
+CALL want 'QUERY DELETE FROM Customers', 10       /* QUERY only reads */
+CALL want 'EXEC SELECT 1', 10
+CALL want 'EXEC', 10
+CALL want 'REPORTS', 0
+SAY '     REPORTS:' res
+CALL want 'REPORT', 10
+CALL want 'REPORT "no such report" TO T:x.txt', 10
 CALL want 'ROW 1', 0                               /* every row, key order */
 CALL want 'COUNTROWS', 0
 rows = res
