@@ -57,7 +57,7 @@ rc=0
     OPENSQLITE=$W/nowhere OPENSQLITE_LIB=$D
     ARGS=$W/args; export ARGS
     CC=$W/cc CFLAGS_COMMON="" SPECS=specs OUT=$W/out OWF=linked OWFFLAGS="" OWF_WRITE="" SPELL="" SPELL_SRC=""
-    OPENLAYOUT_SRC=$W/ol OL_C="" OWFSRC_DOCS=""
+    OPENLAYOUT_SRC=$W/ol OL_C="" OL_PAGES="" OL_PAGES_FLAGS="" OWFSRC_DOCS=""
     . "$HERE/build.d/base.sh"
 ) > "$W/buildlog" 2>&1 || rc=$?
 check "build.d/base.sh builds GFOpenBase from it" '[ $rc = 0 ] && [ -f "$W/out/GFOpenBase" ] && grep -qxF -- "-L$D/lib-soft" "$W/args" && grep -qxF -- "-lsqlite3_link" "$W/args"'
