@@ -62,7 +62,7 @@ would fail on it; its main file asks `ow_layout_open()` and ends with a failure 
 | 2 | Build support, and GFOpenWrite (gfoffice #61) | done |
 | 3 | GFOpenPresentation, GFOpenPressmaster, GFOpenBase's preview, OWConvert, the 1.x GFOpenWrite window | done |
 | 4 | The drawing layer (`oldraw_*`) into the library as version 25 (gfopenlayout #78, master 56a0f09b), then GFOpenDiag and GFOpenProject | this change |
-| 5 | Page drawing in owfpub.library and owfpresent.library through the library | to do |
+| 5 | owfpub.library and owfpresent.library: nothing to convert. They carry no GFOpenLayout code (build-library.sh compiles none); their pages are drawn by the programs (src/deck, src/pub), converted in step 3 | not needed |
 | 6 | After the ROM pin and the lab pass: the default becomes `library` | to do |
 | 7 | The `source` way removed from the Amiga builds | to do |
 
@@ -80,6 +80,7 @@ step's Amiga build is made both ways.
 | GFOpenDiag, GFOpenProject | at start-up (library 25: their canvas and views) | a requester, then ends |
 
 After step 3 no compile in `build-os3.sh` or `build.d/` names `$OL_C` itself, and the check fails if one does.
+After step 4 no Amiga compile takes GFOpenLayout's source except through the switch (`$OL_PAGES`, `$OL_DRAW`).
 GFOpenDiag and GFOpenProject draw with GFOpenLayout's drawing layer (`oldraw_*`, `gfopenlayout_draw.h`), which
 came into the library in version 25. They name `$OL_DRAW` and `$OL_DRAW_FLAGS` where they named `draw/oldraw.c`
 and `amiga/oldraw_amiga.c`: with `OPENLAYOUT=library` that is the library's link source
