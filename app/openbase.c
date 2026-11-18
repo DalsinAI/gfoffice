@@ -56,6 +56,7 @@
 #include "openbase_report.h"   /* ob_report_rexx: REPORTS and REPORT */
 #include "ob_reportwin.h"
 #include "ow_stack.h"
+#include "ow_layoutlib.h"
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
@@ -6059,6 +6060,13 @@ static int window_main(int argc, char **argv)
         rc = 20;
         goto out;
     }
+    /* the report preview's pages are GFOpenLayout's: its library, at the version this was built for, before
+       any window (ow_layoutlib.h) */
+    if (!ow_layout_open()) {
+        tell("GFOpenBase needs " OW_LAYOUT_NEEDS " in LIBS:.");
+        rc = 20;
+        goto out;
+    }
     if (argc > 1) {
         int i;
         for (i = 1; i < argc; i++) {
@@ -6103,6 +6111,7 @@ out:
     close_project();
     close_window();
     owf_close();            /* after the project: its documents may use it */
+    ow_layout_close();
     if (AslBase) CloseLibrary(AslBase);
     if (GadToolsBase) CloseLibrary(GadToolsBase);
     return rc;

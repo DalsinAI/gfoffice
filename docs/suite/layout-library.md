@@ -59,8 +59,8 @@ would fail on it; its main file asks `ow_layout_open()` and ends with a failure 
 | Step | What | State |
 |---|---|---|
 | 1 | gfopenlayout.library 24: the document calls (gfopenlayout #77, master d622316a) | done |
-| 2 | Build support, and GFOpenWrite | this change |
-| 3 | GFOpenPresentation, GFOpenPressmaster, GFOpenBase's preview, OWConvert | to do |
+| 2 | Build support, and GFOpenWrite (gfoffice #61) | done |
+| 3 | GFOpenPresentation, GFOpenPressmaster, GFOpenBase's preview, OWConvert, the 1.x GFOpenWrite window | this change |
 | 4 | The drawing layer (`oldraw_*`) into the library, then GFOpenDiag and GFOpenProject | to do |
 | 5 | Page drawing in owfpub.library and owfpresent.library through the library | to do |
 | 6 | After the ROM pin and the lab pass: the default becomes `library` | to do |
@@ -68,6 +68,18 @@ would fail on it; its main file asks `ow_layout_open()` and ends with a failure 
 
 A program is added to `programs` in `tests/layout/check_library_calls.sh` in the step that converts it. Every
 step's Amiga build is made both ways.
+
+## The programs
+
+| Program | Asks for the library | Says, when it is missing or older |
+|---|---|---|
+| GFOpenWrite (and the 1.x window) | at start-up | a requester, then ends |
+| GFOpenPresentation, GFOpenPressmaster | at start-up | a requester, then ends |
+| GFOpenBase | at start-up (its report preview's pages) | a requester, then ends |
+| OWConvert | only when a presentation is converted to PDF | a line in the Shell; every other conversion runs without the library |
+
+After step 3 no compile in `build-os3.sh` or `build.d/` names `$OL_C` itself, and the check fails if one does.
+GFOpenDiag and GFOpenProject draw with GFOpenLayout's drawing layer (`oldraw_*`), which is step 4.
 
 ## Lab
 

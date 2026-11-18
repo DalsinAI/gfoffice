@@ -53,6 +53,7 @@
 
 #include "openwrite_core.h"
 #include "ow_stack.h"
+#include "ow_layoutlib.h"
 #include "lastdir.h"
 #include "ow_print.h"
 #include "ow_spell.h"
@@ -3015,6 +3016,12 @@ static int window_main(int argc, char **argv)
         rc = 20;
         goto out;
     }
+    /* the pages' library, at the version this was built for, before any window (ow_layoutlib.h) */
+    if (!ow_layout_open()) {
+        tell("GFOpenWrite", "GFOpenWrite needs " OW_LAYOUT_NEEDS " in LIBS:.");
+        rc = 20;
+        goto out;
+    }
 
     OpenFontTextBase = ogt_openfont_open();
     LayersBase = OpenLibrary((STRPTR)"layers.library", 36);
@@ -3074,6 +3081,7 @@ out:
     if (RexxSysBase) { CloseLibrary((struct Library *)RexxSysBase); RexxSysBase = NULL; }
     if (AslBase) CloseLibrary(AslBase);
     if (GadToolsBase) CloseLibrary(GadToolsBase);
+    ow_layout_close();
     return rc;
 }
 

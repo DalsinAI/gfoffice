@@ -15,6 +15,9 @@
 #ifdef OWC_DECK_PDF
 #include "openpresentation_core.h"
 #endif
+#ifdef OW_LAYOUT_LIBRARY
+#include "ow_layoutlib.h"       /* the PDF's pages through gfopenlayout.library (build-os3.sh's OPENLAYOUT=library) */
+#endif
 
 #include <stdio.h>
 #include <string.h>
@@ -37,6 +40,9 @@ void owc_deck_close(void)
     if (opened)
         owf_close();
     opened = 0;
+#ifdef OW_LAYOUT_LIBRARY
+    ow_layout_close();
+#endif
 }
 
 int owc_deck_names(const char *format)
@@ -90,6 +96,13 @@ int owc_deck_convert(const unsigned char *data, size_t n, const char *from, cons
 #ifdef OWC_DECK_PDF
         unsigned char *pdf;
         size_t length;
+#ifdef OW_LAYOUT_LIBRARY
+        /* only a PDF needs the pages' library: the other conversions run without it */
+        if (!ow_layout_open()) {
+            owc_missing("gfopenlayout.library", OW_LAYOUT_LIBRARY_VERSION, "presentations' PDFs");
+            result = OWF_ERR_UNSUPPORTED;
+        } else
+#endif
         result = opr_export_pdf(deck, NULL, &pdf, &length, report);
         if (result == OWF_OK) {
             FILE *out = fopen(to, "wb");
