@@ -7,7 +7,9 @@
 # MIT, Copyright (c) 2026 AmiCradle Team.
 if [ "$OWF" != linked ]; then
     echo "build.d/project.sh: GFOpenProject is built with libowf linked in only (OWF=linked)"
-elif [ ! -f "$OPENLAYOUT_SRC/draw/oldraw.c" ] || [ ! -f "$OPENLAYOUT_SRC/amiga/oldraw_amiga.c" ]; then
+elif [ ! -f "$OPENLAYOUT_SRC/include/gfopenlayout_draw.h" ] || { [ "$OPENLAYOUT" = source ] &&
+       { [ ! -f "$OPENLAYOUT_SRC/draw/oldraw.c" ] || [ ! -f "$OPENLAYOUT_SRC/amiga/oldraw_amiga.c" ]; }; }; then
+    # the drawing's sources are needed only when they are compiled in; its header either way
     echo "build.d/project.sh: no GFOpenLayout drawing in $OPENLAYOUT_SRC (draw/oldraw.c): GFOpenProject left out"
 else
     # shellcheck disable=SC2086

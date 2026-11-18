@@ -19,7 +19,9 @@ else
     DIAGSRC="$DIAGSRC $HERE/libowf/src/owf_picture.c $OWFDIAG_SRC"
     OWF_DIAG=""
 fi
-if [ ! -f "$OPENLAYOUT_SRC/draw/oldraw.c" ] || [ ! -f "$OPENLAYOUT_SRC/amiga/oldraw_amiga.c" ] ||
+# the drawing's sources are needed only when they are compiled in; its header either way
+if { [ "$OPENLAYOUT" = source ] &&
+       { [ ! -f "$OPENLAYOUT_SRC/draw/oldraw.c" ] || [ ! -f "$OPENLAYOUT_SRC/amiga/oldraw_amiga.c" ]; }; } ||
      ! grep -q oldraw_ellipse "$OPENLAYOUT_SRC/include/gfopenlayout_draw.h"; then
     echo "build.d/diag.sh: no GFOpenLayout drawing with lines and ellipses in $OPENLAYOUT_SRC: GFOpenDiag left out"
 else
