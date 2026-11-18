@@ -128,6 +128,20 @@ source)
     OL_PAGES_FLAGS="" ;;
 *)  echo "build-os3.sh: OPENLAYOUT is library or source, not '$OPENLAYOUT'"; exit 2 ;;
 esac
+# GFOpenLayout drawing (gfopenlayout_draw.h: GFOpenDiag's canvas, GFOpenProject's views and their printing) goes
+# the same way: a program that draws with it names $OL_DRAW and $OL_DRAW_FLAGS where it named draw/oldraw.c and
+# amiga/oldraw_amiga.c. With OPENLAYOUT=library the calls are gfopenlayout.library 25's (the drawing came into
+# the library in 25), and OW_LAYOUT_DRAW has app/ow_layoutlib.c ask for that version.
+case "$OPENLAYOUT" in
+library)
+    [ -f "$OL_LINK_DIR/gfopenlayout_link_draw.c" ] || {
+        echo "GFOpenLayout at $OPENLAYOUT_SRC has no library 25 link source (library/link/gfopenlayout_link_draw.c)"; exit 2; }
+    OL_DRAW="$OL_LINK_DIR/gfopenlayout_link_draw.c $HERE/app/ow_layoutlib.c"
+    OL_DRAW_FLAGS="-DOW_LAYOUT_LIBRARY -DOW_LAYOUT_DRAW" ;;
+source)
+    OL_DRAW="$OPENLAYOUT_SRC/draw/oldraw.c $OPENLAYOUT_SRC/amiga/oldraw_amiga.c $HERE/app/ow_layoutlib.c"
+    OL_DRAW_FLAGS="-DOLDRAW_AMIGA -DOW_LAYOUT_DRAW" ;;
+esac
 echo "build-os3.sh: converted programs take GFOpenLayout as: $OPENLAYOUT"
 
 # OWConvert: 68040, as every build, with presentations' PDFs through GFOpenPresentation's core (src/deck) on

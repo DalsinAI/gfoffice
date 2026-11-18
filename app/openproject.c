@@ -46,6 +46,7 @@
 #include "openproject_core.h"
 #include "openproject_spell.h"
 #include "ow_print.h"
+#include "ow_layoutlib.h"
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
@@ -2601,6 +2602,13 @@ int main(int argc, char **argv)
         rc = 20;
         goto out;
     }
+    /* the views are drawn with GFOpenLayout drawing: its library, at the version this was built for, before any
+       window (ow_layoutlib.h) */
+    if (!ow_layout_open()) {
+        tell("GFOpenProject needs " OW_LAYOUT_NEEDS " in LIBS:.");
+        rc = 20;
+        goto out;
+    }
     if (argc > 1) put_text(first, sizeof first, argv[1]);
     else if (argc == 0) {
         struct WBStartup *w = (struct WBStartup *)argv;
@@ -2643,5 +2651,6 @@ out:
     if (rx.doc) opj_doc_free(rx.doc);
     if (AslBase) CloseLibrary(AslBase);
     if (GadToolsBase) CloseLibrary(GadToolsBase);
+    ow_layout_close();
     return rc;
 }

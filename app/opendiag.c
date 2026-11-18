@@ -61,6 +61,7 @@
 #include "opendiag_order.h"
 #include "opendiag_align.h"
 #include "owf_open.h"
+#include "ow_layoutlib.h"
 
 struct Library *GadToolsBase = NULL, *AslBase = NULL, *DiskfontBase = NULL;
 struct Library *CyberGfxBase = NULL;     /* the page as a picture (PNG, ILBM): its pixels read back; optional */   /* labels' sizes: OpenDiskFont */
@@ -1689,6 +1690,13 @@ int main(int argc, char **argv)
         rc = 20;
         goto out;
     }
+    /* the canvas is drawn with GFOpenLayout drawing: its library, at the version this was built for, before any
+       window (ow_layoutlib.h) */
+    if (!ow_layout_open()) {
+        tell("GFOpenDiag needs " OW_LAYOUT_NEEDS " in LIBS:.");
+        rc = 20;
+        goto out;
+    }
     if (argc > 1) put_text(first, sizeof first, argv[1]);
     else if (argc == 0) {
         struct WBStartup *w = (struct WBStartup *)argv;
@@ -1734,5 +1742,6 @@ out:
     if (AslBase) CloseLibrary(AslBase);
     if (GadToolsBase) CloseLibrary(GadToolsBase);
     owf_close();
+    ow_layout_close();
     return rc;
 }
