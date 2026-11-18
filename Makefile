@@ -222,10 +222,11 @@ layout-check: $(OUT)/test-layout-asan
 
 .PHONY: layout-test layout-check
 
-# The programs on gfopenlayout.library (docs/suite/layout-library.md): build-os3.sh links each with the library's
-# calls, and every GFOpenLayout call its files make is one the library gives.
+# The programs converted to gfopenlayout.library (docs/suite/layout-library.md): build-os3.sh builds each either
+# way (OPENLAYOUT), every GFOpenLayout call its files make is one the library gives, and it asks for the library
+# as it starts.
 layout-library-calls-check:
-	OPENLAYOUT_SRC=$(OPENLAYOUT_SRC) tests/layout/check_library_calls.sh
+	tests/layout/check_library_calls.sh "$(OPENLAYOUT_SRC)" $(CC)
 
 test: layout-library-calls-check
 check: layout-library-calls-check

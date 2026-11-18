@@ -105,14 +105,30 @@ OL_C="$OPENLAYOUT_SRC/src/openlayout.c"
 for f in gfcss_parse gfcss_values gfcss_select openlayout_css; do
     [ -f "$OPENLAYOUT_SRC/src/$f.c" ] && OL_C="$OL_C $OPENLAYOUT_SRC/src/$f.c"
 done
-# A program that opens gfopenlayout.library instead (Dale, 17 November 2026: every GFOffice program, one step at a
-# time; docs/suite/layout-library.md) compiles GFOpenLayout's link sources, not its source: the same C calls, made
-# through the library (version 24 or later, in the OS's ROM or LIBS:), which the program's start-up opens. $OL_C
-# stays for the programs not yet converted; tests/layout/check_library_calls.sh holds each converted one to $OL_LIB.
+# A converted program (Dale, 17 November 2026: every GFOffice program opens gfopenlayout.library, one step at a
+# time; docs/suite/layout-library.md) names $OL_PAGES and $OL_PAGES_FLAGS where it named $OL_C, and what they
+# are is OPENLAYOUT's choice:
+#   OPENLAYOUT=source   (the default until the OS's ROM carries library 24 and the lab has passed) GFOpenLayout's
+#                       source compiled in, as before: the program runs on every OS image
+#   OPENLAYOUT=library  GFOpenLayout's link sources instead: the same C calls, made through gfopenlayout.library
+#                       24 or later (the OS's, in its ROM or LIBS:), which app/ow_layoutlib.c opens in main()
+# Either way app/ow_layoutlib.c is linked: the program asks it for the library before it opens a window, and with
+# the source compiled in that asks for nothing. $OL_C alone stays for the programs not yet converted;
+# tests/layout/check_library_calls.sh holds each converted one to $OL_PAGES.
+OPENLAYOUT=${OPENLAYOUT:-source}
 OL_LINK_DIR="$OPENLAYOUT_SRC/library/link"
-[ -f "$OL_LINK_DIR/gfopenlayout_link_core.c" ] || {
-    echo "GFOpenLayout at $OPENLAYOUT_SRC has no library 24 link sources (library/link/gfopenlayout_link_core.c)"; exit 2; }
-OL_LIB="$OL_LINK_DIR/gfopenlayout_link.c $OL_LINK_DIR/gfopenlayout_link_core.c $OL_LINK_DIR/gfopenlayout_link_base.c"
+case "$OPENLAYOUT" in
+library)
+    [ -f "$OL_LINK_DIR/gfopenlayout_link_core.c" ] || {
+        echo "GFOpenLayout at $OPENLAYOUT_SRC has no library 24 link sources (library/link/gfopenlayout_link_core.c)"; exit 2; }
+    OL_PAGES="$OL_LINK_DIR/gfopenlayout_link.c $OL_LINK_DIR/gfopenlayout_link_core.c $HERE/app/ow_layoutlib.c"
+    OL_PAGES_FLAGS="-DOW_LAYOUT_LIBRARY" ;;
+source)
+    OL_PAGES="$OL_C $HERE/app/ow_layoutlib.c"
+    OL_PAGES_FLAGS="" ;;
+*)  echo "build-os3.sh: OPENLAYOUT is library or source, not '$OPENLAYOUT'"; exit 2 ;;
+esac
+echo "build-os3.sh: converted programs take GFOpenLayout as: $OPENLAYOUT"
 
 # OWConvert: 68040, as every build, with presentations' PDFs through GFOpenPresentation's core (src/deck) on
 # GFOpenLayout. Its parts are one file per library (tools/owc.h, docs/suite/owf-libraries.md section 5): with
@@ -152,8 +168,9 @@ APP_COMMON="$HERE/app/ow_autosave.c $HERE/app/ow_print.c $HERE/app/ow_spell.c $H
 # do not inject the otherwise unused fpuauto maths. Calc and the converter keep
 # their explicit -lm paths.
 "$CC" $CFLAGS_COMMON -DNO_FPUAUTO -DNO_GFMALLOC -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_WRITE $SPELL \
+    $OL_PAGES_FLAGS \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
-    $OWFSRC_DOCS "$HERE"/src/core/*.c $OL_LIB "$HERE/app/openwrite2.c" $APP_COMMON $SPELL_SRC \
+    $OWFSRC_DOCS "$HERE"/src/core/*.c $OL_PAGES "$HERE/app/openwrite2.c" $APP_COMMON $SPELL_SRC \
     "$HERE"/third_party/opengadtools/*.c -lamiga \
     -o "$OUT/GFOpenWrite"
 

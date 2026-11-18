@@ -58,6 +58,7 @@
 #include "openwrite_core.h"
 #include "owf_open.h"
 #include "ow_layout.h"
+#include "ow_layoutlib.h"
 #include "ow_stack.h"
 #include "lastdir.h"
 #include "ow_print.h"
@@ -6347,6 +6348,13 @@ static int window_main(int argc, char **argv)
         rc = 20;
         goto out;
     }
+    /* the pages' library, at the version this was built for, before any window: an older one in the ROM is
+       said in a requester (Workbench has no Shell to read) and nothing is left open (ow_layoutlib.h) */
+    if (!ow_layout_open()) {
+        tell("GFOpenWrite", "GFOpenWrite needs " OW_LAYOUT_NEEDS " in LIBS:.");
+        rc = 20;
+        goto out;
+    }
 
     OpenFontTextBase = ogt_openfont_open();
     LayersBase = OpenLibrary((STRPTR)"layers.library", 36);
@@ -6412,6 +6420,7 @@ out:
     if (RexxSysBase) { CloseLibrary((struct Library *)RexxSysBase); RexxSysBase = NULL; }
     if (AslBase) CloseLibrary(AslBase);
     if (GadToolsBase) CloseLibrary(GadToolsBase);
+    ow_layout_close();
     owf_close();
     return rc;
 }
