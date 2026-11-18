@@ -23,7 +23,8 @@ the former name.
   tests. The Amiga build emits an m68k SDK archive; both front ends link it.
 
 GFOffice pins commit `c6e4ceba680458b6aef7c2da002a957ade0f8178` in
-`deps/gfopendraw.ref` so a suite build is reproducible.
+`deps/gfopendraw.ref` so a suite build is reproducible. From that commit GFOpenDraw and GFOpenDrawOL open
+`gfopendraw.library`, which the suite build puts in `library/` for the package's `LIBS:`.
 
 ## Do not duplicate OpenLayout
 

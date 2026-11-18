@@ -99,6 +99,13 @@ a system where the copy is missing or the restart has not happened.
 The check holds this too: both refs are commits, `build-amiga.sh` builds the library with the theme reader at `-Os`, and
 the GFOpenLayout it is given builds a library no older than `app/ow_layoutlib.h` asks for.
 
+## The libraries the package carries for these programs
+
+`build-amiga.sh` leaves them in `library/`, and the package installs them to `LIBS:` with GFOffice's own:
+`gfopenlayout.library` (25, above) and `gfopendraw.library`, which GFOpenDraw and GFOpenDrawOL open since the
+gfopendraw pinned in `deps/gfopendraw.ref` builds them on it. The check fails when either copy is missing from
+`build-amiga.sh`.
+
 ## Lab
 
 Each program is owed a lab pass on an OS with library 25 (in the ROM, or from `LIBS:` over a ROM with 23): open
