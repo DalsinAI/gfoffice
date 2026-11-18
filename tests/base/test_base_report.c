@@ -844,7 +844,7 @@ static void test_band_api(ob_project *p)
     CHECK(ob_report_check(p, &r, err, sizeof err) == 0, "every band of its own names: %s", err);
 }
 
-/* ARexx: REPORTS and REPORT (0.3.0) */
+/* ARexx: REPORTS and REPORT (0.3.0; 0.3.1 refuses what does not fit) */
 static void test_rexx_reports(ob_project *p)
 {
     ob_report r;
@@ -911,6 +911,39 @@ static void test_rexx_reports(ob_project *p)
     CHECK(ob_report_rexx(p, cmd, out, sizeof out) == 10 && out[0], "no such format: %s", out);
     snprintf(cmd, sizeof cmd, "REPORT RxSales TO \"%s\"", path("no-such-dir/rx.txt"));
     CHECK(ob_report_rexx(p, cmd, out, sizeof out) == 10 && out[0], "a file that can't be written: %s", out);
+    /* 0.3.1: what does not fit is refused, never cut: a cut file name or answer is another file or answer */
+    {
+        char longs[700];
+        memset(longs, 'n', sizeof longs - 1);
+        longs[sizeof longs - 1] = 0;
+        snprintf(cmd, sizeof cmd, "REPORT RxSales TO \"%s\"", longs);
+        CHECK(ob_report_rexx(p, cmd, out, sizeof out) == 10 && !strcmp(out, "REPORT: the file's name is too long (511 characters at most)"),
+              "a file name too long: %s", out);
+        longs[511] = 0;                         /* the longest that fits is taken (and then can't be written here) */
+        snprintf(cmd, sizeof cmd, "REPORT RxSales TO \"no-such-dir/%s\"", longs + 12);
+        CHECK(ob_report_rexx(p, cmd, out, sizeof out) == 10 && !strstr(out, "too long"), "a file name that just fits: %s", out);
+        longs[300] = 0;
+        snprintf(cmd, sizeof cmd, "REPORT \"Rx Town\" ANSWER %s TO \"%s\"", longs, path("rx-none.txt"));
+        CHECK(ob_report_rexx(p, cmd, out, sizeof out) == 10 && !strcmp(out, "REPORT: answer 1 is too long (255 characters at most)"),
+              "an answer too long: %s", out);
+        longs[100] = 0;
+        snprintf(cmd, sizeof cmd, "REPORT %s TO \"%s\"", longs, path("rx-none.txt"));
+        CHECK(ob_report_rexx(p, cmd, out, sizeof out) == 10 && !strcmp(out, "REPORT: the report's name is too long (63 characters at most)"),
+              "a report name too long: %s", out);
+        snprintf(cmd, sizeof cmd, "REPORT RxSales TO \"%s\" FORMAT %s", path("rx-none.txt"), longs);
+        CHECK(ob_report_rexx(p, cmd, out, sizeof out) == 10 && !strcmp(out, "REPORT: FORMAT is odt, docx, pdf or text"), "a format too long: %s", out);
+        text = slurp(path("rx-none.txt"), &len);
+        CHECK(!text, "no file was made by a refused REPORT");
+        free(text);
+    }
+    /* REPORT writes over a file that is there (a script that must keep one checks first) */
+    snprintf(cmd, sizeof cmd, "REPORT RxSales TO \"%s\"", path("rx-sales.odt"));
+    CHECK(ob_report_rexx(p, cmd, out, sizeof out) == 0, "over the .odt: %s", out);
+    snprintf(cmd, sizeof cmd, "REPORT RxSales TO \"%s\" FORMAT text", path("rx-sales.odt"));
+    CHECK(ob_report_rexx(p, cmd, out, sizeof out) == 0, "over it again as text: %s", out);
+    text = slurp(path("rx-sales.odt"), &len);
+    CHECK(text && strstr(text, "Count 4\tSum 12") && memcmp(text, "PK", 2), "the file there was replaced");
+    free(text);
     CHECK(ob_report_delete(p, "RxSales") && ob_report_delete(p, "Rx Town"), "tidy: %s", ob_error(p));
 }
 

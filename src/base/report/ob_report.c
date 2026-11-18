@@ -1059,17 +1059,18 @@ static int rr_word(const char *s, const char *word, const char **rest)
     return 1;
 }
 
-/* The next argument, "in quotes" ('or these') or one word, into out (cut to size). */
-static const char *rr_arg(const char *s, char *out, size_t size)
+/* The next argument, "in quotes" ('or these') or one word, into out. One longer than out has room for
+ * sets *cut: the caller refuses it, since a file name or an answer cut short is another file or answer. */
+static const char *rr_arg(const char *s, char *out, size_t size, int *cut)
 {
     size_t k = 0;
     s = rr_skip(s);
     if (*s == '"' || *s == '\'') {
         char q = *s++;
-        for (; *s && *s != q; s++) if (k + 1 < size) out[k++] = *s;
+        for (; *s && *s != q; s++) { if (k + 1 < size) out[k++] = *s; else *cut = 1; }
         if (*s == q) s++;
     } else {
-        for (; *s && *s != ' ' && *s != '\t'; s++) if (k + 1 < size) out[k++] = *s;
+        for (; *s && *s != ' ' && *s != '\t'; s++) { if (k + 1 < size) out[k++] = *s; else *cut = 1; }
     }
     out[k] = 0;
     return rr_skip(s);
@@ -1082,7 +1083,7 @@ int ob_report_rexx(ob_project *p, const char *command, char *out, size_t size)
     ob_query *q = NULL;
     char (*ans)[OB_VALUE_MAX] = NULL;
     char name[OB_NAME_MAX] = "", path[512] = "", format[16] = "", err[OB_ERR_MAX] = "";
-    int rc = 0, na = 0, want = 0, i, n;
+    int rc = 0, na = 0, want = 0, cut = 0, i, n;
     command = rr_skip(command ? command : "");
     if (rr_word(command, "REPORTS", &s)) {
         size_t k = 0;
@@ -1109,7 +1110,8 @@ int ob_report_rexx(ob_project *p, const char *command, char *out, size_t size)
     if (!out || size < 2) return 20;
     out[0] = 0;
     if (!p) { snprintf(out, size, "No project is open: OPEN opens one"); return 5; }
-    s = rr_arg(s, name, sizeof name);
+    s = rr_arg(s, name, sizeof name, &cut);
+    if (cut) { snprintf(out, size, "REPORT: the report's name is too long (%d characters at most)", (int)sizeof name - 1); return 10; }
     if (!name[0]) { snprintf(out, size, "REPORT takes a report's name, then TO and the file to make"); return 10; }
     r = (ob_report *)malloc(sizeof *r);
     q = (ob_query *)malloc(sizeof *q);
@@ -1117,11 +1119,20 @@ int ob_report_rexx(ob_project *p, const char *command, char *out, size_t size)
     if (!r || !q || !ans) { snprintf(out, size, "Not enough memory"); rc = 20; goto done; }
     while (*s) {
         const char *rest;
-        if (rr_word(s, "TO", &rest)) { s = rr_arg(rest, path, sizeof path); continue; }
-        if (rr_word(s, "FORMAT", &rest)) { s = rr_arg(rest, format, sizeof format); continue; }
+        if (rr_word(s, "TO", &rest)) {
+            s = rr_arg(rest, path, sizeof path, &cut);
+            if (cut) { snprintf(out, size, "REPORT: the file's name is too long (%d characters at most)", (int)sizeof path - 1); rc = 10; goto done; }
+            continue;
+        }
+        if (rr_word(s, "FORMAT", &rest)) {
+            s = rr_arg(rest, format, sizeof format, &cut);
+            if (cut) { snprintf(out, size, "REPORT: FORMAT is odt, docx, pdf or text"); rc = 10; goto done; }
+            continue;
+        }
         if (rr_word(s, "ANSWER", &rest)) {
             if (na >= OB_QUERY_PARAMS) { snprintf(out, size, "A query asks at most %d questions", OB_QUERY_PARAMS); rc = 10; goto done; }
-            s = rr_arg(rest, ans[na], sizeof ans[na]);
+            s = rr_arg(rest, ans[na], sizeof ans[na], &cut);
+            if (cut) { snprintf(out, size, "REPORT: answer %d is too long (%d characters at most)", na + 1, OB_VALUE_MAX - 1); rc = 10; goto done; }
             answers[na] = ans[na];
             na++;
             continue;
