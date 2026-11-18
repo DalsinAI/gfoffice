@@ -59,12 +59,12 @@ if [ -n "$OB_SQL_OK" ]; then
     # shellcheck disable=SC2086
     # Reports (4.3) write documents through libowf: GFOpenWrite's part of it ($OWFSRC_DOCS and $OWF_WRITE,
     # so OWF=library uses owfwrite.library as GFOpenWrite does). Their print preview lays the pages out as
-    # GFOpenWrite does (src/core/ow_layout.c and GFOpenLayout, $OL_C).
+    # GFOpenWrite does (src/core/ow_layout.c and GFOpenLayout, $OL_PAGES: build-os3.sh's OPENLAYOUT).
     # Spelling (src/base/spell) is GFOffice's one spell checker, owfspell.library ($SPELL, $SPELL_SRC).
-    "$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_WRITE $SPELL -I"$HERE/include" -I"$HERE/app" \
+    "$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_WRITE $SPELL $OL_PAGES_FLAGS -I"$HERE/include" -I"$HERE/app" \
         -I"$OPENLAYOUT_SRC/include" $OB_SQL_INC "$HERE"/src/base/*.c "$HERE"/src/base/report/*.c \
         "$HERE/src/base/spell/ob_spell.c" $SPELL_SRC \
-        "$HERE"/src/base/preview/*.c "$HERE/src/core/ow_layout.c" $OL_C $OB_SHEET $OWFSRC_DOCS $OB_BOOK \
+        "$HERE"/src/base/preview/*.c "$HERE/src/core/ow_layout.c" $OL_PAGES $OB_SHEET $OWFSRC_DOCS $OB_BOOK \
         "$HERE/app/openbase.c" "$HERE/app/ob_reportwin.c" "$HERE/app/ob_previewwin.c" "$HERE/app/ow_stack.c" \
         "$HERE/app/ob_sqlitelib.c" $OB_SQL_LINK -lm -lamiga -o "$OUT/GFOpenBase"
     echo "GFOpenBase: $(wc -c < "$OUT/GFOpenBase") bytes (SQLITE=$SQLITE)"

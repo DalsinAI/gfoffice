@@ -37,7 +37,7 @@ run() {
         OPENSQLITE=$2 OPENSQLITE_LIB=$3
         ARGS=$W/args; export ARGS
         CC=$W/cc CFLAGS_COMMON="" SPECS=specs OUT=$W/out OWF=linked OWFFLAGS="" OWF_WRITE="" SPELL="" SPELL_SRC=""
-        OPENLAYOUT_SRC=$W/ol OL_C="" OWFSRC_DOCS=""
+        OPENLAYOUT_SRC=$W/ol OL_PAGES="" OL_PAGES_FLAGS="" OWFSRC_DOCS=""
         . "$HERE/build.d/base.sh"
     ) > "$W/log" 2>&1
 }

@@ -135,8 +135,8 @@ echo "build-os3.sh: converted programs take GFOpenLayout as: $OPENLAYOUT"
 # libowf linked in they are built together; on the libraries each is built for its own (owc_doc.c for
 # owfwrite.library, owc_book.c owfcalc, owc_pub.c owfpub, owc_deck.c and the deck's PDF owfpresent), so a
 # conversion opens only the libraries it needs.
-OWC_DECK="-DOWC_DECK_PDF -I$HERE/include -I$OPENLAYOUT_SRC/include"
-OWC_PDF="$HERE/src/deck/opr_layout.c $HERE/src/deck/opr_pdf.c $HERE/src/deck/opr_gradient.c $HERE/src/core/ow_layout.c $OL_C"
+OWC_DECK="-DOWC_DECK_PDF $OL_PAGES_FLAGS -I$HERE/include -I$HERE/app -I$OPENLAYOUT_SRC/include"
+OWC_PDF="$HERE/src/deck/opr_layout.c $HERE/src/deck/opr_pdf.c $HERE/src/deck/opr_gradient.c $HERE/src/core/ow_layout.c $OL_PAGES"
 OWCFLAGS="$CFLAGS_COMMON -m68040 -specs=$SPECS -Os $OWFFLAGS -I$HERE/tools"
 if [ "$OWF" = library ]; then
     OWC_OBJ="$OUT/obj-owconvert"
@@ -178,9 +178,9 @@ APP_COMMON="$HERE/app/ow_autosave.c $HERE/app/ow_print.c $HERE/app/ow_spell.c $H
 if [ "${OW1:-}" = yes ] && [ "$OWF" = library ]; then
     echo "build-os3.sh: the 1.x window is built with libowf linked in only (OWF=linked)"
 elif [ "${OW1:-}" = yes ]; then
-"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $SPELL \
+"$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $SPELL $OL_PAGES_FLAGS \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
-    $OWFSRC_DOCS "$HERE"/src/core/*.c $OL_C "$HERE/app/openwrite.c" $APP_COMMON $SPELL_SRC \
+    $OWFSRC_DOCS "$HERE"/src/core/*.c $OL_PAGES "$HERE/app/openwrite.c" $APP_COMMON $SPELL_SRC \
     "$HERE"/third_party/opengadtools/*.c -lamiga \
     -o "$OUT/GFOpenWrite1"
 echo "$OUT/GFOpenWrite1 ($(wc -c < "$OUT/GFOpenWrite1") bytes)"
@@ -242,10 +242,11 @@ for f in owf_book.c owf_cfb.c owf_xlfunc.c in_xls.c out_csv.c owf_chartbook.c ow
 done
 # shellcheck disable=SC2086
 "$CC" $CFLAGS_COMMON -DOW_CLIPBOARD_OBJECTS -DOPR_CHART_EDITOR -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $SPELL \
+    $OL_PAGES_FLAGS \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/src/calc" -I"$HERE/libowf/calc" \
     -I"$HERE/third_party/opengadtools" \
     $OWFSRC_DECK $OWFSRC_CHARTED "$HERE"/libowf/calc/*.c "$HERE"/src/calc/*.c "$HERE"/src/deckchart/*.c \
-    "$HERE"/src/deck/*.c $SPELL_SRC "$HERE/src/core/ow_layout.c" $OL_C \
+    "$HERE"/src/deck/*.c $SPELL_SRC "$HERE/src/core/ow_layout.c" $OL_PAGES \
     "$HERE/app/openpresent.c" "$HERE/app/opr_chartwin.c" "$HERE/app/ow_stack.c" "$HERE/app/ow_clipboard.c" \
     "$HERE"/third_party/opengadtools/*.c -lamiga -lm \
     -o "$OUT/GFOpenPresentation"
@@ -257,8 +258,9 @@ echo "$OUT/GFOpenPresentation ($(wc -c < "$OUT/GFOpenPresentation") bytes)"
 OWFSRC_PUB="$OWFSRC_DECK $HERE/libowf/src/owf_cfb.c $HERE/libowf/src/in_pub.c"
 # shellcheck disable=SC2086
 "$CC" $CFLAGS_COMMON -DOPENPRESSMASTER -DOW_CLIPBOARD_OBJECTS -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $SPELL \
+    $OL_PAGES_FLAGS \
     -I"$HERE/include" -I"$OPENLAYOUT_SRC/include" -I"$HERE/app" -I"$HERE/third_party/opengadtools" \
-    $OWFSRC_PUB "$HERE"/src/deck/*.c $SPELL_SRC "$HERE/src/pub/opp_import.c" "$HERE/libowf/pub/opp_merge.c" "$HERE/src/pub/opp_pagenum.c" "$HERE/src/pub/opp_spread.c" "$HERE/libowf/pub/opp_template.c" "$HERE/src/core/ow_merge.c" "$HERE/src/core/ow_layout.c" $OL_C \
+    $OWFSRC_PUB "$HERE"/src/deck/*.c $SPELL_SRC "$HERE/src/pub/opp_import.c" "$HERE/libowf/pub/opp_merge.c" "$HERE/src/pub/opp_pagenum.c" "$HERE/src/pub/opp_spread.c" "$HERE/libowf/pub/opp_template.c" "$HERE/src/core/ow_merge.c" "$HERE/src/core/ow_layout.c" $OL_PAGES \
     "$HERE/app/openpresent.c" "$HERE/app/ow_stack.c" "$HERE/app/ow_clipboard.c" "$HERE"/third_party/opengadtools/*.c -lamiga \
     -o "$OUT/GFOpenPressmaster"
 echo "$OUT/GFOpenPressmaster ($(wc -c < "$OUT/GFOpenPressmaster") bytes)"

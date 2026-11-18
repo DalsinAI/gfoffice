@@ -82,6 +82,7 @@
 #include "openpressmaster_spread.h"
 #endif
 #include "ow_layout.h"
+#include "ow_layoutlib.h"
 #include "owf_pdf.h"
 #include "owf_metafile.h"
 #include "ow_stack.h"
@@ -10154,6 +10155,12 @@ static int window_main(int argc, char **argv)
         rc = 20;
         goto out;
     }
+    /* the pages' library, at the version this was built for, before any window (ow_layoutlib.h) */
+    if (!ow_layout_open()) {
+        tell(PROGRAM, PROGRAM " needs " OW_LAYOUT_NEEDS " in LIBS:.");
+        rc = 20;
+        goto out;
+    }
     OpenFontTextBase = ogt_openfont_open();
     LayersBase = OpenLibrary((STRPTR)"layers.library", 36);
     DataTypesBase = OpenLibrary((STRPTR)"datatypes.library", 39);
@@ -10222,6 +10229,7 @@ out:
     if (CyberGfxBase) CloseLibrary(CyberGfxBase);
     if (DataTypesBase) CloseLibrary(DataTypesBase);
     if (RexxSysBase) { CloseLibrary((struct Library *)RexxSysBase); RexxSysBase = NULL; }
+    ow_layout_close();
     if (AslBase) CloseLibrary(AslBase);
     if (GadToolsBase) CloseLibrary(GadToolsBase);
     return rc;
