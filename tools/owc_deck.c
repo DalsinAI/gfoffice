@@ -16,7 +16,7 @@
 #include "openpresentation_core.h"
 #endif
 #ifdef OW_LAYOUT_LIBRARY
-#include "ow_layoutlib.h"       /* the PDF's pages through gfopenlayout.library (build-os3.sh's OPENLAYOUT=library) */
+#include "ow_layoutlib.h"       /* the PDF's pages through gfopenlayout.library (the Amiga build; a host build compiles GFOpenLayout in for its tests) */
 #endif
 
 #include <stdio.h>

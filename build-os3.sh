@@ -95,54 +95,25 @@ for f in $OWFSRC; do
     esac
 done
 
-# The pages are GFOpenLayout's (DalsinAI/gfopenlayout 0.2 or later): OPENLAYOUT_SRC, else beside this
-# repository.
+# GFOpenLayout is gfopenlayout.library, and nothing else (Dale, 18 November 2026: "no switch, remove all the dead
+# code and lock in just openlayout"; docs/suite/layout-library.md). No program compiles GFOpenLayout's source in:
+# each links the library's link sources from a gfopenlayout checkout (OPENLAYOUT_SRC, else beside this
+# repository; build-amiga.sh fetches the one deps/openamigalayout.ref pins), which make the same C calls through
+# the library, and app/ow_layoutlib.c, which opens it in main() and lets the program say so when it is missing.
+#   $OL_PAGES, $OL_PAGES_FLAGS   the page programs: the document calls, gfopenlayout.library 24 or later
+#   $OL_DRAW, $OL_DRAW_FLAGS     GFOpenDiag and GFOpenProject: GFOpenLayout drawing, gfopenlayout.library 25
+# tests/layout/check_library_calls.sh holds every program to these and fails if a build line names GFOpenLayout's
+# sources again.
 OPENLAYOUT_SRC=${OPENLAYOUT_SRC:-$HERE/../gfopenlayout}
-[ -f "$OPENLAYOUT_SRC/src/openlayout.c" ] || { echo "GFOpenLayout not found: set OPENLAYOUT_SRC to a gfopenlayout checkout"; exit 2; }
-# GFOpenLayout's own sources: openlayout.c and, since gfopenlayout 4b03625 (1 Nov), the GFCSS engine it styles
-# documents with (its build-amiga.sh's CSS list); an older checkout without them still builds
-OL_C="$OPENLAYOUT_SRC/src/openlayout.c"
-for f in gfcss_parse gfcss_values gfcss_select openlayout_css; do
-    [ -f "$OPENLAYOUT_SRC/src/$f.c" ] && OL_C="$OL_C $OPENLAYOUT_SRC/src/$f.c"
-done
-# A converted program (Dale, 17 November 2026: every GFOffice program opens gfopenlayout.library, one step at a
-# time; docs/suite/layout-library.md) names $OL_PAGES and $OL_PAGES_FLAGS where it named $OL_C, and what they
-# are is OPENLAYOUT's choice:
-#   OPENLAYOUT=source   (the default until the OS's ROM carries library 24 and the lab has passed) GFOpenLayout's
-#                       source compiled in, as before: the program runs on every OS image
-#   OPENLAYOUT=library  GFOpenLayout's link sources instead: the same C calls, made through gfopenlayout.library
-#                       24 or later (the OS's, in its ROM or LIBS:), which app/ow_layoutlib.c opens in main()
-# Either way app/ow_layoutlib.c is linked: the program asks it for the library before it opens a window, and with
-# the source compiled in that asks for nothing. $OL_C alone stays for the programs not yet converted;
-# tests/layout/check_library_calls.sh holds each converted one to $OL_PAGES.
-OPENLAYOUT=${OPENLAYOUT:-source}
 OL_LINK_DIR="$OPENLAYOUT_SRC/library/link"
-case "$OPENLAYOUT" in
-library)
-    [ -f "$OL_LINK_DIR/gfopenlayout_link_core.c" ] || {
-        echo "GFOpenLayout at $OPENLAYOUT_SRC has no library 24 link sources (library/link/gfopenlayout_link_core.c)"; exit 2; }
-    OL_PAGES="$OL_LINK_DIR/gfopenlayout_link.c $OL_LINK_DIR/gfopenlayout_link_core.c $HERE/app/ow_layoutlib.c"
-    OL_PAGES_FLAGS="-DOW_LAYOUT_LIBRARY" ;;
-source)
-    OL_PAGES="$OL_C $HERE/app/ow_layoutlib.c"
-    OL_PAGES_FLAGS="" ;;
-*)  echo "build-os3.sh: OPENLAYOUT is library or source, not '$OPENLAYOUT'"; exit 2 ;;
-esac
-# GFOpenLayout drawing (gfopenlayout_draw.h: GFOpenDiag's canvas, GFOpenProject's views and their printing) goes
-# the same way: a program that draws with it names $OL_DRAW and $OL_DRAW_FLAGS where it named draw/oldraw.c and
-# amiga/oldraw_amiga.c. With OPENLAYOUT=library the calls are gfopenlayout.library 25's (the drawing came into
-# the library in 25), and OW_LAYOUT_DRAW has app/ow_layoutlib.c ask for that version.
-case "$OPENLAYOUT" in
-library)
-    [ -f "$OL_LINK_DIR/gfopenlayout_link_draw.c" ] || {
-        echo "GFOpenLayout at $OPENLAYOUT_SRC has no library 25 link source (library/link/gfopenlayout_link_draw.c)"; exit 2; }
-    OL_DRAW="$OL_LINK_DIR/gfopenlayout_link_draw.c $HERE/app/ow_layoutlib.c"
-    OL_DRAW_FLAGS="-DOW_LAYOUT_LIBRARY -DOW_LAYOUT_DRAW" ;;
-source)
-    OL_DRAW="$OPENLAYOUT_SRC/draw/oldraw.c $OPENLAYOUT_SRC/amiga/oldraw_amiga.c $HERE/app/ow_layoutlib.c"
-    OL_DRAW_FLAGS="-DOLDRAW_AMIGA -DOW_LAYOUT_DRAW" ;;
-esac
-echo "build-os3.sh: converted programs take GFOpenLayout as: $OPENLAYOUT"
+for f in gfopenlayout_link.c gfopenlayout_link_core.c gfopenlayout_link_draw.c; do
+    [ -f "$OL_LINK_DIR/$f" ] || {
+        echo "GFOpenLayout with library 25's link sources not found (library/link/$f): set OPENLAYOUT_SRC to a gfopenlayout checkout"; exit 2; }
+done
+OL_PAGES="$OL_LINK_DIR/gfopenlayout_link.c $OL_LINK_DIR/gfopenlayout_link_core.c $HERE/app/ow_layoutlib.c"
+OL_PAGES_FLAGS="-DOW_LAYOUT_LIBRARY"
+OL_DRAW="$OL_LINK_DIR/gfopenlayout_link_draw.c $HERE/app/ow_layoutlib.c"
+OL_DRAW_FLAGS="-DOW_LAYOUT_LIBRARY -DOW_LAYOUT_DRAW"
 
 # OWConvert: 68040, as every build, with presentations' PDFs through GFOpenPresentation's core (src/deck) on
 # GFOpenLayout. Its parts are one file per library (tools/owc.h, docs/suite/owf-libraries.md section 5): with

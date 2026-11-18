@@ -38,6 +38,27 @@ fi
 echo "build-amiga.sh: gfopenlayout at $(git -C "$DEPS/gfopenlayout" rev-parse --short HEAD) ($REF)"
 OS32_GCC16=$STOVE OPENLAYOUT_SRC="$DEPS/gfopenlayout" sh "$HERE/build-os3.sh" "$OUT"
 OS32_GCC16=$STOVE sh "$HERE/build-library.sh" "$OUT/library"
+
+# gfopenlayout.library itself, for the package's Libs (docs/suite/layout-library.md, "Systems with an older
+# library"): the programs use the library only, and an OS whose ROM has an older one starts the newer copy in
+# LIBS: at the first open after a boot. Built from the GFOpenLayout pinned above, as the OS's own is: with
+# GFOpenGadTools' theme reader, at the commit deps/gfopengadtools.ref names, and at -Os as the ROM's is
+# (amicradle-guest tools/openkickrom: OPT=-Os): after a restart this copy serves the whole system, Workbench too.
+# GFOpenDraw's build below takes the same GFOpenGadTools.
+OGT_REF=main
+[ -f "$HERE/deps/gfopengadtools.ref" ] && OGT_REF=$(head -n 1 "$HERE/deps/gfopengadtools.ref" | tr -d '[:space:]')
+[ -n "$OGT_REF" ] || OGT_REF=main
+if [ ! -d "$DEPS/gfopengadtools/.git" ]; then
+    git init -q "$DEPS/gfopengadtools" &&
+        git -C "$DEPS/gfopengadtools" fetch -q --depth 1 "${GIT_BASE}DalsinAI/gfopengadtools" "$OGT_REF" &&
+        git -C "$DEPS/gfopengadtools" checkout -q FETCH_HEAD ||
+        { echo "build-amiga.sh: couldn't fetch DalsinAI/gfopengadtools at $OGT_REF" >&2; exit 1; }
+fi
+echo "build-amiga.sh: gfopengadtools at $(git -C "$DEPS/gfopengadtools" rev-parse --short HEAD) ($OGT_REF)"
+STOVE="$STOVE" OUT="$DEPS/gfopenlayout-lib" OGT_ROOT="$DEPS/gfopengadtools" OPT=-Os SPECS="$HERE/specs/m68k-soft-m68040.specs" \
+    sh "$DEPS/gfopenlayout/build-library.sh"
+cp "$DEPS/gfopenlayout-lib/lib/gfopenlayout.library" "$OUT/library/gfopenlayout.library"
+echo "$OUT/library/gfopenlayout.library ($(wc -c < "$OUT/library/gfopenlayout.library") bytes)"
 OS32_GCC16=$STOVE OPENLAYOUT_SRC="$DEPS/gfopenlayout" OWF=library OWF_BUILD_LIBRARIES=no \
     sh "$HERE/build-os3.sh" "$OUT/onlib"
 
