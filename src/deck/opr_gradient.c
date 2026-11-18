@@ -10,24 +10,6 @@
 
 #include <stdlib.h>
 
-/* sin of whole degrees 0..90, * 16384 */
-static const unsigned short sin_degree[91] = {
-    0, 286, 572, 857, 1143, 1428, 1713, 1997, 2280, 2563, 2845, 3126, 3406, 3686, 3964, 4240, 4516, 4790, 5063,
-    5334, 5604, 5872, 6138, 6402, 6664, 6924, 7182, 7438, 7692, 7943, 8192, 8438, 8682, 8923, 9162, 9397, 9630,
-    9860, 10087, 10311, 10531, 10749, 10963, 11174, 11381, 11585, 11786, 11982, 12176, 12365, 12551, 12733, 12911,
-    13085, 13255, 13421, 13583, 13741, 13894, 14044, 14189, 14330, 14466, 14598, 14726, 14849, 14968, 15082, 15191,
-    15296, 15396, 15491, 15582, 15668, 15749, 15826, 15897, 15964, 16026, 16083, 16135, 16182, 16225, 16262, 16294,
-    16322, 16344, 16362, 16374, 16382, 16384
-};
-
-/* sin of tenths of a degree (to the nearest degree), * 16384 */
-static long sin16k(int tenths)
-{
-    int d = ((tenths % 3600 + 3600) % 3600 + 5) / 10 % 360;
-    return d <= 90 ? sin_degree[d] : d <= 180 ? sin_degree[180 - d] : d <= 270 ? -(long)sin_degree[d - 180]
-                                                                                : -(long)sin_degree[360 - d];
-}
-
 /* the same kinds, and the same largest outline as GFOpenLayout's, or the build stops here */
 typedef char opr_gradient_kinds_match[OPR_GRADIENT_LINEAR == OWF_FILL_LINEAR && OPR_GRADIENT_RADIAL == OWF_FILL_RADIAL
                                       ? 1 : -1];
@@ -52,7 +34,7 @@ static int compare_long(const void *a, const void *b)
  * sorted, paired inside to outside (even-odd) */
 static int hatch_set(const int *xy, int n, int x, int y, int angle, int distance, int *out, int cap, int m)
 {
-    long long dx = (long long)sin16k(angle + 900) / 16, dy = -(long long)sin16k(angle) / 16;   /* along, * 1024: y runs down */
+    long long dx = (long long)owf_fill_sin16k(angle + 900) / 16, dy = -(long long)owf_fill_sin16k(angle) / 16;   /* along, * 1024: y runs down */
     long long nx = -dy, ny = dx;                                                    /* across */
     long long tmin = 0, tmax = 0, t, cross[2 * OL_MAX_SHAPE_POINTS];
     long long k, kfirst, klast;
