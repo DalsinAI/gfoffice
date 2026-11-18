@@ -1,15 +1,16 @@
 #!/bin/sh
-# The programs converted to gfopenlayout.library (build-os3.sh's OPENLAYOUT, docs/suite/layout-library.md) link
-# with OPENLAYOUT=library only when every GFOpenLayout call their files make is one the library's link sources
-# give (gfopenlayout library/link/gfopenlayout_link.c and gfopenlayout_link_core.c, library 24). This reads the
-# calls from the text (a name and "("), so a call the library lacks shows on the host, before an m68k link would
-# fail on it. It also holds each converted program to the rest of the conversion:
-#   - its compile names $OL_PAGES and $OL_PAGES_FLAGS, never $OL_C (the source, whatever OPENLAYOUT says);
-#   - its main file asks ow_layout_open() as it starts, says what it needs and ends with a failure when that
-#     answers 0, and calls ow_layout_close() (app/ow_layoutlib.h): an older library in the ROM is said, not
+# GFOffice's programs take GFOpenLayout from gfopenlayout.library and nowhere else (Dale, 18 November 2026: "no
+# switch, remove all the dead code and lock in just openlayout"; docs/suite/layout-library.md). They link only
+# when every GFOpenLayout call their files make is one the library's link sources give (gfopenlayout
+# library/link/gfopenlayout_link.c, gfopenlayout_link_core.c, gfopenlayout_link_draw.c). This reads the calls from
+# the text (a name and "("), so a call the library lacks shows on the host, before an m68k link would fail on
+# it. It also holds:
+#   - each program's compile to $OL_PAGES and $OL_PAGES_FLAGS (pages) or $OL_DRAW and $OL_DRAW_FLAGS (drawing);
+#   - each main file to asking ow_layout_open() as it starts, saying what it needs and ending with a failure
+#     when that answers 0, and calling ow_layout_close() (app/ow_layoutlib.h): an older library is said, not
 #     crashed into;
-#   - app/ow_layoutlib.c, built with the source compiled in, asks for nothing and answers 1.
-# It prints build-os3.sh's default for OPENLAYOUT, so a log shows which way a release is built.
+#   - the Amiga build (build-os3.sh, build.d/, build-amiga.sh) to naming none of GFOpenLayout's own sources and
+#     having no switch back to them.
 #   tests/layout/check_library_calls.sh [GFOpenLayout source] [CC]
 # MIT, Copyright (c) 2026 AmiCradle Team.
 set -eu
@@ -115,31 +116,19 @@ while IFS='|' read -r p script mainfile needs files kind; do
     total=$((total + n))
 done < "$T/programs"
 
-# a program not listed here still names $OL_C: say which, so the list and the steps stay in step
-left=$(grep -l '\$OL_C\b' "$HERE/build-os3.sh" "$HERE"/build.d/*.sh 2>/dev/null |
-    while read -r f; do grep -v '^[ \t]*#' "$f" | grep -v '^OL_C=\|OL_C="\$OL_C \|OL_PAGES="\$OL_C ' | grep -c '\$OL_C\b' || :; done |
-    awk '{ s += $1 } END { print s + 0 }')
-[ "$left" = 0 ] || say "$left compile line(s) still name \$OL_C: convert them and list the program here"
-
-# ow_layoutlib.c with the source compiled in: nothing to open
-cat > "$T/t.c" <<'EOF'
-#include "ow_layoutlib.h"
-int main(void)
-{
-    int ok = ow_layout_open() == 1 && ow_layout_is_library() == 0;
-    ow_layout_close();
-    ow_layout_close();
-    return ok && ow_layout_open() == 1 && OW_LAYOUT_LIBRARY_VERSION == 24 ? 0 : 1;
-}
-EOF
-if ! "$CC" -std=gnu99 -Wall -Werror -I"$HERE/app" "$T/t.c" "$HERE/app/ow_layoutlib.c" -o "$T/t" || ! "$T/t"; then
-    say "app/ow_layoutlib.c with the source compiled in does not answer 1"
-fi
-default=$(sed -n 's/^OPENLAYOUT=\${OPENLAYOUT:-\([a-z]*\)}$/\1/p' "$HERE/build-os3.sh")
-case "$default" in
-library|source) echo "check_library_calls.sh: build-os3.sh builds converted programs with OPENLAYOUT=$default by default" ;;
-*) say "build-os3.sh has no OPENLAYOUT default of library or source" ;;
-esac
+# No way back: the Amiga build compiles none of GFOpenLayout's own sources and has no switch for it
+for f in "$HERE/build-os3.sh" "$HERE"/build.d/*.sh "$HERE/build-amiga.sh"; do
+    grep -v '^[ \t]*#' "$f" > "$T/code"
+    if grep -n 'OPENLAYOUT_SRC/\(src\|draw\|ui\|amiga\|core\)/\|\$OL_C\b\|OLDRAW_AMIGA' "$T/code" > "$T/hits"; then
+        say "$(basename "$f") names GFOpenLayout's sources: the programs take gfopenlayout.library only"
+        sed 's/^/    /' "$T/hits"
+    fi
+    if grep -n '\bOPENLAYOUT\b' "$T/code" | grep -v 'OPENLAYOUT_SRC' > "$T/hits"; then
+        say "$(basename "$f") has an OPENLAYOUT switch again: there is one way, the library"
+        sed 's/^/    /' "$T/hits"
+    fi
+done
+grep -q 'OL_PAGES_FLAGS="-DOW_LAYOUT_LIBRARY"' "$HERE/build-os3.sh" || say "build-os3.sh does not build the page programs for the library"
 
 [ "$fail" = 0 ] || exit 1
 if [ "$have_layout" = 1 ]; then

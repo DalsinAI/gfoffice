@@ -57,7 +57,7 @@ if [ -n "$OB_SQL_OK" ]; then
     # shellcheck disable=SC2086
     # Reports (4.3) write documents through libowf: GFOpenWrite's part of it ($OWFSRC_DOCS and $OWF_WRITE,
     # so OWF=library uses owfwrite.library as GFOpenWrite does). Their print preview lays the pages out as
-    # GFOpenWrite does (src/core/ow_layout.c and GFOpenLayout, $OL_PAGES: build-os3.sh's OPENLAYOUT).
+    # GFOpenWrite does (src/core/ow_layout.c and GFOpenLayout, $OL_PAGES: gfopenlayout.library).
     # Spelling (src/base/spell) is GFOffice's one spell checker, owfspell.library ($SPELL, $SPELL_SRC).
     "$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_WRITE $SPELL $OL_PAGES_FLAGS -I"$HERE/include" -I"$HERE/app" \
         -I"$OPENLAYOUT_SRC/include" $OB_SQL_INC "$HERE"/src/base/*.c "$HERE"/src/base/report/*.c \
