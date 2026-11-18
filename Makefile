@@ -222,6 +222,17 @@ layout-check: $(OUT)/test-layout-asan
 
 .PHONY: layout-test layout-check
 
+# The programs converted to gfopenlayout.library (docs/suite/layout-library.md): build-os3.sh builds each either
+# way (OPENLAYOUT), every GFOpenLayout call its files make is one the library gives, and it asks for the library
+# as it starts.
+layout-library-calls-check:
+	tests/layout/check_library_calls.sh "$(OPENLAYOUT_SRC)" $(CC)
+
+test: layout-library-calls-check
+check: layout-library-calls-check
+
+.PHONY: layout-library-calls-check
+
 # GFOpenWrite's text widths for the layout (app/ow_fontwidths.c, 2.0.3): the face that draws the text when the
 # document's doesn't open, and widths at the size asked or scaled to it (tests/core/test_fontwidths.c)
 FONTW_SRC = app/ow_fontwidths.c app/ow_fontwidths.h tests/core/test_fontwidths.c
