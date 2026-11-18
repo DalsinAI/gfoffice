@@ -43,7 +43,7 @@
 extern "C" {
 #endif
 
-#define OB_REPORT_VERSION "0.3.0"
+#define OB_REPORT_VERSION "0.3.1"
 #define OB_REPORT_COLUMNS 16
 #define OB_REPORT_LEVELS 3        /* group levels: group, subgroup[0], subgroup[1] */
 #define OB_BAND_MAX 160            /* a band's text, with its 0 */

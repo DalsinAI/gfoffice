@@ -623,7 +623,7 @@ Nothing asks; the reason for a refusal is in LASTERROR.
 | QUERY [ROW n] [COUNT] [ANSWER a]... sql | Typed SQL that reads, one statement: row n's values (row 1 without ROW) with a tab between, so the first value alone for one column; COUNT gives the number of rows. 5 past the end |
 | EXEC [ANSWER a]... sql | One typed UPDATE, INSERT or DELETE on one of the project's tables, all or none: the rows changed, and NOUNDO after the count as RUNQUERY answers |
 | REPORTS | The kept reports' names, each in quotes |
-| REPORT name TO file [FORMAT f] [ANSWER a]... | Makes a kept report as a document: FORMAT odt, docx, pdf or text, left out to go by the file's name. OK |
+| REPORT name TO file [FORMAT f] [ANSWER a]... | Makes a kept report as a document: FORMAT odt, docx, pdf or text, left out to go by the file's name. A file already there is written over without asking (ARexx shows no requester). OK |
 
 QUERY and EXEC (core 0.19.0, GFOpenBase 0.18.0) take their words first and
 the rest of the line as the SQL; one pair of quotes round all of it comes
@@ -631,7 +631,9 @@ off. Values are bound, never pasted: each `?`, `?1` or `:name` in the SQL
 takes one ANSWER, in order (`QUERY ANSWER Leeds SELECT Name FROM People
 WHERE Town = ?`), so a quote in a value can't break the statement. STEM is
 not there yet: a script reads row by row with ROW. REPORTS and REPORT
-(report 0.3.0) are in src/base/report/ob_report.c, tested by
+(report 0.3.0; 0.3.1 refuses a report name, file name, FORMAT or ANSWER
+longer than it has room for instead of cutting it, since a cut file name
+is another file) are in src/base/report/ob_report.c, tested by
 `test_rexx_reports` in tests/base/test_base_report.c; QUERY and EXEC by
 `test_rexx_sql`.
 
