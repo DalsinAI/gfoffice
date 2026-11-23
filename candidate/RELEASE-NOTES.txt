@@ -12,15 +12,21 @@ What is new since RC92
   The programs' sources are RC92's: no program has a new version number.
 * The package is made by the repository's own scripts/package.sh, from
   build-rc.sh, with the version in candidate/VERSION.
+* Spelling works from the package as it comes: the word list is in the
+  Dictionaries drawer beside the programs, and the install below now names
+  owfspell.library. RC92 had no word list and its install did not name the
+  library, so spelling worked only where an earlier install had left them.
+* The library tests come with the files they read (library/tests).
 
-INSTALL: THREE LIBRARIES GO IN LIBS:
-------------------------------------
+INSTALL: FOUR LIBRARIES GO IN LIBS:
+-----------------------------------
 The programs open libraries, and the package carries them in the library
 drawer. From a Shell in the GFOffice drawer:
 
     Copy library/gfopenlayout.library LIBS:
     Copy library/sqlite.library LIBS:
     Copy library/gfopendraw.library LIBS:
+    Copy library/owfspell.library LIBS:
 
 then restart the Amiga, so that an older gfopenlayout.library already in
 memory is not the one the programs get.
@@ -32,10 +38,12 @@ memory is not the one the programs get.
                            GFOpenDrawOL needs 10.
   sqlite.library 1         GFOpenBase.
   gfopendraw.library 1     GFOpenDraw and GFOpenDrawOL.
+  owfspell.library 1.1     Spelling in every program that checks it.
 
 A program that does not find its library says which one it needs and ends
 (a requester from Workbench, a line in a Shell). GFOpenCalc needs none of
-the three. The owf libraries in the same drawer are for programs built on
+the first three. Without owfspell.library a program runs and says so when
+spelling is asked for. The owf libraries in the same drawer are for programs built on
 them and for developers; the programs here have libowf linked in.
 
 Programs in this candidate
@@ -60,4 +68,5 @@ Package
 The programs with their icons; library/ with gfopenlayout.library,
 sqlite.library, gfopendraw.library and the owf libraries (owf, owfwrite,
 owfcalc, owfpresent, owfpub, owfdiag, owfspell) and their tests; sdk/;
-Images/Toolbar; Rexx; Documentation; samples; BUILD-INFO.txt; SHA256SUMS.
+Images/Toolbar; Rexx; Dictionaries; Documentation; samples; BUILD-INFO.txt;
+SHA256SUMS.

@@ -1,7 +1,8 @@
 #!/bin/sh
 # The GFOffice release package from a build's out/ (build-amiga.sh's OUT): the GFOffice drawer as
 # GFOffice-<version>-AmigaOS3, with the programs and their icons, library/ (the libraries for LIBS: and the owf
-# libraries, with their tests), sdk/, Images, Rexx, samples, Documentation, the release notes and SHA256SUMS,
+# libraries, with their tests and what the tests read), sdk/, Images, Rexx, samples, Dictionaries, Documentation,
+# the release notes and SHA256SUMS,
 # then the .lha and its SHA-256 where there is an lha to pack with.
 #
 #   candidate/VERSION              one line: the version the package is named for (as 2.0.25-rc93)
@@ -46,6 +47,15 @@ for t in OWFLibTest OWFLibsTest OWFSpellTest; do
     need "$O/library/tests/$t"
     cp "$O/library/tests/$t" "$P/library/tests/"
 done
+# what the three tests read, beside them as build-library.sh lays it out: without these OWFSpellTest fails 5 of
+# its checks and the library tests every check that reads a file (RC93's first package, in a lab)
+for d in Dictionaries fixtures samples; do
+    need "$O/library/tests/$d"
+    cp -R "$O/library/tests/$d" "$P/library/tests/"
+done
+# the word list the programs' spelling reads, PROGDIR:Dictionaries/en_GB.words (docs/suite/owf-spell.md)
+mkdir -p "$P/Dictionaries"
+cp "$HERE/Dictionaries/en_GB.words" "$P/Dictionaries/"
 for d in Images Rexx samples; do need "$O/$d"; cp -R "$O/$d" "$P/"; done
 mkdir -p "$P/sdk/gfoffice"
 cp -R "$HERE/libowf/library/sdk/FD" "$HERE/libowf/library/sdk/Include_H" "$HERE/libowf/library/sdk/Include_I" \
