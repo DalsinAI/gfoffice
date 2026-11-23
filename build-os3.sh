@@ -182,18 +182,11 @@ else
     OCSRC="$OWFSRC $HERE/libowf/calc/*.c"
     OWF_CALC=""
 fi
-# External Data's databases (include/opencalc_extdb.h) need GFOpenBase's core and gfopensqlite's soft-float
-# SQLite, found as build.d/base.sh finds it (OPENSQLITE); without it GFOpenCalc's External Data reads web pages
-# only and says so for a database.
-OC_SQLITE=${OPENSQLITE:-$HERE/../gfopensqlite/out-soft-st}
-if [ -f "$OC_SQLITE/lib/libsqlite3.a" ] && [ -f "$OC_SQLITE/include/sqlite3.h" ]; then
-    OC_EXTDB="-DOC_EXTDATA_DATABASES -I$OC_SQLITE/include $HERE/src/calc/extdb/oc_extdb.c $HERE/src/base/ob_core.c"
-    OC_EXTDB_LIB="-L$OC_SQLITE/lib -lsqlite3"
-else
-    OC_EXTDB=""
-    OC_EXTDB_LIB=""
-    echo "build-os3.sh: no gfopensqlite build in $OC_SQLITE: GFOpenCalc's External Data reads web pages only"
-fi
+# External Data's databases (include/opencalc_extdb.h) need GFOpenBase's core and SQLite: sqlite.library by
+# default, or SQLite linked in, by the same SQLITE switch as GFOpenBase (build.d/calc-extdb.sh); without it
+# GFOpenCalc's External Data reads web pages only and says so for a database.
+. "$HERE/build.d/calc-extdb.sh"
+oc_extdb_setup || exit 1
 # shellcheck disable=SC2086
 "$CC" $CFLAGS_COMMON -m68040 -specs=$SPECS -O2 -Wno-pointer-sign $OWFFLAGS $OWF_CALC $SPELL \
     -I"$HERE/include" -I"$HERE/app" -I"$HERE/src/calc" -I"$HERE/libowf/calc" -I"$HERE/third_party/opengadtools" \
@@ -201,6 +194,7 @@ fi
     "$HERE/app/ow_fontwidths.c" "$HERE"/third_party/opengadtools/*.c $OC_EXTDB_LIB -lamiga -lm \
     -o "$OUT/GFOpenCalc"
 echo "$OUT/GFOpenCalc ($(wc -c < "$OUT/GFOpenCalc") bytes)"
+oc_extdb_verify "$OUT/GFOpenCalc" || exit 1
 
 # GFOpenPresentation, the GFOffice Suite's slides (P2 and P3's first typing): the documents' libowf files with
 # the deck's (the model, ODP, PPTX in, the page PDF writer), its core (src/deck) on GFOpenLayout and GFOpenWrite's

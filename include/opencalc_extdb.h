@@ -6,7 +6,7 @@
  * An item is a table's, view's or saved query's name, or a query typed in
  * (SELECT or WITH: one statement that only reads). Files are opened read only.
  * Built apart from src/calc (it needs SQLite): src/calc/extdb, tests in
- * tests/calc_core/test_calc_extdb.c (mk/calc-extdb.mk).
+ * tests/calc_core/test_calc_extdb.c and test_calc_extdb_lib.c (mk/calc-extdb.mk).
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #ifndef OPENCALC_EXTDB_H
@@ -39,6 +39,12 @@ typedef struct {
     char name[128];
 } oc_extdb_item;
 int oc_extdb_items(const char *database, oc_extdb_item *items, int max, char *err, size_t errsize);
+
+/* SQLite: linked in, or sqlite.library (OB_SQLITE_LIBRARY), which the two calls above open at the first
+ * database read; until it opens they answer OWF_ERR_IO and -1 with "Reading a database needs sqlite.library
+ * 1 or later in LIBS:" in err, and GFOpenCalc runs on without it. oc_extdb_close() lets the library go, on the
+ * program's way out (safe when it never opened, or twice); a later read opens it again. */
+void oc_extdb_close(void);
 
 #ifdef __cplusplus
 }
