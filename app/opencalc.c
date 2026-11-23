@@ -4855,7 +4855,8 @@ static void do_edit_links(void)
 /* ---- Data > External Data: web pages and databases ---- */
 
 /* GFOpenCalc reads databases when it is built with GFOpenBase's core and SQLite (OC_EXTDATA_DATABASES,
- * build.d/calc-extdb.sh); without them a database source says it cannot be read. Web pages come from files
+ * build.d/calc-extdb.sh): sqlite.library by default, opened at the first database read so GFOpenCalc starts
+ * without it (opencalc_extdb.h); without them a database source says it cannot be read. Web pages come from files
  * (a page saved from a browser, or one on a share): reading them over the network is still to come. */
 #ifdef OC_EXTDATA_DATABASES
 #include "opencalc_extdb.h"
@@ -8871,6 +8872,9 @@ out:
     close_window();
     oc_draw_list_free(&dl);
     if (core) { oc_core_free(core); core = NULL; }
+#ifdef OC_EXTDATA_DATABASES
+    oc_extdb_close();                    /* sqlite.library, if a database read opened it */
+#endif
     spell_finish();
     if (theme.text) ogt_theme_free(&theme);
     if (LayersBase) { CloseLibrary(LayersBase); LayersBase = NULL; }

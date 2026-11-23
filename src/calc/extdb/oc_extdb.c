@@ -4,6 +4,9 @@
  * ob_table_get and ob_rows_at for a table, ob_query_get and ob_query_rows for
  * a saved query, a view or a query typed in), so each value comes in its
  * field's own form; any other SQLite file is read with SQLite itself.
+ * SQLite is linked in, or is sqlite.library (OB_SQLITE_LIBRARY, build.d/calc-extdb.sh): then the library is
+ * opened at the first database read, not as GFOpenCalc starts, so GFOpenCalc runs without it and only a
+ * database range says it is needed (oc_extdb_close() lets it go on the way out).
  * MIT, Copyright (c) 2026 AmiCradle Team.
  */
 #include "opencalc_extdb.h"
@@ -15,6 +18,7 @@
 #include <string.h>
 
 #include "sqlite3.h"
+#include "ob_sqlitelib.h"
 
 #define EXTDB_PAGE 512                   /* rows asked of GFOpenBase at once */
 #define EXTDB_COLS 256                   /* a result's columns, at most */
@@ -31,6 +35,30 @@ static void say(char *err, size_t errsize, const char *fmt, const char *a)
 {
     if (err && errsize)
         snprintf(err, errsize, fmt, a ? a : "");
+}
+
+/* SQLite's calls can be made: with SQLite linked in always; on sqlite.library once it is open, which is
+ * tried here at each read until it answers (a library put in LIBS: while GFOpenCalc runs is found then).
+ * 0 with the reason in err: no sqlite3_ call may be made then (app/ob_sqlitelib.h). */
+static int engine_open;
+
+static int engine(char *err, size_t errsize)
+{
+    if (engine_open)
+        return 1;
+    if (!ob_sqlite_open()) {
+        say(err, errsize, "Reading a database needs %s", OB_SQLITE_NEEDS);
+        return 0;
+    }
+    engine_open = 1;
+    return 1;
+}
+
+void oc_extdb_close(void)
+{
+    if (engine_open)
+        ob_sqlite_close();
+    engine_open = 0;
 }
 
 static void rows_free(extdb_rows *r)
@@ -508,6 +536,10 @@ int oc_extdb_query(void *user, const char *database, const char *item, int heade
         say(err, errsize, "No table or query was given%s", NULL);
         return OWF_ERR_FORMAT;
     }
+    if (!engine(err, errsize)) {
+        owf_free(what);
+        return OWF_ERR_IO;
+    }
     why[0] = 0;
     if ((p = ob_open(database, OB_OPEN_READONLY, why, sizeof why)) != NULL) {
         ob_set_step_limit(p, OC_EXTDB_STEPS / OB_STEP_OPS);
@@ -563,6 +595,8 @@ int oc_extdb_items(const char *database, oc_extdb_item *items, int max, char *er
         say(err, errsize, "No database was given%s", NULL);
         return -1;
     }
+    if (!engine(err, errsize))
+        return -1;
     if ((p = ob_open(database, OB_OPEN_READONLY, why, sizeof why)) != NULL) {
         count = ob_table_count(p);
         for (i = 0; i < count; i++)
