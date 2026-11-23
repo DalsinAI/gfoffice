@@ -25,6 +25,9 @@ mkout() {
         echo "$l" > "$o/library/$l.library"
     done
     for t in OWFLibTest OWFLibsTest OWFSpellTest; do echo "$t" > "$o/library/tests/$t"; done
+    mkdir -p "$o/library/tests/Dictionaries" "$o/library/tests/fixtures" "$o/library/tests/samples"
+    echo w > "$o/library/tests/Dictionaries/en_GB.words"; echo f > "$o/library/tests/fixtures/book.xls"
+    echo d > "$o/library/tests/samples/OpenWrite-Tour.docx"
     echo p > "$o/Images/Toolbar/new.ilbm"; echo r > "$o/Rexx/a.rexx"; echo s > "$o/samples/a.docx"
     echo h > "$o/sdk/gfopendraw/Include_H/x.h"
     echo "Compiler: test" > "$o/BUILD-INFO.txt"
@@ -44,6 +47,8 @@ sh "$HERE/scripts/package.sh" "$W/out" "$W/rel" > "$W/log" 2>&1; ok "package.sh 
 P=$W/rel/$NAME
 for f in GFOpenWrite GFOpenWrite.info GFOpenDrawOL OWConvert library/gfopenlayout.library library/sqlite.library \
          library/gfopendraw.library library/owfspell.library library/tests/OWFSpellTest Images/Toolbar/new.ilbm \
+         library/tests/Dictionaries/en_GB.words library/tests/fixtures/book.xls \
+         library/tests/samples/OpenWrite-Tour.docx Dictionaries/en_GB.words \
          Rexx/a.rexx samples/a.docx sdk/gfopendraw/Include_H/x.h sdk/gfoffice/FD Documentation/Formats.md \
          Documentation/Layout-Library.md Documentation/Parity-README.md library.info Documentation.info \
          RELEASE-NOTES.txt BUILD-INFO.txt SHA256SUMS; do
@@ -64,6 +69,10 @@ fi
 mkout "$W/out"; rm "$W/out/GFOpenBase"
 sh "$HERE/scripts/package.sh" "$W/out" "$W/rel2" > "$W/log" 2>&1; [ $? != 0 ] && grep -q "no GFOpenBase" "$W/log"
 ok "a build without GFOpenBase is refused" $?
+mkout "$W/out"; rm -r "$W/out/library/tests/fixtures"
+sh "$HERE/scripts/package.sh" "$W/out" "$W/rel4" > "$W/log" 2>&1; [ $? != 0 ] && grep -q "tests/fixtures" "$W/log"
+ok "a build without the tests' fixtures is refused" $?
+grep -q "owfspell.library LIBS:" "$HERE/candidate/RELEASE-NOTES.txt"; ok "the notes say owfspell.library goes in LIBS:" $?
 mkout "$W/out"; rm "$W/out/library/sqlite.library"
 sh "$HERE/scripts/package.sh" "$W/out" "$W/rel3" > "$W/log" 2>&1; [ $? != 0 ] && grep -q "sqlite.library" "$W/log"
 ok "a build without sqlite.library is refused" $?
