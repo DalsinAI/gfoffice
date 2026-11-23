@@ -51,10 +51,16 @@ for f in GFOpenWrite GFOpenWrite.info GFOpenDrawOL OWConvert library/gfopenlayou
          library/tests/samples/OpenWrite-Tour.docx Dictionaries/en_GB.words \
          Rexx/a.rexx samples/a.docx sdk/gfopendraw/Include_H/x.h sdk/gfoffice/FD Documentation/Formats.md \
          Documentation/Layout-Library.md Documentation/Parity-README.md library.info Documentation.info \
-         RELEASE-NOTES.txt BUILD-INFO.txt SHA256SUMS; do
+         RELEASE-NOTES.txt BUILD-INFO.txt Install-Libraries SHA256SUMS; do
     [ -e "$P/$f" ]; ok "the package has $f" $?
 done
 [ -f "$W/rel/$NAME.info" ]; ok "the drawer's icon is beside the drawer" $?
+# the install script copies each library the notes name for LIBS:, gfopendraw.library among them
+for l in gfopenlayout sqlite gfopendraw owfspell; do
+    grep -q "^Copy library/$l.library LIBS:" "$P/Install-Libraries"; ok "Install-Libraries copies $l.library to LIBS:" $?
+    grep -q "Copy library/$l.library LIBS:" "$HERE/candidate/RELEASE-NOTES.txt"; ok "the notes' install names $l.library" $?
+done
+grep -q "Execute Install-Libraries" "$HERE/candidate/RELEASE-NOTES.txt"; ok "the notes name Install-Libraries" $?
 [ ! -e "$P/OWConvert.info" ]; ok "OWConvert has no icon" $?
 (cd "$P" && sha256sum -c SHA256SUMS > /dev/null 2>&1); ok "SHA256SUMS checks" $?
 n=$(find "$P" -type f ! -name SHA256SUMS | wc -l | tr -d ' ')

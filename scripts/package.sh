@@ -77,6 +77,8 @@ cp "$HERE/docs/CALC_ENGINE.md" "$D/Calc-Engine.md"
 for d in samples library sdk Documentation Rexx Images; do cp "$HERE/icons/drawers/$d.info" "$P/"; done
 cp "$HERE/icons/drawers/GFOffice.info" "$DEST/$NAME.info"
 cp "$NOTES" "$P/RELEASE-NOTES.txt"
+# the install step as a script: the four libraries the programs open, into LIBS: (Execute Install-Libraries)
+cp "$HERE/scripts/Install-Libraries" "$P/Install-Libraries"
 # what built it, when the build wrote it down (build-rc.sh)
 [ -f "$O/BUILD-INFO.txt" ] && cp "$O/BUILD-INFO.txt" "$P/"
 (cd "$P" && find . -type f ! -name SHA256SUMS | LC_ALL=C sort | xargs sha256sum > SHA256SUMS)

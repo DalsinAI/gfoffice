@@ -1,0 +1,35 @@
+; Install-Libraries: copies the four libraries GFOffice's programs open into LIBS:
+; (gfopenlayout.library, sqlite.library, gfopendraw.library, owfspell.library).
+; From a Shell in the GFOffice drawer:
+;
+;     Execute Install-Libraries
+;
+; then restart the Amiga, so that an older library already in memory is not
+; the one the programs get. A library LIBS: already has is replaced.
+; MIT, Copyright (c) 2026 AmiCradle Team.
+FailAt 21
+If NOT EXISTS library/gfopendraw.library
+    Echo "Install-Libraries: run this from the GFOffice drawer (no library drawer here)."
+    Quit 10
+EndIf
+Copy library/gfopenlayout.library LIBS: CLONE
+If WARN
+    Echo "Install-Libraries: gfopenlayout.library was not copied."
+    Quit 10
+EndIf
+Copy library/sqlite.library LIBS: CLONE
+If WARN
+    Echo "Install-Libraries: sqlite.library was not copied."
+    Quit 10
+EndIf
+Copy library/gfopendraw.library LIBS: CLONE
+If WARN
+    Echo "Install-Libraries: gfopendraw.library was not copied."
+    Quit 10
+EndIf
+Copy library/owfspell.library LIBS: CLONE
+If WARN
+    Echo "Install-Libraries: owfspell.library was not copied."
+    Quit 10
+EndIf
+Echo "GFOffice's four libraries are in LIBS:. Restart the Amiga before running the programs."
