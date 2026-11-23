@@ -23,6 +23,10 @@ INSTALL: FOUR LIBRARIES GO IN LIBS:
 The programs open libraries, and the package carries them in the library
 drawer. From a Shell in the GFOffice drawer:
 
+    Execute Install-Libraries
+
+which does these four copies:
+
     Copy library/gfopenlayout.library LIBS:
     Copy library/sqlite.library LIBS:
     Copy library/gfopendraw.library LIBS:
