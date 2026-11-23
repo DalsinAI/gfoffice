@@ -1,5 +1,5 @@
 #!/bin/sh
-# scripts/package.sh on a made-up build: the package's layout, its name from release/VERSION, the checksums,
+# scripts/package.sh on a made-up build: the package's layout, its name from candidate/VERSION, the checksums,
 # and that a build with a program or a LIBS: library missing is refused; then scripts/fetch-gfopensqlite.sh
 # on a made-up release, with unzip and without it (Python's zipfile).
 # MIT, Copyright (c) 2026 AmiCradle Team.
@@ -10,7 +10,7 @@ trap 'rm -rf "$W"' EXIT
 PASS=0
 FAIL=0
 ok() { if [ "$2" = 0 ]; then PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL $1"; fi; }
-VERSION=$(head -n 1 "$HERE/release/VERSION" | tr -d '[:space:]')
+VERSION=$(head -n 1 "$HERE/candidate/VERSION" | tr -d '[:space:]')
 NAME=GFOffice-$VERSION-AmigaOS3
 
 mkout() {
@@ -31,8 +31,13 @@ mkout() {
 }
 
 case "$VERSION" in [0-9]*.[0-9]*.[0-9]*-rc[0-9]*|[0-9]*.[0-9]*.[0-9]*) r=0 ;; *) r=1 ;; esac
-ok "release/VERSION is a version" $r
-grep -q "$VERSION" "$HERE/release/RELEASE-NOTES.txt"; ok "the release notes name release/VERSION" $?
+ok "candidate/VERSION is a version" $r
+# in a checkout, both are files git has (release/ is in .gitignore: a version kept there never reached a build)
+if git -C "$HERE" rev-parse --git-dir > /dev/null 2>&1; then
+    git -C "$HERE" ls-files --error-unmatch candidate/VERSION candidate/RELEASE-NOTES.txt > /dev/null 2>&1
+    ok "candidate/VERSION and the notes are in the repository" $?
+fi
+grep -q "$VERSION" "$HERE/candidate/RELEASE-NOTES.txt"; ok "the release notes name candidate/VERSION" $?
 
 mkout "$W/out"
 sh "$HERE/scripts/package.sh" "$W/out" "$W/rel" > "$W/log" 2>&1; ok "package.sh runs" $?

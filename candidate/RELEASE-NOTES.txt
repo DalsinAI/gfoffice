@@ -1,0 +1,63 @@
+GFOffice 2.0.25 RC93 for AmigaOS 3
+==================================
+
+Release candidate: gfoffice-2.0.25-rc93 (pre-release)
+Previous release: RC92 (2f27338e, 18 Nov 2026).
+What built it (source commit, stove, compiler, pinned parts) is in
+BUILD-INFO.txt, written by the build itself.
+
+What is new since RC92
+----------------------
+* Built with the open9 stove (os32-gcc16-open9), in LumaVAULT's kitchen.
+  The programs' sources are RC92's: no program has a new version number.
+* The package is made by the repository's own scripts/package.sh, from
+  build-rc.sh, with the version in candidate/VERSION.
+
+INSTALL: THREE LIBRARIES GO IN LIBS:
+------------------------------------
+The programs open libraries, and the package carries them in the library
+drawer. From a Shell in the GFOffice drawer:
+
+    Copy library/gfopenlayout.library LIBS:
+    Copy library/sqlite.library LIBS:
+    Copy library/gfopendraw.library LIBS:
+
+then restart the Amiga, so that an older gfopenlayout.library already in
+memory is not the one the programs get.
+
+  gfopenlayout.library 25  GFOpenWrite, GFOpenPresentation,
+                           GFOpenPressmaster, GFOpenBase (report preview),
+                           OWConvert (a presentation to PDF) need 24;
+                           GFOpenDiag and GFOpenProject need 25;
+                           GFOpenDrawOL needs 10.
+  sqlite.library 1         GFOpenBase.
+  gfopendraw.library 1     GFOpenDraw and GFOpenDrawOL.
+
+A program that does not find its library says which one it needs and ends
+(a requester from Workbench, a line in a Shell). GFOpenCalc needs none of
+the three. The owf libraries in the same drawer are for programs built on
+them and for developers; the programs here have libowf linked in.
+
+Programs in this candidate
+--------------------------
+GFOpenWrite 2.0.53, GFOpenCalc 0.1.78, GFOpenPresentation 0.6.36,
+GFOpenBase 0.18.0, GFOpenDiag 0.1.0, GFOpenProject 0.1.28,
+GFOpenPressmaster 0.3.37, GFOpenDraw and GFOpenDrawOL, OWConvert.
+
+Lab
+---
+Lab check owed: not yet run on this build.
+
+Known
+-----
+* GFOpenBase leaves an empty NAME.oadb.lck beside the database after it
+  quits. It is not held and the database opens again.
+* gfopenlayout.library 25 replaces an older file in LIBS:. It has every
+  call of the older versions.
+
+Package
+-------
+The programs with their icons; library/ with gfopenlayout.library,
+sqlite.library, gfopendraw.library and the owf libraries (owf, owfwrite,
+owfcalc, owfpresent, owfpub, owfdiag, owfspell) and their tests; sdk/;
+Images/Toolbar; Rexx; Documentation; samples; BUILD-INFO.txt; SHA256SUMS.
