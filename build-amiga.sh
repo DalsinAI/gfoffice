@@ -80,8 +80,14 @@ STOVE="$STOVE" OUT="$DEPS/gfopenlayout-lib" OGT_ROOT="$DEPS/gfopengadtools" OPT=
     sh "$DEPS/gfopenlayout/build-library.sh"
 cp "$DEPS/gfopenlayout-lib/lib/gfopenlayout.library" "$OUT/library/gfopenlayout.library"
 echo "$OUT/library/gfopenlayout.library ($(wc -c < "$OUT/library/gfopenlayout.library") bytes)"
-OS32_GCC16=$STOVE OPENLAYOUT_SRC="$DEPS/gfopenlayout" OWF=library OWF_BUILD_LIBRARIES=no \
-    sh "$HERE/build-os3.sh" "$OUT/onlib"
+# ONLIB=no leaves this second build out: a release candidate's package does not carry the onlib programs, and
+# the kitchen stops a job at 45 minutes (build-rc.sh sets it).
+if [ "${ONLIB:-yes}" != no ]; then
+    OS32_GCC16=$STOVE OPENLAYOUT_SRC="$DEPS/gfopenlayout" OWF=library OWF_BUILD_LIBRARIES=no \
+        sh "$HERE/build-os3.sh" "$OUT/onlib"
+else
+    echo "build-amiga.sh: ONLIB=no, the programs on the owf libraries are not built"
+fi
 
 # GFOpenDraw stays in its own repository because its plain-C indexed-paint engine is independently reusable.
 # A suite build pins and builds that repository, then puts the two applications and its m68k SDK beside the

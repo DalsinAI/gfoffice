@@ -8,7 +8,8 @@ HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 OUT=${OUT:-$HERE/build/os3}
 STOVE=${STOVE:-$HOME/AmiCradle/stoves/os32-gcc16}
 export OUT STOVE
-sh "$HERE/build-amiga.sh"
+# the package has no onlib programs: not building them keeps the job well inside the kitchen's time limit
+ONLIB=${ONLIB:-no} sh "$HERE/build-amiga.sh"
 {
     echo "GFOffice $(head -n 1 "$HERE/candidate/VERSION" | tr -d '[:space:]')"
     echo "Source: $(git -C "$HERE" rev-parse HEAD 2>/dev/null || echo unknown)"
