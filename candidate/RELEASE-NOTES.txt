@@ -58,7 +58,34 @@ GFOpenPressmaster 0.3.37, GFOpenDraw and GFOpenDrawOL, OWConvert.
 
 Lab
 ---
-Lab check owed: not yet run on this build.
+Checked on 23 November 2026 in the lab t2-lister-putty-20261114 (Kickstart
+47.2, Workbench 47.100), with the four libraries copied to LIBS: from the
+package and the programs run from the package's drawer:
+
+* The libraries load: gfopenlayout.library 25.0, sqlite.library 1.0,
+  gfopendraw.library 1.0, owfspell.library 1.1.
+* Every program starts and ends cleanly. GFOpenWrite opens
+  OpenWrite-Tour.docx, GFOpenCalc features-openpyxl.xlsx (8 sheets),
+  GFOpenPresentation pptx-talk.pptx (5 slides); GFOpenBase makes a new
+  database and opens it again; GFOpenDiag, GFOpenProject, GFOpenPressmaster,
+  GFOpenDraw and GFOpenDrawOL open their windows.
+* OWConvert: pptx to PDF, docx to PDF, xlsx to ods.
+* Spelling (through ARexx SPELL): GFOpenCalc, GFOpenDiag, GFOpenProject and
+  GFOpenPresentation find misspelt words typed in and suggest for them;
+  GFOpenBase checks and suggests.
+* GFOpenCalc External Data: a table from a saved web page comes in and
+  refreshes. Reading a database is not in this build (it says so).
+* GFOpenProject: the Gantt, Resource Usage, Task Usage, Network and
+  Resource Graph views each export to PDF.
+* GFOpenPresentation table tools: merge, split, row height and design on a
+  table in pptx-talk.pptx, undone and saved as .pptx.
+* The library tests, run from library/tests with the files they read:
+  OWFLibTest 133 passed, 0 failed; OWFLibsTest 380 passed, 0 failed;
+  OWFSpellTest 0 failed.
+
+Not run in the lab: GFOpenPressmaster's Facing Pages and tracked format
+changes in an ODT file (both are covered by the unit tests, and neither has
+changed since RC92).
 
 Known
 -----
