@@ -11,6 +11,7 @@
 # library, and the one that was checked in a lab.
 #
 #   REF            the ref file (default deps/gfopensqlite.ref)
+#   UNZIP          the unzip to use (default unzip); when there is none, python3 -m zipfile unpacks
 #   RELEASE_BASE   where releases are (default https://github.com/DalsinAI/gfopensqlite/releases/download)
 #
 # usage: scripts/fetch-gfopensqlite.sh DEST
@@ -37,7 +38,14 @@ curl -sSfL -o "$W/$ZIP" "$RELEASE_BASE/$TAG/$ZIP" ||
     { echo "fetch-gfopensqlite: couldn't fetch $RELEASE_BASE/$TAG/$ZIP" >&2; exit 1; }
 echo "$SUM  $W/$ZIP" | sha256sum -c - >/dev/null 2>&1 ||
     { echo "fetch-gfopensqlite: $ZIP is not the file $REF names (SHA-256 differs)" >&2; exit 1; }
-unzip -qo "$W/$ZIP" -d "$W/x"
+# unzip where there is one; a kitchen without it (LumaVAULT's, 23 Nov 2026) has Python's zipfile
+if command -v "${UNZIP:-unzip}" >/dev/null 2>&1; then
+    "${UNZIP:-unzip}" -qo "$W/$ZIP" -d "$W/x"
+else
+    mkdir -p "$W/x"
+    python3 -m zipfile -e "$W/$ZIP" "$W/x" ||
+        { echo "fetch-gfopensqlite: no unzip, and python3 -m zipfile couldn't unpack $ZIP" >&2; exit 1; }
+fi
 S=$W/x/GFOpenSQLite
 for f in Libs/sqlite.library SDK/lib/soft-float/libsqlite3_link.a SDK/Include/sqlite3.h SDK/Include/sqlite3_link.h \
          SDK/Include/libraries/sqlite.h SDK/Include/inline/sqlite.h SDK/Include/proto/sqlite.h; do
