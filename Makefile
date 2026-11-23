@@ -863,3 +863,12 @@ test: attribution-test attribution-check
 check: attribution-test attribution-check
 
 .PHONY: attribution-test attribution-check
+
+# The release package (scripts/package.sh, release/VERSION) and the sqlite fetch without unzip, on made-up builds.
+package-test:
+	sh tests/repo/test_package.sh
+
+test: package-test
+check: package-test
+
+.PHONY: package-test
