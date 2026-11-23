@@ -15,6 +15,45 @@ STOVE=${STOVE:-$HOME/AmiCradle/stoves/os32-gcc16}
 DEPS=${DEPS:-$OUT/deps}
 GIT_BASE=${AMIGACHROME_GIT_BASE:-https://github.com/}
 mkdir -p "$DEPS"
+# The other repositories a build needs, each at its pinned commit, fetched before anything is compiled so that a
+# build that cannot get one stops in its first seconds. Each is asked of GIT_BASE first (GitHub), then of
+# AMIGACHROME_GIT_MIRROR (default: LumaVAULT's git mirror on the machine the kitchen runs on), which has the
+# repositories GitHub does not give without a name. A server that does not give a bare commit is asked for its
+# branches, and the commit is taken from those.
+GIT_MIRROR=${AMIGACHROME_GIT_MIRROR:-http://127.0.0.1:8418/}
+GIT_TERMINAL_PROMPT=0
+export GIT_TERMINAL_PROMPT
+fetch_dep() {   # fetch_dep NAME REF: DalsinAI/NAME at REF into $DEPS/NAME
+    [ -d "$DEPS/$1/.git" ] && return 0
+    for base in "$GIT_BASE" "$GIT_MIRROR"; do
+        rm -rf "$DEPS/$1"
+        git init -q "$DEPS/$1"
+        if git -C "$DEPS/$1" fetch -q --depth 1 "${base}DalsinAI/$1" "$2" 2>/dev/null &&
+           git -C "$DEPS/$1" checkout -q FETCH_HEAD 2>/dev/null; then
+            echo "build-amiga.sh: $1 from $base"
+            return 0
+        fi
+        if git -C "$DEPS/$1" fetch -q "${base}DalsinAI/$1" '+refs/heads/*:refs/remotes/dep/*' 2>/dev/null &&
+           { git -C "$DEPS/$1" checkout -q "$2" 2>/dev/null || git -C "$DEPS/$1" checkout -q "dep/$2" 2>/dev/null; }; then
+            echo "build-amiga.sh: $1 from $base (its branches)"
+            return 0
+        fi
+    done
+    echo "build-amiga.sh: couldn't fetch DalsinAI/$1 at $2 (asked $GIT_BASE and $GIT_MIRROR)" >&2
+    return 1
+}
+ref_of() {      # ref_of FILE DEFAULT: the first line of deps/FILE, or DEFAULT
+    r=$2
+    [ -f "$HERE/deps/$1" ] && r=$(head -n 1 "$HERE/deps/$1" | tr -d '[:space:]')
+    [ -n "$r" ] || r=$2
+    echo "$r"
+}
+REF=$(ref_of openamigalayout.ref master)
+OGT_REF=$(ref_of gfopengadtools.ref main)
+DRAW_REF=$(ref_of gfopendraw.ref main)
+fetch_dep gfopenlayout "$REF"
+fetch_dep gfopengadtools "$OGT_REF"
+fetch_dep gfopendraw "$DRAW_REF"
 # sqlite.library for GFOpenBase (build.d/base.sh, SQLITE=library, the default): the release of
 # DalsinAI/gfopensqlite that deps/gfopensqlite.ref names, its .zip checked by SHA-256, gives the link library
 # GFOpenBase is built with and the sqlite.library that goes in the package's Libs. OPENSQLITE_LIB set by the
@@ -26,15 +65,6 @@ fi
 export OPENSQLITE_LIB
 # GFOpenLayout pinned (Team 5, 25 October 2026): a build of a GFOffice commit always takes the same GFOpenLayout,
 # and a GFOffice pull request that needs a GFOpenLayout one names that one's head here, to be checked together.
-REF=master
-[ -f "$HERE/deps/openamigalayout.ref" ] && REF=$(head -n 1 "$HERE/deps/openamigalayout.ref" | tr -d '[:space:]')
-[ -n "$REF" ] || REF=master
-if [ ! -d "$DEPS/gfopenlayout/.git" ]; then
-    git init -q "$DEPS/gfopenlayout" &&
-        git -C "$DEPS/gfopenlayout" fetch -q --depth 1 "${GIT_BASE}DalsinAI/gfopenlayout" "$REF" &&
-        git -C "$DEPS/gfopenlayout" checkout -q FETCH_HEAD ||
-        { echo "build-amiga.sh: couldn't fetch DalsinAI/gfopenlayout at $REF" >&2; exit 1; }
-fi
 echo "build-amiga.sh: gfopenlayout at $(git -C "$DEPS/gfopenlayout" rev-parse --short HEAD) ($REF)"
 OS32_GCC16=$STOVE OPENLAYOUT_SRC="$DEPS/gfopenlayout" sh "$HERE/build-os3.sh" "$OUT"
 OS32_GCC16=$STOVE sh "$HERE/build-library.sh" "$OUT/library"
@@ -45,36 +75,24 @@ OS32_GCC16=$STOVE sh "$HERE/build-library.sh" "$OUT/library"
 # GFOpenGadTools' theme reader, at the commit deps/gfopengadtools.ref names, and at -Os as the ROM's is
 # (amicradle-guest tools/openkickrom: OPT=-Os): after a restart this copy serves the whole system, Workbench too.
 # GFOpenDraw's build below takes the same GFOpenGadTools.
-OGT_REF=main
-[ -f "$HERE/deps/gfopengadtools.ref" ] && OGT_REF=$(head -n 1 "$HERE/deps/gfopengadtools.ref" | tr -d '[:space:]')
-[ -n "$OGT_REF" ] || OGT_REF=main
-if [ ! -d "$DEPS/gfopengadtools/.git" ]; then
-    git init -q "$DEPS/gfopengadtools" &&
-        git -C "$DEPS/gfopengadtools" fetch -q --depth 1 "${GIT_BASE}DalsinAI/gfopengadtools" "$OGT_REF" &&
-        git -C "$DEPS/gfopengadtools" checkout -q FETCH_HEAD ||
-        { echo "build-amiga.sh: couldn't fetch DalsinAI/gfopengadtools at $OGT_REF" >&2; exit 1; }
-fi
 echo "build-amiga.sh: gfopengadtools at $(git -C "$DEPS/gfopengadtools" rev-parse --short HEAD) ($OGT_REF)"
 STOVE="$STOVE" OUT="$DEPS/gfopenlayout-lib" OGT_ROOT="$DEPS/gfopengadtools" OPT=-Os SPECS="$HERE/specs/m68k-soft-m68040.specs" \
     sh "$DEPS/gfopenlayout/build-library.sh"
 cp "$DEPS/gfopenlayout-lib/lib/gfopenlayout.library" "$OUT/library/gfopenlayout.library"
 echo "$OUT/library/gfopenlayout.library ($(wc -c < "$OUT/library/gfopenlayout.library") bytes)"
-OS32_GCC16=$STOVE OPENLAYOUT_SRC="$DEPS/gfopenlayout" OWF=library OWF_BUILD_LIBRARIES=no \
-    sh "$HERE/build-os3.sh" "$OUT/onlib"
+# ONLIB=no leaves this second build out: a release candidate's package does not carry the onlib programs, and
+# the kitchen stops a job at 45 minutes (build-rc.sh sets it).
+if [ "${ONLIB:-yes}" != no ]; then
+    OS32_GCC16=$STOVE OPENLAYOUT_SRC="$DEPS/gfopenlayout" OWF=library OWF_BUILD_LIBRARIES=no \
+        sh "$HERE/build-os3.sh" "$OUT/onlib"
+else
+    echo "build-amiga.sh: ONLIB=no, the programs on the owf libraries are not built"
+fi
 
 # GFOpenDraw stays in its own repository because its plain-C indexed-paint engine is independently reusable.
 # A suite build pins and builds that repository, then puts the two applications and its m68k SDK beside the
 # other GFOffice deliverables. Its build-amiga.sh finds this job's pinned gfopenlayout and fetches
 # GFOpenGadTools when the job did not check it out.
-DRAW_REF=main
-[ -f "$HERE/deps/gfopendraw.ref" ] && DRAW_REF=$(head -n 1 "$HERE/deps/gfopendraw.ref" | tr -d '[:space:]')
-[ -n "$DRAW_REF" ] || DRAW_REF=main
-if [ ! -d "$DEPS/gfopendraw/.git" ]; then
-    git init -q "$DEPS/gfopendraw" &&
-        git -C "$DEPS/gfopendraw" fetch -q --depth 1 "${GIT_BASE}DalsinAI/gfopendraw" "$DRAW_REF" &&
-        git -C "$DEPS/gfopendraw" checkout -q FETCH_HEAD ||
-        { echo "build-amiga.sh: couldn't fetch DalsinAI/gfopendraw at $DRAW_REF" >&2; exit 1; }
-fi
 echo "build-amiga.sh: gfopendraw at $(git -C "$DEPS/gfopendraw" rev-parse --short HEAD) ($DRAW_REF)"
 OUT="$OUT/draw" STOVE="$STOVE" AMICRADLE_GIT_BASE="$GIT_BASE" \
     sh "$DEPS/gfopendraw/build-amiga.sh"

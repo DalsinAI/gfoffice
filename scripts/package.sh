@@ -4,8 +4,8 @@
 # libraries, with their tests), sdk/, Images, Rexx, samples, Documentation, the release notes and SHA256SUMS,
 # then the .lha and its SHA-256 where there is an lha to pack with.
 #
-#   release/VERSION              one line: the version the package is named for (as 2.0.25-rc93)
-#   release/RELEASE-NOTES.txt    goes in the package and beside the .lha
+#   candidate/VERSION              one line: the version the package is named for (as 2.0.25-rc93)
+#   candidate/RELEASE-NOTES.txt    goes in the package and beside the .lha
 #
 # usage: scripts/package.sh OUT [DEST]     DEST defaults to OUT/release
 #
@@ -15,17 +15,17 @@ set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 O=${1:?usage: package.sh OUT [DEST]}
 DEST=${2:-$O/release}
-[ -f "$HERE/release/VERSION" ] || { echo "package.sh: no release/VERSION" >&2; exit 1; }
-VERSION=$(head -n 1 "$HERE/release/VERSION" | tr -d '[:space:]')
+[ -f "$HERE/candidate/VERSION" ] || { echo "package.sh: no candidate/VERSION" >&2; exit 1; }
+VERSION=$(head -n 1 "$HERE/candidate/VERSION" | tr -d '[:space:]')
 case "$VERSION" in
     [0-9]*.[0-9]*) ;;
-    *) echo "package.sh: release/VERSION does not begin with a version (as 2.0.25-rc93)" >&2; exit 1 ;;
+    *) echo "package.sh: candidate/VERSION does not begin with a version (as 2.0.25-rc93)" >&2; exit 1 ;;
 esac
 case "$VERSION" in
     *[!0-9A-Za-z.-]*) echo "package.sh: the version may hold letters, digits, '.' and '-' only" >&2; exit 1 ;;
 esac
-NOTES=$HERE/release/RELEASE-NOTES.txt
-[ -f "$NOTES" ] || { echo "package.sh: no release/RELEASE-NOTES.txt" >&2; exit 1; }
+NOTES=$HERE/candidate/RELEASE-NOTES.txt
+[ -f "$NOTES" ] || { echo "package.sh: no candidate/RELEASE-NOTES.txt" >&2; exit 1; }
 NAME=GFOffice-$VERSION-AmigaOS3
 P=$DEST/$NAME
 rm -rf "$P" "$DEST/$NAME.info" "$DEST/$NAME.lha" "$DEST/$NAME.lha.sha256"

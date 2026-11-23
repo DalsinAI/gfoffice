@@ -864,7 +864,7 @@ check: attribution-test attribution-check
 
 .PHONY: attribution-test attribution-check
 
-# The release package (scripts/package.sh, release/VERSION) and the sqlite fetch without unzip, on made-up builds.
+# The release package (scripts/package.sh, candidate/VERSION) and the sqlite fetch without unzip, on made-up builds.
 package-test:
 	sh tests/repo/test_package.sh
 
