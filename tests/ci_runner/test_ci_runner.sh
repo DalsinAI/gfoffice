@@ -2,7 +2,8 @@
 # Copyright (c) 2026 AmiCradle Team. MIT licence.
 # SPDX-License-Identifier: MIT
 # tests/ci/test_all.sh on a made-up repository: it finds every kind of test, a failing one makes it fail,
-# exit 77 and tests/ci/skip.txt skip, and a test outside the patterns is not run.
+# exit 77 and tests/ci/skip.txt skip, a test outside the patterns is not run, and
+# tests/ci/extra.txt's commands run.
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
@@ -22,11 +23,11 @@ printf 'import unittest\nclass T(unittest.TestCase):\n    def test_bad(self): se
 if out=$(OUT=$T/out sh "$T/tests/ci/test_all.sh"); then echo "FAIL a failing test passed: $out"; exit 1; fi
 echo "$out" | grep -q '^FAIL tests/b/test_bad.py' || { echo "FAIL not named: $out"; exit 1; }
 echo "$out" | grep -q 'broken' || { echo "FAIL no log tail: $out"; exit 1; }
-# a top Makefile's check target runs first, and its failure fails the run
+# tests/ci/extra.txt's commands run too, and a failing one fails the run
 rm "$T/tests/b/test_bad.py"
-printf 'check:\n\ttrue\n' > "$T/Makefile"
+printf '# name: command\nmake-check: true\n' > "$T/tests/ci/extra.txt"
 out=$(OUT=$T/out sh "$T/tests/ci/test_all.sh")
-echo "$out" | grep -qx 'PASS make:check' || { echo "FAIL make check not run: $out"; exit 1; }
-printf 'check:\n\tfalse\n' > "$T/Makefile"
-if out=$(OUT=$T/out sh "$T/tests/ci/test_all.sh"); then echo "FAIL a failing make check passed: $out"; exit 1; fi
-echo "PASS ci runner: finds, fails, skips, make check"
+echo "$out" | grep -qx 'PASS extra:make-check' || { echo "FAIL extra.txt not run: $out"; exit 1; }
+printf 'make-check: false\n' > "$T/tests/ci/extra.txt"
+if out=$(OUT=$T/out sh "$T/tests/ci/test_all.sh"); then echo "FAIL a failing extra.txt command passed: $out"; exit 1; fi
+echo "PASS ci runner: finds, fails, skips, extra.txt"

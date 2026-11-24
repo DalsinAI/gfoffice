@@ -1,0 +1,2 @@
+# Other test commands, one a line: "name: command", run from the top of the repository.
+make-check: make -j4 check
