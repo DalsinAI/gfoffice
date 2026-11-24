@@ -1,2 +1,3 @@
-# Other test commands, one a line: "name: command", run from the top of the repository.
-make-check: make -j4 check
+# Other test commands, one a line: "name @ paths: command", run from the top of the repository.
+# The command runs on a pull request when a change is under one of the paths; every night it runs anyway.
+make-check @ src include libowf app mk deps tests Makefile: make -j4 check
