@@ -4,9 +4,9 @@
 #   libs/sqlite.library for the package, and build.d/base.sh then builds GFOpenBase from that folder;
 #   a .zip whose SHA-256 is not the ref's, a release that is not there, a .zip with a file missing and a
 #   ref with no sum each stop it, and none of them leaves a folder a build would take;
-#   the vault: a release on a stand-in kitchen shelf (SHELF=...) is taken from there with no RELEASE_BASE
-#   to reach, a shelf without that version falls back to RELEASE_BASE, and a shelf .zip whose SHA-256 is
-#   not the ref's stops it;
+#   the vault: a release on a stand-in kitchen shelf (SHELF=..., or with no SHELF the one beside the job's
+#   stove) is taken from there with no RELEASE_BASE to reach, a shelf without that version falls back to
+#   RELEASE_BASE, and a shelf .zip whose SHA-256 is not the ref's stops it;
 #   deps/gfopensqlite.ref itself is a tag and a SHA-256.
 # usage: tests/base/test_base_sqlite_fetch.sh   (from the repository's top)
 # MIT, Copyright (c) 2026 AmiCradle Team.
@@ -120,6 +120,14 @@ N=11
 echo "v9.9.9-2 $SUM" > "$W/ref"
 rc=0; vault file://$W/nowhere || rc=$?
 check "on neither the shelf nor RELEASE_BASE stops it" '[ $rc != 0 ] && grep -q "is not on the shelf" "$W/log" && nothing'
+N=12
+# no SHELF: the kitchen's shelf is found beside the job's stove (KITCHEN_ROOT/stoves/<stove>, KITCHEN_ROOT/shelf)
+K=$W/kitchen
+mkdir -p "$K/stoves/os32" "$K/shelf/amicradle/gfopensqlite/9.9.9-1/files"
+cp "$W/rel/v9.9.9-1/GFOpenSQLite-9.9.9-1.zip" "$K/shelf/amicradle/gfopensqlite/9.9.9-1/files/"
+echo "v9.9.9-1 $SUM" > "$W/ref"
+rc=0; (unset SHELF; REF=$W/ref STOVE=$K/stoves/os32 RELEASE_BASE=file://$W/nowhere sh "$HERE/scripts/fetch-gfopensqlite.sh" "$W/dest$N" > "$W/log" 2>&1) || rc=$?
+check "with no SHELF, the shelf beside the job's stove" '[ $rc = 0 ] && grep -qF "from the shelf ($K/shelf/amicradle/gfopensqlite/9.9.9-1)" "$W/log" && [ "$(cat "$W/dest12/libs/sqlite.library")" = "the library" ]'
 
 read -r T S REST < "$HERE/deps/gfopensqlite.ref" || true
 check "deps/gfopensqlite.ref: a tag and a SHA-256, nothing more" 'case "$T" in v[0-9]*) [ ${#S} = 64 ] && [ -z "$REST" ] && [ "$(wc -l < "$HERE/deps/gfopensqlite.ref")" = 1 ] ;; *) false ;; esac'

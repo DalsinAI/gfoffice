@@ -16,7 +16,9 @@
 #
 #   REF            the ref file (default deps/gfopensqlite.ref)
 #   UNZIP          the unzip to use (default unzip); when there is none, python3 -m zipfile unpacks
-#   SHELF          gfopensqlite on the kitchen's shelf (default /srv/kitchen/shelf/amicradle/gfopensqlite)
+#   SHELF          gfopensqlite on the kitchen's shelf. When it is not set, the first of these that holds the
+#                  version: beside the job's stove (STOVE/../../shelf/...), LumaVAULT's kitchen
+#                  (/srv/samsung/kitchen/shelf/...), a kitchen at its own default (/srv/kitchen/shelf/...)
 #   RELEASE_BASE   where releases are, when the shelf hasn't it (default https://github.com/DalsinAI/gfopensqlite/releases/download)
 #
 # usage: scripts/fetch-gfopensqlite.sh DEST
@@ -25,7 +27,6 @@ set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 DEST=${1:?usage: fetch-gfopensqlite.sh DEST}
 REF=${REF:-$HERE/deps/gfopensqlite.ref}
-SHELF=${SHELF:-/srv/kitchen/shelf/amicradle/gfopensqlite}
 RELEASE_BASE=${RELEASE_BASE:-https://github.com/DalsinAI/gfopensqlite/releases/download}
 [ -f "$REF" ] || { echo "fetch-gfopensqlite: no $REF" >&2; exit 1; }
 read -r TAG SUM REST < "$REF" || true
@@ -38,6 +39,13 @@ case "$TAG" in
 esac
 [ ${#SUM} = 64 ] || { echo "fetch-gfopensqlite: $REF has no SHA-256 after the tag" >&2; exit 1; }
 ZIP=GFOpenSQLite-${TAG#v}.zip
+if [ -z "${SHELF:-}" ]; then
+    for s in ${STOVE:+"$(dirname -- "$(dirname -- "$STOVE")")/shelf/amicradle/gfopensqlite"} \
+             /srv/samsung/kitchen/shelf/amicradle/gfopensqlite /srv/kitchen/shelf/amicradle/gfopensqlite; do
+        SHELF=$s
+        [ -f "$SHELF/${TAG#v}/files/$ZIP" ] && break
+    done
+fi
 W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
 if [ -f "$SHELF/${TAG#v}/files/$ZIP" ]; then
