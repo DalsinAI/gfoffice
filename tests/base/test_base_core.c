@@ -3850,9 +3850,9 @@ static void test_make_table(void)
     c = ob_query_add_column(&q, NULL, "length(\"Customers\".\"Name\") * 2");
     c->show = 1;
     strcpy(c->heading, "Twice");
-    c = ob_query_add_column(&q, NULL, "\"Customers\".\"Credit\" / 3.0");
+    c = ob_query_add_column(&q, NULL, "\"Customers\".\"Credit\" / 4.0");
     c->show = 1;
-    strcpy(c->heading, "Third");
+    strcpy(c->heading, "Quarter");
     ob_query_set_kind(&q, OB_QK_MAKE);
     CHECK(!ob_query_check(p, &q), "no table named");
     CHECK_ERR(p, "name the table it makes");
@@ -3873,14 +3873,14 @@ static void test_make_table(void)
     CHECK(ob_undo_count(p) > 0, "a step to undo");
     CHECK(ob_query_run(p, &q, NULL, &undoable) == 2 && undoable == 0, "run: %s", ob_error(p));
     CHECK(ob_undo_count(p) == 0, "a new table empties the Undo list");
-    CHECK(!strcmp(design_of(p, "Yorkers"), "id:0,Name:1,Town:1,Credit limit:5,Twice:3,Third:4"), "the new table's design: %s",
+    CHECK(!strcmp(design_of(p, "Yorkers"), "id:0,Name:1,Town:1,Credit limit:5,Twice:3,Quarter:4"), "the new table's design: %s",
           design_of(p, "Yorkers"));
     {
         static ob_query r;
         ob_query_init(&r, "");
         ob_query_add_table(&r, "Yorkers");
         ob_query_add_column(&r, "Yorkers", "*")->show = 1;
-        CHECK(!strcmp(qrows(p, &r, NULL, 0, -1), "1|bob|York||6|;2|dan|York|250.00|6|8333.33333333333"),
+        CHECK(!strcmp(qrows(p, &r, NULL, 0, -1), "1|bob|York||6|;2|dan|York|250.00|6|6250.0"),
               "its rows, in the query's order: %s", qrows(p, &r, NULL, 0, -1));
     }
     CHECK(ob_query_run(p, &q, NULL, &undoable) < 0, "a second run is refused");
