@@ -62,7 +62,7 @@
 struct Library *GadToolsBase = NULL, *AslBase = NULL;
 struct RxsLib *RexxSysBase = NULL;
 
-#define VERSION_TEXT "GFOpenBase 0.18.0 (17.11.2026)"
+#define VERSION_TEXT "GFOpenBase 0.19.0 (24.11.2026)"
 static const char version[] __attribute__((used)) =
     "$VER: " VERSION_TEXT " GFOpenBase, the database of the GFOffice Suite. MIT, Copyright (c) 2026 AmiCradle Team";
 
@@ -2805,9 +2805,10 @@ static int ask_text(const char *title, const char *prompt, char *buf, size_t siz
     return okd;
 }
 
-/* qy changes rows (an Update, Append or Delete query): says how many, asks,
- * and runs it all or none; the datasheet shows the table's rows again.
- * 0 when it didn't run. */
+/* qy changes rows (an Update, Append or Delete query) or makes a table (a
+ * Make Table query): says how many, asks, and runs it all or none; the
+ * datasheet shows the table's rows again (a made table's). 0 when it
+ * didn't run. */
 static int run_action(void)
 {
     char said[2 * OB_NAME_MAX + 96], msg[sizeof status];
@@ -2822,10 +2823,22 @@ static int run_action(void)
     }
     n = ob_query_ask(proj, &qy, q_pv, said, sizeof said);
     if (n < 0) { tell(ob_error(proj)); return 0; }
-    if (n == 0) { tell(said); return 0; }
+    if (n == 0 && qy.kind != OB_QK_MAKE) { tell(said); return 0; }    /* an empty table is still made */
     if (!ask(said, "Run|Cancel")) { set_status("The query was not run"); return 0; }
     n = ob_query_run(proj, &qy, q_pv, &undoable);
     if (n < 0) { tell(ob_error(proj)); load_page(); return 0; }
+    if (qy.kind == OB_QK_MAKE) {
+        char made[OB_NAME_MAX];
+        const char *a = qy.target, *e;
+        while (*a == ' ') a++;
+        put_text(made, sizeof made, a);
+        for (e = made + strlen(made); e > made && e[-1] == ' '; e--) ;
+        made[e - made] = 0;
+        snprintf(msg, sizeof msg, "Made the table %.63s: %lld row%s", made, (long long)n, n == 1 ? "" : "s");
+        load_tables(made);
+        set_status(msg);
+        return 1;
+    }
     if (undoable) snprintf(msg, sizeof msg, "%.180s. Edit > Undo takes it back", ob_undo_name(proj));
     else snprintf(msg, sizeof msg, "%s query %.63s: %lld row%s. It can't be undone", ob_qkind_name(qy.kind),
                   qy.name[0] ? qy.name : "(not saved)", (long long)n, n == 1 ? "" : "s");
@@ -2849,7 +2862,8 @@ static int run_query(int ask_again)
         }
         q_pv[i] = q_answers[i];
     }
-    if (qy.kind == OB_QK_UPDATE || qy.kind == OB_QK_APPEND || qy.kind == OB_QK_DELETE) return run_action();
+    if (qy.kind == OB_QK_UPDATE || qy.kind == OB_QK_APPEND || qy.kind == OB_QK_DELETE || qy.kind == OB_QK_MAKE)
+        return run_action();
     q_ncols = ob_query_columns(proj, &qy, q_cols, OB_QUERY_OUT);
     if (q_ncols < 0) { tell(ob_error(proj)); q_ncols = 0; return 0; }
     if (q_ncols > OB_QUERY_OUT) q_ncols = OB_QUERY_OUT;
@@ -2872,7 +2886,7 @@ static int run_query(int ask_again)
 enum {
     Q_NAME = 1, Q_SQLONLY, Q_SQL, Q_TABLES, Q_ADDTABLE, Q_REMTABLE, Q_JOINS, Q_COLS, Q_ADDFIELD, Q_ADDEXPR, Q_REMCOL,
     Q_EXPR, Q_HEAD, Q_SORT, Q_TOTAL, Q_SHOW, Q_CRIT0, Q_CRIT1, Q_CRIT2, Q_SQLTEXT, Q_RUN, Q_SAVE, Q_CLOSE,
-    Q_KIND, Q_TARGET, Q_UALL, Q_TO, Q_COUNT
+    Q_KIND, Q_TARGET, Q_UALL, Q_TO, Q_MAKENAME, Q_XTAB, Q_COUNT
 };
 
 #define QF_MAX 240                 /* fields offered to add */
@@ -2892,6 +2906,8 @@ static STRPTR q_kind_labels[OB_QKINDS + 1];
 static STRPTR q_target_labels[OB_MAX_FIELDS + 2];   /* the tables an Update, Append or Delete can change */
 static int q_ntargets, q_target_sel;
 static ob_query q_part;            /* a saved query, looked at as a union's part */
+static STRPTR q_xtab_labels[] = { (STRPTR)"Only picks rows", (STRPTR)"Row Heading", (STRPTR)"Column Heading",
+                                  (STRPTR)"Value", NULL };      /* a Crosstab's parts, OB_XT_* */
 
 static void q_lists(void)
 {
@@ -2925,6 +2941,10 @@ static void q_lists(void)
         if (c->to[0] && (q_ed.kind == OB_QK_UPDATE || q_ed.kind == OB_QK_APPEND)) {
             size_t len = strlen(q_ctext[i]);
             snprintf(q_ctext[i] + len, sizeof q_ctext[i] - len, " -> %.30s", c->to);
+        }
+        if (q_ed.kind == OB_QK_CROSSTAB && c->xtab > OB_XT_NONE && c->xtab < OB_XTS) {
+            size_t len = strlen(q_ctext[i]);
+            snprintf(q_ctext[i] + len, sizeof q_ctext[i] - len, " = %s", (const char *)q_xtab_labels[c->xtab]);
         }
         q_cnodes[i].ln_Name = q_ctext[i];
         AddTail(&q_cl, &q_cnodes[i]);
@@ -2998,6 +3018,7 @@ static void q_read_strings(struct Window *qw, struct Gadget **gad, int csel)
     if (str) put_text((dst), sizeof(dst), (const char *)str); } while (0)
     QSTR(Q_NAME, q_ed.name);
     if (q_ed.sql_only) QSTR(Q_SQL, q_ed.sql);
+    if (q_ed.kind == OB_QK_MAKE) QSTR(Q_MAKENAME, q_ed.target);
     if (c && !q_ed.sql_only) {
         if (!c->table[0]) QSTR(Q_EXPR, c->expr);
         QSTR(Q_HEAD, c->heading);
@@ -3376,6 +3397,14 @@ static void design_query(int fresh)
                 g = gad[Q_TARGET] = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)q_target_labels,
                                                  GTCY_Active, (ULONG)q_target_sel, TAG_DONE);
                 ng.ng_TopEdge = y += rowh;
+            } else if (q_ed.kind == OB_QK_MAKE) {
+                /* the new table's name: typed SQL makes one too */
+                ng.ng_Width = half;
+                ng.ng_GadgetText = (UBYTE *)"Make table";
+                ng.ng_GadgetID = Q_MAKENAME;
+                g = gad[Q_MAKENAME] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)q_ed.target,
+                                                   GTST_MaxChars, OB_NAME_MAX - 1, TAG_DONE);
+                ng.ng_TopEdge = y += rowh;
             } else if (!q_ed.sql_only && q_ed.kind == OB_QK_UNION) {
                 ng.ng_Width = fh + 6;
                 ng.ng_Flags = PLACETEXT_RIGHT;
@@ -3460,6 +3489,16 @@ static void design_query(int fresh)
                     ng.ng_GadgetID = Q_TO;
                     g = gad[Q_TO] = CreateGadget(STRING_KIND, g, &ng, GTST_String, (ULONG)(c ? c->to : ""),
                                                  GTST_MaxChars, OB_EXPR_MAX - 1, GA_Disabled, nc, TAG_DONE);
+                } else if (q_ed.kind == OB_QK_CROSSTAB) {
+                    /* the column's part: a row heading, the column heading, the value, or it only picks rows */
+                    ng.ng_TopEdge = y += rowh;
+                    ng.ng_Width = half;
+                    ng.ng_GadgetText = (UBYTE *)"Crosstab";
+                    ng.ng_GadgetID = Q_XTAB;
+                    g = gad[Q_XTAB] = CreateGadget(CYCLE_KIND, g, &ng, GTCY_Labels, (ULONG)q_xtab_labels,
+                                                   GTCY_Active, (ULONG)(c && c->xtab < OB_XTS ? c->xtab : 0), GA_Disabled, nc,
+                                                   TAG_DONE);
+                    ng.ng_Width = iw - lw;
                 }
                 ng.ng_TopEdge = y += rowh;
                 ng.ng_Width = half;
@@ -3536,6 +3575,8 @@ static void design_query(int fresh)
                 q_read_strings(qw, gad, csel);
                 switch (gg->GadgetID) {
                 case Q_NAME: case Q_SQL: break;
+                case Q_MAKENAME: rebuild = 1; break;
+                case Q_XTAB: if (c && code < OB_XTS) { c->xtab = code; rebuild = 1; } break;
                 case Q_EXPR: case Q_HEAD: case Q_TO: case Q_CRIT0: case Q_CRIT1: case Q_CRIT2: rebuild = 1; break;
                 case Q_KIND:
                     if (code < OB_QKINDS) { ob_query_set_kind(&q_ed, (ob_qkind)code); rebuild = 1; }
@@ -3597,8 +3638,9 @@ static void design_query(int fresh)
                     if (!ob_query_check(proj, &q_ed)) {
                         struct EasyStruct es = { sizeof(struct EasyStruct), 0, (UBYTE *)"GFOpenBase", (UBYTE *)"%s", (UBYTE *)"OK" };
                         EasyRequest(qw, &es, NULL, (ULONG)ob_error(proj));
-                    } else if (q_ed.kind == OB_QK_UPDATE || q_ed.kind == OB_QK_APPEND || q_ed.kind == OB_QK_DELETE) {
-                        /* it changes rows: the count, Run or Cancel, and the designer stays */
+                    } else if (q_ed.kind == OB_QK_UPDATE || q_ed.kind == OB_QK_APPEND || q_ed.kind == OB_QK_DELETE
+                               || q_ed.kind == OB_QK_MAKE) {
+                        /* it changes rows or makes a table: the count, Run or Cancel, and the designer stays */
                         int k;
                         qy = q_ed;
                         for (k = 0; k < OB_QUERY_PARAMS; k++) q_answers[k][0] = 0;
@@ -5802,7 +5844,8 @@ static int rexx_rows(const char *command, char *out, size_t size)
 /* QUERIES QUERYFIELDS COUNTQUERY QUERYROW RUNQUERY (ob_rexx_queries) on the
  * project's saved queries, and QUERY and EXEC with typed SQL (ob_rexx_sql);
  * after a RUNQUERY or an EXEC the datasheet shows the table's rows as they
- * now are. -1 when command isn't one of these. */
+ * now are (and the table list a table a Make Table query made). -1 when
+ * command isn't one of these. */
 static int rexx_queries(const char *command, char *out, size_t size)
 {
     int changed = 0, rc = ob_rexx_queries(proj, command, out, size, &changed);
@@ -5815,7 +5858,8 @@ static int rexx_queries(const char *command, char *out, size_t size)
             sel_row = -1;
             left_col = 0;
         }
-        load_page();
+        if (ob_table_count(proj) != table_count) load_tables(NULL);    /* a Make Table query made one */
+        else load_page();
     }
     return rc;
 }

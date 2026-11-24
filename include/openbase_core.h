@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#define OB_CORE_VERSION "0.19.0"
+#define OB_CORE_VERSION "0.20.0"
 
 /* The .oadb header: PRAGMA application_id ("OADB") and user_version. */
 #define OB_APPLICATION_ID 0x4F414442L
@@ -655,7 +655,11 @@ typedef struct ob_qcolumn {
     ob_total total;
     char criteria[OB_QUERY_OR][OB_VALUE_MAX];
     char to[OB_EXPR_MAX];           /* core 0.15: Update To (a value) or Append To (a field); "" none */
+    int xtab;                       /* core 0.20, OB_QK_CROSSTAB: OB_XT_* */
 } ob_qcolumn;
+
+/* A column's part in a Crosstab query (core 0.20). */
+enum { OB_XT_NONE, OB_XT_ROW, OB_XT_COLUMN, OB_XT_VALUE, OB_XTS };
 
 /* What a query does (core 0.15): reads rows, or changes them. */
 typedef enum ob_qkind {
@@ -664,6 +668,8 @@ typedef enum ob_qkind {
     OB_QK_APPEND,                   /* adds the rows it reads to the target */
     OB_QK_DELETE,                   /* deletes the target's rows */
     OB_QK_UNION,                    /* core 0.16, reads: the rows of several tables and queries, one after another */
+    OB_QK_MAKE,                     /* core 0.20: makes a new table of the rows it reads */
+    OB_QK_CROSSTAB,                 /* core 0.20, reads: a value totalled for each row heading and column heading */
     OB_QKINDS
 } ob_qkind;
 
@@ -679,7 +685,7 @@ typedef struct ob_query {
     int njoins;                     /* 0: tables joined by their relationships */
     ob_qjoin joins[OB_QUERY_JOINS];
     ob_qkind kind;                  /* core 0.15; OB_QK_SELECT (0) by ob_query_init */
-    char target[OB_NAME_MAX];       /* the table an action query changes; "" the first table */
+    char target[OB_NAME_MAX];       /* the table an action query changes; "" the first table; a Make Table's new table */
     int union_all;                  /* core 0.16, OB_QK_UNION: 1 keeps rows that are the same (UNION ALL) */
 } ob_query;
 
@@ -775,7 +781,7 @@ int ob_query_delete(ob_project *p, const char *name);
  * ob_query_rows does. A saved action query is kept as "oadb query 3" (an
  * older GFOpenBase refuses to run it, as SQL that changes rows). */
 #define OB_UNDO_ROWS 20000
-const char *ob_qkind_name(ob_qkind k);      /* "Select", "Update", "Append", "Delete", "Union" */
+const char *ob_qkind_name(ob_qkind k);      /* "Select", "Update", "Append", "Delete", "Union", "Make Table", "Crosstab" */
 ob_int ob_query_preview(ob_project *p, const ob_query *q, const char *const *params);
 ob_int ob_query_run(ob_project *p, const ob_query *q, const char *const *params, int *undoable);
 
@@ -823,6 +829,52 @@ ob_int ob_query_ask(ob_project *p, const ob_query *q, const char *const *params,
  * GFOpenBase opens it as its SQL, a plain read). Renaming a table or a
  * saved query renames it in the unions that read it. SQL typed as SQL may
  * say UNION itself, as a Select query; sql_only with this kind is refused. */
+
+/* ---- Make Table queries (core 0.20, design 5.9) ----
+ * A Make Table query (kind OB_QK_MAKE) reads rows as a Select query does
+ * (made in the grid, or typed as one SELECT) and makes a new table of them,
+ * named in q->target. The new table has a Counter, "id" (or "Row", "Row id"
+ * when a column is called that), then a field for each column shown, named
+ * by its heading, of the type the column is shown as: a Counter or a Lookup
+ * becomes an Integer, a Choice a Text; an expression's type is taken from
+ * its values (whole numbers an Integer, numbers a Number, else a Text). A
+ * column of Datatype objects is refused, as Append refuses it.
+ *
+ *   - The name must be free: no table, saved query or view has it. Running
+ *     the query again once the table is made is refused ("Archive is a
+ *     table already: delete it, or make the query's table another name").
+ *   - ob_query_preview makes the table and its rows and takes them back,
+ *     counting the rows; ob_query_run makes them, all or none. A new table
+ *     changes the project's design, so it is not on the Undo list: the list
+ *     is emptied and *undoable is 0. ob_query_ask says "This will make the
+ *     table Archive with 3 rows. It can't be undone." (or "with no rows":
+ *     an empty table is made too).
+ *   - Rows, totals, CSV and views refuse it, as an action query. Saved, its
+ *     grid is "oadb query 5" (an older GFOpenBase opens it as its SQL, the
+ *     plain Select). Renaming a table renames it in the query's grid.
+ *
+ * ---- Crosstab queries (core 0.20, design 5.10) ----
+ * A Crosstab query (kind OB_QK_CROSSTAB) is made in the grid. Each column
+ * has a part (xtab):
+ *
+ *   OB_XT_ROW     a row heading (one to OB_XT_ROWS): a row for each value,
+ *                 sorted A to Z (Z to A when the column sorts down);
+ *   OB_XT_COLUMN  the column heading (exactly one): a column for each value
+ *                 it has in the rows the criteria pick, in order (text
+ *                 without case), headed by the value as the datasheet
+ *                 shows it, "(empty)" for none;
+ *   OB_XT_VALUE   the value (exactly one), with a total (Sum, Count,
+ *                 Average, Min or Max) worked out in each cell; empty
+ *                 where no row has that pair;
+ *   OB_XT_NONE    only picks rows, by its criteria.
+ *
+ * Every criterion picks rows before they are totalled. A Crosstab can't
+ * ask a [question] (its columns are found when it is made ready), has no
+ * drawn total besides the value's, and shows at most OB_QUERY_OUT columns.
+ * It reads: ob_query_rows, ob_query_total, ob_query_columns and CSV take it
+ * as a Select query; a view refuses it (its columns come from the rows), so
+ * does a Union. Saved, its grid is "oadb query 5" with each column's part. */
+#define OB_XT_ROWS 4
 
 /* ---- A query's rows as CSV, a query as a view (core 0.13.1) ----
  * CSV: a header of the result's headings, then every row the query gives,

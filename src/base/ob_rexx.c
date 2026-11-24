@@ -336,11 +336,15 @@ int ob_rexx_queries(ob_project *p, const char *command, char *out, size_t size, 
         goto done;
     }
     if (!ob_query_get(p, name, q)) { snprintf(out, size, "%s", ob_error(p)); rc = 10; goto done; }
-    reads = q->kind == OB_QK_SELECT || q->kind == OB_QK_UNION;
+    reads = q->kind == OB_QK_SELECT || q->kind == OB_QK_UNION || q->kind == OB_QK_CROSSTAB;
 
     if (cmd == RQ_FIELDS) {
         size_t k = 0;
-        if (!reads) { snprintf(out, size, "%.60s changes rows: it shows no columns", q->name); rc = 10; goto done; }
+        if (!reads) {
+            snprintf(out, size, "%.60s %s: it shows no columns", q->name, q->kind == OB_QK_MAKE ? "makes a table" : "changes rows");
+            rc = 10;
+            goto done;
+        }
         n = ob_query_columns(p, q, cols, OB_QUERY_OUT);
         if (n < 0) { snprintf(out, size, "%s", ob_error(p)); rc = 10; goto done; }
         for (i = 0; i < n && i < OB_QUERY_OUT; i++) {

@@ -423,6 +423,65 @@ Tests: `test_query_window` in tests/base/test_base_core.c (the kinds'
 changes and every sentence). The window itself needs a lab (owed while
 Cradle labs are paused).
 
+### 5.9 Make Table queries (core 0.20, GFOpenBase 0.19.0)
+
+A sixth kind, **Make Table** (`OB_QK_MAKE`), reads rows as a Select query
+does (made in the grid, or typed as one `SELECT`) and makes a new table of
+them, named in the query's target (the window's **Make table** line).
+
+- The new table has a Counter, `id` (`Row` or `Row id` when a column is
+  already called `id`), then a field for each column shown, named by its
+  heading, of the type the column is shown as. A Counter or a Lookup
+  becomes an Integer (the new table has no relationships), a Choice a Text.
+  An expression's type comes from its values: any text makes a Text, else
+  any number with a point a Number, else an Integer. A column of Datatype
+  objects is refused, as Append refuses it; so are two columns of one name.
+- The name must be free: no table, saved query or view has it. Running the
+  query again once its table is there is refused ("Archive is a table
+  already: delete it, or give the table Make archive makes another name"):
+  a Make Table query never deletes a table.
+- Run asks first, as the other kinds do: "This will make the table Archive
+  with 3 rows. It can't be undone." An empty result still makes the table
+  ("with no rows"). The table and its rows are made all or none, inside the
+  caller's change when one is open. A new table changes the project's
+  design, so it is not a step on the Undo list, and the list is emptied.
+  After Run the table list shows the new table, chosen.
+- Rows, totals, CSV and views refuse it, as they refuse an action query.
+  Saved, its grid is `oadb query 5`; an older GFOpenBase opens it as its
+  stored SQL, the plain Select. Renaming a table it reads renames it in the
+  grid; renaming the table it made does not change its target.
+
+### 5.10 Crosstab queries (core 0.20, GFOpenBase 0.19.0)
+
+A seventh kind, **Crosstab** (`OB_QK_CROSSTAB`), is made in the grid. Each
+column has a part, chosen in the window's **Crosstab** line:
+
+- **Row Heading** (one to four): a row for each different value, sorted A
+  to Z, or Z to A when the column sorts down;
+- **Column Heading** (exactly one): a column for each value it has in the
+  rows the criteria pick, in order (text without case), headed by the value
+  as the datasheet shows it (`1,500.00`, `Yes`), `(empty)` for none;
+- **Value** (exactly one) with a total, Sum, Count, Average, Min or Max,
+  worked out in each cell, by the Select rules (Sum and Average on numbers,
+  an Average of money rounded to the penny); a cell no row reaches is empty;
+- **Only picks rows**: its criteria pick the rows, nothing is shown.
+
+Every criterion picks rows before they are totalled. The statement is the
+Select of the headings and the value as a `WITH b(...)`, then one
+`total(CASE WHEN c IS value THEN v END)` for each value of the column
+heading, `GROUP BY` the row headings. The column heading's values are found
+when the query is made ready, so a Crosstab can't ask a `[question]`, can't
+be a view (its columns would be frozen) or a union's part, and shows at
+most 128 columns. It reads: rows, a page of rows, the total, the columns
+and CSV take it as a Select query; Run opens it in the datasheet. Typed SQL
+can't be a Crosstab. Saved, its grid is `oadb query 5` with each column's
+part; an older GFOpenBase opens it as its stored SQL, the columns as they
+were when it was saved. ARexx's QUERYFIELDS, COUNTQUERY and QUERYROW read
+it as they read a Select query.
+
+Tests: `test_make_table` and `test_crosstab` in tests/base/test_base_core.c.
+The window's new lines need a lab (backlog GF-138).
+
 ## 6. Forms
 
 ### 6.1 Auto forms
