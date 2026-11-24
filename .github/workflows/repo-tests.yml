@@ -1,0 +1,18 @@
+name: Repo tests
+# LV-16: every pull request runs the repository's own tests (tests/ci/test_all.sh finds them all),
+# so green means they ran, not only the small checks.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Every test in every tests/ folder
+        run: sh tests/ci/test_all.sh
