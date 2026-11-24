@@ -10,9 +10,14 @@
 # against that sum before a file is taken from it, so a build of a GFOffice commit always gets the same
 # library, and the one that was checked in a lab.
 #
+# The .zip is looked for in the vault first: the LumaVAULT kitchen's shelf, where a release is put as the
+# ingredient gfopensqlite <version> (SHELF/<version>/files/GFOpenSQLite-<version>.zip). Only when it is not
+# there is it fetched from RELEASE_BASE.
+#
 #   REF            the ref file (default deps/gfopensqlite.ref)
 #   UNZIP          the unzip to use (default unzip); when there is none, python3 -m zipfile unpacks
-#   RELEASE_BASE   where releases are (default https://github.com/DalsinAI/gfopensqlite/releases/download)
+#   SHELF          gfopensqlite on the kitchen's shelf (default /srv/kitchen/shelf/amicradle/gfopensqlite)
+#   RELEASE_BASE   where releases are, when the shelf hasn't it (default https://github.com/DalsinAI/gfopensqlite/releases/download)
 #
 # usage: scripts/fetch-gfopensqlite.sh DEST
 # MIT, Copyright (c) 2026 AmiCradle Team.
@@ -20,6 +25,7 @@ set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 DEST=${1:?usage: fetch-gfopensqlite.sh DEST}
 REF=${REF:-$HERE/deps/gfopensqlite.ref}
+SHELF=${SHELF:-/srv/kitchen/shelf/amicradle/gfopensqlite}
 RELEASE_BASE=${RELEASE_BASE:-https://github.com/DalsinAI/gfopensqlite/releases/download}
 [ -f "$REF" ] || { echo "fetch-gfopensqlite: no $REF" >&2; exit 1; }
 read -r TAG SUM REST < "$REF" || true
@@ -34,10 +40,16 @@ esac
 ZIP=GFOpenSQLite-${TAG#v}.zip
 W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
-curl -sSfL -o "$W/$ZIP" "$RELEASE_BASE/$TAG/$ZIP" ||
-    { echo "fetch-gfopensqlite: couldn't fetch $RELEASE_BASE/$TAG/$ZIP" >&2; exit 1; }
+if [ -f "$SHELF/${TAG#v}/files/$ZIP" ]; then
+    cp "$SHELF/${TAG#v}/files/$ZIP" "$W/$ZIP"
+    FROM="the shelf ($SHELF/${TAG#v})"
+else
+    curl -sSfL -o "$W/$ZIP" "$RELEASE_BASE/$TAG/$ZIP" ||
+        { echo "fetch-gfopensqlite: $ZIP is not on the shelf ($SHELF/${TAG#v}) and couldn't be fetched from $RELEASE_BASE/$TAG/$ZIP" >&2; exit 1; }
+    FROM=$RELEASE_BASE
+fi
 echo "$SUM  $W/$ZIP" | sha256sum -c - >/dev/null 2>&1 ||
-    { echo "fetch-gfopensqlite: $ZIP is not the file $REF names (SHA-256 differs)" >&2; exit 1; }
+    { echo "fetch-gfopensqlite: $ZIP from $FROM is not the file $REF names (SHA-256 differs)" >&2; exit 1; }
 # unzip where there is one; a kitchen without it (LumaVAULT's, 23 Nov 2026) has Python's zipfile
 if command -v "${UNZIP:-unzip}" >/dev/null 2>&1; then
     "${UNZIP:-unzip}" -qo "$W/$ZIP" -d "$W/x"
@@ -56,4 +68,4 @@ mkdir -p "$DEST/include" "$DEST/lib-soft" "$DEST/libs"
 cp -R "$S/SDK/Include/." "$DEST/include/"
 cp "$S/SDK/lib/soft-float/libsqlite3_link.a" "$DEST/lib-soft/"
 cp "$S/Libs/sqlite.library" "$DEST/libs/"
-echo "fetch-gfopensqlite: $TAG, sqlite.library $(wc -c < "$DEST/libs/sqlite.library") bytes"
+echo "fetch-gfopensqlite: $TAG from $FROM, sqlite.library $(wc -c < "$DEST/libs/sqlite.library") bytes"
