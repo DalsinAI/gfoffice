@@ -4779,7 +4779,7 @@ bad:
 
 static sqlite3_stmt *plan_prepare(ob_project *p, const qplan *pl, const char *const *params, const char *fmt);
 
-static const char *const qkind_names[OB_QKINDS] = { "Select", "Update", "Append", "Delete", "Union" };
+static const char *const qkind_names[OB_QKINDS] = { "Select", "Update", "Append", "Delete", "Union", "Make Table", "Crosstab" };
 
 const char *ob_qkind_name(ob_qkind k)
 {
@@ -4789,7 +4789,8 @@ const char *ob_qkind_name(ob_qkind k)
 /* "an Update", "an Append", "a Delete": the kind with its article. */
 static const char *a_kind(ob_qkind k)
 {
-    static const char *const a[OB_QKINDS] = { "a Select", "an Update", "an Append", "a Delete", "a Union" };
+    static const char *const a[OB_QKINDS] = { "a Select", "an Update", "an Append", "a Delete", "a Union", "a Make Table",
+                                               "a Crosstab" };
     return (unsigned)k < OB_QKINDS ? a[k] : "a";
 }
 
@@ -5154,6 +5155,11 @@ static qplan *union_part(ob_project *p, const ob_query *q, const char *name, ob_
             fail(p, "%s: %s is a union itself: add its tables and queries instead", qname(q), part->name);
             return NULL;
         }
+        if (part->kind == OB_QK_CROSSTAB) {
+            fail(p, "%s: %s is a Crosstab query: its columns come from its rows, so a union can't read it", qname(q),
+                 part->name);
+            return NULL;
+        }
         if (part->kind != OB_QK_SELECT) {
             fail(p, "%s: %s is %s query: it changes rows, so a union can't read it", qname(q), part->name, a_kind(part->kind));
             return NULL;
@@ -5268,6 +5274,347 @@ bad:
     return NULL;
 }
 
+/* ---- Make Table and Crosstab queries (core 0.20) ---- */
+
+static qplan *plan_make(ob_project *p, const ob_query *q);
+
+/* A Make Table query made ready: the Select it reads, and the name of the table it makes. */
+static qplan *make_plan(ob_project *p, const ob_query *q)
+{
+    ob_query *sq = malloc(sizeof *sq);
+    qplan *pl;
+    char name[OB_NAME_MAX];
+    int i;
+    if (!sq) { fail(p, "Not enough memory"); return NULL; }
+    trimmed(q->target, name, sizeof name);
+    if (!name[0]) { free(sq); fail(p, "%s: name the table it makes", qname(q)); return NULL; }
+    *sq = *q;
+    sq->kind = OB_QK_SELECT;
+    for (i = 0; i < sq->ncolumns && i < OB_QUERY_COLUMNS; i++) { sq->columns[i].to[0] = 0; sq->columns[i].xtab = OB_XT_NONE; }
+    pl = select_plan(p, sq);
+    free(sq);
+    if (!pl) return NULL;
+    for (i = 0; i < pl->nout; i++)
+        if (pl->out[i].type == OB_OBJECT) {
+            fail(p, "%s holds Datatype objects: a Make Table query can't copy it yet", pl->out[i].heading);
+            plan_free(pl);
+            return NULL;
+        }
+    pl->kind = OB_QK_MAKE;
+    copy(pl->target, sizeof pl->target, name);
+    return pl;
+}
+
+/* pl's statement put inside sql (which has %s where it goes), its [questions] bound. */
+static sqlite3_stmt *plan_wrapped(ob_project *p, qplan *pl, const char *const *params, const char *sql)
+{
+    char *keep = pl->sql, *full = sqlite3_mprintf(sql, keep);
+    sqlite3_stmt *st;
+    if (!full) { fail(p, "Not enough memory"); return NULL; }
+    pl->sql = full;
+    st = plan_prepare(p, pl, params, "%s");
+    pl->sql = keep;
+    sqlite3_free(full);
+    return st;
+}
+
+/* "WITH m(c0, c1...) AS (SELECT * FROM (%s))": the plan's columns by place, %s where its statement goes;
+ * NULL with the reason. */
+static char *by_place(ob_project *p, int n, const char *rest)
+{
+    sqlite3_str *s = sqlite3_str_new(NULL);
+    char *r;
+    int i;
+    sqlite3_str_appendall(s, "WITH m(");
+    for (i = 0; i < n; i++) sqlite3_str_appendf(s, "%sc%d", i ? ", " : "", i);
+    sqlite3_str_appendf(s, ") AS (SELECT * FROM (%%s)) %s", rest);
+    if (!(r = sqlite3_str_finish(s))) fail(p, "Not enough memory");
+    return r;
+}
+
+/* The design of the table a Make Table query makes: a Counter, then a field for each column. */
+static int made_design(ob_project *p, const ob_query *q, qplan *pl, const char *const *params, ob_table *t)
+{
+    static const char *const ids[] = { "id", "Row", "Row id" };
+    int guess[OB_QUERY_OUT][2];
+    int i, j, k, any = 0;
+    memset(guess, 0, sizeof guess);
+    for (k = 0; k < 3; k++) {
+        for (i = 0; i < pl->nout && !same(pl->out[i].heading, ids[k]); i++) ;
+        if (i == pl->nout) break;
+    }
+    if (k == 3) return fail(p, "%s: columns are called id, Row and Row id: give one of them another heading", qname(q));
+    for (i = 0; i < pl->nout; i++) {
+        if (!pl->out[i].heading[0]) return fail(p, "%s: column %d has no heading: give it one", qname(q), i + 1);
+        for (j = 0; j < i; j++)
+            if (same(pl->out[i].heading, pl->out[j].heading))
+                return fail(p, "%s: two columns are called %s: give one another heading", qname(q), pl->out[i].heading);
+        if (pl->out[i].type < 0) any = 1;
+    }
+    if (any) {      /* an expression's type, from its values: any text, any number with a point */
+        sqlite3_str *r = sqlite3_str_new(NULL);
+        char *rest, *sql;
+        sqlite3_stmt *st;
+        sqlite3_str_appendall(r, "SELECT ");
+        for (i = 0; i < pl->nout; i++)
+            sqlite3_str_appendf(r, "%scoalesce(max(typeof(c%d) IN ('text', 'blob')), 0), coalesce(max(typeof(c%d) = 'real'), 0)",
+                                i ? ", " : "", i, i);
+        sqlite3_str_appendall(r, " FROM m");
+        if (!(rest = sqlite3_str_finish(r))) return fail(p, "Not enough memory");
+        sql = by_place(p, pl->nout, rest);
+        sqlite3_free(rest);
+        if (!sql) return 0;
+        st = plan_wrapped(p, pl, params, sql);
+        sqlite3_free(sql);
+        if (!st) return 0;
+        if (sqlite3_step(st) == SQLITE_ROW)
+            for (i = 0; i < pl->nout; i++) {
+                guess[i][0] = sqlite3_column_int(st, 2 * i);
+                guess[i][1] = sqlite3_column_int(st, 2 * i + 1);
+            }
+        else { sqlite3_finalize(st); return sql_fail(p, NULL, sqlite3_errcode(p->db)); }
+        sqlite3_finalize(st);
+    }
+    ob_table_init(t, pl->target);
+    if (k) ob_table_rename_field(t, 0, ids[k]);
+    for (i = 0; i < pl->nout; i++) {
+        int type = pl->out[i].type;
+        if (type == OB_COUNTER || type == OB_LOOKUP) type = OB_INTEGER;
+        else if (type == OB_CHOICE) type = OB_TEXT;
+        else if (type < 0) type = guess[i][0] ? OB_TEXT : guess[i][1] ? OB_NUMBER : OB_INTEGER;
+        if (!ob_table_add_field(t, pl->out[i].heading, (ob_type)type))
+            return fail(p, "%s shows %d columns: a table has at most %d fields", qname(q), pl->nout, OB_MAX_FIELDS - 1);
+    }
+    if (!ob_table_check(p, t)) {
+        char why[OB_ERR_MAX];
+        copy(why, sizeof why, ob_error(p));
+        return fail(p, "%s: the table it makes: %s", qname(q), why);
+    }
+    return 1;
+}
+
+/* Runs a Make Table query: keep 0 makes the table and its rows, counts them, and takes them back. */
+static ob_int make_go(ob_project *p, const ob_query *q, const char *const *params, int keep, int *undoable)
+{
+    qplan *pl;
+    ob_table *t = NULL;
+    sqlite3_stmt *st = NULL;
+    sqlite3_str *s;
+    char *sql, err[OB_ERR_MAX];
+    ob_int n = -1;
+    int i, mine, kept = 0, rc;
+    if (!(pl = plan_make(p, q))) return -1;
+    if (table_exists(p, pl->target)) {
+        fail(p, "%s is a table already: delete it, or give the table %s makes another name", pl->target, qname(q));
+        plan_free(pl);
+        return -1;
+    }
+    if (query_exists(p, pl->target) || view_exists(p, pl->target)) {
+        fail(p, "There is a %s named %s: give the table %s makes another name", query_exists(p, pl->target) ? "query" : "view",
+             pl->target, qname(q));
+        plan_free(pl);
+        return -1;
+    }
+    if (!(t = malloc(sizeof *t))) { fail(p, "Not enough memory"); plan_free(pl); return -1; }
+    if (!made_design(p, q, pl, params, t)) { free(t); plan_free(pl); return -1; }
+    s = sqlite3_str_new(NULL);
+    sqlite3_str_appendf(s, "INSERT INTO \"%w\"(", t->name);
+    for (i = 1; i < t->nfields; i++) sqlite3_str_appendf(s, "%s\"%w\"", i > 1 ? ", " : "", t->fields[i].name);
+    sqlite3_str_appendall(s, ") SELECT * FROM (%s)");
+    if (!(sql = sqlite3_str_finish(s))) { fail(p, "Not enough memory"); free(t); plan_free(pl); return -1; }
+    mine = !p->in_txn;
+    if (!run(p, mine ? "BEGIN IMMEDIATE" : "SAVEPOINT ob_make")) { sqlite3_free(sql); free(t); plan_free(pl); return -1; }
+    if (mine) p->in_txn = 1;
+    if (ob_table_create(p, t) && (st = plan_wrapped(p, pl, params, sql))) {
+        rc = sqlite3_step(st);
+        if (rc == SQLITE_DONE) n = (ob_int)sqlite3_changes64(p->db);
+        else sql_fail(p, t, rc);
+        sqlite3_finalize(st);
+    }
+    sqlite3_free(sql);
+    if (mine) p->in_txn = 0;
+    if (keep && n >= 0) kept = run(p, mine ? "COMMIT" : "RELEASE ob_make");
+    if (!kept) {
+        copy(err, sizeof err, p->err);
+        if (mine) sqlite3_exec(p->db, "ROLLBACK", NULL, NULL, NULL);
+        else {
+            sqlite3_exec(p->db, "ROLLBACK TO ob_make", NULL, NULL, NULL);
+            sqlite3_exec(p->db, "RELEASE ob_make", NULL, NULL, NULL);
+        }
+        copy(p->err, sizeof p->err, err);
+    }
+    forget(p);
+    free(t);
+    plan_free(pl);
+    if (n < 0 || (keep && !kept)) return -1;
+    if (undoable) *undoable = 0;
+    if (keep && !p->undo_off) ob_undo_clear(p);     /* a new table: the older steps' design has changed */
+    ok(p);
+    return n;
+}
+
+/* A Crosstab query made ready: its rows read by a Select (row headings, the column heading, the value, in that
+ * order), the column heading's values found, and one column for each, the value totalled in it. */
+static qplan *crosstab_plan(ob_project *p, const ob_query *q)
+{
+    ob_query *sq = NULL;
+    qplan *bp = NULL, *pl = NULL;
+    sqlite3_stmt *st = NULL;
+    sqlite3_str *s = NULL;
+    char *sql = NULL;
+    int rows[OB_XT_ROWS], nrows = 0, colc = -1, valc = -1, c, i, ctype, vtype, ctext, nvals = 0, rc;
+    ob_total vt;
+    if (q->sql_only) { fail(p, "%s: a Crosstab query is made in the grid", qname(q)); return NULL; }
+    for (c = 0; c < q->ncolumns && c < OB_QUERY_COLUMNS; c++) {
+        const ob_qcolumn *k = &q->columns[c];
+        if ((unsigned)k->xtab >= OB_XTS) { fail(p, "%s: column %d has an unknown part", qname(q), c + 1); return NULL; }
+        if (k->xtab != OB_XT_NONE && !strcmp(k->field, "*") && k->table[0]) {
+            fail(p, "%s.*: a column of every field can't be a heading or the value", k->table);
+            return NULL;
+        }
+        if (k->xtab != OB_XT_VALUE && k->total != OB_TOTAL_NONE) {
+            fail(p, "%s: in a Crosstab query only the value has a total", qname(q));
+            return NULL;
+        }
+        if (k->xtab == OB_XT_ROW) {
+            if (nrows == OB_XT_ROWS) { fail(p, "%s: a Crosstab query has at most %d row headings", qname(q), OB_XT_ROWS); return NULL; }
+            rows[nrows++] = c;
+        } else if (k->xtab == OB_XT_COLUMN) {
+            if (colc >= 0) { fail(p, "%s: a Crosstab query has one column heading", qname(q)); return NULL; }
+            colc = c;
+        } else if (k->xtab == OB_XT_VALUE) {
+            if (valc >= 0) { fail(p, "%s: a Crosstab query has one value", qname(q)); return NULL; }
+            valc = c;
+        }
+    }
+    if (!nrows) { fail(p, "%s: choose a column to be the row heading", qname(q)); return NULL; }
+    if (colc < 0) { fail(p, "%s: choose a column to be the column heading", qname(q)); return NULL; }
+    if (valc < 0) { fail(p, "%s: choose a column to be the value", qname(q)); return NULL; }
+    vt = q->columns[valc].total;
+    if (vt == OB_TOTAL_NONE || vt == OB_TOTAL_GROUP || (unsigned)vt >= OB_TOTALS) {
+        fail(p, "%s: give the value a total: Sum, Count, Average, Min or Max", qname(q));
+        return NULL;
+    }
+    /* the rows: row headings, the column heading and the value, as they are; the other columns only pick */
+    if (!(sq = malloc(sizeof *sq))) { fail(p, "Not enough memory"); return NULL; }
+    *sq = *q;
+    sq->kind = OB_QK_SELECT;
+    sq->ncolumns = 0;
+    for (i = 0; i < nrows + 2; i++) sq->columns[sq->ncolumns++] = q->columns[i < nrows ? rows[i] : i == nrows ? colc : valc];
+    for (c = 0; c < q->ncolumns && c < OB_QUERY_COLUMNS; c++)
+        if (q->columns[c].xtab == OB_XT_NONE) {
+            sq->columns[sq->ncolumns] = q->columns[c];
+            sq->columns[sq->ncolumns++].show = 0;
+        }
+    for (c = 0; c < sq->ncolumns; c++) {
+        ob_qcolumn *k = &sq->columns[c];
+        if (c < nrows + 2) k->show = 1;
+        k->total = OB_TOTAL_NONE;
+        k->sort = OB_SORT_NONE;
+        k->to[0] = 0;
+        k->xtab = OB_XT_NONE;
+    }
+    if (!(bp = select_plan(p, sq))) goto bad;
+    if (bp->nparams) { fail(p, "%s asks a question: a Crosstab query asks none", qname(q)); goto bad; }
+    if (bp->nout != nrows + 2) { fail(p, "%s: its headings and value are one field or expression each", qname(q)); goto bad; }
+    for (i = 0; i < nrows + 1; i++)
+        if (bp->out[i].type == OB_OBJECT) { fail(p, "%s holds Datatype objects: it can't be a heading", bp->out[i].heading); goto bad; }
+    ctype = bp->out[nrows].type;
+    vtype = bp->out[nrows + 1].type;
+    ctext = ctype >= 0 && holds_text((ob_type)ctype);
+    /* the value's total, and the type it is shown as (select_plan's rules) */
+    switch (vt) {
+    case OB_TOTAL_SUM:
+    case OB_TOTAL_AVERAGE:
+        if (vtype >= 0 && !numeric_type(vtype)) { fail(p, "%s: %s works on numbers", bp->out[nrows + 1].heading, ob_total_name(vt)); goto bad; }
+        if (vt == OB_TOTAL_SUM && (vtype == OB_YESNO || vtype == OB_COUNTER)) vtype = OB_INTEGER;
+        if (vt == OB_TOTAL_AVERAGE && vtype >= 0 && vtype != OB_CURRENCY) vtype = OB_NUMBER;
+        break;
+    case OB_TOTAL_COUNT:
+        vtype = OB_INTEGER;
+        break;
+    default:
+        if (vtype == OB_OBJECT) { fail(p, "%s holds Datatype objects: it has no %s", bp->out[nrows + 1].heading, ob_total_name(vt)); goto bad; }
+        break;
+    }
+    if (!(pl = calloc(1, sizeof *pl))) { fail(p, "Not enough memory"); goto bad; }
+    s = sqlite3_str_new(NULL);
+    sqlite3_str_appendall(s, "WITH b(");
+    for (i = 0; i < nrows; i++) sqlite3_str_appendf(s, "r%d, ", i);
+    sqlite3_str_appendf(s, "c, v) AS (%s) SELECT ", bp->sql);
+    for (i = 0; i < nrows; i++) {
+        sqlite3_str_appendf(s, "%sr%d AS \"%w\"", i ? ", " : "", i, bp->out[i].heading);
+        if (!add_out(p, pl, bp->out[i].heading, bp->out[i].type)) goto bad;
+    }
+    /* the column heading's values, in order */
+    {
+        sqlite3_str *w = sqlite3_str_new(NULL);
+        sqlite3_str_appendall(w, "WITH b(");
+        for (i = 0; i < nrows; i++) sqlite3_str_appendf(w, "r%d, ", i);
+        sqlite3_str_appendf(w, "c, v) AS (%%s) SELECT DISTINCT c, quote(c) FROM b ORDER BY c%s", ctext ? " COLLATE NOCASE" : "");
+        sql = sqlite3_str_finish(w);
+    }
+    if (!sql) { fail(p, "Not enough memory"); goto bad; }
+    st = plan_wrapped(p, bp, NULL, sql);
+    sqlite3_free(sql);
+    sql = NULL;
+    if (!st) goto bad;
+    while ((rc = sqlite3_step(st)) == SQLITE_ROW) {
+        char head[OB_NAME_MAX];
+        const char *lit = (const char *)sqlite3_column_text(st, 1);
+        int ct = sqlite3_column_type(st, 0);
+        if (nrows + nvals >= OB_QUERY_OUT) {
+            fail(p, "%s: %s has more than %d values: a Crosstab query shows at most %d columns", qname(q),
+                 bp->out[nrows].heading, OB_QUERY_OUT - nrows, OB_QUERY_OUT);
+            goto bad;
+        }
+        if (ct == SQLITE_NULL) copy(head, sizeof head, "(empty)");
+        else if (ctype == OB_CURRENCY && ct == SQLITE_INTEGER) ob_currency_format(sqlite3_column_int64(st, 0), head, sizeof head);
+        else if (ctype == OB_YESNO && ct == SQLITE_INTEGER) copy(head, sizeof head, sqlite3_column_int64(st, 0) ? "Yes" : "No");
+        else if (ct == SQLITE_BLOB) snprintf(head, sizeof head, "(%d bytes)", sqlite3_column_bytes(st, 0));
+        else copy(head, sizeof head, (const char *)sqlite3_column_text(st, 0));
+        if (vt == OB_TOTAL_AVERAGE && vtype == OB_CURRENCY)
+            sqlite3_str_appendf(s, ", CAST(round(avg(CASE WHEN c IS %s THEN v END)) AS INTEGER)", lit ? lit : "NULL");
+        else
+            sqlite3_str_appendf(s, ", %s(CASE WHEN c IS %s THEN v END)",
+                                vt == OB_TOTAL_SUM ? "sum" : vt == OB_TOTAL_AVERAGE ? "avg" : vt == OB_TOTAL_COUNT ? "count"
+                                : vt == OB_TOTAL_MIN ? "min" : "max", lit ? lit : "NULL");
+        sqlite3_str_appendf(s, " AS \"%w\"", head);
+        if (!add_out(p, pl, head, vtype)) goto bad;
+        nvals++;
+    }
+    if (rc != SQLITE_DONE) { sql_fail(p, NULL, rc); goto bad; }
+    sqlite3_finalize(st);
+    st = NULL;
+    sqlite3_str_appendall(s, " FROM b GROUP BY ");
+    for (i = 0; i < nrows; i++) sqlite3_str_appendf(s, "%sr%d", i ? ", " : "", i);
+    sqlite3_str_appendall(s, " ORDER BY ");
+    for (i = 0; i < nrows; i++)
+        sqlite3_str_appendf(s, "%sr%d%s%s", i ? ", " : "", i,
+                            bp->out[i].type >= 0 && holds_text((ob_type)bp->out[i].type) ? " COLLATE NOCASE" : "",
+                            q->columns[rows[i]].sort == OB_SORT_DOWN ? " DESC" : "");
+    pl->sql = sqlite3_str_finish(s);
+    s = NULL;
+    if (!pl->sql) { fail(p, "Not enough memory"); goto bad; }
+    pl->kind = OB_QK_CROSSTAB;
+    {
+        sqlite3_stmt *chk = NULL;
+        int rc = sqlite3_prepare_v2(p->db, pl->sql, -1, &chk, NULL);
+        sqlite3_finalize(chk);
+        if (rc != SQLITE_OK) { fail(p, "%s: %s", qname(q), sqlite3_errmsg(p->db)); goto bad; }
+    }
+    plan_free(bp);
+    free(sq);
+    return pl;
+bad:
+    sqlite3_finalize(st);
+    sqlite3_free(sqlite3_str_finish(s));
+    plan_free(bp);
+    plan_free(pl);
+    free(sq);
+    return NULL;
+}
+
 /* A query made ready: one that reads (select_plan, union_plan), or one that changes rows. */
 static qplan *plan_make(ob_project *p, const ob_query *q)
 {
@@ -5275,6 +5622,8 @@ static qplan *plan_make(ob_project *p, const ob_query *q)
     if (q->kind == OB_QK_SELECT) return select_plan(p, q);
     if ((unsigned)q->kind >= OB_QKINDS) { fail(p, "%s: a query of no kind", qname(q)); return NULL; }
     if (q->kind == OB_QK_UNION) return union_plan(p, q);
+    if (q->kind == OB_QK_MAKE) return make_plan(p, q);
+    if (q->kind == OB_QK_CROSSTAB) return crosstab_plan(p, q);
     if (q->sql_only) {
         if (!(pl = calloc(1, sizeof *pl))) { fail(p, "Not enough memory"); return NULL; }
         pl = sql_action_plan(p, q, pl);
@@ -5390,8 +5739,12 @@ static ob_int action_go(ob_project *p, const ob_query *q, const char *const *par
     ob_int n = -1;
     int rc = SQLITE_ERROR, capture = 0, good;
     if (undoable) *undoable = 0;
-    if (q->kind == OB_QK_SELECT || q->kind == OB_QK_UNION) { fail(p, "%s reads rows: open it to see them", qname(q)); return -1; }
+    if (q->kind == OB_QK_SELECT || q->kind == OB_QK_UNION || q->kind == OB_QK_CROSSTAB) {
+        fail(p, "%s reads rows: open it to see them", qname(q));
+        return -1;
+    }
     if (p->readonly) { fail(p, "The project is open read-only"); return -1; }
+    if (q->kind == OB_QK_MAKE) return make_go(p, q, params, keep, undoable);
     if (!(pl = plan_make(p, q))) return -1;
     if (!(t = malloc(sizeof *t)) || !ob_table_get(p, pl->target, t)) {
         if (t) fail(p, "%s uses the table %s, which isn't there", qname(q), pl->target);
@@ -5448,8 +5801,13 @@ void ob_query_set_kind(ob_query *q, ob_qkind kind)
     int i;
     if ((unsigned)kind >= OB_QKINDS) kind = OB_QK_SELECT;
     if (q->kind == kind) return;
-    for (i = 0; i < q->ncolumns && i < OB_QUERY_COLUMNS; i++) q->columns[i].to[0] = 0;
-    if (kind == OB_QK_SELECT || kind == OB_QK_UNION) q->target[0] = 0;
+    for (i = 0; i < q->ncolumns && i < OB_QUERY_COLUMNS; i++) {
+        q->columns[i].to[0] = 0;
+        if (kind != OB_QK_CROSSTAB) q->columns[i].xtab = OB_XT_NONE;
+    }
+    /* a Make Table's target is a table to make; the others' one to change */
+    if (kind == OB_QK_SELECT || kind == OB_QK_UNION || kind == OB_QK_CROSSTAB || kind == OB_QK_MAKE || q->kind == OB_QK_MAKE)
+        q->target[0] = 0;
     if (kind == OB_QK_UNION) q->njoins = 0;
     else q->union_all = 0;
     q->kind = kind;
@@ -5463,6 +5821,16 @@ ob_int ob_query_ask(ob_project *p, const ob_query *q, const char *const *params,
     int can;
     if (out && size) out[0] = 0;
     if ((n = action_go(p, q, params, 0, NULL)) < 0) return -1;
+    if (q->kind == OB_QK_MAKE) {
+        char name[OB_NAME_MAX];
+        trimmed(q->target, name, sizeof name);
+        if (out && size) {
+            if (n == 0) snprintf(out, size, "This will make the table %s with no rows. It can't be undone.", name);
+            else snprintf(out, size, "This will make the table %s with %lld row%s. It can't be undone.", name, (long long)n,
+                          n == 1 ? "" : "s");
+        }
+        return n;
+    }
     if (!(pl = plan_make(p, q))) return -1;
     copy(target, sizeof target, pl->target);
     can = n <= OB_UNDO_ROWS && undo_can(p, pl, q->kind);
@@ -5600,7 +5968,9 @@ static sqlite3_stmt *plan_prepare(ob_project *p, const qplan *pl, const char *co
 /* An action query's rows aren't shown: it is run (ob_query_run). */
 static int reads(ob_project *p, const ob_query *q)
 {
-    if (q->kind == OB_QK_SELECT || q->kind == OB_QK_UNION) return 1;
+    if (q->kind == OB_QK_SELECT || q->kind == OB_QK_UNION || q->kind == OB_QK_CROSSTAB) return 1;
+    if (q->kind == OB_QK_MAKE)
+        return fail(p, "%s is a Make Table query: it makes a table, so it is run, not opened", qname(q));
     return fail(p, "%s is %s query: it %s rows, so it is run, not opened", qname(q), a_kind(q->kind),
                 q->kind == OB_QK_APPEND ? "adds" : q->kind == OB_QK_DELETE ? "deletes" : "changes");
 }
@@ -5742,9 +6112,10 @@ static char *grid_text(const ob_query *q)
     sqlite3_str *s = sqlite3_str_new(NULL);
     int i, r;
     int un = q->kind == OB_QK_UNION;
+    int five = q->kind == OB_QK_MAKE || q->kind == OB_QK_CROSSTAB;    /* core 0.20 */
     int action = q->kind != OB_QK_SELECT && !un;
-    sqlite3_str_appendall(s, un ? "oadb query 4\n" : action ? "oadb query 3\n" : q->njoins > 0 ? "oadb query 2\n"
-                                                                                                : "oadb query 1\n");
+    sqlite3_str_appendall(s, five ? "oadb query 5\n" : un ? "oadb query 4\n" : action ? "oadb query 3\n"
+                             : q->njoins > 0 ? "oadb query 2\n" : "oadb query 1\n");
     if (action || un) {
         sqlite3_str_appendf(s, "kind\t%d", (int)q->kind);
         put_escaped(s, q->target);
@@ -5766,6 +6137,7 @@ static char *grid_text(const ob_query *q)
         sqlite3_str_appendf(s, "\t%d\t%d\t%d", c->show ? 1 : 0, c->sort, (int)c->total);
         for (r = 0; r < OB_QUERY_OR; r++) put_escaped(s, c->criteria[r]);
         if (action) put_escaped(s, c->to);
+        if (q->kind == OB_QK_CROSSTAB) sqlite3_str_appendf(s, "\t%d", c->xtab);
         sqlite3_str_appendall(s, "\n");
     }
     for (i = 0; i < q->njoins && i < OB_QUERY_JOINS; i++) {
@@ -5803,7 +6175,7 @@ static int grid_read(const char *text, ob_query *q)
     const char *s = text;
     char word[16], num[16];
     if (strncmp(s, "oadb query 1\n", 13) && strncmp(s, "oadb query 2\n", 13) && strncmp(s, "oadb query 3\n", 13)
-        && strncmp(s, "oadb query 4\n", 13))
+        && strncmp(s, "oadb query 4\n", 13) && strncmp(s, "oadb query 5\n", 13))
         return 0;
     s += 13;
     while (*s) {
@@ -5825,6 +6197,8 @@ static int grid_read(const char *text, ob_query *q)
             if ((unsigned)c->total >= OB_TOTALS) c->total = OB_TOTAL_NONE;
             for (r = 0; r < OB_QUERY_OR; r++) grid_cell(&s, c->criteria[r], sizeof c->criteria[r]);
             grid_cell(&s, c->to, sizeof c->to);
+            grid_cell(&s, num, sizeof num); c->xtab = atoi(num);
+            if ((unsigned)c->xtab >= OB_XTS) c->xtab = OB_XT_NONE;
         } else if (!strcmp(word, "kind")) {
             grid_cell(&s, num, sizeof num);
             q->kind = (ob_qkind)atoi(num);
@@ -6522,7 +6896,8 @@ static int rename_in_query(ob_query *q, const char *old_name, const char *new_na
         if (!q->columns[i].table[0]) n += rename_in_expr(q->columns[i].expr, old_name, new_name);
         if (q->kind == OB_QK_UPDATE) n += rename_in_expr(q->columns[i].to, old_name, new_name);
     }
-    if (same(q->target, old_name)) { copy(q->target, OB_NAME_MAX, new_name); n++; }
+    /* a Make Table's target is the table it makes, not one it reads */
+    if (q->kind != OB_QK_MAKE && same(q->target, old_name)) { copy(q->target, OB_NAME_MAX, new_name); n++; }
     return n;
 }
 
@@ -6625,6 +7000,8 @@ int ob_query_save_view(ob_project *p, const ob_query *q, const char *name)
     if (table_exists(p, name)) return fail(p, "There is a table named %s: give the view another name", name);
     if (query_exists(p, name)) return fail(p, "There is a query named %s: give the view another name", name);
     if (!reads(p, q)) return 0;
+    if (q->kind == OB_QK_CROSSTAB)
+        return fail(p, "%s is a Crosstab query: its columns come from its rows, so it can't be a view", qname(q));
     if (!(pl = plan_make(p, q))) return 0;
     if (pl->nparams) {
         plan_free(pl);

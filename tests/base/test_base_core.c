@@ -3597,7 +3597,7 @@ static void test_union_queries(void)
     if (!p) return;
     five_customers(p);
     shop_orders(p);
-    CHECK(!strcmp(ob_qkind_name(OB_QK_UNION), "Union") && OB_QK_UNION == 4 && OB_QKINDS == 5, "the kind's name and number");
+    CHECK(!strcmp(ob_qkind_name(OB_QK_UNION), "Union") && OB_QK_UNION == 4 && OB_QKINDS == 7, "the kind's name and number");
     save_pair(p, "York", "Town", "york");
     save_pair(p, "Leeds", "Town", "leeds");
     save_pair(p, "Credits", "Credit", "");
@@ -3805,6 +3805,281 @@ static void test_union_queries(void)
 }
 
 /* ---- The query window's words (core 0.17) ---- */
+
+/* A table's design as "name:type,..." */
+static const char *design_of(ob_project *p, const char *table)
+{
+    static ob_table t;
+    static char got[512];
+    int i;
+    got[0] = 0;
+    if (!ob_table_get(p, table, &t)) { snprintf(got, sizeof got, "error: %s", ob_error(p)); return got; }
+    for (i = 0; i < t.nfields; i++) {
+        size_t n = strlen(got);
+        snprintf(got + n, sizeof got - n, "%s%s:%d", i ? "," : "", t.fields[i].name, (int)t.fields[i].type);
+    }
+    return got;
+}
+
+/* Make Table queries (core 0.20): a new table of the rows a Select reads */
+static void test_make_table(void)
+{
+    ob_project *p = fresh("maketable.oadb");
+    static ob_query q, back;
+    static ob_table t;
+    ob_qcolumn *c;
+    char say[256];
+    int undoable = -1;
+    const char *york[] = { "York" };
+    if (!p) return;
+    five_customers(p);
+    shop_orders(p);
+    CHECK(!strcmp(ob_qkind_name(OB_QK_MAKE), "Make Table") && !strcmp(ob_qkind_name(OB_QK_CROSSTAB), "Crosstab"),
+          "the new kinds' names");
+
+    ob_query_init(&q, "Make Yorkers");
+    ob_query_add_table(&q, "Customers");
+    c = ob_query_add_column(&q, "Customers", "Name");
+    c->show = 1;
+    c->sort = OB_SORT_UP;
+    c = ob_query_add_column(&q, "Customers", "Town");
+    c->show = 1;
+    strcpy(c->criteria[0], "York");
+    c = ob_query_add_column(&q, "Customers", "Credit");
+    c->show = 1;
+    c = ob_query_add_column(&q, NULL, "length(\"Customers\".\"Name\") * 2");
+    c->show = 1;
+    strcpy(c->heading, "Twice");
+    c = ob_query_add_column(&q, NULL, "\"Customers\".\"Credit\" / 3.0");
+    c->show = 1;
+    strcpy(c->heading, "Third");
+    ob_query_set_kind(&q, OB_QK_MAKE);
+    CHECK(!ob_query_check(p, &q), "no table named");
+    CHECK_ERR(p, "name the table it makes");
+    strcpy(q.target, " Yorkers ");
+    CHECK(ob_query_check(p, &q), "a Make Table query: %s", ob_error(p));
+    CHECK(ob_query_rows(p, &q, NULL, 0, -1, NULL, NULL) < 0, "its rows aren't opened");
+    CHECK_ERR(p, "makes a table, so it is run");
+    CHECK(ob_query_total(p, &q, NULL) < 0 && ob_query_save_view(p, &q, "V") == 0, "nor counted or kept as a view");
+
+    /* ask first: nothing is kept */
+    CHECK(ob_query_ask(p, &q, NULL, say, sizeof say) == 2, "it would make two rows: %s", ob_error(p));
+    CHECK(!strcmp(say, "This will make the table Yorkers with 2 rows. It can't be undone."), "the sentence: %s", say);
+    CHECK(!ob_table_get(p, "Yorkers", &t), "asking made no table");
+    CHECK(ob_query_preview(p, &q, NULL) == 2 && !ob_table_get(p, "Yorkers", &t), "nor did a preview");
+
+    /* run: the table and its rows */
+    CHECK(ob_row_change(p, "Customers", 1, 1, (const char *[]){ "Name" }, (const char *[]){ "dan" }), "an undo step: %s", ob_error(p));
+    CHECK(ob_undo_count(p) > 0, "a step to undo");
+    CHECK(ob_query_run(p, &q, NULL, &undoable) == 2 && undoable == 0, "run: %s", ob_error(p));
+    CHECK(ob_undo_count(p) == 0, "a new table empties the Undo list");
+    CHECK(!strcmp(design_of(p, "Yorkers"), "id:0,Name:1,Town:1,Credit limit:5,Twice:3,Third:4"), "the new table's design: %s",
+          design_of(p, "Yorkers"));
+    {
+        static ob_query r;
+        ob_query_init(&r, "");
+        ob_query_add_table(&r, "Yorkers");
+        ob_query_add_column(&r, "Yorkers", "*")->show = 1;
+        CHECK(!strcmp(qrows(p, &r, NULL, 0, -1), "1|bob|York||6|;2|dan|York|250.00|6|8333.33333333333"),
+              "its rows, in the query's order: %s", qrows(p, &r, NULL, 0, -1));
+    }
+    CHECK(ob_query_run(p, &q, NULL, &undoable) < 0, "a second run is refused");
+    CHECK_ERR(p, "Yorkers is a table already: delete it, or give the table Make Yorkers makes another name");
+
+    /* saved, read back, and renaming a table it reads */
+    CHECK(ob_query_save(p, &q), "saved: %s", ob_error(p));
+    CHECK(ob_query_get(p, "Make Yorkers", &back) && back.kind == OB_QK_MAKE && !strcmp(back.target, " Yorkers ")
+          && back.ncolumns == 5, "read back: kind %d, target %s", (int)back.kind, back.target);
+    CHECK(ob_table_rename(p, "Yorkers", "Old Yorkers"), "the made table renamed: %s", ob_error(p));
+    CHECK(ob_query_get(p, "Make Yorkers", &back) && !strcmp(back.target, " Yorkers "), "the target isn't a table it reads: %s",
+          back.target);
+    CHECK(ob_query_run(p, &back, NULL, &undoable) == 2, "so it runs again: %s", ob_error(p));
+    {
+        char out[256];
+        int changed = 0;
+        CHECK(ob_table_drop(p, "Yorkers"), "the made table dropped: %s", ob_error(p));
+        CHECK(ob_rexx_queries(p, "RUNQUERY \"Make Yorkers\"", out, sizeof out, &changed) == 0 && !strcmp(out, "2 NOUNDO")
+              && changed, "ARexx RUNQUERY makes it: %s", out);
+        CHECK(ob_rexx_queries(p, "QUERYFIELDS \"Make Yorkers\"", out, sizeof out, &changed) == 10, "it shows no columns");
+    }
+
+    /* a [question], an empty result, typed SQL */
+    strcpy(q.columns[1].criteria[0], "[Which town?]");
+    strcpy(q.target, "Picked");
+    CHECK(ob_query_ask(p, &q, NULL, say, sizeof say) < 0, "a question needs its answer");
+    CHECK(ob_query_ask(p, &q, (const char *[]){ "Hull" }, say, sizeof say) == 1 && strstr(say, "with 1 row."), "one row: %s", say);
+    strcpy(q.columns[1].criteria[0], "Paris");
+    CHECK(ob_query_ask(p, &q, NULL, say, sizeof say) < 0, "Paris isn't a Town");
+    strcpy(q.columns[1].criteria[0], "Leeds");
+    strcpy(q.columns[0].criteria[0], "Zed");
+    CHECK(ob_query_ask(p, &q, NULL, say, sizeof say) == 0
+          && !strcmp(say, "This will make the table Picked with no rows. It can't be undone."), "no rows: %s", say);
+    CHECK(ob_query_run(p, &q, NULL, NULL) == 0 && ob_table_get(p, "Picked", &t) && ob_row_total(p, "Picked") == 0,
+          "an empty table is made too: %s", ob_error(p));
+    (void)york;
+    ob_query_init(&q, "Typed");
+    q.sql_only = 1;
+    strcpy(q.sql, "SELECT \"Name\", \"Credit\" * 2 AS \"Double\", 'x' AS \"id\" FROM \"Customers\" WHERE \"Town\" = 'Leeds'");
+    ob_query_set_kind(&q, OB_QK_MAKE);
+    strcpy(q.target, "Typed copy");
+    CHECK(ob_query_run(p, &q, NULL, NULL) == 2, "typed SQL makes a table: %s", ob_error(p));
+    CHECK(!strcmp(design_of(p, "Typed copy"), "Row:0,Name:1,Double:3,id:1"), "named by its columns, the Counter out of the way: %s",
+          design_of(p, "Typed copy"));
+
+    /* refused: two columns of one name, a Datatype object, a name that is taken, a table made inside a change */
+    strcpy(q.sql, "SELECT \"Name\", \"Town\" AS \"name\" FROM \"Customers\"");
+    strcpy(q.target, "Twice named");
+    CHECK(ob_query_run(p, &q, NULL, NULL) < 0, "two columns called Name");
+    CHECK_ERR(p, "two columns are called name");
+    strcpy(q.sql, "SELECT \"Name\" FROM \"Customers\"");
+    strcpy(q.target, "Make Yorkers");
+    CHECK(ob_query_run(p, &q, NULL, NULL) < 0, "a query's name");
+    CHECK_ERR(p, "There is a query named Make Yorkers");
+    strcpy(q.target, "Orders");
+    CHECK(ob_query_run(p, &q, NULL, NULL) < 0, "a table's name");
+    CHECK(ob_begin(p), "a change opened");
+    strcpy(q.target, "Inside");
+    CHECK(ob_query_run(p, &q, NULL, NULL) == 5 && ob_table_get(p, "Inside", &t), "made inside the change: %s", ob_error(p));
+    CHECK(ob_rollback(p) && !ob_table_get(p, "Inside", &t), "and taken back with it");
+    ob_close(p);
+}
+
+/* Crosstab queries (core 0.20): a value totalled for each row heading and column heading */
+static void test_crosstab(void)
+{
+    ob_project *p = fresh("crosstab.oadb");
+    static ob_query q, back, u;
+    ob_qcolumn *c;
+    ob_qresult res[OB_QUERY_OUT];
+    int n;
+    if (!p) return;
+    five_customers(p);
+    shop_orders(p);
+
+    ob_query_init(&q, "Credit by town");
+    ob_query_add_table(&q, "Customers");
+    c = ob_query_add_column(&q, "Customers", "Town");
+    c->xtab = OB_XT_ROW;
+    c = ob_query_add_column(&q, "Customers", "Member");
+    c->xtab = OB_XT_COLUMN;
+    c = ob_query_add_column(&q, "Customers", "Credit");
+    c->xtab = OB_XT_VALUE;
+    ob_query_set_kind(&q, OB_QK_CROSSTAB);
+    CHECK(q.columns[0].xtab == OB_XT_ROW && q.columns[2].xtab == OB_XT_VALUE, "set_kind keeps the parts");
+    CHECK(!ob_query_check(p, &q), "the value needs a total");
+    CHECK_ERR(p, "give the value a total");
+    q.columns[2].total = OB_TOTAL_SUM;
+    CHECK(ob_query_check(p, &q), "a Crosstab: %s", ob_error(p));
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "Hull||99.99;Leeds|1,500.00|-5.00;York||250.00"), "its rows: %s",
+          qrows(p, &q, NULL, 0, -1));
+    n = ob_query_columns(p, &q, res, OB_QUERY_OUT);
+    CHECK(n == 3 && !strcmp(res[0].heading, "Town") && !strcmp(res[1].heading, "No") && !strcmp(res[2].heading, "Yes")
+          && res[0].type == OB_CHOICE && res[1].type == OB_CURRENCY, "its columns: %d %s %s", n, res[1].heading, res[2].heading);
+    CHECK(ob_query_total(p, &q, NULL) == 3, "three rows");
+    CHECK(!strcmp(qrows(p, &q, NULL, 1, 1), "Leeds|1,500.00|-5.00"), "a page: %s", qrows(p, &q, NULL, 1, 1));
+
+    /* Count, Average of money, a criterion, rows Z to A, two row headings */
+    q.columns[2].total = OB_TOTAL_COUNT;
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "Hull|0|1;Leeds|1|1;York|0|1"), "Count (an empty Credit not counted): %s", qrows(p, &q, NULL, 0, -1));
+    q.columns[2].total = OB_TOTAL_AVERAGE;
+    q.columns[0].sort = OB_SORT_DOWN;
+    strcpy(q.columns[2].criteria[0], "not empty");
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "York||250.00;Leeds|1,500.00|-5.00;Hull||99.99"), "Average, Z to A: %s",
+          qrows(p, &q, NULL, 0, -1));
+    q.columns[2].criteria[0][0] = 0;
+    q.columns[0].sort = OB_SORT_NONE;
+    c = ob_query_add_column(&q, "Customers", "Name");
+    c->xtab = OB_XT_ROW;
+    q.columns[2].total = OB_TOTAL_MAX;
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "Hull|Cy||99.99;Leeds|Ann|1,500.00|;Leeds|Eve||-5.00;York|bob||;York|dan||250.00"),
+          "two row headings: %s", qrows(p, &q, NULL, 0, -1));
+    q.ncolumns--;
+
+    /* the column heading's values in order, text without case, empty as (empty); a column that only picks */
+    ob_query_init(&q, "Orders by name");
+    ob_query_add_table(&q, "Orders");
+    ob_query_add_table(&q, "Customers");
+    c = ob_query_add_column(&q, "Customers", "Member");
+    c->xtab = OB_XT_ROW;
+    c = ob_query_add_column(&q, "Orders", "Weight");
+    c->xtab = OB_XT_COLUMN;
+    c = ob_query_add_column(&q, "Orders", "Total");
+    c->xtab = OB_XT_VALUE;
+    c->total = OB_TOTAL_SUM;
+    c = ob_query_add_column(&q, "Customers", "Town");
+    strcpy(c->criteria[0], "not Hull");
+    ob_query_set_kind(&q, OB_QK_CROSSTAB);
+    n = ob_query_columns(p, &q, res, OB_QUERY_OUT);
+    CHECK(n == 5 && !strcmp(res[1].heading, "(empty)") && !strcmp(res[2].heading, "0.25") && !strcmp(res[3].heading, "1.5")
+          && !strcmp(res[4].heading, "20.0"), "the column heading's values: %d %s %s %s %s", n, res[1].heading, res[2].heading,
+          res[3].heading, n > 4 ? res[4].heading : "");
+    CHECK(!strcmp(qrows(p, &q, NULL, 0, -1), "No||||100.00;Yes|2.50|1.00|10.00|"), "joined, Hull left out: %s",
+          qrows(p, &q, NULL, 0, -1));
+
+    /* saved and read back; a union and a view can't read it */
+    CHECK(ob_query_save(p, &q), "saved: %s", ob_error(p));
+    CHECK(ob_query_get(p, "Orders by name", &back) && back.kind == OB_QK_CROSSTAB && back.columns[1].xtab == OB_XT_COLUMN
+          && back.columns[2].xtab == OB_XT_VALUE && back.columns[3].xtab == OB_XT_NONE, "read back with its parts");
+    CHECK(!strcmp(qrows(p, &back, NULL, 0, -1), qrows(p, &q, NULL, 0, -1)), "the same rows");
+    CHECK(ob_query_save_view(p, &q, "Pivot") == 0, "not a view");
+    CHECK_ERR(p, "its columns come from its rows, so it can't be a view");
+    ob_query_init(&u, "U");
+    u.kind = OB_QK_UNION;
+    strcpy(u.tables[0], "Orders by name");
+    strcpy(u.tables[1], "Orders by name");
+    u.ntables = 2;
+    CHECK(!ob_query_check(p, &u), "nor a union's part");
+    CHECK_ERR(p, "is a Crosstab query: its columns come from its rows, so a union can't read it");
+    CHECK(ob_query_run(p, &q, NULL, NULL) < 0, "it reads, so it isn't run");
+    {
+        char out[512];
+        int changed = 0;
+        CHECK(ob_rexx_queries(p, "QUERYFIELDS \"Orders by name\"", out, sizeof out, &changed) == 0
+              && !strcmp(out, "\"Member\" \"(empty)\" \"0.25\" \"1.5\" \"20.0\""), "ARexx QUERYFIELDS: %s", out);
+        CHECK(ob_rexx_queries(p, "COUNTQUERY \"Orders by name\"", out, sizeof out, &changed) == 0 && !strcmp(out, "2"),
+              "ARexx COUNTQUERY: %s", out);
+    }
+    CHECK(ob_table_rename(p, "Orders", "Sales") && ob_query_get(p, "Orders by name", &back) && !strcmp(back.tables[0], "Sales")
+          && !strcmp(back.columns[1].table, "Sales"), "a table's rename follows into it");
+    CHECK(!strcmp(qrows(p, &back, NULL, 0, -1), "No||||100.00;Yes|2.50|1.00|10.00|"), "and it still reads: %s",
+          qrows(p, &back, NULL, 0, -1));
+
+    /* refused */
+    q = back;
+    q.columns[3].total = OB_TOTAL_COUNT;
+    CHECK(!ob_query_check(p, &q), "a total on a column that only picks");
+    CHECK_ERR(p, "only the value has a total");
+    q.columns[3].total = OB_TOTAL_NONE;
+    q.columns[3].xtab = OB_XT_COLUMN;
+    CHECK(!ob_query_check(p, &q), "two column headings");
+    CHECK_ERR(p, "one column heading");
+    q.columns[3].xtab = OB_XT_NONE;
+    q.columns[0].xtab = OB_XT_NONE;
+    CHECK(!ob_query_check(p, &q), "no row heading");
+    CHECK_ERR(p, "choose a column to be the row heading");
+    q.columns[0].xtab = OB_XT_ROW;
+    strcpy(q.columns[3].criteria[0], "[Which town?]");
+    CHECK(!ob_query_check(p, &q), "a question");
+    CHECK_ERR(p, "a Crosstab query asks none");
+    q.columns[3].criteria[0][0] = 0;
+    q.columns[0].xtab = OB_XT_VALUE;
+    q.columns[0].total = OB_TOTAL_SUM;
+    q.columns[2].xtab = OB_XT_ROW;
+    q.columns[2].total = OB_TOTAL_NONE;
+    CHECK(ob_query_check(p, &q), "Sum of Yes/No counts the Yeses: %s", ob_error(p));
+    q.columns[0] = back.columns[3];
+    q.columns[0].xtab = OB_XT_VALUE;
+    q.columns[0].total = OB_TOTAL_SUM;
+    q.columns[0].criteria[0][0] = 0;
+    CHECK(!ob_query_check(p, &q), "Sum of text");
+    CHECK_ERR(p, "Sum works on numbers");
+    q.sql_only = 1;
+    CHECK(!ob_query_check(p, &q), "typed SQL");
+    CHECK_ERR(p, "a Crosstab query is made in the grid");
+    ob_query_set_kind(&q, OB_QK_SELECT);
+    CHECK(q.columns[0].xtab == OB_XT_NONE, "another kind clears the parts");
+    ob_close(p);
+}
 
 static void test_query_window(void)
 {
@@ -4179,6 +4454,8 @@ int main(int argc, char **argv)
     test_action_queries();
     test_union_queries();
     test_query_window();
+    test_make_table();
+    test_crosstab();
     test_rexx_queries();
     test_rexx_sql();
     test_relation_draw();
