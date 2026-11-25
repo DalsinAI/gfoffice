@@ -12,7 +12,7 @@ on:
 jobs:
   tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,4 +22,6 @@ jobs:
       - name: The tests this change touches (every test at night)
         env:
           TEST_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event_name == 'push' && github.event.before || '' }}
+          # make check (extra.txt, the whole run only) builds every test under ASan: 50 minutes a test
+          TEST_TIMEOUT: '3000'
         run: sh tests/ci/test_all.sh
