@@ -1,0 +1,5 @@
+# Other test commands, one a line: "name @ paths: command", run from the top of the repository.
+# The command runs on a pull request when a change is under one of the paths; a line with no paths runs
+# only in the whole run (every night, on demand, or when tests/ci changes).
+# make check builds every host test under ASan and UBSan (about 20 minutes on bigguy), so it is nightly.
+make-check: make -j4 check
